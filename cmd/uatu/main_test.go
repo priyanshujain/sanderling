@@ -113,18 +113,16 @@ func TestRun_Doctor(t *testing.T) {
 	}
 }
 
-func TestRun_TestSubcommand(t *testing.T) {
-	var stdout bytes.Buffer
+func TestRun_TestSubcommand_ReportsBundleErrorForMissingSpec(t *testing.T) {
+	// Without a real spec file the pipeline should fail at the bundle step
+	// rather than panicking — proves the flag wiring reaches the runner.
 	err := run([]string{
 		"uatu", "test",
-		"--spec", "s.ts",
+		"--spec", "definitely-missing-spec.ts",
 		"--bundle-id", "com.example",
 		"--avd", "Pixel_5_API_33",
-	}, &stdout, io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stdout.String(), "uatu test (stub)") {
-		t.Errorf("test stub output missing, got: %q", stdout.String())
+	}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "bundle") {
+		t.Errorf("expected bundle error, got %v", err)
 	}
 }

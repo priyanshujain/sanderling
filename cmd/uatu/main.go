@@ -62,8 +62,9 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 }
 
 func runTest(options testOptions, stdout io.Writer) error {
-	fmt.Fprintf(stdout, "uatu test (stub): %+v\n", options)
-	return nil
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	return runTestPipeline(ctx, options, stdout)
 }
 
 func runDoctor(stdout io.Writer) error {
