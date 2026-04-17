@@ -1,6 +1,7 @@
 plugins {
     id("com.android.library") version "8.11.0"
     kotlin("android") version "2.1.21"
+    `maven-publish`
 }
 
 android {
@@ -23,6 +24,35 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
+}
+
+publishing {
+    publications {
+        register<MavenPublication>("release") {
+            groupId = "dev.uatu"
+            artifactId = "sdk-android"
+            version = "0.0.1"
+            afterEvaluate {
+                from(components["release"])
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/priyanshujain/uatu")
+            credentials {
+                username = System.getenv("GH_USERNAME") ?: System.getenv("GITHUB_ACTOR") ?: "priyanshujain"
+                password = System.getenv("GH_TOKEN") ?: System.getenv("GITHUB_TOKEN") ?: ""
+            }
+        }
     }
 }
 
