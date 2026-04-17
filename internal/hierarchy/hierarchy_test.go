@@ -73,3 +73,16 @@ func TestUnknownSelector(t *testing.T) {
 		t.Fatal("unknown kind should not match")
 	}
 }
+
+func TestDescPrefix(t *testing.T) {
+	xml := `<hierarchy>
+		<node content-desc="customer_row_abc-123" bounds="[0,0][100,100]"/>
+		<node content-desc="customer_row_def-456" bounds="[0,100][100,200]"/>
+		<node content-desc="supplier_row_xyz" bounds="[0,200][100,300]"/>
+	</hierarchy>`
+	tree, _ := Parse(xml)
+	rows := tree.FindAll("descPrefix:customer_row_")
+	if len(rows) != 2 {
+		t.Fatalf("want 2 customer rows, got %d", len(rows))
+	}
+}

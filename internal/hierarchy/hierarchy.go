@@ -3,9 +3,10 @@
 //
 // Selector grammar (v0.1):
 //
-//	id:<suffix>     — match resource-id ending with ":id/<suffix>" or equal to <suffix>
-//	text:<value>    — exact match on the node's text
-//	desc:<value>    — exact match on the node's content-desc
+//	id:<suffix>            — match resource-id ending with ":id/<suffix>" or equal to <suffix>
+//	text:<value>           — exact match on the node's text
+//	desc:<value>           — exact match on the node's content-desc
+//	descPrefix:<prefix>    — startsWith match on the node's content-desc (e.g. Compose testTag + UUID)
 package hierarchy
 
 import (
@@ -133,6 +134,8 @@ func match(element *Element, kind, value string) bool {
 		return element.Text == value
 	case "desc":
 		return element.Description == value
+	case "descPrefix":
+		return strings.HasPrefix(element.Description, value)
 	default:
 		return false
 	}
