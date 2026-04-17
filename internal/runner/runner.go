@@ -79,7 +79,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if err := options.Verifier.PushSnapshot(verifier.Snapshots(snapshot.Snapshots), tree); err != nil {
 			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 		}
-		fmt.Printf("step %d: screen=%q hierarchy=%d nodes\n", stepIndex, screenFromSnapshot(snapshot.Snapshots), treeSize)
+		fmt.Printf("step %d: screen=%q hierarchy=%d nodes tags=%v\n",
+			stepIndex, screenFromSnapshot(snapshot.Snapshots), treeSize, interestingTags(tree))
 		verdicts := options.Verifier.EvaluateProperties()
 		violations := violationNames(verdicts)
 
@@ -228,6 +229,33 @@ func fetchHierarchy(ctx context.Context, drv driver.Driver) (*hierarchy.Tree, er
 		return nil, err
 	}
 	return hierarchy.Parse(xmlText)
+}
+
+// interestingTags collects a short summary of which selectors the current
+// spec cares about are present, so we can read the log and see which
+// generator gates will fire.
+func interestingTags(tree *hierarchy.Tree) []string {
+	if tree == nil {
+		return nil
+	}
+	selectors := []string{
+		"id:select_language",
+		"id:etMobileNumber",
+		"id:otp",
+		"text:Sign Out Other Devices",
+		"text:Sign Out",
+		"text:Cancel",
+		"text:Skip",
+		"descPrefix:customer_row_",
+		"descPrefix:supplier_row_",
+	}
+	var hits []string
+	for _, selector := range selectors {
+		if elements := tree.FindAll(selector); len(elements) > 0 {
+			hits = append(hits, fmt.Sprintf("%s=%d", selector, len(elements)))
+		}
+	}
+	return hits
 }
 
 func traceActionFor(action verifier.Action) *trace.Action {
