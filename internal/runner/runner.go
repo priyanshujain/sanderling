@@ -9,6 +9,7 @@ import (
 
 	"github.com/priyanshujain/uatu/internal/agent"
 	"github.com/priyanshujain/uatu/internal/driver"
+	"github.com/priyanshujain/uatu/internal/hierarchy"
 	"github.com/priyanshujain/uatu/internal/ltl"
 	"github.com/priyanshujain/uatu/internal/trace"
 	"github.com/priyanshujain/uatu/internal/verifier"
@@ -61,7 +62,13 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			return summary, fmt.Errorf("step %d snapshot: %w", stepIndex, err)
 		}
 
-		if err := options.Verifier.PushSnapshot(verifier.Snapshots(snapshot.Snapshots)); err != nil {
+		tree, hierarchyErr := fetchHierarchy(ctx, options.Driver)
+		if hierarchyErr != nil {
+			// Degrade gracefully — property evaluation still works without ax.
+			fmt.Printf("warning: step %d hierarchy: %v\n", stepIndex, hierarchyErr)
+		}
+
+		if err := options.Verifier.PushSnapshot(verifier.Snapshots(snapshot.Snapshots), tree); err != nil {
 			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 		}
 		verdicts := options.Verifier.EvaluateProperties()
@@ -99,7 +106,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		if nextErr == nil {
-			if err := applyAction(ctx, options.Driver, nextAction); err != nil {
+			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
 				return summary, fmt.Errorf("step %d apply: %w", stepIndex, err)
 			}
 		}
@@ -168,18 +175,50 @@ func screenFromSnapshot(snapshots map[string]json.RawMessage) string {
 	return screen
 }
 
-func applyAction(ctx context.Context, drv driver.Driver, action verifier.Action) error {
+func applyAction(ctx context.Context, drv driver.Driver, action verifier.Action, tree *hierarchy.Tree) error {
 	switch action.Kind {
 	case verifier.ActionKindTap:
-		if action.On == "" {
-			return nil
+		x, y, ok := resolveCoordinates(action, tree)
+		if !ok {
+			if action.On == "" {
+				return nil
+			}
+			return drv.TapSelector(ctx, action.On)
 		}
-		return drv.TapSelector(ctx, action.On)
+		return drv.Tap(ctx, x, y)
 	case verifier.ActionKindInputText:
+		if x, y, ok := resolveCoordinates(action, tree); ok {
+			_ = drv.Tap(ctx, x, y)
+		} else if action.On != "" {
+			_ = drv.TapSelector(ctx, action.On)
+		}
 		return drv.InputText(ctx, action.Text)
 	default:
 		return fmt.Errorf("unknown action kind %q", action.Kind)
 	}
+}
+
+func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int, bool) {
+	if action.X > 0 && action.Y > 0 {
+		return action.X, action.Y, true
+	}
+	if tree != nil && action.On != "" {
+		if element := tree.Find(action.On); element != nil {
+			x, y := element.Bounds.Center()
+			if x > 0 && y > 0 {
+				return x, y, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+func fetchHierarchy(ctx context.Context, drv driver.Driver) (*hierarchy.Tree, error) {
+	xmlText, err := drv.Hierarchy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return hierarchy.Parse(xmlText)
 }
 
 func traceActionFor(action verifier.Action) *trace.Action {
