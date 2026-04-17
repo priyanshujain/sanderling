@@ -11,6 +11,7 @@ service Driver {
   rpc Terminate(Empty) returns (Empty);
 
   rpc Tap(Point) returns (Empty);
+  rpc TapSelector(Selector) returns (Empty);
   rpc InputText(Text) returns (Empty);
 
   rpc Screenshot(Empty) returns (Image);
@@ -33,6 +34,10 @@ message Point {
 }
 
 message Text {
+  string value = 1;
+}
+
+message Selector {
   string value = 1;
 }
 

@@ -22,6 +22,7 @@ const (
 	Driver_Launch_FullMethodName      = "/uatu.driver.v1.Driver/Launch"
 	Driver_Terminate_FullMethodName   = "/uatu.driver.v1.Driver/Terminate"
 	Driver_Tap_FullMethodName         = "/uatu.driver.v1.Driver/Tap"
+	Driver_TapSelector_FullMethodName = "/uatu.driver.v1.Driver/TapSelector"
 	Driver_InputText_FullMethodName   = "/uatu.driver.v1.Driver/InputText"
 	Driver_Screenshot_FullMethodName  = "/uatu.driver.v1.Driver/Screenshot"
 	Driver_Hierarchy_FullMethodName   = "/uatu.driver.v1.Driver/Hierarchy"
@@ -36,6 +37,7 @@ type DriverClient interface {
 	Launch(ctx context.Context, in *LaunchRequest, opts ...grpc.CallOption) (*Empty, error)
 	Terminate(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Empty, error)
 	Tap(ctx context.Context, in *Point, opts ...grpc.CallOption) (*Empty, error)
+	TapSelector(ctx context.Context, in *Selector, opts ...grpc.CallOption) (*Empty, error)
 	InputText(ctx context.Context, in *Text, opts ...grpc.CallOption) (*Empty, error)
 	Screenshot(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Image, error)
 	Hierarchy(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HierarchyJSON, error)
@@ -75,6 +77,16 @@ func (c *driverClient) Tap(ctx context.Context, in *Point, opts ...grpc.CallOpti
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Empty)
 	err := c.cc.Invoke(ctx, Driver_Tap_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *driverClient) TapSelector(ctx context.Context, in *Selector, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Driver_TapSelector_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +150,7 @@ type DriverServer interface {
 	Launch(context.Context, *LaunchRequest) (*Empty, error)
 	Terminate(context.Context, *Empty) (*Empty, error)
 	Tap(context.Context, *Point) (*Empty, error)
+	TapSelector(context.Context, *Selector) (*Empty, error)
 	InputText(context.Context, *Text) (*Empty, error)
 	Screenshot(context.Context, *Empty) (*Image, error)
 	Hierarchy(context.Context, *Empty) (*HierarchyJSON, error)
@@ -161,6 +174,9 @@ func (UnimplementedDriverServer) Terminate(context.Context, *Empty) (*Empty, err
 }
 func (UnimplementedDriverServer) Tap(context.Context, *Point) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method Tap not implemented")
+}
+func (UnimplementedDriverServer) TapSelector(context.Context, *Selector) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method TapSelector not implemented")
 }
 func (UnimplementedDriverServer) InputText(context.Context, *Text) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method InputText not implemented")
@@ -248,6 +264,24 @@ func _Driver_Tap_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DriverServer).Tap(ctx, req.(*Point))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Driver_TapSelector_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Selector)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DriverServer).TapSelector(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Driver_TapSelector_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DriverServer).TapSelector(ctx, req.(*Selector))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -360,6 +394,10 @@ var Driver_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Tap",
 			Handler:    _Driver_Tap_Handler,
+		},
+		{
+			MethodName: "TapSelector",
+			Handler:    _Driver_TapSelector_Handler,
 		},
 		{
 			MethodName: "InputText",

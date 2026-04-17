@@ -205,6 +205,50 @@ func (x *Text) GetValue() string {
 	return ""
 }
 
+type Selector struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         string                 `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Selector) Reset() {
+	*x = Selector{}
+	mi := &file_driverpb_driver_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Selector) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Selector) ProtoMessage() {}
+
+func (x *Selector) ProtoReflect() protoreflect.Message {
+	mi := &file_driverpb_driver_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Selector.ProtoReflect.Descriptor instead.
+func (*Selector) Descriptor() ([]byte, []int) {
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Selector) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
 type Image struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Png           []byte                 `protobuf:"bytes,1,opt,name=png,proto3" json:"png,omitempty"`
@@ -216,7 +260,7 @@ type Image struct {
 
 func (x *Image) Reset() {
 	*x = Image{}
-	mi := &file_driverpb_driver_proto_msgTypes[4]
+	mi := &file_driverpb_driver_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -228,7 +272,7 @@ func (x *Image) String() string {
 func (*Image) ProtoMessage() {}
 
 func (x *Image) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[4]
+	mi := &file_driverpb_driver_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -241,7 +285,7 @@ func (x *Image) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Image.ProtoReflect.Descriptor instead.
 func (*Image) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{4}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Image) GetPng() []byte {
@@ -274,7 +318,7 @@ type HierarchyJSON struct {
 
 func (x *HierarchyJSON) Reset() {
 	*x = HierarchyJSON{}
-	mi := &file_driverpb_driver_proto_msgTypes[5]
+	mi := &file_driverpb_driver_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -286,7 +330,7 @@ func (x *HierarchyJSON) String() string {
 func (*HierarchyJSON) ProtoMessage() {}
 
 func (x *HierarchyJSON) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[5]
+	mi := &file_driverpb_driver_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -299,7 +343,7 @@ func (x *HierarchyJSON) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HierarchyJSON.ProtoReflect.Descriptor instead.
 func (*HierarchyJSON) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{5}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *HierarchyJSON) GetJson() string {
@@ -318,7 +362,7 @@ type Duration struct {
 
 func (x *Duration) Reset() {
 	*x = Duration{}
-	mi := &file_driverpb_driver_proto_msgTypes[6]
+	mi := &file_driverpb_driver_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -330,7 +374,7 @@ func (x *Duration) String() string {
 func (*Duration) ProtoMessage() {}
 
 func (x *Duration) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[6]
+	mi := &file_driverpb_driver_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -343,7 +387,7 @@ func (x *Duration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Duration.ProtoReflect.Descriptor instead.
 func (*Duration) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{6}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Duration) GetMillis() int64 {
@@ -364,7 +408,7 @@ type HealthStatus struct {
 
 func (x *HealthStatus) Reset() {
 	*x = HealthStatus{}
-	mi := &file_driverpb_driver_proto_msgTypes[7]
+	mi := &file_driverpb_driver_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -376,7 +420,7 @@ func (x *HealthStatus) String() string {
 func (*HealthStatus) ProtoMessage() {}
 
 func (x *HealthStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[7]
+	mi := &file_driverpb_driver_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -389,7 +433,7 @@ func (x *HealthStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthStatus.ProtoReflect.Descriptor instead.
 func (*HealthStatus) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{7}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *HealthStatus) GetReady() bool {
@@ -427,6 +471,8 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"\x01x\x18\x01 \x01(\x05R\x01x\x12\f\n" +
 	"\x01y\x18\x02 \x01(\x05R\x01y\"\x1c\n" +
 	"\x04Text\x12\x14\n" +
+	"\x05value\x18\x01 \x01(\tR\x05value\" \n" +
+	"\bSelector\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\tR\x05value\"G\n" +
 	"\x05Image\x12\x10\n" +
 	"\x03png\x18\x01 \x01(\fR\x03png\x12\x14\n" +
@@ -439,11 +485,12 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"\fHealthStatus\x12\x14\n" +
 	"\x05ready\x18\x01 \x01(\bR\x05ready\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1a\n" +
-	"\bplatform\x18\x03 \x01(\tR\bplatform2\xf0\x03\n" +
+	"\bplatform\x18\x03 \x01(\tR\bplatform2\xb0\x04\n" +
 	"\x06Driver\x12>\n" +
 	"\x06Launch\x12\x1d.uatu.driver.v1.LaunchRequest\x1a\x15.uatu.driver.v1.Empty\x129\n" +
 	"\tTerminate\x12\x15.uatu.driver.v1.Empty\x1a\x15.uatu.driver.v1.Empty\x123\n" +
-	"\x03Tap\x12\x15.uatu.driver.v1.Point\x1a\x15.uatu.driver.v1.Empty\x128\n" +
+	"\x03Tap\x12\x15.uatu.driver.v1.Point\x1a\x15.uatu.driver.v1.Empty\x12>\n" +
+	"\vTapSelector\x12\x18.uatu.driver.v1.Selector\x1a\x15.uatu.driver.v1.Empty\x128\n" +
 	"\tInputText\x12\x14.uatu.driver.v1.Text\x1a\x15.uatu.driver.v1.Empty\x12:\n" +
 	"\n" +
 	"Screenshot\x12\x15.uatu.driver.v1.Empty\x1a\x15.uatu.driver.v1.Image\x12A\n" +
@@ -464,36 +511,39 @@ func file_driverpb_driver_proto_rawDescGZIP() []byte {
 	return file_driverpb_driver_proto_rawDescData
 }
 
-var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_driverpb_driver_proto_goTypes = []any{
 	(*Empty)(nil),         // 0: uatu.driver.v1.Empty
 	(*LaunchRequest)(nil), // 1: uatu.driver.v1.LaunchRequest
 	(*Point)(nil),         // 2: uatu.driver.v1.Point
 	(*Text)(nil),          // 3: uatu.driver.v1.Text
-	(*Image)(nil),         // 4: uatu.driver.v1.Image
-	(*HierarchyJSON)(nil), // 5: uatu.driver.v1.HierarchyJSON
-	(*Duration)(nil),      // 6: uatu.driver.v1.Duration
-	(*HealthStatus)(nil),  // 7: uatu.driver.v1.HealthStatus
+	(*Selector)(nil),      // 4: uatu.driver.v1.Selector
+	(*Image)(nil),         // 5: uatu.driver.v1.Image
+	(*HierarchyJSON)(nil), // 6: uatu.driver.v1.HierarchyJSON
+	(*Duration)(nil),      // 7: uatu.driver.v1.Duration
+	(*HealthStatus)(nil),  // 8: uatu.driver.v1.HealthStatus
 }
 var file_driverpb_driver_proto_depIdxs = []int32{
 	1, // 0: uatu.driver.v1.Driver.Launch:input_type -> uatu.driver.v1.LaunchRequest
 	0, // 1: uatu.driver.v1.Driver.Terminate:input_type -> uatu.driver.v1.Empty
 	2, // 2: uatu.driver.v1.Driver.Tap:input_type -> uatu.driver.v1.Point
-	3, // 3: uatu.driver.v1.Driver.InputText:input_type -> uatu.driver.v1.Text
-	0, // 4: uatu.driver.v1.Driver.Screenshot:input_type -> uatu.driver.v1.Empty
-	0, // 5: uatu.driver.v1.Driver.Hierarchy:input_type -> uatu.driver.v1.Empty
-	6, // 6: uatu.driver.v1.Driver.WaitForIdle:input_type -> uatu.driver.v1.Duration
-	0, // 7: uatu.driver.v1.Driver.Health:input_type -> uatu.driver.v1.Empty
-	0, // 8: uatu.driver.v1.Driver.Launch:output_type -> uatu.driver.v1.Empty
-	0, // 9: uatu.driver.v1.Driver.Terminate:output_type -> uatu.driver.v1.Empty
-	0, // 10: uatu.driver.v1.Driver.Tap:output_type -> uatu.driver.v1.Empty
-	0, // 11: uatu.driver.v1.Driver.InputText:output_type -> uatu.driver.v1.Empty
-	4, // 12: uatu.driver.v1.Driver.Screenshot:output_type -> uatu.driver.v1.Image
-	5, // 13: uatu.driver.v1.Driver.Hierarchy:output_type -> uatu.driver.v1.HierarchyJSON
-	0, // 14: uatu.driver.v1.Driver.WaitForIdle:output_type -> uatu.driver.v1.Empty
-	7, // 15: uatu.driver.v1.Driver.Health:output_type -> uatu.driver.v1.HealthStatus
-	8, // [8:16] is the sub-list for method output_type
-	0, // [0:8] is the sub-list for method input_type
+	4, // 3: uatu.driver.v1.Driver.TapSelector:input_type -> uatu.driver.v1.Selector
+	3, // 4: uatu.driver.v1.Driver.InputText:input_type -> uatu.driver.v1.Text
+	0, // 5: uatu.driver.v1.Driver.Screenshot:input_type -> uatu.driver.v1.Empty
+	0, // 6: uatu.driver.v1.Driver.Hierarchy:input_type -> uatu.driver.v1.Empty
+	7, // 7: uatu.driver.v1.Driver.WaitForIdle:input_type -> uatu.driver.v1.Duration
+	0, // 8: uatu.driver.v1.Driver.Health:input_type -> uatu.driver.v1.Empty
+	0, // 9: uatu.driver.v1.Driver.Launch:output_type -> uatu.driver.v1.Empty
+	0, // 10: uatu.driver.v1.Driver.Terminate:output_type -> uatu.driver.v1.Empty
+	0, // 11: uatu.driver.v1.Driver.Tap:output_type -> uatu.driver.v1.Empty
+	0, // 12: uatu.driver.v1.Driver.TapSelector:output_type -> uatu.driver.v1.Empty
+	0, // 13: uatu.driver.v1.Driver.InputText:output_type -> uatu.driver.v1.Empty
+	5, // 14: uatu.driver.v1.Driver.Screenshot:output_type -> uatu.driver.v1.Image
+	6, // 15: uatu.driver.v1.Driver.Hierarchy:output_type -> uatu.driver.v1.HierarchyJSON
+	0, // 16: uatu.driver.v1.Driver.WaitForIdle:output_type -> uatu.driver.v1.Empty
+	8, // 17: uatu.driver.v1.Driver.Health:output_type -> uatu.driver.v1.HealthStatus
+	9, // [9:18] is the sub-list for method output_type
+	0, // [0:9] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -510,7 +560,7 @@ func file_driverpb_driver_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_driverpb_driver_proto_rawDesc), len(file_driverpb_driver_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
