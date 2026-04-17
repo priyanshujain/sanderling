@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -66,8 +67,7 @@ func runTest(options testOptions, stdout io.Writer) error {
 }
 
 func runDoctor(stdout io.Writer) error {
-	fmt.Fprintln(stdout, "uatu doctor (stub): all checks pending implementation")
-	return nil
+	return runDoctorChecks(context.Background(), defaultDoctorChecks(), stdout)
 }
 
 func run(args []string, stdout, stderr io.Writer) error {

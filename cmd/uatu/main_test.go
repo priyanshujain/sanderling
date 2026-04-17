@@ -104,11 +104,12 @@ func TestRun_UnknownCommand(t *testing.T) {
 
 func TestRun_Doctor(t *testing.T) {
 	var stdout bytes.Buffer
-	if err := run([]string{"uatu", "doctor"}, &stdout, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stdout.String(), "doctor") {
-		t.Errorf("doctor output missing, got: %q", stdout.String())
+	// Doctor may pass or fail depending on host environment; we just want to
+	// confirm it runs and emits per-check lines.
+	_ = run([]string{"uatu", "doctor"}, &stdout, io.Discard)
+	output := stdout.String()
+	if !strings.Contains(output, "OK") && !strings.Contains(output, "FAIL") {
+		t.Errorf("doctor output missing OK/FAIL lines: %q", output)
 	}
 }
 
