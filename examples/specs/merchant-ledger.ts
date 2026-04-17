@@ -53,6 +53,12 @@ const confirmSignOutButton = extract((state) => {
 // Notification-permission modal on Home.
 const skipNotificationsButton = extract((state) => state.ax.find("text:Skip"));
 
+// Back arrow visible on customer/supplier ledger toolbars; tapping it
+// returns to the Home tab list so the spec can pick another counterparty.
+const ledgerBackArrow = extract((state) =>
+  onLedger.current ? state.ax.find("desc:Back") : undefined,
+);
+
 // Home screen customer/supplier rows. Compose testTag appears as
 // content-desc; rows are suffixed with a stable UUID.
 const customerRows = extract((state) => state.ax.findAll("descPrefix:customer_row_"));
@@ -67,11 +73,21 @@ const onLedger = extract<boolean>(
 
 // ── Properties ─────────────────────────────────────────────────
 export const properties = {
-  ledgerBalanceMatchesTxns: always(
-    () =>
-      !onLedger.current ||
-      balance.current === totalGiven.current - totalReceived.current,
-  ),
+  // Sign convention discovered empirically against merchant-android:
+  //   customer ledger: balance == received − given  (debt customer owes)
+  //   supplier ledger: balance == given − received  (debt merchant owes)
+  // The two screens flip because "given/received" is recorded from the
+  // merchant's POV in both DAOs, but each summary balance is stored from
+  // the counterparty's POV.
+  ledgerBalanceMatchesTxns: always(() => {
+    if (screen.current === "customer_ledger") {
+      return balance.current === totalReceived.current - totalGiven.current;
+    }
+    if (screen.current === "supplier_ledger") {
+      return balance.current === totalGiven.current - totalReceived.current;
+    }
+    return true;
+  }),
 };
 
 // ── Action generators ──────────────────────────────────────────
@@ -130,6 +146,10 @@ const openCustomerOrSupplier = actions(() => {
   return rows.map((row) => Tap({ on: row }));
 });
 
+const leaveLedger = actions(() => {
+  return ledgerBackArrow.current ? [Tap({ on: ledgerBackArrow.current })] : [];
+});
+
 export const actionsRoot = weighted(
   [100, selectEnglish],
   [100, enterMobile],
@@ -137,6 +157,9 @@ export const actionsRoot = weighted(
   [100, dismissMultiDevice],
   [100, dismissNotifications],
   [80, openCustomerOrSupplier],
+  // leaveLedger is lighter so the property gets several evaluations on each
+  // ledger before we navigate away to a new one.
+  [25, leaveLedger],
   [10, taps],
   [2, swipes],
 );
