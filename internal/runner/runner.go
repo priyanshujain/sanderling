@@ -57,20 +57,29 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		stepIndex++
 		stepStart := time.Now()
 
+		// Fetch hierarchy BEFORE pausing the SDK: uiautomator dump calls
+		// waitForIdle internally, and the SDK's Choreographer-held pause
+		// stalls the main thread, so dumping during the pause yields the
+		// pre-pause (stale) tree. Doing this first also means the spec sees
+		// a hierarchy that matches the snapshots captured a moment later.
+		tree, hierarchyErr := fetchHierarchy(ctx, options.Driver)
+		if hierarchyErr != nil {
+			fmt.Printf("warning: step %d hierarchy: %v\n", stepIndex, hierarchyErr)
+		}
+		treeSize := 0
+		if tree != nil {
+			treeSize = len(tree.Elements)
+		}
+
 		snapshot, err := snapshotStep(ctx, options)
 		if err != nil {
 			return summary, fmt.Errorf("step %d snapshot: %w", stepIndex, err)
 		}
 
-		tree, hierarchyErr := fetchHierarchy(ctx, options.Driver)
-		if hierarchyErr != nil {
-			// Degrade gracefully — property evaluation still works without ax.
-			fmt.Printf("warning: step %d hierarchy: %v\n", stepIndex, hierarchyErr)
-		}
-
 		if err := options.Verifier.PushSnapshot(verifier.Snapshots(snapshot.Snapshots), tree); err != nil {
 			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 		}
+		fmt.Printf("step %d: screen=%q hierarchy=%d nodes\n", stepIndex, screenFromSnapshot(snapshot.Snapshots), treeSize)
 		verdicts := options.Verifier.EvaluateProperties()
 		violations := violationNames(verdicts)
 
