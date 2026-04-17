@@ -87,12 +87,18 @@ const enterMobile = actions(() => {
   const button = continueButton.current;
   const phone = process.env.UATU_TEST_PHONE ?? "";
   if (!field || !phone) return [];
-  const steps: ReturnType<typeof Tap | typeof InputText>[] = [
-    InputText({ into: field, text: phone }),
-  ];
-  if (terms) steps.push(Tap({ on: terms }));
-  if (button) steps.push(Tap({ on: button }));
-  return steps;
+  // Step by screen state so we never tap a disabled button, append to the
+  // phone field, or toggle the terms checkbox off again.
+  if (field.text !== phone) {
+    return [InputText({ into: field, text: phone })];
+  }
+  if (terms && !terms.checked) {
+    return [Tap({ on: terms })];
+  }
+  if (button && button.enabled) {
+    return [Tap({ on: button })];
+  }
+  return [];
 });
 
 const enterOtp = actions(() => {
@@ -100,6 +106,8 @@ const enterOtp = actions(() => {
   const field = otpFirstBox.current;
   const otp = process.env.UATU_TEST_OTP ?? "";
   if (!field || !otp) return [];
+  // The first box shows the entered digit once filled; stop re-typing then.
+  if (field.text && field.text.length > 0) return [];
   return [InputText({ into: field, text: otp })];
 });
 
@@ -133,4 +141,5 @@ export const actionsRoot = weighted(
   [2, swipes],
 );
 
-(globalThis as { actions?: unknown }).actions = actionsRoot;
+(globalThis as { actions?: unknown; properties?: unknown }).actions = actionsRoot;
+(globalThis as { properties?: unknown }).properties = properties;
