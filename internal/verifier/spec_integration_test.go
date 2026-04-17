@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"encoding/json"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,5 +90,55 @@ func TestSpecDrivesLanguageThenMobile(t *testing.T) {
 	}
 	if englishHits > 0 {
 		t.Fatalf("selectEnglish leaked into mobile screen %d times", englishHits)
+	}
+}
+
+// TestSpecDismissesMultiDeviceConfirm makes sure the confirm-dialog gate
+// actually fires — the live run got stuck here.
+func TestSpecDismissesMultiDeviceConfirm(t *testing.T) {
+	dialogXML, err := os.ReadFile("/tmp/confirm-dump.xml")
+	if err != nil {
+		t.Skip("confirm-dump.xml not present")
+	}
+	specPath, _ := filepath.Abs("../../examples/specs/merchant-ledger.ts")
+	apiPath, _ := filepath.Abs("../../pkg/spec-api/src/index.ts")
+	bundle, err := bundler.Bundle(bundler.Options{
+		EntryFile: specPath,
+		Defines:   map[string]string{"UATU_TEST_PHONE": "7509657590", "UATU_TEST_OTP": "000000"},
+		Aliases:   map[string]string{"@uatu/spec": apiPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := New(WithRand(rand.New(rand.NewPCG(42, 0))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Load(string(bundle.JavaScript)); err != nil {
+		t.Fatal(err)
+	}
+
+	tree, err := hierarchy.Parse(string(dialogXML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.PushSnapshot(Snapshots{}, tree); err != nil {
+		t.Fatal(err)
+	}
+
+	counts := map[string]int{}
+	for range 400 {
+		action, err := v.NextAction()
+		if err != nil {
+			counts["noAction"]++
+			continue
+		}
+		key := string(action.Kind) + ":" + action.On
+		counts[key]++
+	}
+	t.Logf("dialog-screen action counts: %+v", counts)
+	if counts["Tap:text:Sign Out"] == 0 {
+		t.Fatal("dismissMultiDevice confirm branch never fired on dialog hierarchy")
 	}
 }
