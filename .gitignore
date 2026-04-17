@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+**/build/
+local.properties
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# macOS
+.DS_Store
+
+# Go
+/bin/
+*.test
+*.out
+
+# Uatu runs
+/runs/
