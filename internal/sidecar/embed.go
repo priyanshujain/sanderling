@@ -3,27 +3,11 @@ package sidecar
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	_ "embed"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
-
-//go:embed assets/sidecar-all.jar
-var embeddedJAR []byte
-
-// PlaceholderMagic is the byte sequence written to the placeholder JAR that
-// ships in the repository. A binary that still carries the placeholder is
-// not runnable against a real sidecar — `make sidecar && make uatu` must
-// have been invoked to embed the real fat JAR.
-const PlaceholderMagic = "uatu-sidecar-placeholder"
-
-// IsPlaceholder reports whether the embedded JAR is the development
-// placeholder rather than a real sidecar fat JAR.
-func IsPlaceholder() bool {
-	return string(embeddedJAR) == PlaceholderMagic
-}
 
 // EmbeddedSize returns the size in bytes of the embedded JAR.
 func EmbeddedSize() int { return len(embeddedJAR) }
@@ -39,7 +23,7 @@ func EmbeddedSHA256() string {
 // matching checksum, no rewrite happens. Returns the JAR path.
 func Extract(dir string) (string, error) {
 	if len(embeddedJAR) == 0 {
-		return "", errors.New("sidecar: embedded JAR is empty")
+		return "", errors.New("sidecar: binary built without -tags withsidecar; rebuild with `make uatu`")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir %s: %w", dir, err)
