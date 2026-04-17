@@ -1,0 +1,104 @@
+package trace
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+type Step struct {
+	Index      int                        `json:"step"`
+	Timestamp  time.Time                  `json:"timestamp"`
+	Screen     string                     `json:"screen,omitempty"`
+	Snapshots  map[string]json.RawMessage `json:"snapshots,omitempty"`
+	Action     *Action                    `json:"action,omitempty"`
+	Violations []string                   `json:"violations,omitempty"`
+}
+
+type Action struct {
+	Kind string `json:"kind"`
+	X    int    `json:"x,omitempty"`
+	Y    int    `json:"y,omitempty"`
+	Text string `json:"text,omitempty"`
+}
+
+type Meta struct {
+	Seed         int64     `json:"seed"`
+	SpecPath     string    `json:"spec_path"`
+	BundleSHA256 string    `json:"bundle_sha256"`
+	Platform     string    `json:"platform"`
+	BundleID     string    `json:"bundle_id"`
+	StartedAt    time.Time `json:"started_at"`
+	UatuVersion  string    `json:"uatu_version"`
+}
+
+type Writer struct {
+	directory string
+	mutex     sync.Mutex
+	file      io.WriteCloser
+	encoder   *json.Encoder
+}
+
+// NewWriter ensures `directory` exists and opens trace.jsonl for append.
+// meta.json is written separately via WriteMeta. Caller must Close.
+func NewWriter(directory string) (*Writer, error) {
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir: %w", err)
+	}
+	file, err := os.OpenFile(
+		filepath.Join(directory, "trace.jsonl"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0o644,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("open trace.jsonl: %w", err)
+	}
+	encoder := json.NewEncoder(file)
+	return &Writer{directory: directory, file: file, encoder: encoder}, nil
+}
+
+func (w *Writer) Directory() string { return w.directory }
+
+func (w *Writer) WriteMeta(meta Meta) error {
+	body, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal meta: %w", err)
+	}
+	return os.WriteFile(filepath.Join(w.directory, "meta.json"), body, 0o644)
+}
+
+func (w *Writer) WriteStep(step Step) error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	if w.file == nil {
+		return fmt.Errorf("trace: writer is closed")
+	}
+	return w.encoder.Encode(step)
+}
+
+func (w *Writer) WriteScreenshot(stepIndex int, png []byte) error {
+	if len(png) == 0 {
+		return nil
+	}
+	directory := filepath.Join(w.directory, "screenshots")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return fmt.Errorf("mkdir screenshots: %w", err)
+	}
+	path := filepath.Join(directory, fmt.Sprintf("step-%05d.png", stepIndex))
+	return os.WriteFile(path, png, 0o644)
+}
+
+func (w *Writer) Close() error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	if w.file == nil {
+		return nil
+	}
+	err := w.file.Close()
+	w.file = nil
+	return err
+}
