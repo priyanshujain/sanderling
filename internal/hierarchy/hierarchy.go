@@ -42,6 +42,9 @@ type Element struct {
 	Package     string
 	Clickable   bool
 	Enabled     bool
+	Checked     bool
+	Focused     bool
+	Selected    bool
 	Bounds      Bounds
 }
 
@@ -160,6 +163,12 @@ func elementFromStart(start xml.StartElement) (*Element, error) {
 			element.Clickable = attribute.Value == "true"
 		case "enabled":
 			element.Enabled = attribute.Value == "true"
+		case "checked":
+			element.Checked = attribute.Value == "true"
+		case "focused":
+			element.Focused = attribute.Value == "true"
+		case "selected":
+			element.Selected = attribute.Value == "true"
 		case "bounds":
 			boundsText = attribute.Value
 		}
