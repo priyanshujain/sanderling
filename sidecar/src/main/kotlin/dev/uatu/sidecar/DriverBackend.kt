@@ -4,6 +4,7 @@ interface DriverBackend {
     fun launch(bundleId: String, clearState: Boolean)
     fun terminate(bundleId: String)
     fun tap(x: Int, y: Int)
+    fun tapSelector(selector: String)
     fun inputText(text: String)
     fun screenshot(): Triple<ByteArray, Int, Int>
     fun hierarchy(): String
@@ -24,6 +25,8 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         private set
     @Volatile var lastTap: Pair<Int, Int>? = null
         private set
+    @Volatile var lastTapSelector: String? = null
+        private set
     @Volatile var lastInputText: String? = null
         private set
 
@@ -38,6 +41,10 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
 
     override fun tap(x: Int, y: Int) {
         lastTap = x to y
+    }
+
+    override fun tapSelector(selector: String) {
+        lastTapSelector = selector
     }
 
     override fun inputText(text: String) {

@@ -9,6 +9,7 @@ import dev.uatu.driver.v1.HierarchyJSON
 import dev.uatu.driver.v1.Image
 import dev.uatu.driver.v1.LaunchRequest
 import dev.uatu.driver.v1.Point
+import dev.uatu.driver.v1.Selector
 import dev.uatu.driver.v1.Text
 import io.grpc.stub.StreamObserver
 import java.util.concurrent.atomic.AtomicReference
@@ -40,6 +41,13 @@ class DriverService(
     override fun tap(request: Point, responseObserver: StreamObserver<Empty>) {
         runRpc(responseObserver) {
             backend.tap(request.x, request.y)
+            Empty.getDefaultInstance()
+        }
+    }
+
+    override fun tapSelector(request: Selector, responseObserver: StreamObserver<Empty>) {
+        runRpc(responseObserver) {
+            backend.tapSelector(request.value)
             Empty.getDefaultInstance()
         }
     }
