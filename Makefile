@@ -7,6 +7,7 @@ BUF := buf
 
 GO_PACKAGES := ./...
 SIDECAR_JAR := sidecar/build/libs/sidecar-all.jar
+SIDECAR_EMBED := internal/sidecar/assets/sidecar-all.jar
 SDK_AAR := sdk/android/build/outputs/aar/sdk-android-release.aar
 UATU_BIN := bin/uatu
 
@@ -35,6 +36,7 @@ uatu: $(UATU_BIN)
 
 $(UATU_BIN): $(SIDECAR_JAR)
 	mkdir -p bin
+	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
 	$(GO) build -o $(UATU_BIN) ./cmd/uatu
 
 $(SIDECAR_JAR):

@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/priyanshujain/uatu/internal/sidecar"
 )
 
 type doctorCheck struct {
@@ -22,7 +24,18 @@ func defaultDoctorChecks() []doctorCheck {
 		{Name: "adb on PATH", Run: checkExecutableOnPath("adb")},
 		{Name: "emulator on PATH or under ANDROID_HOME", Run: checkEmulator},
 		{Name: "java 17+ on PATH", Run: checkJavaVersion},
+		{Name: "sidecar JAR is real (not placeholder)", Run: checkSidecarJAR},
 	}
+}
+
+func checkSidecarJAR(_ context.Context) error {
+	if sidecar.IsPlaceholder() {
+		return fmt.Errorf("placeholder JAR embedded — run `make sidecar && make uatu` to embed the real fat JAR")
+	}
+	if sidecar.EmbeddedSize() == 0 {
+		return fmt.Errorf("embedded JAR is empty")
+	}
+	return nil
 }
 
 func runDoctorChecks(ctx context.Context, checks []doctorCheck, stdout io.Writer) error {
