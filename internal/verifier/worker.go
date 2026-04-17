@@ -113,12 +113,25 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 }
 
 // NextAction resolves the root action generator into a single Action.
-// Returns ErrNoAction when the generator yields nothing actionable.
+// Returns ErrNoAction when no branch of the generator produces one after a
+// small number of retries. Retrying avoids wedging when most branches of a
+// weighted generator produce no action on the current screen (e.g. a gated
+// login-phone generator when the app is already past login).
 func (v *Verifier) NextAction() (Action, error) {
 	if v.actionGenerator == nil {
 		return Action{}, ErrNoAction
 	}
-	return v.resolveGenerator(v.actionGenerator)
+	const maxRetries = 16
+	for range maxRetries {
+		action, err := v.resolveGenerator(v.actionGenerator)
+		if err == nil {
+			return action, nil
+		}
+		if !errors.Is(err, ErrNoAction) {
+			return Action{}, err
+		}
+	}
+	return Action{}, ErrNoAction
 }
 
 var ErrNoAction = errors.New("verifier: no action available")
