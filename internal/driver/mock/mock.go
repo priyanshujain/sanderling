@@ -14,6 +14,7 @@ const (
 	ActionLaunch      ActionKind = "launch"
 	ActionTerminate   ActionKind = "terminate"
 	ActionTap         ActionKind = "tap"
+	ActionTapSelector ActionKind = "tap_selector"
 	ActionInputText   ActionKind = "input_text"
 	ActionHierarchy   ActionKind = "hierarchy"
 	ActionScreenshot  ActionKind = "screenshot"
@@ -26,6 +27,7 @@ type Action struct {
 	BundleID   string
 	ClearState bool
 	X, Y       int
+	Selector   string
 	Text       string
 	Idle       time.Duration
 }
@@ -98,6 +100,14 @@ func (d *Driver) Tap(ctx context.Context, x, y int) error {
 	return nil
 }
 
+func (d *Driver) TapSelector(ctx context.Context, selector string) error {
+	if err := d.failure(ActionTapSelector); err != nil {
+		return err
+	}
+	d.record(Action{Kind: ActionTapSelector, Selector: selector})
+	return nil
+}
+
 func (d *Driver) InputText(ctx context.Context, text string) error {
 	if err := d.failure(ActionInputText); err != nil {
 		return err
@@ -131,7 +141,17 @@ func (d *Driver) WaitForIdle(ctx context.Context, duration time.Duration) error 
 		return err
 	}
 	d.record(Action{Kind: ActionWaitForIdle, Idle: duration})
-	return nil
+	if duration <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (d *Driver) Health(ctx context.Context) (driver.Health, error) {

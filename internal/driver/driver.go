@@ -13,6 +13,7 @@ type Driver interface {
 	Terminate(ctx context.Context) error
 
 	Tap(ctx context.Context, x, y int) error
+	TapSelector(ctx context.Context, selector string) error
 	InputText(ctx context.Context, text string) error
 
 	Hierarchy(ctx context.Context) (string, error)
