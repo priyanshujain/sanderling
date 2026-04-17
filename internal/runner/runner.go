@@ -15,8 +15,6 @@ import (
 )
 
 type Options struct {
-	BundleID        string
-	ClearState      bool
 	Duration        time.Duration
 	SnapshotTimeout time.Duration
 	IdleTimeout     time.Duration
@@ -39,20 +37,16 @@ type ViolationRecord struct {
 	Properties []string
 }
 
+// Run drives the snapshot/evaluate/release/act loop until the duration
+// elapses or the context is canceled. The caller is responsible for
+// launching the app and connecting the SDK before Run is called, and for
+// terminating the app afterwards.
 func Run(ctx context.Context, options Options) (Summary, error) {
 	if err := validate(options); err != nil {
 		return Summary{}, err
 	}
 
 	summary := Summary{StartTime: time.Now()}
-
-	if err := options.Driver.Launch(ctx, options.BundleID, options.ClearState); err != nil {
-		return summary, fmt.Errorf("launch: %w", err)
-	}
-	defer func() {
-		_ = options.Driver.Terminate(context.Background())
-	}()
-
 	deadline := summary.StartTime.Add(options.Duration)
 	stepIndex := 0
 	for time.Now().Before(deadline) {

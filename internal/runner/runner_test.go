@@ -129,7 +129,6 @@ func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	summary, err := Run(ctx, Options{
-		BundleID:        "com.fixture",
 		Duration:        100 * time.Millisecond,
 		SnapshotTimeout: 2 * time.Second,
 		IdleTimeout:     50 * time.Millisecond,
@@ -149,14 +148,8 @@ func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
 	}
 
 	actions := state.mock.Actions()
-	if !containsAction(actions, mockdriver.ActionLaunch, "com.fixture") {
-		t.Errorf("expected Launch with com.fixture, got %v", actions)
-	}
 	if !containsAction(actions, mockdriver.ActionTapSelector, "id:next") {
 		t.Errorf("expected TapSelector with id:next, got %v", actions)
-	}
-	if !containsAction(actions, mockdriver.ActionTerminate, "") {
-		t.Errorf("expected Terminate, got %v", actions)
 	}
 }
 
@@ -173,7 +166,6 @@ func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	summary, err := Run(ctx, Options{
-		BundleID:        "com.fixture",
 		Duration:        100 * time.Millisecond,
 		SnapshotTimeout: 2 * time.Second,
 		IdleTimeout:     50 * time.Millisecond,
@@ -223,7 +215,6 @@ func TestRunner_RecordsScreenFieldFromSnapshot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := Run(ctx, Options{
-		BundleID:        "com.fixture",
 		Duration:        100 * time.Millisecond,
 		SnapshotTimeout: 2 * time.Second,
 		IdleTimeout:     50 * time.Millisecond,
