@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package uatu.driver.v1;
+
+option go_package = "github.com/priyanshujain/uatu/proto/driverpb;driverpb";
+option java_package = "dev.uatu.driver.v1";
+option java_multiple_files = true;
+
+service Driver {
+  rpc Launch(LaunchRequest) returns (Empty);
+  rpc Terminate(Empty) returns (Empty);
+
+  rpc Tap(Point) returns (Empty);
+  rpc InputText(Text) returns (Empty);
+
+  rpc Screenshot(Empty) returns (Image);
+  rpc Hierarchy(Empty) returns (HierarchyJSON);
+
+  rpc WaitForIdle(Duration) returns (Empty);
+  rpc Health(Empty) returns (HealthStatus);
+}
+
+message Empty {}
+
+message LaunchRequest {
+  string bundle_id = 1;
+  bool clear_state = 2;
+}
+
+message Point {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message Text {
+  string value = 1;
+}
+
+message Image {
+  bytes png = 1;
+  int32 width = 2;
+  int32 height = 3;
+}
+
+message HierarchyJSON {
+  string json = 1;
+}
+
+message Duration {
+  int64 millis = 1;
+}
+
+message HealthStatus {
+  bool ready = 1;
+  string version = 2;
+  string platform = 3;
+}
