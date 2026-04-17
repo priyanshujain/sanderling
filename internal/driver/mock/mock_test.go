@@ -29,7 +29,7 @@ func TestRecordsAllActionsInOrder(t *testing.T) {
 	mock := New()
 	ctx := context.Background()
 
-	if err := mock.Launch(ctx, "com.example", true); err != nil {
+	if err := mock.Launch(ctx, "com.example", "com.example/.MainActivity", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.Tap(ctx, 100, 200); err != nil {

@@ -21,6 +21,7 @@ type fakeServer struct {
 	healthCalls int
 
 	launchedBundleID string
+	launcherActivity string
 	clearState       bool
 	terminateCalls   int
 	taps             []int32
@@ -49,6 +50,7 @@ func (s *fakeServer) Launch(_ context.Context, request *driverpb.LaunchRequest) 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	s.launchedBundleID = request.GetBundleId()
+	s.launcherActivity = request.GetLauncherActivity()
 	s.clearState = request.GetClearState()
 	return &driverpb.Empty{}, nil
 }
@@ -188,10 +190,10 @@ func TestClient_LaunchAndTerminate(t *testing.T) {
 	client, _ := Dial(state.address)
 	defer client.Close()
 
-	if err := client.Launch(context.Background(), "com.example", true); err != nil {
+	if err := client.Launch(context.Background(), "com.example", "com.example/.MainActivity", true); err != nil {
 		t.Fatal(err)
 	}
-	if state.fake.launchedBundleID != "com.example" || !state.fake.clearState {
+	if state.fake.launchedBundleID != "com.example" || !state.fake.clearState || state.fake.launcherActivity != "com.example/.MainActivity" {
 		t.Errorf("launch payload wrong: %+v", state.fake)
 	}
 	if err := client.Terminate(context.Background()); err != nil {

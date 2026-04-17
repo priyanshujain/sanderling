@@ -1,7 +1,7 @@
 package dev.uatu.sidecar
 
 interface DriverBackend {
-    fun launch(bundleId: String, clearState: Boolean)
+    fun launch(bundleId: String, launcherActivity: String, clearState: Boolean)
     fun terminate(bundleId: String)
     fun tap(x: Int, y: Int)
     fun tapSelector(selector: String)
@@ -30,44 +30,19 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     @Volatile var lastInputText: String? = null
         private set
 
-    override fun launch(bundleId: String, clearState: Boolean) {
+    override fun launch(bundleId: String, launcherActivity: String, clearState: Boolean) {
         launchCount++
         lastBundleId = bundleId
         if (clearState) {
             runAdb(listOf("shell", "pm", "clear", bundleId))
         }
-        val launcherComponent = resolveLauncherActivity(bundleId)
-        if (launcherComponent != null) {
-            runAdb(listOf("shell", "am", "start", "-n", launcherComponent))
+        if (launcherActivity.isNotEmpty()) {
+            val component = if (launcherActivity.contains('/')) launcherActivity else "$bundleId/$launcherActivity"
+            runAdb(listOf("shell", "am", "start", "-n", component))
         } else {
-            // Fallback to monkey (less reliable on emulators without physical keys).
+            // `monkey` uses PackageManager.getLaunchIntentForPackage, which
+            // picks the canonical default launcher.
             runAdb(listOf("shell", "monkey", "-p", bundleId, "-c", "android.intent.category.LAUNCHER", "1"))
-        }
-    }
-
-    private fun resolveLauncherActivity(bundleId: String): String? {
-        return try {
-            val process = ProcessBuilder(listOf("adb", "shell", "pm", "dump", bundleId))
-                .redirectErrorStream(true).start()
-            process.waitFor()
-            val output = process.inputStream.bufferedReader().readText()
-            // pm dump emits stanzas like:
-            //   <hash> <pkg>/<activity> filter <hash>
-            //     Action: "android.intent.action.MAIN"
-            //     Category: "android.intent.category.LAUNCHER"
-            // Pick the first <pkg>/<activity> followed by both MAIN + LAUNCHER.
-            val componentPattern = Regex("\\s+\\S+\\s+($bundleId/[\\w.\$]+)\\s+filter\\b")
-            val lines = output.lines()
-            for (index in lines.indices) {
-                val match = componentPattern.find(lines[index]) ?: continue
-                val window = lines.subList(index, minOf(index + 12, lines.size)).joinToString("\n")
-                if (window.contains("android.intent.action.MAIN") && window.contains("android.intent.category.LAUNCHER")) {
-                    return match.groupValues[1]
-                }
-            }
-            null
-        } catch (_: Exception) {
-            null
         }
     }
 
@@ -95,9 +70,10 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     private fun runAdb(arguments: List<String>) {
         try {
             val command = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(true).start()
+            // Drain output before waiting so a large write doesn't block the child.
+            command.inputStream.bufferedReader().readText()
             command.waitFor()
         } catch (cause: Exception) {
-            // Best-effort: log and continue.
             println("adb ${arguments.joinToString(" ")} failed: $cause")
         }
     }

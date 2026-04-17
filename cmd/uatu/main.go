@@ -11,13 +11,14 @@ import (
 )
 
 type testOptions struct {
-	spec     string
-	bundleID string
-	platform string
-	avd      string
-	duration time.Duration
-	seed     int64
-	output   string
+	spec             string
+	bundleID         string
+	launcherActivity string
+	platform         string
+	avd              string
+	duration         time.Duration
+	seed             int64
+	output           string
 }
 
 const topUsage = `uatu is a property-based UI fuzzer for mobile apps.
@@ -38,6 +39,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	var options testOptions
 	flagSet.StringVar(&options.spec, "spec", "", "path to the TypeScript spec (required)")
 	flagSet.StringVar(&options.bundleID, "bundle-id", "", "target app bundle ID (required)")
+	flagSet.StringVar(&options.launcherActivity, "launcher-activity", "", "optional <pkg>/<activity> to launch (overrides default resolution)")
 	flagSet.StringVar(&options.platform, "platform", "android", "target platform: android (ios deferred)")
 	flagSet.StringVar(&options.avd, "avd", "", "Android AVD name (required on android)")
 	flagSet.DurationVar(&options.duration, "duration", 5*time.Minute, "total test duration")

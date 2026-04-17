@@ -116,7 +116,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		acceptChannel <- acceptResult{connection: connection, err: acceptErr}
 	}()
 
-	if err := driverClient.Launch(ctx, options.bundleID, false); err != nil {
+	if err := driverClient.Launch(ctx, options.bundleID, options.launcherActivity, false); err != nil {
 		return fmt.Errorf("launch app: %w", err)
 	}
 	fmt.Fprintf(stdout, "launched %s; waiting for SDK to connect (%.0fs timeout)\n", options.bundleID, sdkAcceptTimeout.Seconds())

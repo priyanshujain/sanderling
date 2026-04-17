@@ -26,6 +26,10 @@ message Empty {}
 message LaunchRequest {
   string bundle_id = 1;
   bool clear_state = 2;
+  // Optional "<pkg>/<activity>" component to pass to `am start -n`. Needed
+  // when an app declares multiple MAIN+LAUNCHER activities where the first
+  // one reported by `pm dump` is an alias whose target class is disabled.
+  string launcher_activity = 3;
 }
 
 message Point {

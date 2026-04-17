@@ -9,7 +9,11 @@ import (
 // matches proto/driverpb/driver.proto. The Maestro sidecar implementation
 // lives under driver/maestro; tests use driver/mock.
 type Driver interface {
-	Launch(ctx context.Context, bundleID string, clearState bool) error
+	// Launch asks the backend to bring the target app to the foreground.
+	// launcherActivity is an optional "<pkg>/<activity>" component that
+	// overrides the backend's default launcher resolution — needed for
+	// apps that declare multiple MAIN+LAUNCHER activities.
+	Launch(ctx context.Context, bundleID, launcherActivity string, clearState bool) error
 	Terminate(ctx context.Context) error
 
 	Tap(ctx context.Context, x, y int) error

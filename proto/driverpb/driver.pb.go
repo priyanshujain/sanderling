@@ -58,11 +58,15 @@ func (*Empty) Descriptor() ([]byte, []int) {
 }
 
 type LaunchRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	BundleId      string                 `protobuf:"bytes,1,opt,name=bundle_id,json=bundleId,proto3" json:"bundle_id,omitempty"`
-	ClearState    bool                   `protobuf:"varint,2,opt,name=clear_state,json=clearState,proto3" json:"clear_state,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	BundleId   string                 `protobuf:"bytes,1,opt,name=bundle_id,json=bundleId,proto3" json:"bundle_id,omitempty"`
+	ClearState bool                   `protobuf:"varint,2,opt,name=clear_state,json=clearState,proto3" json:"clear_state,omitempty"`
+	// Optional "<pkg>/<activity>" component to pass to `am start -n`. Needed
+	// when an app declares multiple MAIN+LAUNCHER activities where the first
+	// one reported by `pm dump` is an alias whose target class is disabled.
+	LauncherActivity string `protobuf:"bytes,3,opt,name=launcher_activity,json=launcherActivity,proto3" json:"launcher_activity,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *LaunchRequest) Reset() {
@@ -107,6 +111,13 @@ func (x *LaunchRequest) GetClearState() bool {
 		return x.ClearState
 	}
 	return false
+}
+
+func (x *LaunchRequest) GetLauncherActivity() string {
+	if x != nil {
+		return x.LauncherActivity
+	}
+	return ""
 }
 
 type Point struct {
@@ -462,11 +473,12 @@ var File_driverpb_driver_proto protoreflect.FileDescriptor
 const file_driverpb_driver_proto_rawDesc = "" +
 	"\n" +
 	"\x15driverpb/driver.proto\x12\x0euatu.driver.v1\"\a\n" +
-	"\x05Empty\"M\n" +
+	"\x05Empty\"z\n" +
 	"\rLaunchRequest\x12\x1b\n" +
 	"\tbundle_id\x18\x01 \x01(\tR\bbundleId\x12\x1f\n" +
 	"\vclear_state\x18\x02 \x01(\bR\n" +
-	"clearState\"#\n" +
+	"clearState\x12+\n" +
+	"\x11launcher_activity\x18\x03 \x01(\tR\x10launcherActivity\"#\n" +
 	"\x05Point\x12\f\n" +
 	"\x01x\x18\x01 \x01(\x05R\x01x\x12\f\n" +
 	"\x01y\x18\x02 \x01(\x05R\x01y\"\x1c\n" +

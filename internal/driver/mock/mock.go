@@ -23,13 +23,14 @@ const (
 )
 
 type Action struct {
-	Kind       ActionKind
-	BundleID   string
-	ClearState bool
-	X, Y       int
-	Selector   string
-	Text       string
-	Idle       time.Duration
+	Kind             ActionKind
+	BundleID         string
+	LauncherActivity string
+	ClearState       bool
+	X, Y             int
+	Selector         string
+	Text             string
+	Idle             time.Duration
 }
 
 // Driver is an in-memory Driver implementation for unit tests.
@@ -76,11 +77,11 @@ func (d *Driver) failure(kind ActionKind) error {
 	return d.Failures[kind]
 }
 
-func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool) error {
+func (d *Driver) Launch(ctx context.Context, bundleID, launcherActivity string, clearState bool) error {
 	if err := d.failure(ActionLaunch); err != nil {
 		return err
 	}
-	d.record(Action{Kind: ActionLaunch, BundleID: bundleID, ClearState: clearState})
+	d.record(Action{Kind: ActionLaunch, BundleID: bundleID, LauncherActivity: launcherActivity, ClearState: clearState})
 	return nil
 }
 

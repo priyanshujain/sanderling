@@ -24,7 +24,7 @@ class DriverService(
 
     override fun launch(request: LaunchRequest, responseObserver: StreamObserver<Empty>) {
         runRpc(responseObserver) {
-            backend.launch(request.bundleId, request.clearState)
+            backend.launch(request.bundleId, request.launcherActivity, request.clearState)
             launchedBundleId.set(request.bundleId)
             Empty.getDefaultInstance()
         }
