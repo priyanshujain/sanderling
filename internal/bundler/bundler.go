@@ -14,6 +14,7 @@ import (
 type Options struct {
 	EntryFile string
 	Defines   map[string]string
+	Aliases   map[string]string
 	Sourcemap bool
 }
 
@@ -51,6 +52,7 @@ func Bundle(options Options) (Result, error) {
 		Target:      esbuild.ES2020,
 		Platform:    esbuild.PlatformNeutral,
 		Define:      defines,
+		Alias:       options.Aliases,
 		Sourcemap:   sourcemap,
 		Write:       false,
 		LogLevel:    esbuild.LogLevelSilent,

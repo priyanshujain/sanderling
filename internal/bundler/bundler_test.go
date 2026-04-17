@@ -164,3 +164,28 @@ func TestBundle_SourcemapInlinedWhenRequested(t *testing.T) {
 		t.Errorf("expected inline sourcemap")
 	}
 }
+
+func TestBundle_AliasResolvesPackageImport(t *testing.T) {
+	directory := t.TempDir()
+	aliasTarget := filepath.Join(directory, "aliased.ts")
+	entryPath := filepath.Join(directory, "entry.ts")
+	if err := os.WriteFile(aliasTarget, []byte(`export const aliasMagic = "alias-resolved";`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entryPath, []byte(`
+		import { aliasMagic } from "@example/aliased";
+		console.log(aliasMagic);
+	`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Bundle(Options{
+		EntryFile: entryPath,
+		Aliases:   map[string]string{"@example/aliased": aliasTarget},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(result.JavaScript), "alias-resolved") {
+		t.Errorf("alias target should be inlined: %s", result.JavaScript)
+	}
+}
