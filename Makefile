@@ -35,9 +35,9 @@ sdk-android-publish:
 uatu: $(UATU_BIN)
 
 $(UATU_BIN): $(SIDECAR_JAR)
-	mkdir -p bin
+	mkdir -p bin $(dir $(SIDECAR_EMBED))
 	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
-	$(GO) build -o $(UATU_BIN) ./cmd/uatu
+	$(GO) build -tags withsidecar -o $(UATU_BIN) ./cmd/uatu
 
 $(SIDECAR_JAR):
 	$(MAKE) sidecar
