@@ -26,3 +26,7 @@ node_modules/
 # Secrets
 .env
 .env.local
+
+# Sidecar fat JAR — build artifact copied in by `make uatu` before
+# `go build -tags withsidecar`. Never commit: it's ~130 MB.
+internal/sidecar/assets/sidecar-all.jar
