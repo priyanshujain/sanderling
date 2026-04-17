@@ -17,6 +17,10 @@ type Action struct {
 	Kind ActionKind
 	On   string
 	Text string
+	// X, Y hold the element center when the spec passed an ax element to
+	// Tap/InputText. Zero means the runner must resolve On against the
+	// current hierarchy.
+	X, Y int
 }
 
 type extractorState struct {
@@ -32,6 +36,7 @@ const (
 	tagFormula            = "__uatuFormula"
 	tagActionGenerator    = "__uatuActionGenerator"
 	tagInternalKind       = "__uatuKind"
+	tagSelector           = "__uatuSelector"
 	internalKindActions   = "actions"
 	internalKindWeighted  = "weighted"
 	internalKindBuiltinTaps   = "taps"

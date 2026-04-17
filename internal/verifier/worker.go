@@ -7,6 +7,7 @@ import (
 
 	"github.com/dop251/goja"
 
+	"github.com/priyanshujain/uatu/internal/hierarchy"
 	"github.com/priyanshujain/uatu/internal/ltl"
 )
 
@@ -79,9 +80,10 @@ func (v *Verifier) Load(source string) error {
 }
 
 // PushSnapshot updates the JS-side state and refreshes every extractor's
-// current/previous values in registration order.
-func (v *Verifier) PushSnapshot(snapshots Snapshots) error {
-	state, err := stateObject(v.runtime, snapshots)
+// current/previous values in registration order. Passing a nil tree is
+// allowed and yields an empty ax scope.
+func (v *Verifier) PushSnapshot(snapshots Snapshots, tree *hierarchy.Tree) error {
+	state, err := stateObject(v.runtime, snapshots, tree)
 	if err != nil {
 		return fmt.Errorf("build state: %w", err)
 	}
