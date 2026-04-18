@@ -4,6 +4,7 @@ import {
   actions,
   weighted,
   Tap,
+  InputText,
   taps,
   swipes,
 } from "@uatu/spec";
@@ -16,9 +17,13 @@ const appState = extract<string>(
 const clickCount = extract<number>(
   (state) => (state.snapshots.click_count as number) ?? 0,
 );
+const username = extract<string>(
+  (state) => (state.snapshots.username as string) ?? "",
+);
 
 // ── UI elements ────────────────────────────────────────────────
 const clickButton = extract((state) => state.ax.find("text:Click me"));
+const usernameField = extract((state) => state.ax.find("desc:username_field"));
 
 // ── Properties ─────────────────────────────────────────────────
 export const properties = {
@@ -28,6 +33,10 @@ export const properties = {
     const previous = clickCount.previous;
     return previous === undefined || clickCount.current >= previous;
   }),
+  usernameNeverShrinks: always(() => {
+    const previous = username.previous;
+    return previous === undefined || username.current.length >= previous.length;
+  }),
 };
 
 // ── Actions ────────────────────────────────────────────────────
@@ -35,8 +44,15 @@ const tapClickMe = actions(() => {
   return clickButton.current ? [Tap({ on: clickButton.current })] : [];
 });
 
+const typeUsername = actions(() => {
+  return usernameField.current
+    ? [InputText({ into: usernameField.current, text: "alice" })]
+    : [];
+});
+
 export const actionsRoot = weighted(
-  [100, tapClickMe],
+  [50, tapClickMe],
+  [50, typeUsername],
   [10, taps],
   [2, swipes],
 );

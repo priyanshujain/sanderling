@@ -9,6 +9,7 @@ class SampleApplication : Application() {
         Uatu.start(this)
         Uatu.extract("app_state") { "running" }
         Uatu.extract("click_count") { MainActivity.clickCount }
+        Uatu.extract("username") { MainActivity.username }
         Uatu.extract("uptime_millis") { System.currentTimeMillis() - startedAt }
     }
 

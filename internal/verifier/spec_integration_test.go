@@ -16,6 +16,8 @@ const sampleAppHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
     <node index="0" class="android.widget.LinearLayout" bounds="[64,96][1016,2336]">
       <node index="0" class="android.widget.TextView" text="Clicks: 0" bounds="[100,200][900,300]" />
       <node index="1" class="android.widget.Button" text="Click me" clickable="true" enabled="true" bounds="[400,800][680,920]" />
+      <node index="2" class="android.widget.TextView" text="Username: " bounds="[100,1000][900,1080]" />
+      <node index="3" class="android.widget.EditText" content-desc="username_field" clickable="true" enabled="true" bounds="[100,1200][900,1320]" />
     </node>
   </node>
 </hierarchy>`
@@ -63,17 +65,24 @@ func TestSampleAppSpecTapsClickMe(t *testing.T) {
 	}
 
 	tapHits := 0
-	for range 200 {
+	inputHits := 0
+	for range 400 {
 		action, err := v.NextAction()
 		if err != nil {
 			continue
 		}
-		if action.Kind == ActionKindTap && action.On == "text:Click me" {
+		switch {
+		case action.Kind == ActionKindTap && action.On == "text:Click me":
 			tapHits++
+		case action.Kind == ActionKindInputText && action.On == "desc:username_field" && action.Text == "alice":
+			inputHits++
 		}
 	}
 	if tapHits == 0 {
 		t.Fatal("tapClickMe never fired on sample-app hierarchy")
+	}
+	if inputHits == 0 {
+		t.Fatal("typeUsername never fired on sample-app hierarchy")
 	}
 }
 
@@ -88,31 +97,37 @@ func TestSampleAppSpecPropertiesHold(t *testing.T) {
 	steps := []struct {
 		appState   string
 		clickCount int
+		username   string
 		want       map[string]ltl.Verdict
 	}{
-		{"running", 0, map[string]ltl.Verdict{
+		{"running", 0, "", map[string]ltl.Verdict{
 			"appIsRunning":             ltl.VerdictHolds,
 			"clickCountNonNegative":    ltl.VerdictHolds,
 			"clickCountNeverDecreases": ltl.VerdictHolds,
+			"usernameNeverShrinks":     ltl.VerdictHolds,
 		}},
-		{"running", 5, map[string]ltl.Verdict{
+		{"running", 5, "alice", map[string]ltl.Verdict{
 			"appIsRunning":             ltl.VerdictHolds,
 			"clickCountNonNegative":    ltl.VerdictHolds,
 			"clickCountNeverDecreases": ltl.VerdictHolds,
+			"usernameNeverShrinks":     ltl.VerdictHolds,
 		}},
-		{"running", 3, map[string]ltl.Verdict{
+		{"running", 3, "al", map[string]ltl.Verdict{
 			"appIsRunning":             ltl.VerdictHolds,
 			"clickCountNonNegative":    ltl.VerdictHolds,
 			"clickCountNeverDecreases": ltl.VerdictViolated,
+			"usernameNeverShrinks":     ltl.VerdictViolated,
 		}},
 	}
 
 	for index, step := range steps {
 		stateRaw, _ := json.Marshal(step.appState)
 		countRaw, _ := json.Marshal(step.clickCount)
+		usernameRaw, _ := json.Marshal(step.username)
 		if err := v.PushSnapshot(Snapshots{
 			"app_state":   stateRaw,
 			"click_count": countRaw,
+			"username":    usernameRaw,
 		}, nil); err != nil {
 			t.Fatalf("step %d: %v", index, err)
 		}

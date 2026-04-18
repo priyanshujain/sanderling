@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -232,6 +233,35 @@ func TestRunner_RecordsScreenFieldFromSnapshot(t *testing.T) {
 	if !strings.Contains(string(body), `"screen":"customer_ledger"`) {
 		t.Errorf("screen field not in trace: %s", body)
 	}
+}
+
+func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
+	t.Run("selector focus tap fails", func(t *testing.T) {
+		driverMock := mockdriver.New()
+		driverMock.Failures[mockdriver.ActionTapSelector] = errors.New("adb unreachable")
+		action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
+
+		err := applyAction(context.Background(), driverMock, action, nil)
+		if err == nil {
+			t.Fatalf("expected focus tap failure to surface, got nil")
+		}
+		if containsAction(driverMock.Actions(), mockdriver.ActionInputText, "") {
+			t.Errorf("InputText must not run after focus tap failed: %v", driverMock.Actions())
+		}
+	})
+	t.Run("coordinate focus tap fails", func(t *testing.T) {
+		driverMock := mockdriver.New()
+		driverMock.Failures[mockdriver.ActionTap] = errors.New("tap driver error")
+		action := verifier.Action{Kind: verifier.ActionKindInputText, X: 10, Y: 20, Text: "alice"}
+
+		err := applyAction(context.Background(), driverMock, action, nil)
+		if err == nil {
+			t.Fatalf("expected focus tap failure to surface, got nil")
+		}
+		if containsAction(driverMock.Actions(), mockdriver.ActionInputText, "") {
+			t.Errorf("InputText must not run after focus tap failed: %v", driverMock.Actions())
+		}
+	})
 }
 
 func mustNewVerifier(t *testing.T) *verifier.Verifier {
