@@ -67,6 +67,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	)
 	sidecarCommand.Stdout = stdout
 	sidecarCommand.Stderr = stdout
+	sidecarCommand.Env = envWithAndroidPlatformTools(os.Environ())
 	if err := sidecarCommand.Start(); err != nil {
 		return fmt.Errorf("spawn sidecar: %w", err)
 	}
@@ -236,10 +237,18 @@ func pickFreePort() (int, error) {
 }
 
 func adbReverse(socket string, port int) error {
-	command := exec.Command("adb", "reverse", "localabstract:"+socket, fmt.Sprintf("tcp:%d", port))
+	adb, err := adbBinary()
+	if err != nil {
+		return err
+	}
+	command := exec.Command(adb, "reverse", "localabstract:"+socket, fmt.Sprintf("tcp:%d", port))
 	return command.Run()
 }
 
 func adbReverseRemove(socket string) error {
-	return exec.Command("adb", "reverse", "--remove", "localabstract:"+socket).Run()
+	adb, err := adbBinary()
+	if err != nil {
+		return err
+	}
+	return exec.Command(adb, "reverse", "--remove", "localabstract:"+socket).Run()
 }

@@ -40,3 +40,54 @@ uatu_test
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+func TestPickAVD_ExplicitName(t *testing.T) {
+	got, err := pickAVD("Pixel_7", []string{"Pixel_7", "uatu_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "Pixel_7" {
+		t.Fatalf("got %q, want Pixel_7", got)
+	}
+}
+
+func TestPickAVD_ExplicitMissing(t *testing.T) {
+	_, err := pickAVD("Nope", []string{"Pixel_7"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestPickAVD_SingleAvailable(t *testing.T) {
+	got, err := pickAVD("", []string{"uatu_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "uatu_test" {
+		t.Fatalf("got %q, want uatu_test", got)
+	}
+}
+
+func TestPickAVD_AmbiguousWithoutHint(t *testing.T) {
+	_, err := pickAVD("", []string{"a", "b"})
+	if err == nil {
+		t.Fatal("expected error when multiple AVDs and no --avd")
+	}
+}
+
+func TestPickAVD_NoneAvailable(t *testing.T) {
+	_, err := pickAVD("", nil)
+	if err == nil {
+		t.Fatal("expected error when no AVDs exist")
+	}
+}
+
+func TestPathContains(t *testing.T) {
+	path := "/usr/bin:/opt/tools:/usr/local/bin"
+	if !pathContains(path, "/opt/tools") {
+		t.Error("expected /opt/tools in PATH")
+	}
+	if pathContains(path, "/nope") {
+		t.Error("did not expect /nope in PATH")
+	}
+}
