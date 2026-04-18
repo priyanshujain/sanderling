@@ -79,8 +79,12 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if err := options.Verifier.PushSnapshot(verifier.Snapshots(snapshot.Snapshots), tree); err != nil {
 			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 		}
+		screen, screenErr := screenFromSnapshot(snapshot.Snapshots)
+		if screenErr != nil {
+			fmt.Printf("warning: step %d screen: %v\n", stepIndex, screenErr)
+		}
 		fmt.Printf("step %d: screen=%q hierarchy=%d nodes\n",
-			stepIndex, screenFromSnapshot(snapshot.Snapshots), treeSize)
+			stepIndex, screen, treeSize)
 		verdicts := options.Verifier.EvaluateProperties()
 		violations := violationNames(verdicts)
 
@@ -95,7 +99,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		step := trace.Step{
 			Index:      stepIndex,
 			Timestamp:  stepStart,
-			Screen:     screenFromSnapshot(snapshot.Snapshots),
+			Screen:     screen,
 			Snapshots:  snapshot.Snapshots,
 			Action:     traceAction,
 			Violations: violations,
@@ -175,14 +179,16 @@ func violationNames(verdicts map[string]ltl.Verdict) []string {
 	return names
 }
 
-func screenFromSnapshot(snapshots map[string]json.RawMessage) string {
+func screenFromSnapshot(snapshots map[string]json.RawMessage) (string, error) {
 	raw, ok := snapshots["screen"]
 	if !ok {
-		return ""
+		return "", nil
 	}
 	var screen string
-	_ = json.Unmarshal(raw, &screen)
-	return screen
+	if err := json.Unmarshal(raw, &screen); err != nil {
+		return "", err
+	}
+	return screen, nil
 }
 
 func applyAction(ctx context.Context, drv driver.Driver, action verifier.Action, tree *hierarchy.Tree) error {
