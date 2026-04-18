@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>$if(title)$$title$ · $endif$uatu</title>
+<link rel="stylesheet" href="__ROOT___assets/style.css">
+<style>$highlighting-css$</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="__ROOT__index.html">uatu</a>
+    <nav>
+      <h3>Manual</h3>
+      <ul>
+        <li><a href="__ROOT__manual/getting-started.html">Getting started</a></li>
+        <li><a href="__ROOT__manual/writing-specs.html">Writing specs</a></li>
+        <li><a href="__ROOT__manual/runs.html">Runs</a></li>
+        <li><a href="__ROOT__manual/cli.html">CLI reference</a></li>
+      </ul>
+      <h3>Development</h3>
+      <ul>
+        <li><a href="__ROOT__development/design-principles.html">Design principles</a></li>
+        <li><a href="__ROOT__development/architecture.html">Architecture</a></li>
+      </ul>
+    </nav>
+  </aside>
+  <main>
+    <article>
+$body$
+    </article>
+    <footer>
+      <a href="https://github.com/priyanshujain/uatu">github.com/priyanshujain/uatu</a>
+      · <a href="https://github.com/priyanshujain/uatu/issues/4">v0.1.0 roadmap</a>
+    </footer>
+  </main>
+</div>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: false, theme: 'neutral', fontFamily: 'inherit' });
+for (const pre of document.querySelectorAll('pre.mermaid, pre > code.language-mermaid')) {
+  const node = pre.tagName === 'PRE' ? pre : pre.parentElement;
+  const div = document.createElement('div');
+  div.className = 'mermaid';
+  div.textContent = node.textContent;
+  node.replaceWith(div);
+}
+await mermaid.run();
+</script>
+</body>
+</html>
