@@ -5,9 +5,10 @@ project_name: uatu
 before:
   hooks:
     # The Go binary embeds the sidecar fat JAR via //go:embed gated by the
-    # `withsidecar` build tag. Rebuild the JAR so the embed picks up the
-    # fresh bytes that match this tag.
+    # `withsidecar` build tag. Rebuild the JAR and stage it at the embed
+    # path so the `go build` below picks up fresh bytes.
     - make sidecar
+    - sh -c 'mkdir -p internal/sidecar/assets && cp sidecar/build/libs/sidecar-all.jar internal/sidecar/assets/sidecar-all.jar'
 
 builds:
   - id: uatu
