@@ -7,6 +7,8 @@ plugins {
     id("com.google.protobuf") version "0.9.5"
 }
 
+version = findProperty("uatu.version") as String? ?: "0.0.0-dev"
+
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(17))

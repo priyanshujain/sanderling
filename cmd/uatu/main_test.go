@@ -95,6 +95,22 @@ func TestRun_HelpPrintsUsage(t *testing.T) {
 	}
 }
 
+func TestRun_VersionPrintsVersion(t *testing.T) {
+	prev := Version
+	Version = "1.2.3-test"
+	defer func() { Version = prev }()
+
+	for _, arg := range []string{"version", "--version", "-v"} {
+		var stdout bytes.Buffer
+		if err := run([]string{"uatu", arg}, &stdout, io.Discard); err != nil {
+			t.Fatalf("%s: %v", arg, err)
+		}
+		if strings.TrimSpace(stdout.String()) != "1.2.3-test" {
+			t.Errorf("%s: got %q, want 1.2.3-test", arg, stdout.String())
+		}
+	}
+}
+
 func TestRun_UnknownCommand(t *testing.T) {
 	err := run([]string{"uatu", "wat"}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unknown command") {

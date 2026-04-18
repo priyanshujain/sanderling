@@ -30,3 +30,9 @@ node_modules/
 # Sidecar fat JAR — build artifact copied in by `make uatu` before
 # `go build -tags withsidecar`. Never commit: it's ~130 MB.
 internal/sidecar/assets/sidecar-all.jar
+
+# spec-api compiled output
+pkg/spec-api/dist/
+
+# goreleaser local output
+dist/
