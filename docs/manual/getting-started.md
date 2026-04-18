@@ -59,9 +59,10 @@ uatu test \
   --spec spec.ts \
   --bundle-id dev.uatu.sample \
   --platform android \
-  --avd Pixel_7 \
   --duration 2m
 ```
+
+Pass `--avd <name>` only when no device is connected and you have multiple AVDs; otherwise uatu uses the connected device or boots the single AVD it finds.
 
 When the run ends, the trace lands in `runs/<timestamp>/`:
 

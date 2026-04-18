@@ -47,4 +47,4 @@ Traces land in `./runs/<timestamp>/`.
   registers snapshot extractors (`app_state`, `click_count`)
 - `spec.ts` imports `@uatu/spec` (see `package.json`), reads those snapshots,
   asserts properties on them, and weights the actions the fuzzer picks from
-- `just test` invokes `uatu test` against the installed APK on the named AVD
+- `just test` invokes `uatu test` against the installed APK on the connected device (or the AVD named via `AVD=`)

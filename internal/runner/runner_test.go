@@ -235,6 +235,38 @@ func TestRunner_RecordsScreenFieldFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestScreenFromSnapshot(t *testing.T) {
+	t.Run("string value returns screen", func(t *testing.T) {
+		snapshots := map[string]json.RawMessage{"screen": json.RawMessage(`"home"`)}
+		screen, err := screenFromSnapshot(snapshots)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if screen != "home" {
+			t.Errorf("screen = %q, want %q", screen, "home")
+		}
+	})
+	t.Run("missing key returns empty with no error", func(t *testing.T) {
+		screen, err := screenFromSnapshot(map[string]json.RawMessage{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if screen != "" {
+			t.Errorf("screen = %q, want empty", screen)
+		}
+	})
+	t.Run("non-string value returns error", func(t *testing.T) {
+		snapshots := map[string]json.RawMessage{"screen": json.RawMessage(`{"nested":1}`)}
+		screen, err := screenFromSnapshot(snapshots)
+		if err == nil {
+			t.Fatalf("expected error for non-string screen, got nil")
+		}
+		if screen != "" {
+			t.Errorf("screen = %q, want empty on error", screen)
+		}
+	})
+}
+
 func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 	t.Run("selector focus tap fails", func(t *testing.T) {
 		driverMock := mockdriver.New()

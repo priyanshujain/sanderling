@@ -11,7 +11,7 @@ A run is not analogous to a unit test. A closer framing is: boot a fuzzer for an
 ## Lifecycle
 
 ```
-uatu test --spec spec.ts --bundle-id com.example.app --avd Pixel_7 --duration 30m
+uatu test --spec spec.ts --bundle-id com.example.app --duration 30m
   │
   ├── uninstall and reinstall the app (clean slate, every run)
   ├── boot the sidecar, connect the agent socket
