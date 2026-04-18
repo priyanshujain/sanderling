@@ -43,6 +43,12 @@ jobs:
       - name: Install buf
         uses: bufbuild/buf-setup-action@v1
 
+      - name: Install protoc plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
