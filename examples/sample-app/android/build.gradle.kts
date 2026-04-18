@@ -3,6 +3,8 @@ plugins {
     kotlin("android") version "2.1.21"
 }
 
+val uatuVersion = findProperty("uatu.version") as String? ?: "0.0.0-dev"
+
 android {
     namespace = "dev.uatu.sample"
     compileSdk = 35
@@ -12,7 +14,7 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 1
-        versionName = findProperty("uatu.version") as String? ?: "0.0.0-dev"
+        versionName = uatuVersion
     }
 
     compileOptions {
@@ -32,5 +34,5 @@ android {
 }
 
 dependencies {
-    implementation(project(":sdk-android"))
+    implementation("io.github.priyanshujain:sdk-android:$uatuVersion")
 }
