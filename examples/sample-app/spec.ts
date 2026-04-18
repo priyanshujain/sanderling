@@ -11,9 +11,6 @@ import {
 
 // ── Snapshot extractors (fed by SampleApplication.kt) ──────────
 // See ./android/src/main/kotlin/dev/uatu/sample/SampleApplication.kt
-const appState = extract<string>(
-  (state) => (state.snapshots.app_state as string) ?? "",
-);
 const clickCount = extract<number>(
   (state) => (state.snapshots.click_count as number) ?? 0,
 );
@@ -23,11 +20,11 @@ const username = extract<string>(
 
 // ── UI elements ────────────────────────────────────────────────
 const clickButton = extract((state) => state.ax.find("text:Click me"));
+const resetButton = extract((state) => state.ax.find("text:Reset"));
 const usernameField = extract((state) => state.ax.find("desc:username_field"));
 
 // ── Properties ─────────────────────────────────────────────────
 export const properties = {
-  appIsRunning: always(() => appState.current === "running"),
   clickCountNonNegative: always(() => clickCount.current >= 0),
   clickCountNeverDecreases: always(() => {
     const previous = clickCount.previous;
@@ -50,10 +47,15 @@ const typeUsername = actions(() => {
     : [];
 });
 
+const tapReset = actions(() => {
+  return resetButton.current ? [Tap({ on: resetButton.current })] : [];
+});
+
 export const actionsRoot = weighted(
   [50, tapClickMe],
-  [50, typeUsername],
-  [10, taps],
+  [20, typeUsername],
+  [30, tapReset],
+  [5, taps],
   [2, swipes],
 );
 

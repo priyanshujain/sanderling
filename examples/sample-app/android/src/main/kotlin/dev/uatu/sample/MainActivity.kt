@@ -47,6 +47,16 @@ class MainActivity : Activity() {
         }
         layout.addView(button)
 
+        val resetButton = Button(this).apply {
+            text = "Reset"
+            textSize = 18f
+            setOnClickListener {
+                clickCount = 0
+                label.text = "Clicks: $clickCount"
+            }
+        }
+        layout.addView(resetButton)
+
         val usernameLabel = TextView(this).apply {
             text = "Username: "
             textSize = 20f
