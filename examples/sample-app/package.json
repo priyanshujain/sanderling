@@ -1,0 +1,8 @@
+{
+  "name": "uatu-sample",
+  "private": true,
+  "description": "Minimal uatu integration example.",
+  "devDependencies": {
+    "@uatu/spec": "file:../../pkg/spec-api"
+  }
+}
