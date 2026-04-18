@@ -1,10 +1,13 @@
 import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
-import com.vanniktech.maven.publish.SonatypeHost
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.SourcesJar
 
 plugins {
     id("com.android.library") version "8.13.0"
     kotlin("android") version "2.1.21"
-    id("com.vanniktech.maven.publish") version "0.30.0"
+    id("com.vanniktech.maven.publish") version "0.36.0"
+    id("org.jetbrains.dokka") version "2.2.0"
+    id("org.jetbrains.dokka-javadoc") version "2.2.0"
 }
 
 version = findProperty("uatu.version") as String? ?: "0.0.0-dev"
@@ -34,7 +37,7 @@ android {
 }
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
+    publishToMavenCentral(automaticRelease = true)
 
     // Sign only when a release-signing key is provided (env or Gradle
     // property). Unsigned runs are useful for `publishToMavenLocal` dry-runs;
@@ -45,9 +48,9 @@ mavenPublishing {
 
     configure(
         AndroidSingleVariantLibrary(
+            javadocJar = JavadocJar.Dokka("dokkaGeneratePublicationJavadoc"),
+            sourcesJar = SourcesJar.Sources(),
             variant = "release",
-            sourcesJar = true,
-            publishJavadocJar = true,
         ),
     )
 
