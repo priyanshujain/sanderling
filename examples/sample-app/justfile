@@ -1,30 +1,26 @@
 set shell := ["bash", "-cu"]
 
-repo_root := absolute_path(justfile_directory() / ".." / "..")
-uatu      := env_var_or_default("UATU", repo_root / "bin/uatu")
-avd       := env_var_or_default("AVD", "")
-duration  := env_var_or_default("DURATION", "1m")
-seed      := env_var_or_default("SEED", "0")
-output    := env_var_or_default("OUTPUT", repo_root / "runs")
+uatu     := env_var_or_default("UATU", "uatu")
+avd      := env_var_or_default("AVD", "")
+duration := env_var_or_default("DURATION", "1m")
+seed     := env_var_or_default("SEED", "0")
+output   := env_var_or_default("OUTPUT", justfile_directory() / "runs")
+android  := justfile_directory() / "android"
 
 default:
     @just --list
 
 # Build and install the sample APK on a running emulator/device.
 install:
-    cd {{repo_root}} && ./gradlew :sample-app:installDebug
+    cd {{android}} && ./gradlew installDebug
 
 # Remove the sample APK from the connected device.
 uninstall:
-    cd {{repo_root}} && ./gradlew :sample-app:uninstallDebug
+    cd {{android}} && ./gradlew uninstallDebug
 
-# Build the uatu CLI (writes to repo's bin/uatu).
-uatu:
-    make -C {{repo_root}} uatu
-
-# Run the Go tests that bundle and exercise spec.ts (no device required).
-verify:
-    cd {{repo_root}} && go test ./internal/verifier/ -run TestSampleAppSpec
+# Remove the gradle build directory.
+clean:
+    cd {{android}} && ./gradlew clean
 
 # Run 'uatu test' against the sample app. AVD=<name> is required.
 test:
@@ -34,7 +30,6 @@ test:
       echo "AVD is required (usage: just AVD=<name> test)" >&2
       exit 1
     fi
-    if [[ ! -x "{{uatu}}" ]]; then just uatu; fi
     "{{uatu}}" test \
       --spec "{{justfile_directory()}}/spec.ts" \
       --bundle-id dev.uatu.sample \
@@ -42,7 +37,3 @@ test:
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"
-
-# Remove the gradle build directory for the sample app.
-clean:
-    cd {{repo_root}} && ./gradlew :sample-app:clean
