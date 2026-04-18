@@ -198,9 +198,13 @@ func applyAction(ctx context.Context, drv driver.Driver, action verifier.Action,
 		return drv.Tap(ctx, x, y)
 	case verifier.ActionKindInputText:
 		if x, y, ok := resolveCoordinates(action, tree); ok {
-			_ = drv.Tap(ctx, x, y)
+			if err := drv.Tap(ctx, x, y); err != nil {
+				return err
+			}
 		} else if action.On != "" {
-			_ = drv.TapSelector(ctx, action.On)
+			if err := drv.TapSelector(ctx, action.On); err != nil {
+				return err
+			}
 		}
 		return drv.InputText(ctx, action.Text)
 	default:
