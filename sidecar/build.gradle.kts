@@ -73,6 +73,13 @@ application {
     mainClass.set("dev.uatu.sidecar.MainKt")
 }
 
+// The Go binary embeds this fat JAR by fixed path (internal/sidecar/assets/
+// sidecar-all.jar). Pin the shadow output name so the embed step doesn't
+// depend on `version`.
+tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
+    archiveFileName.set("sidecar-all.jar")
+}
+
 // JUnit 4 (vintage) for the gRPC GrpcCleanupRule + JUnit 5 (jupiter)
 // for the rest. UseJUnitPlatform with the vintage engine handles both.
 tasks.test {
