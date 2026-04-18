@@ -30,13 +30,14 @@
     "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run build",
     "check": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "publishConfig": {
     "access": "public"
   },
   "devDependencies": {
     "@types/node": "^22.7.5",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }
