@@ -53,9 +53,9 @@ const tapReset = actions(() => {
 
 export const actionsRoot = weighted(
   [50, tapClickMe],
-  [50, typeUsername],
-  [10, tapReset],
-  [10, taps],
+  [20, typeUsername],
+  [30, tapReset],
+  [5, taps],
   [2, swipes],
 );
 
