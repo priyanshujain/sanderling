@@ -126,7 +126,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
-		_ = options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
+		if err := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			fmt.Printf("warning: step %d wait_for_idle: %v\n", stepIndex, err)
+		}
 		idleCancel()
 	}
 
