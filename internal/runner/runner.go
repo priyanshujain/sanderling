@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/priyanshujain/uatu/internal/agent"
@@ -24,6 +25,7 @@ type Options struct {
 	Driver      driver.Driver
 	Verifier    *verifier.Verifier
 	TraceWriter *trace.Writer
+	Logger      *slog.Logger
 }
 
 type Summary struct {
@@ -46,6 +48,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	if err := validate(options); err != nil {
 		return Summary{}, err
 	}
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -64,7 +70,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// a hierarchy that matches the snapshots captured a moment later.
 		tree, hierarchyErr := fetchHierarchy(ctx, options.Driver)
 		if hierarchyErr != nil {
-			fmt.Printf("warning: step %d hierarchy: %v\n", stepIndex, hierarchyErr)
+			logger.Warn("hierarchy fetch failed", "step", stepIndex, "err", hierarchyErr)
 		}
 		treeSize := 0
 		if tree != nil {
@@ -81,7 +87,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 		screen, screenErr := screenFromSnapshot(snapshot.Snapshots)
 		if screenErr != nil {
-			fmt.Printf("warning: step %d screen: %v\n", stepIndex, screenErr)
+			logger.Warn("screen snapshot decode failed", "step", stepIndex, "err", screenErr)
 		}
 		fmt.Printf("step %d: screen=%q hierarchy=%d nodes\n",
 			stepIndex, screen, treeSize)
@@ -128,7 +134,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
 		idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
 		if idleErr != nil && idleCtx.Err() == nil {
-			fmt.Printf("warning: step %d wait_for_idle: %v\n", stepIndex, idleErr)
+			logger.Warn("wait_for_idle failed", "step", stepIndex, "err", idleErr)
 		}
 		idleCancel()
 	}
