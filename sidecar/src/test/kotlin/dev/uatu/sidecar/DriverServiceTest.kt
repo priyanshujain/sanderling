@@ -35,7 +35,13 @@ class DriverServiceTest {
         val backend = StubDriverBackend("android")
         val client = newClient(backend)
 
-        client.launch(LaunchRequest.newBuilder().setBundleId("com.example").setClearState(true).build())
+        client.launch(
+            LaunchRequest.newBuilder()
+                .setBundleId("com.example")
+                .setLauncherActivity(".MainActivity")
+                .setClearState(true)
+                .build(),
+        )
         assertEquals("com.example", backend.lastBundleId)
         assertEquals(1, backend.launchCount)
 
