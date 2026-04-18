@@ -35,7 +35,13 @@ android {
 
 mavenPublishing {
     publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
-    signAllPublications()
+
+    // Sign only when a release-signing key is provided (env or Gradle
+    // property). Unsigned runs are useful for `publishToMavenLocal` dry-runs;
+    // CI always has the key set so the actual Central push is always signed.
+    if (findProperty("signingInMemoryKey") != null) {
+        signAllPublications()
+    }
 
     configure(
         AndroidSingleVariantLibrary(
