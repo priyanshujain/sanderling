@@ -11,7 +11,7 @@ SIDECAR_EMBED := internal/sidecar/assets/sidecar-all.jar
 SDK_AAR := sdk/android/build/outputs/aar/sdk-android-release.aar
 UATU_BIN := bin/uatu
 
-.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu test test-go test-kotlin test-spec-api clean
+.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu test test-go test-kotlin test-spec-api clean release-cli release-android-local release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -29,8 +29,7 @@ sdk-android:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:assembleRelease
 
 sdk-android-publish:
-	@if [ -z "$$GH_TOKEN" ]; then echo "GH_TOKEN must be set" >&2; exit 1; fi
-	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:publish
+	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:publishToMavenLocal
 
 uatu: $(UATU_BIN)
 
@@ -55,5 +54,18 @@ test-spec-api:
 
 clean:
 	$(GO) clean
-	rm -rf bin
+	rm -rf bin dist pkg/spec-api/dist
 	$(GRADLE) clean
+
+# Local release dry-runs. None of these touch remote registries.
+
+release-cli:
+	$(MAKE) sidecar
+	goreleaser release --snapshot --clean
+
+release-android-local:
+	@if [ -f .env.local ]; then set -a; . ./.env.local; set +a; fi; \
+	  ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:publishToMavenLocal -Puatu.version=0.0.0-local
+
+release-npm-dry:
+	cd pkg/spec-api && npm ci && npm run build && npm pack --dry-run
