@@ -11,16 +11,49 @@ android  := justfile_directory() / "android"
 default:
     @just --list
 
+# Resolve ANDROID_HOME from the env or a short list of canonical install
+# locations, so Gradle can find the Android SDK without the user having to
+# export anything.
+_android-home:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -n "${ANDROID_HOME:-}" && -d "$ANDROID_HOME" ]]; then
+      echo "$ANDROID_HOME"; exit 0
+    fi
+    if [[ -n "${ANDROID_SDK_ROOT:-}" && -d "$ANDROID_SDK_ROOT" ]]; then
+      echo "$ANDROID_SDK_ROOT"; exit 0
+    fi
+    for candidate in \
+      "$HOME/Library/Android/sdk" \
+      "$HOME/Android/Sdk" \
+      "/opt/homebrew/share/android-commandlinetools" \
+      "/usr/local/share/android-commandlinetools"; do
+      if [[ -d "$candidate" ]]; then
+        echo "$candidate"; exit 0
+      fi
+    done
+    echo "could not locate Android SDK (set ANDROID_HOME)" >&2
+    exit 1
+
 # Build and install the sample APK on a running emulator/device.
 install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ANDROID_HOME="$(just _android-home)"
     cd {{android}} && ./gradlew installDebug
 
 # Remove the sample APK from the connected device.
 uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ANDROID_HOME="$(just _android-home)"
     cd {{android}} && ./gradlew uninstallDebug
 
 # Remove the gradle build directory.
 clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ANDROID_HOME="$(just _android-home)"
     cd {{android}} && ./gradlew clean
 
 # Run 'uatu test' against the sample app. Uses a connected device if one is
