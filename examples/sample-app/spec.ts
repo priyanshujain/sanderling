@@ -20,6 +20,7 @@ const username = extract<string>(
 
 // ── UI elements ────────────────────────────────────────────────
 const clickButton = extract((state) => state.ax.find("text:Click me"));
+const resetButton = extract((state) => state.ax.find("text:Reset"));
 const usernameField = extract((state) => state.ax.find("desc:username_field"));
 
 // ── Properties ─────────────────────────────────────────────────
@@ -46,9 +47,14 @@ const typeUsername = actions(() => {
     : [];
 });
 
+const tapReset = actions(() => {
+  return resetButton.current ? [Tap({ on: resetButton.current })] : [];
+});
+
 export const actionsRoot = weighted(
   [50, tapClickMe],
   [50, typeUsername],
+  [10, tapReset],
   [10, taps],
   [2, swipes],
 );
