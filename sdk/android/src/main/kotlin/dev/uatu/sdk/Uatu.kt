@@ -1,6 +1,7 @@
 package dev.uatu.sdk
 
 import android.app.Application
+import android.util.Log
 
 data class Configuration(
     val socketName: String = "uatu-agent",
@@ -9,6 +10,7 @@ data class Configuration(
 
 object Uatu {
     const val VERSION: String = "0.0.1"
+    private const val LOG_TAG = "Uatu"
 
     @Volatile private var runtime: UatuRuntime? = null
 
@@ -24,6 +26,7 @@ object Uatu {
         )
         newRuntime.start()
         runtime = newRuntime
+        Log.i(LOG_TAG, "SDK started (package=${application.packageName} socket=${configuration.socketName})")
     }
 
     fun extract(name: String, function: () -> Any?) {

@@ -36,13 +36,47 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         if (clearState) {
             runAdb(listOf("shell", "pm", "clear", bundleId))
         }
-        if (launcherActivity.isNotEmpty()) {
-            val component = if (launcherActivity.contains('/')) launcherActivity else "$bundleId/$launcherActivity"
-            runAdb(listOf("shell", "am", "start", "-n", component))
-        } else {
-            // `monkey` uses PackageManager.getLaunchIntentForPackage, which
-            // picks the canonical default launcher.
-            runAdb(listOf("shell", "monkey", "-p", bundleId, "-c", "android.intent.category.LAUNCHER", "1"))
+        val component = when {
+            launcherActivity.isEmpty() -> "$bundleId/${resolveLauncherActivity(bundleId)}"
+            launcherActivity.contains('/') -> launcherActivity
+            else -> "$bundleId/$launcherActivity"
+        }
+        runAdb(listOf("shell", "am", "start", "-W", "-n", component))
+    }
+
+    private fun resolveLauncherActivity(bundleId: String): String {
+        val output = captureAdb(
+            listOf(
+                "shell", "cmd", "package", "resolve-activity", "--brief",
+                "-a", "android.intent.action.MAIN",
+                "-c", "android.intent.category.LAUNCHER",
+                bundleId,
+            ),
+        )
+        return parseResolvedActivity(bundleId, output)
+            ?: throw IllegalStateException("could not resolve launcher activity for $bundleId: $output")
+    }
+
+    private fun captureAdb(arguments: List<String>): String {
+        val process = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor()
+        return output
+    }
+
+    companion object {
+        // parseResolvedActivity extracts the activity name from the output of
+        // `cmd package resolve-activity --brief`. The brief output is two
+        // lines: metadata, then `<pkg>/<activity>`.
+        internal fun parseResolvedActivity(bundleId: String, output: String): String? {
+            val prefix = "$bundleId/"
+            for (line in output.lines()) {
+                val trimmed = line.trim()
+                if (trimmed.startsWith(prefix)) {
+                    return trimmed.removePrefix(prefix)
+                }
+            }
+            return null
         }
     }
 

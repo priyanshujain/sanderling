@@ -15,7 +15,7 @@ DOCS_SRC := $(shell find docs -type f -name '*.md' -not -path 'docs/_*')
 DOCS_OUT := $(patsubst docs/%.md,build/site/%.html,$(DOCS_SRC))
 DOCS_TEMPLATE := docs/_template/page.html
 
-.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu test test-go test-kotlin test-spec-api docs clean release-cli release-android-local release-npm-dry
+.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu install test test-go test-kotlin test-spec-api docs clean release-cli release-android-local release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -41,6 +41,14 @@ $(UATU_BIN): $(SIDECAR_JAR)
 	mkdir -p bin $(dir $(SIDECAR_EMBED))
 	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
 	$(GO) build -tags withsidecar -o $(UATU_BIN) ./cmd/uatu
+
+# Installs `uatu` into $GOBIN (or $GOPATH/bin) so it's directly on PATH for
+# anyone with a standard Go toolchain setup.
+install: $(SIDECAR_JAR)
+	mkdir -p $(dir $(SIDECAR_EMBED))
+	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
+	$(GO) install -tags withsidecar ./cmd/uatu
+	@dest="$$($(GO) env GOBIN)"; [ -n "$$dest" ] || dest="$$($(GO) env GOPATH)/bin"; echo "installed uatu to $$dest"
 
 $(SIDECAR_JAR):
 	$(MAKE) sidecar

@@ -66,10 +66,13 @@ func TestParseTestArgs_RequiresBundleID(t *testing.T) {
 	}
 }
 
-func TestParseTestArgs_RequiresAVDOnAndroid(t *testing.T) {
-	_, err := parseTestArgs([]string{"--spec", "s.ts", "--bundle-id", "com.example"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--avd") {
-		t.Fatalf("expected missing --avd error, got %v", err)
+func TestParseTestArgs_AVDIsOptional(t *testing.T) {
+	options, err := parseTestArgs([]string{"--spec", "s.ts", "--bundle-id", "com.example"}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.avd != "" {
+		t.Fatalf("avd default: got %q, want empty", options.avd)
 	}
 }
 
@@ -129,16 +132,25 @@ func TestRun_Doctor(t *testing.T) {
 	}
 }
 
-func TestRun_TestSubcommand_ReportsBundleErrorForMissingSpec(t *testing.T) {
-	// Without a real spec file the pipeline should fail at the bundle step
-	// rather than panicking — proves the flag wiring reaches the runner.
+func TestRun_TestSubcommand_PipelineErrors(t *testing.T) {
+	// Without a real spec, a real device, or a bootable AVD the pipeline
+	// must surface a specific error rather than panicking — proves the flag
+	// wiring reaches the runner.
 	err := run([]string{
 		"uatu", "test",
 		"--spec", "definitely-missing-spec.ts",
 		"--bundle-id", "com.example",
-		"--avd", "Pixel_5_API_33",
+		"--avd", "definitely-missing-avd",
 	}, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "bundle") {
-		t.Errorf("expected bundle error, got %v", err)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	message := err.Error()
+	ok := strings.Contains(message, "bundle") ||
+		strings.Contains(message, "device") ||
+		strings.Contains(message, "AVD") ||
+		strings.Contains(message, "emulator")
+	if !ok {
+		t.Errorf("expected pipeline error (bundle/device/AVD/emulator), got %v", err)
 	}
 }

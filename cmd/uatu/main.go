@@ -46,7 +46,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.StringVar(&options.bundleID, "bundle-id", "", "target app bundle ID (required)")
 	flagSet.StringVar(&options.launcherActivity, "launcher-activity", "", "optional <pkg>/<activity> to launch (overrides default resolution)")
 	flagSet.StringVar(&options.platform, "platform", "android", "target platform: android (ios deferred)")
-	flagSet.StringVar(&options.avd, "avd", "", "Android AVD name (required on android)")
+	flagSet.StringVar(&options.avd, "avd", "", "Android AVD name to boot if no device is connected")
 	flagSet.DurationVar(&options.duration, "duration", 5*time.Minute, "total test duration")
 	flagSet.Int64Var(&options.seed, "seed", 0, "RNG seed (0 = random)")
 	flagSet.StringVar(&options.output, "output", "./runs", "output directory for traces")
@@ -58,9 +58,6 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	}
 	if options.bundleID == "" {
 		return testOptions{}, errors.New("--bundle-id is required")
-	}
-	if options.platform == "android" && options.avd == "" {
-		return testOptions{}, errors.New("--avd is required on android")
 	}
 	if options.platform != "android" {
 		return testOptions{}, fmt.Errorf("unsupported platform: %q (only android in v0.1)", options.platform)

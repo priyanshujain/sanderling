@@ -11,11 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        mavenLocal()
     }
 }
 
-rootProject.name = "uatu"
-
-include(":sidecar")
-include(":sdk-android")
-project(":sdk-android").projectDir = file("sdk/android")
+rootProject.name = "uatu-sample"
