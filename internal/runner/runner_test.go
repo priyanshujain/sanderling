@@ -1,9 +1,11 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -265,6 +267,41 @@ func TestScreenFromSnapshot(t *testing.T) {
 			t.Errorf("screen = %q, want empty on error", screen)
 		}
 	})
+}
+
+func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
+	snapshots := []map[string]json.RawMessage{
+		{"balance": json.RawMessage(`100`)},
+	}
+	state := newHarness(t, snapshots)
+	state.startSDK(t)
+	state.acceptConnection(t)
+	state.mock.Failures[mockdriver.ActionWaitForIdle] = errors.New("sidecar lost gRPC stream")
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:        100 * time.Millisecond,
+		SnapshotTimeout: 2 * time.Second,
+		IdleTimeout:     50 * time.Millisecond,
+		Connection:      state.conn,
+		Driver:          state.mock,
+		Verifier:        state.verifier,
+		TraceWriter:     state.writer,
+		Logger:          logger,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	output := logBuf.String()
+	if !strings.Contains(output, "wait_for_idle failed") {
+		t.Errorf("expected wait_for_idle warning, got: %q", output)
+	}
+	if !strings.Contains(output, "sidecar lost gRPC stream") {
+		t.Errorf("expected driver error message in warning, got: %q", output)
+	}
 }
 
 func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
