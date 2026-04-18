@@ -1,10 +1,12 @@
 name: ci
 
 on:
+  # Runs on PRs (opened / synchronize / reopened — the defaults) and manual
+  # dispatch only. We deliberately don't run on direct pushes to master:
+  # master is PR-merge-only, and PR validation already covers the merge
+  # commit via the `synchronize` event on the PR branch.
   pull_request:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
