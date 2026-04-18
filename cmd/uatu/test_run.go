@@ -28,9 +28,9 @@ const (
 )
 
 func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer) error {
-	specApiPath, err := resolveSpecAPIPath(options.spec)
-	if err != nil {
-		return err
+	aliases := map[string]string{}
+	if specApiPath := resolveSpecAPIPath(options.spec); specApiPath != "" {
+		aliases["@uatu/spec"] = specApiPath
 	}
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile: options.spec,
@@ -38,7 +38,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 			"UATU_TEST_PHONE": os.Getenv("UATU_TEST_PHONE"),
 			"UATU_TEST_OTP":   os.Getenv("UATU_TEST_OTP"),
 		},
-		Aliases: map[string]string{"@uatu/spec": specApiPath},
+		Aliases: aliases,
 	})
 	if err != nil {
 		return fmt.Errorf("bundle spec: %w", err)
@@ -193,10 +193,11 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	return nil
 }
 
-// resolveSpecAPIPath finds pkg/spec-api/src/index.ts relative to the spec
-// file or the current working directory so the bundler can resolve
-// `@uatu/spec` imports.
-func resolveSpecAPIPath(specPath string) (string, error) {
+// resolveSpecAPIPath returns the path to pkg/spec-api/src/index.ts inside
+// a uatu source checkout, searched upward from the spec file and the cwd.
+// Returns "" when not found, in which case esbuild resolves @uatu/spec via
+// node_modules the way a downstream user's project would.
+func resolveSpecAPIPath(specPath string) string {
 	candidates := []string{}
 	if absoluteSpec, err := filepath.Abs(specPath); err == nil {
 		directory := filepath.Dir(absoluteSpec)
@@ -214,10 +215,10 @@ func resolveSpecAPIPath(specPath string) (string, error) {
 	}
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
+			return candidate
 		}
 	}
-	return "", fmt.Errorf("could not locate pkg/spec-api/src/index.ts (searched %d paths)", len(candidates))
+	return ""
 }
 
 func pickFreePort() (int, error) {
