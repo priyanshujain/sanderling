@@ -22,18 +22,19 @@ uninstall:
 clean:
     cd {{android}} && ./gradlew clean
 
-# Run 'uatu test' against the sample app. AVD=<name> is required.
+# Run 'uatu test' against the sample app. Uses a connected device if one is
+# online, otherwise boots AVD=<name> if provided.
 test:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ -z "{{avd}}" ]]; then
-      echo "AVD is required (usage: just AVD=<name> test)" >&2
-      exit 1
+    avd_flag=()
+    if [[ -n "{{avd}}" ]]; then
+      avd_flag=(--avd "{{avd}}")
     fi
     "{{uatu}}" test \
       --spec "{{justfile_directory()}}/spec.ts" \
       --bundle-id dev.uatu.sample \
-      --avd "{{avd}}" \
+      "${avd_flag[@]}" \
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"

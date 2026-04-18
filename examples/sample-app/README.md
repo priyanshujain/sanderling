@@ -6,8 +6,8 @@ Use it as a reference for integrating uatu into your own app.
 ## Prerequisites
 
 - `uatu` CLI on `PATH` (see [getting started](https://priyanshujain.github.io/uatu/manual/getting-started.html))
-- Android SDK with `adb` on `PATH`
-- A running emulator or connected device (API 24+)
+- Android SDK with `adb` and `emulator` on `PATH`
+- An emulator/device (API 24+) running, or an AVD name to boot one
 - `just` task runner
 
 ## Install the app
@@ -17,6 +17,14 @@ just install
 ```
 
 ## Run a test
+
+With a device already connected:
+
+```sh
+just test
+```
+
+Or have uatu boot an AVD for you:
 
 ```sh
 just AVD=Pixel_7 test
