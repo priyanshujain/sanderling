@@ -27,7 +27,7 @@ node_modules/
 .env
 .env.local
 
-# Sidecar fat JAR — build artifact copied in by `make uatu` before
+# Sidecar fat JAR. Build artifact copied in by `make uatu` before
 # `go build -tags withsidecar`. Never commit: it's ~130 MB.
 internal/sidecar/assets/sidecar-all.jar
 
@@ -36,3 +36,7 @@ pkg/spec-api/dist/
 
 # goreleaser local output
 dist/
+
+# coding agent files
+.claude/
+.claude/*
