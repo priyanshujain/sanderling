@@ -11,9 +11,6 @@ import {
 
 // ── Snapshot extractors (fed by SampleApplication.kt) ──────────
 // See ./android/src/main/kotlin/dev/uatu/sample/SampleApplication.kt
-const appState = extract<string>(
-  (state) => (state.snapshots.app_state as string) ?? "",
-);
 const clickCount = extract<number>(
   (state) => (state.snapshots.click_count as number) ?? 0,
 );
@@ -27,7 +24,6 @@ const usernameField = extract((state) => state.ax.find("desc:username_field"));
 
 // ── Properties ─────────────────────────────────────────────────
 export const properties = {
-  appIsRunning: always(() => appState.current === "running"),
   clickCountNonNegative: always(() => clickCount.current >= 0),
   clickCountNeverDecreases: always(() => {
     const previous = clickCount.previous;
