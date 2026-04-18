@@ -41,6 +41,10 @@ func (s *Server) Accept(ctx context.Context) (*Conn, error) {
 		rawConn.Close()
 		return nil, fmt.Errorf("expected HELLO, got %q", hello.Type)
 	}
+	if hello.ProtocolVersion != ProtocolVersion {
+		rawConn.Close()
+		return nil, fmt.Errorf("protocol version mismatch: host=%d sdk=%d", ProtocolVersion, hello.ProtocolVersion)
+	}
 	return &Conn{rawConn: rawConn, hello: hello}, nil
 }
 

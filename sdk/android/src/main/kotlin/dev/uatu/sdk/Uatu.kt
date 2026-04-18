@@ -14,6 +14,7 @@ object Uatu {
 
     @Volatile private var runtime: UatuRuntime? = null
 
+    @JvmOverloads
     @Synchronized
     fun start(application: Application, configuration: Configuration = Configuration()) {
         if (runtime != null) return

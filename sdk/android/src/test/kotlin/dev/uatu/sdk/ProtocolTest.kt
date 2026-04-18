@@ -24,6 +24,7 @@ class ProtocolTest {
     @Test fun roundTripHello() {
         val got = roundTrip(Message.hello("0.0.1", "android", "in.okcredit.merchant"))
         assertEquals(MessageType.HELLO, got.type)
+        assertEquals(Protocol.PROTOCOL_VERSION, got.protocolVersion)
         assertEquals("0.0.1", got.version)
         assertEquals("android", got.platform)
         assertEquals("in.okcredit.merchant", got.appPackage)
@@ -140,6 +141,7 @@ class ProtocolTest {
         Protocol.write(output, Message.hello("0.0.1", "android", "com.x"))
         val payload = String(output.toByteArray().copyOfRange(4, output.size()), Charsets.UTF_8)
         assertTrue(payload.contains("\"type\":\"HELLO\""))
+        assertTrue(payload.contains("\"protocol_version\":1"))
         assertTrue(payload.contains("\"version\":\"0.0.1\""))
         assertTrue(payload.contains("\"platform\":\"android\""))
         assertTrue(payload.contains("\"app_package\":\"com.x\""))

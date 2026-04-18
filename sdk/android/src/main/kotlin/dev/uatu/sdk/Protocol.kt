@@ -26,6 +26,7 @@ enum class MessageType(val wire: String) {
 data class Message(
     val type: MessageType,
     val id: Long = 0L,
+    val protocolVersion: Int = 0,
     val version: String? = null,
     val platform: String? = null,
     val appPackage: String? = null,
@@ -37,7 +38,13 @@ data class Message(
 ) {
     companion object {
         fun hello(version: String, platform: String, appPackage: String): Message =
-            Message(MessageType.HELLO, version = version, platform = platform, appPackage = appPackage)
+            Message(
+                MessageType.HELLO,
+                protocolVersion = Protocol.PROTOCOL_VERSION,
+                version = version,
+                platform = platform,
+                appPackage = appPackage,
+            )
 
         fun pause(id: Long): Message = Message(MessageType.PAUSE, id = id)
 
@@ -55,6 +62,9 @@ data class Message(
 
 object Protocol {
     const val MAX_FRAME_SIZE: Int = 16 * 1024 * 1024
+
+    // Wire-format version. Must match agent.ProtocolVersion on the Go side.
+    const val PROTOCOL_VERSION: Int = 1
 
     @Throws(IOException::class)
     fun write(output: OutputStream, message: Message) {
@@ -85,6 +95,7 @@ object Protocol {
         val json = JSONObject()
         json.put("type", message.type.wire)
         if (message.id != 0L) json.put("id", message.id)
+        if (message.protocolVersion != 0) json.put("protocol_version", message.protocolVersion)
         message.version?.let { json.put("version", it) }
         message.platform?.let { json.put("platform", it) }
         message.appPackage?.let { json.put("app_package", it) }
@@ -108,6 +119,7 @@ object Protocol {
         return Message(
             type = MessageType.fromWire(typeString),
             id = json.optLong("id", 0L),
+            protocolVersion = json.optInt("protocol_version", 0),
             version = json.optStringOrNull("version"),
             platform = json.optStringOrNull("platform"),
             appPackage = json.optStringOrNull("app_package"),

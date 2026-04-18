@@ -28,6 +28,9 @@ func TestRoundTrip_Hello(t *testing.T) {
 	if got.Type != MessageTypeHello || got.Version != "0.0.1" || got.Platform != "android" || got.AppPackage != "in.okcredit.merchant" {
 		t.Fatalf("hello round-trip failed: %+v", got)
 	}
+	if got.ProtocolVersion != ProtocolVersion {
+		t.Errorf("protocol_version: got %d, want %d", got.ProtocolVersion, ProtocolVersion)
+	}
 }
 
 func TestRoundTrip_PauseResume(t *testing.T) {
