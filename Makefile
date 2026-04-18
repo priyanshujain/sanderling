@@ -11,6 +11,10 @@ SIDECAR_EMBED := internal/sidecar/assets/sidecar-all.jar
 SDK_AAR := sdk/android/build/outputs/aar/sdk-android-release.aar
 UATU_BIN := bin/uatu
 
+DOCS_SRC := $(shell find docs -type f -name '*.md' -not -path 'docs/_*')
+DOCS_OUT := $(patsubst docs/%.md,build/site/%.html,$(DOCS_SRC))
+DOCS_TEMPLATE := docs/_template/page.html
+
 .PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu test test-go test-kotlin test-spec-api docs clean release-cli release-android-local release-npm-dry
 
 bootstrap:
@@ -52,8 +56,20 @@ test-kotlin:
 test-spec-api:
 	cd pkg/spec-api && npm test --silent
 
-docs:
-	./scripts/build-docs.sh
+docs: $(DOCS_OUT) build/site/_assets
+	@echo "built $(words $(DOCS_OUT)) pages to build/site"
+
+build/site/_assets: docs/_assets
+	@mkdir -p build/site
+	@rm -rf $@
+	@cp -R $< $@
+
+build/site/%.html: docs/%.md $(DOCS_TEMPLATE)
+	@mkdir -p $(dir $@)
+	@pandoc $< --from=gfm --to=html5 --standalone \
+	  --highlight-style=tango --template=$(DOCS_TEMPLATE) -o $@
+	@rel=$$(echo $(patsubst build/site/%,%,$@) | awk -F/ '{for(i=1;i<NF;i++)printf "../"}'); \
+	  sed -i.bak "s|__ROOT__|$$rel|g" $@ && rm $@.bak
 
 clean:
 	$(GO) clean
