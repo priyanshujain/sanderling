@@ -28,6 +28,11 @@ const (
 )
 
 func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer) error {
+	if options.platform == "android" {
+		if err := ensureDevice(ctx, options.avd, stdout); err != nil {
+			return err
+		}
+	}
 	aliases := map[string]string{}
 	if specApiPath := resolveSpecAPIPath(options.spec); specApiPath != "" {
 		aliases["@uatu/spec"] = specApiPath
