@@ -249,6 +249,53 @@ func TestConn_CloseSendsGoodbye(t *testing.T) {
 	}
 }
 
+// TestConn_SnapshotAfterAcceptContextCancel guards against a race in
+// readWithDeadline where the watcher goroutine from Accept could clobber the
+// conn's read deadline with a past time after Accept returned, causing the
+// next read on the same conn (Snapshot) to time out instantly.
+func TestConn_SnapshotAfterAcceptContextCancel(t *testing.T) {
+	for iteration := range 50 {
+		server := newLoopbackServer(t)
+
+		clientDone := make(chan struct{})
+		go func() {
+			defer close(clientDone)
+			client, err := net.Dial("tcp", server.Addr().String())
+			if err != nil {
+				return
+			}
+			defer client.Close()
+			if err := WriteMessage(client, Hello("0.0.1", "android", "com.x")); err != nil {
+				return
+			}
+			msg, err := ReadMessage(client)
+			if err != nil {
+				return
+			}
+			_ = WriteMessage(client, State(msg.ID, map[string]json.RawMessage{"ok": json.RawMessage(`true`)}))
+		}()
+
+		acceptCtx, acceptCancel := context.WithTimeout(context.Background(), time.Second)
+		conn, err := server.Accept(acceptCtx)
+		acceptCancel()
+		if err != nil {
+			t.Fatalf("iteration %d: Accept: %v", iteration, err)
+		}
+
+		snapCtx, snapCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		state, err := conn.Snapshot(snapCtx)
+		snapCancel()
+		if err != nil {
+			t.Fatalf("iteration %d: Snapshot: %v", iteration, err)
+		}
+		if string(state.Snapshots["ok"]) != `true` {
+			t.Errorf("iteration %d: unexpected snapshots: %v", iteration, state.Snapshots)
+		}
+		conn.Close()
+		<-clientDone
+	}
+}
+
 func TestConn_SnapshotTimesOutIfSDKSilent(t *testing.T) {
 	server := newLoopbackServer(t)
 
