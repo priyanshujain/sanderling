@@ -1,51 +1,15 @@
 # uatu
 
-Testing framework and spec in ts/js used for blackbox testing and property based testing
+Autonomous property-based testing for mobile apps. Specs in TypeScript. Core in Go. Drives the app under test through Maestro and an in-app SDK.
 
+> Alpha. Android emulator only. Full scope in the [v0.1.0 roadmap](https://github.com/priyanshujain/uatu/issues/4).
 
-## Supported Platforms
-- android
-- ios
+## Docs
 
-## Install
+Everything is in the docs site: **[priyanshujain.github.io/uatu](https://priyanshujain.github.io/uatu/)**
 
-### CLI
+Or browse the sources in [`docs/`](./docs).
 
-Download the platform tarball from [GitHub Releases](https://github.com/priyanshujain/uatu/releases/latest):
-
-```sh
-# macOS arm64
-curl -L https://github.com/priyanshujain/uatu/releases/latest/download/uatu_<version>_darwin_arm64.tar.gz | tar xz
-# Linux amd64
-curl -L https://github.com/priyanshujain/uatu/releases/latest/download/uatu_<version>_linux_amd64.tar.gz | tar xz
-
-./uatu version
-```
-
-Pre-built for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`.
-
-### Spec API (npm)
-
-```sh
-npm install --save-dev @uatu/spec
-```
-
-```ts
-import { extract, always, actions } from "@uatu/spec";
-```
-
-### Android SDK (Maven Central)
-
-```kotlin
-// settings.gradle.kts
-dependencyResolutionManagement {
-    repositories {
-        mavenCentral()
-    }
-}
-
-// app/build.gradle.kts
-dependencies {
-    implementation("io.github.priyanshujain:sdk-android:<version>")
-}
-```
+- [Getting started](./docs/manual/getting-started.md)
+- [Writing specs](./docs/manual/writing-specs.md)
+- [Architecture](./docs/development/architecture.md)

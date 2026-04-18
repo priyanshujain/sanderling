@@ -60,7 +60,7 @@ mavenPublishing {
     pom {
         name.set("uatu sdk-android")
         description.set(
-            "Android runtime SDK for uatu — a property-based UI fuzzer for mobile apps. " +
+            "Android runtime SDK for uatu, a property-based UI fuzzer for mobile apps. " +
                 "Exposes a content-provider accessibility bridge consumed by the uatu CLI at test time.",
         )
         url.set("https://github.com/priyanshujain/uatu")

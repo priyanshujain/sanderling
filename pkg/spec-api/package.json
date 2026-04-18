@@ -1,7 +1,7 @@
 {
   "name": "@uatu/spec",
   "version": "0.0.0-dev",
-  "description": "TypeScript spec API for uatu — a property-based UI fuzzer for mobile apps.",
+  "description": "TypeScript spec API for uatu, a property-based UI fuzzer for mobile apps.",
   "type": "module",
   "types": "./dist/index.d.ts",
   "main": "./dist/index.js",

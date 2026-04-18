@@ -1,6 +1,6 @@
 # @uatu/spec
 
-TypeScript spec API for [uatu](https://github.com/priyanshujain/uatu) — a property-based UI fuzzer for mobile apps.
+TypeScript spec API for [uatu](https://github.com/priyanshujain/uatu), a property-based UI fuzzer for mobile apps.
 
 Spec authors write specs in TypeScript that describe what an app should *always* do (safety invariants), generate weighted actions to exercise the app, and extract structured state from the accessibility tree. The `uatu` CLI picks up the spec and drives the app under test.
 

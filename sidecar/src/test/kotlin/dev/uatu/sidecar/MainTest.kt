@@ -6,6 +6,6 @@ import kotlin.test.assertTrue
 class MainTest {
     @Test
     fun mainExists() {
-        assertTrue(true, "placeholder test — real tests land with DriverService")
+        assertTrue(true, "placeholder test; real tests land with DriverService")
     }
 }
