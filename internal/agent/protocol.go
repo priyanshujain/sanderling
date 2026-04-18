@@ -21,13 +21,18 @@ const (
 
 const MaxFrameSize = 16 * 1024 * 1024
 
+// ProtocolVersion is the wire-format version. Bump on any breaking change
+// to the message schema or framing. Independent of the SDK release version.
+const ProtocolVersion = 1
+
 type Message struct {
 	Type MessageType `json:"type"`
 	ID   uint64      `json:"id,omitempty"`
 
-	Version    string `json:"version,omitempty"`
-	Platform   string `json:"platform,omitempty"`
-	AppPackage string `json:"app_package,omitempty"`
+	ProtocolVersion int    `json:"protocol_version,omitempty"`
+	Version         string `json:"version,omitempty"`
+	Platform        string `json:"platform,omitempty"`
+	AppPackage      string `json:"app_package,omitempty"`
 
 	Snapshots map[string]json.RawMessage `json:"snapshots,omitempty"`
 
@@ -39,7 +44,13 @@ type Message struct {
 }
 
 func Hello(version, platform, appPackage string) Message {
-	return Message{Type: MessageTypeHello, Version: version, Platform: platform, AppPackage: appPackage}
+	return Message{
+		Type:            MessageTypeHello,
+		ProtocolVersion: ProtocolVersion,
+		Version:         version,
+		Platform:        platform,
+		AppPackage:      appPackage,
+	}
 }
 
 func Pause(id uint64) Message { return Message{Type: MessageTypePause, ID: id} }

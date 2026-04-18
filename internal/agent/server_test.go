@@ -141,6 +141,28 @@ func TestServer_SnapshotAndRelease(t *testing.T) {
 	wg.Wait()
 }
 
+func TestServer_AcceptRejectsProtocolVersionMismatch(t *testing.T) {
+	server := newLoopbackServer(t)
+
+	go func() {
+		client, err := net.Dial("tcp", server.Addr().String())
+		if err != nil {
+			return
+		}
+		defer client.Close()
+		mismatched := Hello("0.0.1", "android", "com.x")
+		mismatched.ProtocolVersion = ProtocolVersion + 99
+		_ = WriteMessage(client, mismatched)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := server.Accept(ctx)
+	if err == nil || !strings.Contains(err.Error(), "protocol version mismatch") {
+		t.Fatalf("expected protocol-version-mismatch error, got %v", err)
+	}
+}
+
 func TestServer_AcceptRequiresHello(t *testing.T) {
 	server := newLoopbackServer(t)
 
