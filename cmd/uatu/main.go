@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// Version is stamped at build time via goreleaser ldflags.
+// Default "dev" marks untagged local builds.
+var Version = "dev"
+
 type testOptions struct {
 	spec             string
 	bundleID         string
@@ -29,6 +33,7 @@ Usage:
 Commands:
   test     Run a spec against an app for a fixed duration.
   doctor   Check that the host environment is ready to run uatu.
+  version  Print the uatu version.
 
 Run "uatu <command> -h" for command-specific flags.
 `
@@ -87,6 +92,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runTest(options, stdout)
 	case "doctor":
 		return runDoctor(stdout)
+	case "version", "-v", "--version":
+		fmt.Fprintln(stdout, Version)
+		return nil
 	default:
 		return fmt.Errorf("unknown command: %q (try 'uatu help')", args[1])
 	}
