@@ -53,7 +53,8 @@ dependencies {
 The repo ships a working sample at `examples/sample-app`. From that directory:
 
 ```sh
-./gradlew :sample-app:installDebug
+npm install
+(cd android && ./gradlew installDebug)
 uatu test \
   --spec spec.ts \
   --bundle-id dev.uatu.sample \
