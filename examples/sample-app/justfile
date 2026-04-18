@@ -1,4 +1,5 @@
 set shell := ["bash", "-cu"]
+set dotenv-load := true
 
 uatu     := env_var_or_default("UATU", "uatu")
 avd      := env_var_or_default("AVD", "")

@@ -6,8 +6,9 @@ Use it as a reference for integrating uatu into your own app.
 ## Prerequisites
 
 - `uatu` CLI on `PATH` (see [getting started](https://priyanshujain.github.io/uatu/manual/getting-started.html))
-- Android SDK with `adb` and `emulator` on `PATH`
-- An emulator/device (API 24+) running, or an AVD name to boot one
+- Android SDK installed (uatu auto-discovers `adb` and `emulator` under
+  `$ANDROID_HOME`, `~/Library/Android/sdk`, or the Homebrew cask; nothing to
+  export if you use a standard install)
 - `just` task runner
 
 ## Install the app
@@ -18,16 +19,22 @@ just install
 
 ## Run a test
 
-With a device already connected:
-
 ```sh
 just test
 ```
 
-Or have uatu boot an AVD for you:
+If no device is connected, uatu boots the single AVD it finds. With multiple
+AVDs, pick one:
 
 ```sh
 just AVD=Pixel_7 test
+```
+
+Persistent settings can live in `.env` alongside the justfile:
+
+```
+AVD=Pixel_7
+DURATION=5m
 ```
 
 Traces land in `./runs/<timestamp>/`.
