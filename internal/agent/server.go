@@ -92,11 +92,11 @@ func (c *Conn) Close() error {
 func readWithDeadline(ctx context.Context, conn net.Conn) (Message, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetReadDeadline(deadline)
-		defer conn.SetReadDeadline(time.Time{})
 	}
 	done := make(chan struct{})
-	defer close(done)
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		select {
 		case <-ctx.Done():
 			_ = conn.SetReadDeadline(time.Unix(1, 0))
@@ -104,6 +104,9 @@ func readWithDeadline(ctx context.Context, conn net.Conn) (Message, error) {
 		}
 	}()
 	message, err := ReadMessage(conn)
+	close(done)
+	<-exited
+	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil && ctx.Err() != nil {
 		return Message{}, ctx.Err()
 	}
