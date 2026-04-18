@@ -2,7 +2,7 @@ import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
 import com.vanniktech.maven.publish.SonatypeHost
 
 plugins {
-    id("com.android.library") version "8.11.0"
+    id("com.android.library") version "8.13.0"
     kotlin("android") version "2.1.21"
     id("com.vanniktech.maven.publish") version "0.30.0"
 }
