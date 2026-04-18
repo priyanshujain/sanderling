@@ -11,7 +11,7 @@ SIDECAR_EMBED := internal/sidecar/assets/sidecar-all.jar
 SDK_AAR := sdk/android/build/outputs/aar/sdk-android-release.aar
 UATU_BIN := bin/uatu
 
-.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu test test-go test-kotlin test-spec-api clean release-cli release-android-local release-npm-dry
+.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu test test-go test-kotlin test-spec-api docs clean release-cli release-android-local release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -52,9 +52,12 @@ test-kotlin:
 test-spec-api:
 	cd pkg/spec-api && npm test --silent
 
+docs:
+	./scripts/build-docs.sh
+
 clean:
 	$(GO) clean
-	rm -rf bin dist pkg/spec-api/dist
+	rm -rf bin dist pkg/spec-api/dist build/site
 	$(GRADLE) clean
 
 # Local release dry-runs. None of these touch remote registries.
