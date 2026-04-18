@@ -1,8 +1,14 @@
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+import com.vanniktech.maven.publish.SonatypeHost
+
 plugins {
     id("com.android.library") version "8.11.0"
     kotlin("android") version "2.1.21"
-    `maven-publish`
+    id("com.vanniktech.maven.publish") version "0.30.0"
 }
+
+version = findProperty("uatu.version") as String? ?: "0.0.0-dev"
+group = "io.github.priyanshujain"
 
 android {
     namespace = "dev.uatu.sdk"
@@ -25,33 +31,54 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
-
-    publishing {
-        singleVariant("release") {
-            withSourcesJar()
-        }
-    }
 }
 
-publishing {
-    publications {
-        register<MavenPublication>("release") {
-            groupId = "dev.uatu"
-            artifactId = "sdk-android"
-            version = "0.0.1"
-            afterEvaluate {
-                from(components["release"])
+mavenPublishing {
+    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
+    signAllPublications()
+
+    configure(
+        AndroidSingleVariantLibrary(
+            variant = "release",
+            sourcesJar = true,
+            publishJavadocJar = true,
+        ),
+    )
+
+    coordinates(
+        groupId = "io.github.priyanshujain",
+        artifactId = "sdk-android",
+        version = version.toString(),
+    )
+
+    pom {
+        name.set("uatu sdk-android")
+        description.set(
+            "Android runtime SDK for uatu — a property-based UI fuzzer for mobile apps. " +
+                "Exposes a content-provider accessibility bridge consumed by the uatu CLI at test time.",
+        )
+        url.set("https://github.com/priyanshujain/uatu")
+
+        licenses {
+            license {
+                name.set("Apache License, Version 2.0")
+                url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                distribution.set("repo")
             }
         }
-    }
-    repositories {
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/priyanshujain/uatu")
-            credentials {
-                username = System.getenv("GH_USERNAME") ?: System.getenv("GITHUB_ACTOR") ?: "priyanshujain"
-                password = System.getenv("GH_TOKEN") ?: System.getenv("GITHUB_TOKEN") ?: ""
+
+        developers {
+            developer {
+                id.set("priyanshujain")
+                name.set("Priyanshu Jain")
+                url.set("https://github.com/priyanshujain")
             }
+        }
+
+        scm {
+            url.set("https://github.com/priyanshujain/uatu")
+            connection.set("scm:git:git://github.com/priyanshujain/uatu.git")
+            developerConnection.set("scm:git:ssh://git@github.com/priyanshujain/uatu.git")
         }
     }
 }
