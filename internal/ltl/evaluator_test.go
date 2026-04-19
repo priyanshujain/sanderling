@@ -3,6 +3,7 @@ package ltl
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func observe(formula Formula, count int) []Verdict {
@@ -119,5 +120,5 @@ func TestObserve_PanicsOnUnknownFormulaType(t *testing.T) {
 			t.Errorf("expected panic on unsupported formula type")
 		}
 	}()
-	holdsAtCurrentStep(unsupportedFormula{})
+	reduce(unsupportedFormula{}, time.Now())
 }
