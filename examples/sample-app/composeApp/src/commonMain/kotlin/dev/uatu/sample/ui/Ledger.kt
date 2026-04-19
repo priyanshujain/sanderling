@@ -18,6 +18,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.uatu.sample.Navigator
@@ -34,6 +36,8 @@ fun LedgerPage(accountId: String) {
     val t = LocalTokens.current
     val accounts by Repository.accounts.collectAsState()
     val allTxns by Repository.transactions.collectAsState()
+
+    BackHandler { Navigator.back(Route.Home) }
 
     val account = accounts.firstOrNull { it.id == accountId }
     if (account == null) {
@@ -113,8 +117,13 @@ fun LedgerPage(accountId: String) {
 private fun TxnRow(type: TxnType, amount: Long, note: String, date: String) {
     val t = LocalTokens.current
     val signed = if (type == TxnType.credit) amount else -amount
+    val label = "${if (type == TxnType.credit) "Credit" else "Debit"} ${formatCents(signed, signed = true)}" +
+        (if (note.isNotEmpty()) ", $note" else "") + ", $date"
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 14.dp)
+            .semantics(mergeDescendants = true) { contentDescription = label },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

@@ -25,6 +25,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -54,7 +59,7 @@ fun AppButton(
             .clip(RoundedCornerShape(RadiusMd))
             .background(if (enabled) bg else t.surface3)
             .border(BorderStroke(1.dp, if (enabled) border else t.border), RoundedCornerShape(RadiusMd))
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(vertical = 14.dp, horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -78,6 +83,7 @@ fun TextInput(
     keyboardType: KeyboardType = KeyboardType.Text,
     textAlign: TextAlign = TextAlign.Start,
     textStyle: TextStyle = Type.body,
+    label: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val t = LocalTokens.current
@@ -110,7 +116,11 @@ fun TextInput(
             cursorBrush = SolidColor(t.text),
             modifier = Modifier
                 .fillMaxWidth()
-                .onFocusChanged { focused = it.isFocused },
+                .onFocusChanged { focused = it.isFocused }
+                .semantics {
+                    if (label != null) contentDescription = label
+                    if (invalid) stateDescription = "Invalid"
+                },
         )
     }
 }
@@ -163,7 +173,8 @@ fun Segmented(selected: Int, labels: List<String>, onSelect: (Int) -> Unit) {
                     .weight(1f)
                     .clip(RoundedCornerShape(RadiusSm))
                     .background(if (active) t.surface3 else t.surface)
-                    .clickable { onSelect(i) }
+                    .semantics { this.selected = active }
+                    .clickable(role = Role.Tab) { onSelect(i) }
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {

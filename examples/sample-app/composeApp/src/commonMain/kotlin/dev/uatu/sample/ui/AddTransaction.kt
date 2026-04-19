@@ -27,6 +27,8 @@ fun AddTransactionPage(accountId: String) {
     val accounts by Repository.accounts.collectAsState()
     val account = accounts.firstOrNull { it.id == accountId }
 
+    BackHandler { Navigator.back(Route.Ledger(accountId)) }
+
     if (account == null) {
         Screen(
             header = {
@@ -104,6 +106,7 @@ fun AddTransactionPage(accountId: String) {
                     keyboardType = KeyboardType.Decimal,
                     textAlign = TextAlign.Center,
                     textStyle = Type.amountInput,
+                    label = "Amount",
                 )
             }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -112,6 +115,7 @@ fun AddTransactionPage(accountId: String) {
                     value = note,
                     onChange = { note = it.take(80) },
                     placeholder = "What's this for?",
+                    label = "Note",
                 )
             }
             ErrorText(err)

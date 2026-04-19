@@ -17,6 +17,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
@@ -98,13 +101,15 @@ private fun AccountCard(
     onClick: () -> Unit,
 ) {
     val t = LocalTokens.current
+    val a11y = "$name account, balance ${formatCents(balance)}, $count transactions"
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(RadiusLg))
             .background(t.surface)
             .border(1.dp, t.border, RoundedCornerShape(RadiusLg))
-            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = a11y }
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),

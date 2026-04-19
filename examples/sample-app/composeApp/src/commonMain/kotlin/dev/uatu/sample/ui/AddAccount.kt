@@ -22,6 +22,8 @@ fun AddAccountPage() {
     var name by remember { mutableStateOf("") }
     var err by remember { mutableStateOf<String?>(null) }
 
+    BackHandler { Navigator.back(Route.Home) }
+
     fun submit() {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) {
@@ -62,6 +64,7 @@ fun AddAccountPage() {
                     onChange = { name = it; err = null },
                     placeholder = "e.g. Checking",
                     invalid = err != null,
+                    label = "Account name",
                 )
             }
             ErrorText(err)

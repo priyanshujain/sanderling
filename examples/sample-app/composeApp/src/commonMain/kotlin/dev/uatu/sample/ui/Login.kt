@@ -53,6 +53,7 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
                     placeholder = DEMO_EMAIL,
                     invalid = err != null,
                     keyboardType = KeyboardType.Email,
+                    label = "Email",
                 )
             }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -64,6 +65,7 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
                     password = true,
                     invalid = err != null,
                     keyboardType = KeyboardType.Password,
+                    label = "Password",
                 )
             }
             ErrorText(err)
