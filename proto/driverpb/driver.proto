@@ -13,9 +13,12 @@ service Driver {
   rpc Tap(Point) returns (Empty);
   rpc TapSelector(Selector) returns (Empty);
   rpc InputText(Text) returns (Empty);
+  rpc Swipe(SwipeRequest) returns (Empty);
+  rpc PressKey(PressKeyRequest) returns (Empty);
 
   rpc Screenshot(Empty) returns (Image);
   rpc Hierarchy(Empty) returns (HierarchyJSON);
+  rpc RecentLogs(RecentLogsRequest) returns (LogEntries);
 
   rpc WaitForIdle(Duration) returns (Empty);
   rpc Health(Empty) returns (HealthStatus);
@@ -63,4 +66,35 @@ message HealthStatus {
   bool ready = 1;
   string version = 2;
   string platform = 3;
+}
+
+message SwipeRequest {
+  Point from = 1;
+  Point to = 2;
+  int64 duration_millis = 3;
+}
+
+message PressKeyRequest {
+  // Logical key name. Supported: "back", "home", "enter", "tab", "up",
+  // "down", "left", "right".
+  string key = 1;
+}
+
+message RecentLogsRequest {
+  // Lower bound as unix-epoch milliseconds; entries at or after this are
+  // returned.
+  int64 since_unix_millis = 1;
+  // Minimum level: "E", "W", or "I". Empty defaults to "E".
+  string level_at_least = 2;
+}
+
+message LogEntries {
+  repeated LogEntry entries = 1;
+}
+
+message LogEntry {
+  int64 unix_millis = 1;
+  string level = 2;
+  string tag = 3;
+  string message = 4;
 }
