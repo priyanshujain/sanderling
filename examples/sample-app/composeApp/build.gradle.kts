@@ -32,6 +32,7 @@ kotlin {
         target.binaries.framework {
             baseName = "ComposeApp"
             isStatic = true
+            binaryOption("bundleId", "dev.uatu.sample")
         }
     }
 

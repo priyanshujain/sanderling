@@ -26,7 +26,7 @@ object Repository {
     private val _session = MutableStateFlow<Session?>(null)
     val session: StateFlow<Session?> = _session.asStateFlow()
 
-    @Volatile private var loaded = false
+    private var loaded = false
 
     fun load() {
         if (loaded) return

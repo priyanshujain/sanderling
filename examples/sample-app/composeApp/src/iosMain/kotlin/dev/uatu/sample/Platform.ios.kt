@@ -29,11 +29,13 @@ actual object Platform {
     actual fun readFile(name: String): String? {
         val path = "$dir/$name"
         if (!NSFileManager.defaultManager.fileExistsAtPath(path)) return null
-        return NSString.stringWithContentsOfFile(
+        @Suppress("CAST_NEVER_SUCCEEDS")
+        return (NSString.stringWithContentsOfFile(
             path, encoding = NSUTF8StringEncoding, error = null,
-        ) as String?
+        ) as String?)
     }
 
+    @Suppress("CAST_NEVER_SUCCEEDS")
     actual fun writeFile(name: String, content: String) {
         val path = "$dir/$name"
         (content as NSString).writeToFile(
