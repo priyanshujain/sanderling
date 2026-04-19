@@ -27,7 +27,7 @@ private val backGestureTarget = BackGestureTarget()
 
 @OptIn(ExperimentalForeignApi::class)
 fun MainViewController(): UIViewController {
-    Repository.init(DriverFactory())
+    Repository.init()
     val vc = ComposeUIViewController { App() }
     val gesture = UIScreenEdgePanGestureRecognizer(
         target = backGestureTarget,

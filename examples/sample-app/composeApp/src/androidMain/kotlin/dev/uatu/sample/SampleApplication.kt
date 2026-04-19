@@ -6,7 +6,8 @@ import dev.uatu.sdk.Uatu
 class SampleApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        Repository.init(DriverFactory(this))
+        AndroidLedgerContext.context = applicationContext
+        Repository.init()
         Uatu.start(this)
         Uatu.extract("logged_in") { Repository.session.value != null }
         Uatu.extract("account_count") { Repository.accounts.value.size }
