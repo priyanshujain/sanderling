@@ -60,10 +60,10 @@ func TestPushSnapshot_UpdatesExtractorCurrentAndPrevious(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, helloSpec)
 
-	if err := verifier.PushSnapshot(Snapshots{
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{
 		"screen":         json.RawMessage(`"customer_ledger"`),
 		"ledger.balance": json.RawMessage(`1500`),
-	}, nil); err != nil {
+	}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,7 +78,7 @@ func TestPushSnapshot_UpdatesExtractorCurrentAndPrevious(t *testing.T) {
 	}
 
 	// Push again: previous should mirror the prior current.
-	if err := verifier.PushSnapshot(Snapshots{"ledger.balance": json.RawMessage(`2000`)}, nil); err != nil {
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": json.RawMessage(`2000`)}}); err != nil {
 		t.Fatal(err)
 	}
 	balanceValue = verifier.runtime.GlobalObject().Get("balance").ToObject(verifier.runtime)
@@ -105,7 +105,7 @@ func TestEvaluateProperties_HoldsThenViolates(t *testing.T) {
 	}
 	for index, testCase := range cases {
 		raw, _ := json.Marshal(testCase.balance)
-		if err := verifier.PushSnapshot(Snapshots{"ledger.balance": raw}, nil); err != nil {
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": raw}}); err != nil {
 			t.Fatal(err)
 		}
 		verdicts := verifier.EvaluateProperties()
@@ -118,7 +118,7 @@ func TestEvaluateProperties_HoldsThenViolates(t *testing.T) {
 func TestNextAction_FromActionsGenerator(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, helloSpec)
-	_ = verifier.PushSnapshot(Snapshots{}, nil)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
 
 	action, err := verifier.NextAction()
 	if err != nil {
@@ -142,7 +142,7 @@ func TestNextAction_WeightedSelectsByWeight(t *testing.T) {
 			[99, tapAway],
 		);
 	`)
-	_ = verifier.PushSnapshot(Snapshots{}, nil)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
 
 	awayCount := 0
 	homeCount := 0
@@ -168,7 +168,7 @@ func TestNextAction_EmptyGeneratorReturnsErrNoAction(t *testing.T) {
 	mustLoad(t, verifier, `
 		globalThis.actions = __uatu__.actions(() => []);
 	`)
-	_ = verifier.PushSnapshot(Snapshots{}, nil)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
 
 	_, err := verifier.NextAction()
 	if !errors.Is(err, ErrNoAction) {
@@ -183,7 +183,7 @@ func TestInputText_RoundTrip(t *testing.T) {
 			__uatu__.inputText({ into: "id:phone", text: "+919876543210" }),
 		]);
 	`)
-	_ = verifier.PushSnapshot(Snapshots{}, nil)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
 
 	action, err := verifier.NextAction()
 	if err != nil {
@@ -202,7 +202,7 @@ func TestPushSnapshot_FeedsSnapshotsToExtractorState(t *testing.T) {
 	mustLoad(t, verifier, `
 		globalThis.captured = __uatu__.extract(state => state.snapshots["k"]);
 	`)
-	if err := verifier.PushSnapshot(Snapshots{"k": json.RawMessage(`"hello"`)}, nil); err != nil {
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"k": json.RawMessage(`"hello"`)}}); err != nil {
 		t.Fatal(err)
 	}
 	value := verifier.runtime.GlobalObject().Get("captured").ToObject(verifier.runtime).Get("current")

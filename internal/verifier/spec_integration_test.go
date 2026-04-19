@@ -60,7 +60,7 @@ func TestSampleAppSpecTapsClickMe(t *testing.T) {
 		"app_state":   json.RawMessage(`"running"`),
 		"click_count": json.RawMessage(`0`),
 	}
-	if err := v.PushSnapshot(snapshots, tree); err != nil {
+	if err := v.PushSnapshot(SnapshotInput{Snapshots: snapshots, Tree: tree}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,11 +124,11 @@ func TestSampleAppSpecPropertiesHold(t *testing.T) {
 		stateRaw, _ := json.Marshal(step.appState)
 		countRaw, _ := json.Marshal(step.clickCount)
 		usernameRaw, _ := json.Marshal(step.username)
-		if err := v.PushSnapshot(Snapshots{
+		if err := v.PushSnapshot(SnapshotInput{Snapshots: Snapshots{
 			"app_state":   stateRaw,
 			"click_count": countRaw,
 			"username":    usernameRaw,
-		}, nil); err != nil {
+		}}); err != nil {
 			t.Fatalf("step %d: %v", index, err)
 		}
 		got := v.EvaluateProperties()

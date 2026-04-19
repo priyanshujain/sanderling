@@ -77,6 +77,45 @@ func (c *Client) InputText(ctx context.Context, text string) error {
 	return err
 }
 
+func (c *Client) Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error {
+	_, err := c.stub.Swipe(ctx, &driverpb.SwipeRequest{
+		From:           &driverpb.Point{X: int32(fromX), Y: int32(fromY)},
+		To:             &driverpb.Point{X: int32(toX), Y: int32(toY)},
+		DurationMillis: duration.Milliseconds(),
+	})
+	return err
+}
+
+func (c *Client) PressKey(ctx context.Context, key string) error {
+	_, err := c.stub.PressKey(ctx, &driverpb.PressKeyRequest{Key: key})
+	return err
+}
+
+func (c *Client) RecentLogs(ctx context.Context, since time.Time, minLevel string) ([]driver.LogEntry, error) {
+	sinceMillis := int64(0)
+	if !since.IsZero() {
+		sinceMillis = since.UnixMilli()
+	}
+	response, err := c.stub.RecentLogs(ctx, &driverpb.RecentLogsRequest{
+		SinceUnixMillis: sinceMillis,
+		LevelAtLeast:    minLevel,
+	})
+	if err != nil {
+		return nil, err
+	}
+	entries := response.GetEntries()
+	result := make([]driver.LogEntry, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, driver.LogEntry{
+			UnixMillis: entry.GetUnixMillis(),
+			Level:      entry.GetLevel(),
+			Tag:        entry.GetTag(),
+			Message:    entry.GetMessage(),
+		})
+	}
+	return result, nil
+}
+
 func (c *Client) Hierarchy(ctx context.Context) (string, error) {
 	response, err := c.stub.Hierarchy(ctx, &driverpb.Empty{})
 	if err != nil {

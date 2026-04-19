@@ -34,13 +34,22 @@ type Message struct {
 	Platform        string `json:"platform,omitempty"`
 	AppPackage      string `json:"app_package,omitempty"`
 
-	Snapshots map[string]json.RawMessage `json:"snapshots,omitempty"`
+	Snapshots  map[string]json.RawMessage `json:"snapshots,omitempty"`
+	Exceptions []Exception                `json:"exceptions,omitempty"`
 
 	Extractor string          `json:"extractor,omitempty"`
 	Result    json.RawMessage `json:"result,omitempty"`
 	Error     string          `json:"error,omitempty"`
 
 	Reason string `json:"reason,omitempty"`
+}
+
+// Exception mirrors an uncaught throwable captured by the SDK.
+type Exception struct {
+	Class      string `json:"class"`
+	Message    string `json:"message,omitempty"`
+	StackTrace string `json:"stack_trace,omitempty"`
+	UnixMillis int64  `json:"unix_millis,omitempty"`
 }
 
 func Hello(version, platform, appPackage string) Message {

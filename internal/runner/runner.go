@@ -56,6 +56,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
 	stepIndex := 0
+	var lastAction *verifier.Action
+	var lastLogTime time.Time
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			break
@@ -82,7 +84,20 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			return summary, fmt.Errorf("step %d snapshot: %w", stepIndex, err)
 		}
 
-		if err := options.Verifier.PushSnapshot(verifier.Snapshots(snapshot.Snapshots), tree); err != nil {
+		logs := collectLogs(ctx, options.Driver, lastLogTime)
+		lastLogTime = stepStart
+
+		exceptions := decodeExceptions(snapshot)
+
+		if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
+			Snapshots:  verifier.Snapshots(snapshot.Snapshots),
+			Tree:       tree,
+			LastAction: lastAction,
+			StepTime:   stepStart,
+			RunStart:   summary.StartTime,
+			Logs:       logs,
+			Exceptions: exceptions,
+		}); err != nil {
 			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 		}
 		screen, screenErr := screenFromSnapshot(snapshot.Snapshots)
@@ -129,6 +144,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
 				return summary, fmt.Errorf("step %d apply: %w", stepIndex, err)
 			}
+			actionCopy := nextAction
+			lastAction = &actionCopy
+		} else {
+			lastAction = nil
 		}
 
 		idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
@@ -222,9 +241,69 @@ func applyAction(ctx context.Context, drv driver.Driver, action verifier.Action,
 			}
 		}
 		return drv.InputText(ctx, action.Text)
+	case verifier.ActionKindSwipe:
+		duration := time.Duration(action.DurationMillis) * time.Millisecond
+		if duration <= 0 {
+			duration = 250 * time.Millisecond
+		}
+		return drv.Swipe(ctx, action.FromX, action.FromY, action.ToX, action.ToY, duration)
+	case verifier.ActionKindPressKey:
+		if action.Key == "" {
+			return nil
+		}
+		return drv.PressKey(ctx, action.Key)
+	case verifier.ActionKindWait:
+		duration := time.Duration(action.DurationMillis) * time.Millisecond
+		if duration <= 0 {
+			return nil
+		}
+		timer := time.NewTimer(duration)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
 	default:
 		return fmt.Errorf("unknown action kind %q", action.Kind)
 	}
+}
+
+// collectLogs pulls recent error-level log entries from the driver since the
+// previous fetch. A failure is warned-on but not fatal: log capture is a
+// best-effort observability channel, not a correctness dependency.
+func collectLogs(ctx context.Context, drv driver.Driver, since time.Time) []verifier.LogEntry {
+	entries, err := drv.RecentLogs(ctx, since, "E")
+	if err != nil {
+		return nil
+	}
+	result := make([]verifier.LogEntry, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, verifier.LogEntry{
+			UnixMillis: entry.UnixMillis,
+			Level:      entry.Level,
+			Tag:        entry.Tag,
+			Message:    entry.Message,
+		})
+	}
+	return result
+}
+
+func decodeExceptions(snapshot agent.Message) []verifier.Exception {
+	if len(snapshot.Exceptions) == 0 {
+		return nil
+	}
+	result := make([]verifier.Exception, 0, len(snapshot.Exceptions))
+	for _, e := range snapshot.Exceptions {
+		result = append(result, verifier.Exception{
+			Class:      e.Class,
+			Message:    e.Message,
+			StackTrace: e.StackTrace,
+			UnixMillis: e.UnixMillis,
+		})
+	}
+	return result
 }
 
 func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int, bool) {

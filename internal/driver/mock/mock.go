@@ -16,8 +16,11 @@ const (
 	ActionTap         ActionKind = "tap"
 	ActionTapSelector ActionKind = "tap_selector"
 	ActionInputText   ActionKind = "input_text"
+	ActionSwipe       ActionKind = "swipe"
+	ActionPressKey    ActionKind = "press_key"
 	ActionHierarchy   ActionKind = "hierarchy"
 	ActionScreenshot  ActionKind = "screenshot"
+	ActionRecentLogs  ActionKind = "recent_logs"
 	ActionWaitForIdle ActionKind = "wait_for_idle"
 	ActionHealth      ActionKind = "health"
 )
@@ -28,8 +31,14 @@ type Action struct {
 	LauncherActivity string
 	ClearState       bool
 	X, Y             int
+	FromX, FromY     int
+	ToX, ToY         int
+	Duration         time.Duration
 	Selector         string
 	Text             string
+	Key              string
+	LogLevel         string
+	LogSince         time.Time
 	Idle             time.Duration
 }
 
@@ -43,6 +52,7 @@ type Driver struct {
 	HierarchyJSON string
 	ImageData     driver.Image
 	HealthInfo    driver.Health
+	LogEntries    []driver.LogEntry
 	Failures      map[ActionKind]error
 }
 
@@ -115,6 +125,39 @@ func (d *Driver) InputText(ctx context.Context, text string) error {
 	}
 	d.record(Action{Kind: ActionInputText, Text: text})
 	return nil
+}
+
+func (d *Driver) Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error {
+	if err := d.failure(ActionSwipe); err != nil {
+		return err
+	}
+	d.record(Action{
+		Kind:     ActionSwipe,
+		FromX:    fromX,
+		FromY:    fromY,
+		ToX:      toX,
+		ToY:      toY,
+		Duration: duration,
+	})
+	return nil
+}
+
+func (d *Driver) PressKey(ctx context.Context, key string) error {
+	if err := d.failure(ActionPressKey); err != nil {
+		return err
+	}
+	d.record(Action{Kind: ActionPressKey, Key: key})
+	return nil
+}
+
+func (d *Driver) RecentLogs(ctx context.Context, since time.Time, minLevel string) ([]driver.LogEntry, error) {
+	if err := d.failure(ActionRecentLogs); err != nil {
+		return nil, err
+	}
+	d.record(Action{Kind: ActionRecentLogs, LogSince: since, LogLevel: minLevel})
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	return append([]driver.LogEntry(nil), d.LogEntries...), nil
 }
 
 func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
