@@ -19,7 +19,6 @@ import dev.uatu.sample.ui.LedgerPage
 import dev.uatu.sample.ui.LedgerTheme
 import dev.uatu.sample.ui.LocalTokens
 import dev.uatu.sample.ui.LoginPage
-import dev.uatu.sample.ui.StatusBar
 import dev.uatu.sample.ui.Tokens
 
 @Composable
@@ -46,7 +45,6 @@ fun App() {
                     .windowInsetsPadding(WindowInsets.safeDrawing),
             ) {
                 Column(Modifier.fillMaxSize()) {
-                    StatusBar()
                     when (val r = route) {
                         Route.Login -> LoginPage(onLoggedIn = { Navigator.replace(Route.Home) })
                         Route.Home -> HomePage(

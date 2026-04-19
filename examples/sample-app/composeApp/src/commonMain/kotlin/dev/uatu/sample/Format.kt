@@ -69,5 +69,3 @@ fun initialsOf(name: String): String {
 }
 
 expect fun formatDate(epochMillis: Long): String
-
-expect fun formatClock(epochMillis: Long): String

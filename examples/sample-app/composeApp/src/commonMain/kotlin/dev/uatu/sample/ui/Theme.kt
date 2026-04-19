@@ -39,7 +39,6 @@ object Type {
     val amountInput = TextStyle(fontFamily = Mono, fontSize = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp)
     val button = TextStyle(fontFamily = Mono, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
     val brand = TextStyle(fontFamily = Mono, fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp)
-    val status = TextStyle(fontFamily = Mono, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
 }
 
 @Composable

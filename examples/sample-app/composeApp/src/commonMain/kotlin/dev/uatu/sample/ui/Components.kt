@@ -20,11 +20,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,36 +30,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.uatu.sample.Platform
-import dev.uatu.sample.formatClock
-import kotlinx.coroutines.delay
-
-@Composable
-fun StatusBar() {
-    val t = LocalTokens.current
-    var now by remember { mutableLongStateOf(Platform.now()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(30_000)
-            now = Platform.now()
-        }
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(28.dp)
-            .padding(start = 22.dp, end = 22.dp, top = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(formatClock(now), style = Type.status, color = t.text)
-        Spacer(Modifier.weight(1f))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            repeat(3) {
-                Box(Modifier.size(4.dp).background(t.text, CircleShape))
-            }
-        }
-    }
-}
 
 @Composable
 fun Screen(
