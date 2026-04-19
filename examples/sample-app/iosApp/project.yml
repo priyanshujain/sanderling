@@ -21,6 +21,7 @@ targets:
     dependencies:
       - framework: ../composeApp/build/bin/iosSimulatorArm64/debugFramework/ComposeApp.framework
         embed: false
+      - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.uatu.sample
