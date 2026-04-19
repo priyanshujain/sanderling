@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -23,7 +24,6 @@ import dev.uatu.sample.ui.Tokens
 
 @Composable
 fun App() {
-    LaunchedEffect(Unit) { Repository.load() }
     val session by Repository.session.collectAsState()
     val route by Navigator.current.collectAsState()
 
@@ -37,7 +37,7 @@ fun App() {
 
     LedgerTheme {
         val t = Tokens()
-        androidx.compose.runtime.CompositionLocalProvider(LocalTokens provides t) {
+        CompositionLocalProvider(LocalTokens provides t) {
             Box(
                 Modifier
                     .fillMaxSize()

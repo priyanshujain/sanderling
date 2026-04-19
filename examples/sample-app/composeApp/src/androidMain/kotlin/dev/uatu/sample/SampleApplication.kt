@@ -1,20 +1,18 @@
 package dev.uatu.sample
 
 import android.app.Application
-import dev.uatu.sample.balanceOf
 import dev.uatu.sdk.Uatu
 
 class SampleApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        Platform.init(this)
-        Repository.load()
+        Repository.init(DriverFactory(this))
         Uatu.start(this)
         Uatu.extract("logged_in") { Repository.session.value != null }
         Uatu.extract("account_count") { Repository.accounts.value.size }
         Uatu.extract("total_balance") { balanceOf(Repository.transactions.value) }
         Uatu.extract("route") {
-            when (val r = Navigator.current.value) {
+            when (Navigator.current.value) {
                 Route.Login -> "login"
                 Route.Home -> "home"
                 Route.AddAccount -> "add-account"
