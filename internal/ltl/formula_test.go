@@ -145,6 +145,22 @@ func TestEventually_DeadlineViolation(t *testing.T) {
 	}
 }
 
+func TestEventually_RelativeDurationResolvesOnFirstReduce(t *testing.T) {
+	base := time.Unix(0, 0)
+	// One-shot Eventually (not wrapped in Always) with a 1s relative deadline.
+	evaluator := NewEvaluator(EventuallyWithin(Pure(false), 1*time.Second))
+
+	if got := evaluator.ObserveAt(base); got != VerdictPending {
+		t.Errorf("creation step: got %v, want pending", got)
+	}
+	if got := evaluator.ObserveAt(base.Add(500 * time.Millisecond)); got != VerdictPending {
+		t.Errorf("mid-window: got %v, want pending", got)
+	}
+	if got := evaluator.ObserveAt(base.Add(2 * time.Second)); got != VerdictViolated {
+		t.Errorf("past-window: got %v, want violated", got)
+	}
+}
+
 func TestOr_OneBranchHolds(t *testing.T) {
 	evaluator := NewEvaluator(Always(Or(Pure(false), Pure(true))))
 	if got := evaluator.Observe(); got != VerdictHolds {

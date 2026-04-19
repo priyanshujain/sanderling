@@ -130,6 +130,13 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		return pending(concrete.Inner)
 
 	case EventuallyFormula:
+		// First-reduction deadline resolution: if the formula was built with
+		// a relative duration, fix the absolute deadline to (now + duration)
+		// so subsequent reductions compare against a stable value.
+		if !concrete.HasDeadline && concrete.Duration > 0 {
+			concrete.Deadline = now.Add(concrete.Duration)
+			concrete.HasDeadline = true
+		}
 		innerResult := reduce(concrete.Inner, now)
 		if innerResult.status == statusHolds {
 			return holds()

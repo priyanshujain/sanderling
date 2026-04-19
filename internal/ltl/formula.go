@@ -38,11 +38,17 @@ type NextFormula struct {
 // EventuallyFormula obliges its inner formula to hold at some step within the
 // given bound. An unbounded eventually never triggers a violation within a
 // finite run.
+//
+// When Duration is non-zero and Deadline is the zero time, the evaluator
+// resolves the absolute deadline on first reduction using the observation
+// time. This matches the "within N seconds of obligation instantiation"
+// semantics used by nested Always(Eventually(...).within(...)) formulas.
 type EventuallyFormula struct {
 	Inner        Formula
 	StepBound    int
-	Deadline     time.Time
 	HasStepBound bool
+	Duration     time.Duration
+	Deadline     time.Time
 	HasDeadline  bool
 }
 
@@ -85,6 +91,10 @@ func EventuallyBefore(inner Formula, deadline time.Time) Formula {
 	return EventuallyFormula{Inner: inner, Deadline: deadline, HasDeadline: true}
 }
 
+func EventuallyWithin(inner Formula, duration time.Duration) Formula {
+	return EventuallyFormula{Inner: inner, Duration: duration}
+}
+
 func Implies(antecedent, consequent Formula) Formula {
 	return ImpliesFormula{Antecedent: antecedent, Consequent: consequent}
 }
@@ -118,6 +128,8 @@ func (e EventuallyFormula) describe() string {
 	}
 	if e.HasDeadline {
 		parts = append(parts, "deadline="+e.Deadline.Format(time.RFC3339Nano))
+	} else if e.Duration > 0 {
+		parts = append(parts, "within="+e.Duration.String())
 	}
 	return "Eventually(" + strings.Join(parts, ", ") + ")"
 }
