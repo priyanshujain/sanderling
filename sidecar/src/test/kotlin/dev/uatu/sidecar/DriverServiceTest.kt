@@ -5,6 +5,9 @@ import dev.uatu.driver.v1.Duration
 import dev.uatu.driver.v1.Empty
 import dev.uatu.driver.v1.LaunchRequest
 import dev.uatu.driver.v1.Point
+import dev.uatu.driver.v1.PressKeyRequest
+import dev.uatu.driver.v1.RecentLogsRequest
+import dev.uatu.driver.v1.SwipeRequest
 import dev.uatu.driver.v1.Text
 import io.grpc.ManagedChannel
 import io.grpc.inprocess.InProcessChannelBuilder
@@ -14,6 +17,8 @@ import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+
+private data class Quintuple<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: E)
 
 class DriverServiceTest {
 
@@ -98,6 +103,54 @@ class DriverServiceTest {
 
         client.waitForIdle(Duration.newBuilder().setMillis(123).build())
         assertEquals(123L, observed)
+    }
+
+    @Test fun swipeForwardsEndpointsAndDuration() {
+        var observed: Quintuple<Int, Int, Int, Int, Long>? = null
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {
+                observed = Quintuple(fromX, fromY, toX, toY, durationMillis)
+            }
+        }
+        val client = newClient(backend)
+
+        client.swipe(
+            SwipeRequest.newBuilder()
+                .setFrom(Point.newBuilder().setX(10).setY(20).build())
+                .setTo(Point.newBuilder().setX(30).setY(40).build())
+                .setDurationMillis(250)
+                .build(),
+        )
+        assertEquals(Quintuple(10, 20, 30, 40, 250L), observed)
+    }
+
+    @Test fun pressKeyForwardsValue() {
+        var observed: String? = null
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun pressKey(key: String) {
+                observed = key
+            }
+        }
+        val client = newClient(backend)
+
+        client.pressKey(PressKeyRequest.newBuilder().setKey("back").build())
+        assertEquals("back", observed)
+    }
+
+    @Test fun recentLogsReturnsBackendEntries() {
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> {
+                return listOf(LogLine(1, "E", "AndroidRuntime", "boom"))
+            }
+        }
+        val client = newClient(backend)
+
+        val response = client.recentLogs(
+            RecentLogsRequest.newBuilder().setSinceUnixMillis(0).setLevelAtLeast("E").build(),
+        )
+        assertEquals(1, response.entriesCount)
+        assertEquals("AndroidRuntime", response.getEntries(0).tag)
+        assertEquals("boom", response.getEntries(0).message)
     }
 
     @Test fun healthReportsPlatformAndVersion() {

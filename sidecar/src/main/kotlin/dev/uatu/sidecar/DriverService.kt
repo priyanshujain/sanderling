@@ -8,8 +8,13 @@ import dev.uatu.driver.v1.HealthStatus
 import dev.uatu.driver.v1.HierarchyJSON
 import dev.uatu.driver.v1.Image
 import dev.uatu.driver.v1.LaunchRequest
+import dev.uatu.driver.v1.LogEntries
+import dev.uatu.driver.v1.LogEntry
 import dev.uatu.driver.v1.Point
+import dev.uatu.driver.v1.PressKeyRequest
+import dev.uatu.driver.v1.RecentLogsRequest
 import dev.uatu.driver.v1.Selector
+import dev.uatu.driver.v1.SwipeRequest
 import dev.uatu.driver.v1.Text
 import io.grpc.stub.StreamObserver
 import java.util.concurrent.atomic.AtomicReference
@@ -56,6 +61,40 @@ class DriverService(
         runRpc(responseObserver) {
             backend.inputText(request.value)
             Empty.getDefaultInstance()
+        }
+    }
+
+    override fun swipe(request: SwipeRequest, responseObserver: StreamObserver<Empty>) {
+        runRpc(responseObserver) {
+            val from = request.from
+            val to = request.to
+            backend.swipe(from.x, from.y, to.x, to.y, request.durationMillis)
+            Empty.getDefaultInstance()
+        }
+    }
+
+    override fun pressKey(request: PressKeyRequest, responseObserver: StreamObserver<Empty>) {
+        runRpc(responseObserver) {
+            backend.pressKey(request.key)
+            Empty.getDefaultInstance()
+        }
+    }
+
+    override fun recentLogs(request: RecentLogsRequest, responseObserver: StreamObserver<LogEntries>) {
+        runRpc(responseObserver) {
+            val entries = backend.recentLogs(request.sinceUnixMillis, request.levelAtLeast)
+            val builder = LogEntries.newBuilder()
+            for (entry in entries) {
+                builder.addEntries(
+                    LogEntry.newBuilder()
+                        .setUnixMillis(entry.unixMillis)
+                        .setLevel(entry.level)
+                        .setTag(entry.tag)
+                        .setMessage(entry.message)
+                        .build(),
+                )
+            }
+            builder.build()
         }
     }
 
