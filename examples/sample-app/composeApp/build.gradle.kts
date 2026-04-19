@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -16,6 +17,7 @@ kotlin {
     @OptIn(ExperimentalKotlinGradlePluginApi::class)
     compilerOptions {
         freeCompilerArgs.add("-Xexpect-actual-classes")
+        optIn.add("kotlin.js.ExperimentalWasmJsInterop")
     }
 
     androidTarget {
@@ -34,6 +36,35 @@ kotlin {
             baseName = "ComposeApp"
             isStatic = true
             binaryOption("bundleId", "dev.uatu.sample")
+        }
+    }
+
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        outputModuleName.set("composeApp")
+        browser {
+            commonWebpackConfig {
+                outputFileName = "composeApp.js"
+            }
+        }
+        binaries.executable()
+    }
+
+    applyHierarchyTemplate {
+        common {
+            group("sql") {
+                withAndroidTarget()
+                group("apple") {
+                    group("ios") {
+                        withIosX64()
+                        withIosArm64()
+                        withIosSimulatorArm64()
+                    }
+                }
+            }
+            group("wasmJs") {
+                withWasmJs()
+            }
         }
     }
 
