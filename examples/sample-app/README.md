@@ -1,23 +1,56 @@
 # uatu sample app
 
-Tiny Android app wired to the uatu SDK, plus a TypeScript spec that drives it.
-Use it as a reference for integrating uatu into your own app.
+A minimal Kotlin Multiplatform ledger app that mirrors the React reference:
+login with demo credentials, create accounts, add credits and debits. Same
+features, monospace look, and demo creds, shared across Android and iOS via
+Compose Multiplatform.
+
+## Stack
+
+- Kotlin Multiplatform + Compose Multiplatform (shared UI)
+- kotlinx.serialization for file-backed persistence
+- kotlinx.coroutines for state flows
+- uatu `sdk-android` for harness integration on Android
+
+Everything in `composeApp/src/commonMain/kotlin/dev/uatu/sample/` is shared
+between platforms. Platform-specific I/O (file storage, clock, UUID) lives
+in `androidMain/` and `iosMain/` as `actual`s of the `Platform` expect object.
 
 ## Prerequisites
 
-- `uatu` CLI on `PATH` (see [getting started](https://priyanshujain.github.io/uatu/manual/getting-started.html))
-- Android SDK installed (uatu auto-discovers `adb` and `emulator` under
-  `$ANDROID_HOME`, `~/Library/Android/sdk`, or the Homebrew cask; nothing to
-  export if you use a standard install)
-- `just` task runner
+- `just`
+- JDK 17
+- Android SDK (auto-discovered under `$ANDROID_HOME`, `~/Library/Android/sdk`,
+  or the Homebrew cask)
+- Xcode 16+ and `xcodegen` (`brew install xcodegen`) for iOS
 
-## Install the app
+## Android
 
 ```sh
-just install
+just install      # build + install on a booted emulator / device
+just uninstall
+just clean
 ```
 
-## Run a test
+## iOS
+
+```sh
+just ios                          # default device: iPhone 17 Pro
+IOS_DEVICE="iPhone 15" just ios   # pick a different simulator
+```
+
+`just ios` regenerates `iosApp/iosApp.xcodeproj` from `iosApp/project.yml`,
+builds the KMP framework, links it into the SwiftUI host, installs, and
+launches.
+
+## Demo credentials
+
+```
+email:    demo@ledger.app
+password: ledger123
+```
+
+## Run a uatu test (Android)
 
 ```sh
 just test
@@ -39,12 +72,26 @@ DURATION=5m
 
 Traces land in `./runs/<timestamp>/`.
 
-## How the pieces connect
+## Layout
 
-- `android/build.gradle.kts` depends on `io.github.priyanshujain:sdk-android` from
-  Maven Central
-- `android/src/main/kotlin/.../SampleApplication.kt` calls `Uatu.start(this)` and
-  registers snapshot extractors (`app_state`, `click_count`)
-- `spec.ts` imports `@uatu/spec` (see `package.json`), reads those snapshots,
-  asserts properties on them, and weights the actions the fuzzer picks from
-- `just test` invokes `uatu test` against the installed APK on the connected device (or the AVD named via `AVD=`)
+```
+composeApp/
+  src/commonMain/kotlin/dev/uatu/sample/   shared domain, state, UI
+  src/androidMain/                         Android Application + Activity
+  src/iosMain/                             iOS UIViewController entry
+iosApp/
+  project.yml                              xcodegen spec
+  iosApp/iOSApp.swift                      SwiftUI host
+  iosApp/Info.plist
+justfile
+spec.ts                                    uatu test spec
+```
+
+## How it connects to uatu
+
+- `composeApp/src/androidMain/.../SampleApplication.kt` calls `Uatu.start(this)`
+  and registers snapshot extractors (`logged_in`, `account_count`,
+  `total_balance`, `route`)
+- `spec.ts` imports `@uatu/spec`, reads those snapshots, asserts properties,
+  and weights the actions the fuzzer picks from
+- `just test` invokes `uatu test` against the installed APK

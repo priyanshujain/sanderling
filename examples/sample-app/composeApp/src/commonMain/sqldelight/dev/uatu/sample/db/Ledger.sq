@@ -1,0 +1,47 @@
+CREATE TABLE Accounts (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    createdAt INTEGER NOT NULL
+);
+
+CREATE TABLE Txns (
+    id TEXT NOT NULL PRIMARY KEY,
+    accountId TEXT NOT NULL,
+    type TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    note TEXT NOT NULL,
+    createdAt INTEGER NOT NULL
+);
+
+CREATE INDEX txn_account ON Txns(accountId);
+CREATE INDEX txn_created ON Txns(createdAt);
+
+CREATE TABLE AppSession (
+    key INTEGER NOT NULL PRIMARY KEY CHECK (key = 1),
+    user TEXT NOT NULL,
+    loggedInAt INTEGER NOT NULL
+);
+
+selectAllAccounts:
+SELECT * FROM Accounts ORDER BY createdAt ASC;
+
+accountExistsByName:
+SELECT EXISTS(SELECT 1 FROM Accounts WHERE name = :name COLLATE NOCASE);
+
+insertAccount:
+INSERT INTO Accounts(id, name, createdAt) VALUES (?, ?, ?);
+
+selectAllTxns:
+SELECT * FROM Txns;
+
+insertTxn:
+INSERT INTO Txns(id, accountId, type, amount, note, createdAt) VALUES (?, ?, ?, ?, ?, ?);
+
+selectSession:
+SELECT user, loggedInAt FROM AppSession WHERE key = 1;
+
+upsertSession:
+INSERT OR REPLACE INTO AppSession(key, user, loggedInAt) VALUES (1, ?, ?);
+
+clearSession:
+DELETE FROM AppSession WHERE key = 1;

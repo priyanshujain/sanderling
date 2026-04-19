@@ -6,7 +6,7 @@ avd      := env_var_or_default("AVD", "")
 duration := env_var_or_default("DURATION", "1m")
 seed     := env_var_or_default("SEED", "0")
 output   := env_var_or_default("OUTPUT", justfile_directory() / "runs")
-android  := justfile_directory() / "android"
+ios_device := env_var_or_default("IOS_DEVICE", "iPhone 17 Pro")
 
 default:
     @just --list
@@ -40,21 +40,46 @@ install:
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
-    cd {{android}} && ./gradlew installDebug
+    ./gradlew :composeApp:installDebug
 
 # Remove the sample APK from the connected device.
 uninstall:
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
-    cd {{android}} && ./gradlew uninstallDebug
+    ./gradlew :composeApp:uninstallDebug
 
-# Remove the gradle build directory.
+# Remove gradle + iOS build directories.
 clean:
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
-    cd {{android}} && ./gradlew clean
+    ./gradlew clean
+    rm -rf iosApp/build
+
+# Regenerate iosApp.xcodeproj from project.yml.
+ios-gen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd iosApp && xcodegen generate
+
+# Build + install + launch on a booted iOS simulator (boots IOS_DEVICE if none).
+ios:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ANDROID_HOME="$(just _android-home)"
+    if ! xcrun simctl list devices booted | grep -q Booted; then
+      xcrun simctl boot "{{ios_device}}"
+      open -a Simulator
+      sleep 3
+    fi
+    just ios-gen
+    xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp \
+      -destination 'platform=iOS Simulator,name={{ios_device}}' \
+      -derivedDataPath iosApp/build \
+      build | tail -5
+    xcrun simctl install booted iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app
+    xcrun simctl launch booted dev.uatu.sample
 
 # Run 'uatu test' against the sample app. Uses a connected device if one is
 # online, otherwise boots AVD=<name> if provided.
