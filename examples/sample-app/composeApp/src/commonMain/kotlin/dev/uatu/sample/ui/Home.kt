@@ -101,7 +101,8 @@ private fun AccountCard(
     onClick: () -> Unit,
 ) {
     val t = LocalTokens.current
-    val a11y = "$name account, balance ${formatCents(balance)}, $count transactions"
+    val txnLabel = if (count == 1) "1 transaction" else "$count transactions"
+    val a11y = "$name account, balance ${formatCents(balance)}, $txnLabel"
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -131,7 +132,7 @@ private fun AccountCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text("$count transactions", style = Type.caption, color = t.textMuted)
+            Text(txnLabel, style = Type.caption, color = t.textMuted)
         }
         Text(formatCents(balance), style = Type.bodyStrong, color = t.text)
     }
