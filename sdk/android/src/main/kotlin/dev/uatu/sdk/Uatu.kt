@@ -36,6 +36,16 @@ object Uatu {
         activeRuntime.register(name, function)
     }
 
+    /**
+     * Records a caught [Throwable] so it surfaces in the next STATE message's
+     * exceptions field. Useful for coroutine CoroutineExceptionHandler,
+     * OkHttp interceptors, or anywhere else the host app catches errors it
+     * still wants verified against properties like noUncaughtExceptions.
+     */
+    fun reportError(throwable: Throwable) {
+        runtime?.reportError(throwable)
+    }
+
     @Synchronized
     internal fun stopForTest() {
         runtime?.stop()
