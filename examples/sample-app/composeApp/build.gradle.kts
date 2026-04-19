@@ -4,12 +4,13 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     id("com.android.application")
     kotlin("multiplatform")
-    kotlin("plugin.serialization")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.compose")
+    id("app.cash.sqldelight")
 }
 
 val uatuVersion = findProperty("uatu.version") as String? ?: "0.0.0-dev"
+val sqldelightVersion = "2.3.2"
 
 kotlin {
     @OptIn(ExperimentalKotlinGradlePluginApi::class)
@@ -44,12 +45,18 @@ kotlin {
             implementation(compose.ui)
             implementation(compose.components.resources)
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+            implementation("app.cash.sqldelight:runtime:$sqldelightVersion")
+            implementation("app.cash.sqldelight:coroutines-extensions:$sqldelightVersion")
         }
 
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:1.13.0")
+            implementation("app.cash.sqldelight:android-driver:$sqldelightVersion")
             implementation("io.github.priyanshujain:sdk-android:$uatuVersion")
+        }
+
+        iosMain.dependencies {
+            implementation("app.cash.sqldelight:native-driver:$sqldelightVersion")
         }
     }
 }
@@ -80,5 +87,13 @@ android {
     sourceSets["main"].apply {
         manifest.srcFile("src/androidMain/AndroidManifest.xml")
         res.srcDirs("src/androidMain/res")
+    }
+}
+
+sqldelight {
+    databases {
+        create("LedgerDatabase") {
+            packageName.set("dev.uatu.sample.db")
+        }
     }
 }
