@@ -12,6 +12,11 @@ plugins {
 val uatuVersion = findProperty("uatu.version") as String? ?: "0.0.0-dev"
 
 kotlin {
+    @OptIn(ExperimentalKotlinGradlePluginApi::class)
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+
     androidTarget {
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
         compilerOptions {
@@ -37,12 +42,12 @@ kotlin {
             implementation(compose.material3)
             implementation(compose.ui)
             implementation(compose.components.resources)
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
         }
 
         androidMain.dependencies {
-            implementation("androidx.activity:activity-compose:1.9.3")
+            implementation("androidx.activity:activity-compose:1.13.0")
             implementation("io.github.priyanshujain:sdk-android:$uatuVersion")
         }
     }
@@ -50,12 +55,12 @@ kotlin {
 
 android {
     namespace = "dev.uatu.sample"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "dev.uatu.sample"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = uatuVersion
     }
