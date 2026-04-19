@@ -16,14 +16,28 @@ type Step struct {
 	Screen     string                     `json:"screen,omitempty"`
 	Snapshots  map[string]json.RawMessage `json:"snapshots,omitempty"`
 	Action     *Action                    `json:"action,omitempty"`
+	Exceptions []Exception                `json:"exceptions,omitempty"`
 	Violations []string                   `json:"violations,omitempty"`
 }
 
 type Action struct {
-	Kind string `json:"kind"`
-	X    int    `json:"x,omitempty"`
-	Y    int    `json:"y,omitempty"`
-	Text string `json:"text,omitempty"`
+	Kind  string `json:"kind"`
+	X     int    `json:"x,omitempty"`
+	Y     int    `json:"y,omitempty"`
+	FromX int    `json:"from_x,omitempty"`
+	FromY int    `json:"from_y,omitempty"`
+	ToX   int    `json:"to_x,omitempty"`
+	ToY   int    `json:"to_y,omitempty"`
+	Key   string `json:"key,omitempty"`
+	Text  string `json:"text,omitempty"`
+	DurationMillis int `json:"duration_millis,omitempty"`
+}
+
+type Exception struct {
+	Class      string `json:"class"`
+	Message    string `json:"message,omitempty"`
+	StackTrace string `json:"stack_trace,omitempty"`
+	UnixMillis int64  `json:"unix_millis,omitempty"`
 }
 
 type Meta struct {

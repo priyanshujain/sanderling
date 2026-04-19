@@ -123,6 +123,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			Screen:     screen,
 			Snapshots:  snapshot.Snapshots,
 			Action:     traceAction,
+			Exceptions: traceExceptions(exceptions),
 			Violations: violations,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
@@ -330,15 +331,40 @@ func fetchHierarchy(ctx context.Context, drv driver.Driver) (*hierarchy.Tree, er
 }
 
 func traceActionFor(action verifier.Action) *trace.Action {
-	traceAction := &trace.Action{Kind: string(action.Kind)}
+	traceAction := &trace.Action{Kind: string(action.Kind), X: action.X, Y: action.Y}
 	switch action.Kind {
 	case verifier.ActionKindTap:
-		// Selector lives in the trace step's action.text field for now —
-		// trace.Action only has X/Y/Text and we don't resolve coordinates
-		// at the runner layer.
 		traceAction.Text = action.On
 	case verifier.ActionKindInputText:
 		traceAction.Text = action.Text
+	case verifier.ActionKindSwipe:
+		traceAction.FromX = action.FromX
+		traceAction.FromY = action.FromY
+		traceAction.ToX = action.ToX
+		traceAction.ToY = action.ToY
+		traceAction.DurationMillis = action.DurationMillis
+		traceAction.X = 0
+		traceAction.Y = 0
+	case verifier.ActionKindPressKey:
+		traceAction.Key = action.Key
+	case verifier.ActionKindWait:
+		traceAction.DurationMillis = action.DurationMillis
 	}
 	return traceAction
+}
+
+func traceExceptions(exceptions []verifier.Exception) []trace.Exception {
+	if len(exceptions) == 0 {
+		return nil
+	}
+	result := make([]trace.Exception, 0, len(exceptions))
+	for _, e := range exceptions {
+		result = append(result, trace.Exception{
+			Class:      e.Class,
+			Message:    e.Message,
+			StackTrace: e.StackTrace,
+			UnixMillis: e.UnixMillis,
+		})
+	}
+	return result
 }

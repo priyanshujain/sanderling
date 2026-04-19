@@ -1,6 +1,7 @@
 package dev.uatu.sample
 
 import android.app.Application
+import android.content.pm.ApplicationInfo
 import dev.uatu.sdk.Uatu
 
 class SampleApplication : Application() {
@@ -24,12 +25,12 @@ class SampleApplication : Application() {
         maybeInjectDebugError()
     }
 
-    // Fires a synthetic Uatu.reportError when the system property
-    // `uatu.inject_error` is set (for example via `adb shell setprop`). Used
-    // by the e2e test to verify the noUncaughtExceptions property surfaces
-    // SDK-captured errors in the trace.
+    // Fires a synthetic Uatu.reportError in debug builds so the sample-app
+    // e2e run can verify noUncaughtExceptions surfaces SDK-captured errors
+    // in the trace. Production builds skip this.
     private fun maybeInjectDebugError() {
-        if (System.getProperty("uatu.inject_error") == "true") {
+        val isDebuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        if (isDebuggable) {
             Uatu.reportError(RuntimeException("synthetic"))
         }
     }
