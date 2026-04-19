@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./defaults/properties": {
+      "types": "./dist/defaults/properties.d.ts",
+      "import": "./dist/defaults/properties.js"
     }
   },
   "files": [
