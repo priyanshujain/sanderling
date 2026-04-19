@@ -116,6 +116,22 @@ class ProtocolTest {
         assertTrue("expected missing-type error, got: ${error.message}", error.message!!.contains("missing type"))
     }
 
+    @Test fun roundTripStateWithExceptions() {
+        val exceptions = listOf(
+            mapOf<String, Any?>(
+                "class" to "java.lang.RuntimeException",
+                "message" to "boom",
+                "stack_trace" to "at Foo.bar(Foo.kt:42)",
+                "unix_millis" to 1_700_000_000_000L,
+            ),
+        )
+        val got = roundTrip(Message.state(3, mapOf("screen" to "home"), exceptions))
+        assertNotNull(got.exceptions)
+        assertEquals(1, got.exceptions!!.size)
+        assertEquals("java.lang.RuntimeException", got.exceptions[0]["class"])
+        assertEquals("boom", got.exceptions[0]["message"])
+    }
+
     @Test fun streamsMultipleFrames() {
         val messages = listOf(
             Message.hello("v", "android", "com.x"),

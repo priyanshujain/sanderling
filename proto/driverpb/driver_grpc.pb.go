@@ -24,8 +24,11 @@ const (
 	Driver_Tap_FullMethodName         = "/uatu.driver.v1.Driver/Tap"
 	Driver_TapSelector_FullMethodName = "/uatu.driver.v1.Driver/TapSelector"
 	Driver_InputText_FullMethodName   = "/uatu.driver.v1.Driver/InputText"
+	Driver_Swipe_FullMethodName       = "/uatu.driver.v1.Driver/Swipe"
+	Driver_PressKey_FullMethodName    = "/uatu.driver.v1.Driver/PressKey"
 	Driver_Screenshot_FullMethodName  = "/uatu.driver.v1.Driver/Screenshot"
 	Driver_Hierarchy_FullMethodName   = "/uatu.driver.v1.Driver/Hierarchy"
+	Driver_RecentLogs_FullMethodName  = "/uatu.driver.v1.Driver/RecentLogs"
 	Driver_WaitForIdle_FullMethodName = "/uatu.driver.v1.Driver/WaitForIdle"
 	Driver_Health_FullMethodName      = "/uatu.driver.v1.Driver/Health"
 )
@@ -39,8 +42,11 @@ type DriverClient interface {
 	Tap(ctx context.Context, in *Point, opts ...grpc.CallOption) (*Empty, error)
 	TapSelector(ctx context.Context, in *Selector, opts ...grpc.CallOption) (*Empty, error)
 	InputText(ctx context.Context, in *Text, opts ...grpc.CallOption) (*Empty, error)
+	Swipe(ctx context.Context, in *SwipeRequest, opts ...grpc.CallOption) (*Empty, error)
+	PressKey(ctx context.Context, in *PressKeyRequest, opts ...grpc.CallOption) (*Empty, error)
 	Screenshot(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Image, error)
 	Hierarchy(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HierarchyJSON, error)
+	RecentLogs(ctx context.Context, in *RecentLogsRequest, opts ...grpc.CallOption) (*LogEntries, error)
 	WaitForIdle(ctx context.Context, in *Duration, opts ...grpc.CallOption) (*Empty, error)
 	Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthStatus, error)
 }
@@ -103,6 +109,26 @@ func (c *driverClient) InputText(ctx context.Context, in *Text, opts ...grpc.Cal
 	return out, nil
 }
 
+func (c *driverClient) Swipe(ctx context.Context, in *SwipeRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Driver_Swipe_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *driverClient) PressKey(ctx context.Context, in *PressKeyRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Driver_PressKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *driverClient) Screenshot(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Image, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Image)
@@ -117,6 +143,16 @@ func (c *driverClient) Hierarchy(ctx context.Context, in *Empty, opts ...grpc.Ca
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HierarchyJSON)
 	err := c.cc.Invoke(ctx, Driver_Hierarchy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *driverClient) RecentLogs(ctx context.Context, in *RecentLogsRequest, opts ...grpc.CallOption) (*LogEntries, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LogEntries)
+	err := c.cc.Invoke(ctx, Driver_RecentLogs_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -152,8 +188,11 @@ type DriverServer interface {
 	Tap(context.Context, *Point) (*Empty, error)
 	TapSelector(context.Context, *Selector) (*Empty, error)
 	InputText(context.Context, *Text) (*Empty, error)
+	Swipe(context.Context, *SwipeRequest) (*Empty, error)
+	PressKey(context.Context, *PressKeyRequest) (*Empty, error)
 	Screenshot(context.Context, *Empty) (*Image, error)
 	Hierarchy(context.Context, *Empty) (*HierarchyJSON, error)
+	RecentLogs(context.Context, *RecentLogsRequest) (*LogEntries, error)
 	WaitForIdle(context.Context, *Duration) (*Empty, error)
 	Health(context.Context, *Empty) (*HealthStatus, error)
 	mustEmbedUnimplementedDriverServer()
@@ -181,11 +220,20 @@ func (UnimplementedDriverServer) TapSelector(context.Context, *Selector) (*Empty
 func (UnimplementedDriverServer) InputText(context.Context, *Text) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method InputText not implemented")
 }
+func (UnimplementedDriverServer) Swipe(context.Context, *SwipeRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method Swipe not implemented")
+}
+func (UnimplementedDriverServer) PressKey(context.Context, *PressKeyRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method PressKey not implemented")
+}
 func (UnimplementedDriverServer) Screenshot(context.Context, *Empty) (*Image, error) {
 	return nil, status.Error(codes.Unimplemented, "method Screenshot not implemented")
 }
 func (UnimplementedDriverServer) Hierarchy(context.Context, *Empty) (*HierarchyJSON, error) {
 	return nil, status.Error(codes.Unimplemented, "method Hierarchy not implemented")
+}
+func (UnimplementedDriverServer) RecentLogs(context.Context, *RecentLogsRequest) (*LogEntries, error) {
+	return nil, status.Error(codes.Unimplemented, "method RecentLogs not implemented")
 }
 func (UnimplementedDriverServer) WaitForIdle(context.Context, *Duration) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitForIdle not implemented")
@@ -304,6 +352,42 @@ func _Driver_InputText_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Driver_Swipe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SwipeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DriverServer).Swipe(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Driver_Swipe_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DriverServer).Swipe(ctx, req.(*SwipeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Driver_PressKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PressKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DriverServer).PressKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Driver_PressKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DriverServer).PressKey(ctx, req.(*PressKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Driver_Screenshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -336,6 +420,24 @@ func _Driver_Hierarchy_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DriverServer).Hierarchy(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Driver_RecentLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecentLogsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DriverServer).RecentLogs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Driver_RecentLogs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DriverServer).RecentLogs(ctx, req.(*RecentLogsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -404,12 +506,24 @@ var Driver_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Driver_InputText_Handler,
 		},
 		{
+			MethodName: "Swipe",
+			Handler:    _Driver_Swipe_Handler,
+		},
+		{
+			MethodName: "PressKey",
+			Handler:    _Driver_PressKey_Handler,
+		},
+		{
 			MethodName: "Screenshot",
 			Handler:    _Driver_Screenshot_Handler,
 		},
 		{
 			MethodName: "Hierarchy",
 			Handler:    _Driver_Hierarchy_Handler,
+		},
+		{
+			MethodName: "RecentLogs",
+			Handler:    _Driver_RecentLogs_Handler,
 		},
 		{
 			MethodName: "WaitForIdle",

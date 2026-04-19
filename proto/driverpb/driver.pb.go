@@ -468,6 +468,279 @@ func (x *HealthStatus) GetPlatform() string {
 	return ""
 }
 
+type SwipeRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	From           *Point                 `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty"`
+	To             *Point                 `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`
+	DurationMillis int64                  `protobuf:"varint,3,opt,name=duration_millis,json=durationMillis,proto3" json:"duration_millis,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SwipeRequest) Reset() {
+	*x = SwipeRequest{}
+	mi := &file_driverpb_driver_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SwipeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SwipeRequest) ProtoMessage() {}
+
+func (x *SwipeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_driverpb_driver_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SwipeRequest.ProtoReflect.Descriptor instead.
+func (*SwipeRequest) Descriptor() ([]byte, []int) {
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *SwipeRequest) GetFrom() *Point {
+	if x != nil {
+		return x.From
+	}
+	return nil
+}
+
+func (x *SwipeRequest) GetTo() *Point {
+	if x != nil {
+		return x.To
+	}
+	return nil
+}
+
+func (x *SwipeRequest) GetDurationMillis() int64 {
+	if x != nil {
+		return x.DurationMillis
+	}
+	return 0
+}
+
+type PressKeyRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Logical key name. Supported: "back", "home", "enter", "tab", "up",
+	// "down", "left", "right".
+	Key           string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PressKeyRequest) Reset() {
+	*x = PressKeyRequest{}
+	mi := &file_driverpb_driver_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PressKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PressKeyRequest) ProtoMessage() {}
+
+func (x *PressKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_driverpb_driver_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PressKeyRequest.ProtoReflect.Descriptor instead.
+func (*PressKeyRequest) Descriptor() ([]byte, []int) {
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *PressKeyRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+type RecentLogsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Lower bound as unix-epoch milliseconds; entries at or after this are
+	// returned.
+	SinceUnixMillis int64 `protobuf:"varint,1,opt,name=since_unix_millis,json=sinceUnixMillis,proto3" json:"since_unix_millis,omitempty"`
+	// Minimum level: "E", "W", or "I". Empty defaults to "E".
+	LevelAtLeast  string `protobuf:"bytes,2,opt,name=level_at_least,json=levelAtLeast,proto3" json:"level_at_least,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecentLogsRequest) Reset() {
+	*x = RecentLogsRequest{}
+	mi := &file_driverpb_driver_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecentLogsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecentLogsRequest) ProtoMessage() {}
+
+func (x *RecentLogsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_driverpb_driver_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecentLogsRequest.ProtoReflect.Descriptor instead.
+func (*RecentLogsRequest) Descriptor() ([]byte, []int) {
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *RecentLogsRequest) GetSinceUnixMillis() int64 {
+	if x != nil {
+		return x.SinceUnixMillis
+	}
+	return 0
+}
+
+func (x *RecentLogsRequest) GetLevelAtLeast() string {
+	if x != nil {
+		return x.LevelAtLeast
+	}
+	return ""
+}
+
+type LogEntries struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Entries       []*LogEntry            `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogEntries) Reset() {
+	*x = LogEntries{}
+	mi := &file_driverpb_driver_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogEntries) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogEntries) ProtoMessage() {}
+
+func (x *LogEntries) ProtoReflect() protoreflect.Message {
+	mi := &file_driverpb_driver_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogEntries.ProtoReflect.Descriptor instead.
+func (*LogEntries) Descriptor() ([]byte, []int) {
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *LogEntries) GetEntries() []*LogEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+type LogEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UnixMillis    int64                  `protobuf:"varint,1,opt,name=unix_millis,json=unixMillis,proto3" json:"unix_millis,omitempty"`
+	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
+	Tag           string                 `protobuf:"bytes,3,opt,name=tag,proto3" json:"tag,omitempty"`
+	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogEntry) Reset() {
+	*x = LogEntry{}
+	mi := &file_driverpb_driver_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogEntry) ProtoMessage() {}
+
+func (x *LogEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_driverpb_driver_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
+func (*LogEntry) Descriptor() ([]byte, []int) {
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *LogEntry) GetUnixMillis() int64 {
+	if x != nil {
+		return x.UnixMillis
+	}
+	return 0
+}
+
+func (x *LogEntry) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *LogEntry) GetTag() string {
+	if x != nil {
+		return x.Tag
+	}
+	return ""
+}
+
+func (x *LogEntry) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_driverpb_driver_proto protoreflect.FileDescriptor
 
 const file_driverpb_driver_proto_rawDesc = "" +
@@ -497,16 +770,38 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"\fHealthStatus\x12\x14\n" +
 	"\x05ready\x18\x01 \x01(\bR\x05ready\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1a\n" +
-	"\bplatform\x18\x03 \x01(\tR\bplatform2\xb0\x04\n" +
+	"\bplatform\x18\x03 \x01(\tR\bplatform\"\x89\x01\n" +
+	"\fSwipeRequest\x12)\n" +
+	"\x04from\x18\x01 \x01(\v2\x15.uatu.driver.v1.PointR\x04from\x12%\n" +
+	"\x02to\x18\x02 \x01(\v2\x15.uatu.driver.v1.PointR\x02to\x12'\n" +
+	"\x0fduration_millis\x18\x03 \x01(\x03R\x0edurationMillis\"#\n" +
+	"\x0fPressKeyRequest\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\"e\n" +
+	"\x11RecentLogsRequest\x12*\n" +
+	"\x11since_unix_millis\x18\x01 \x01(\x03R\x0fsinceUnixMillis\x12$\n" +
+	"\x0elevel_at_least\x18\x02 \x01(\tR\flevelAtLeast\"@\n" +
+	"\n" +
+	"LogEntries\x122\n" +
+	"\aentries\x18\x01 \x03(\v2\x18.uatu.driver.v1.LogEntryR\aentries\"m\n" +
+	"\bLogEntry\x12\x1f\n" +
+	"\vunix_millis\x18\x01 \x01(\x03R\n" +
+	"unixMillis\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\tR\x05level\x12\x10\n" +
+	"\x03tag\x18\x03 \x01(\tR\x03tag\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage2\xff\x05\n" +
 	"\x06Driver\x12>\n" +
 	"\x06Launch\x12\x1d.uatu.driver.v1.LaunchRequest\x1a\x15.uatu.driver.v1.Empty\x129\n" +
 	"\tTerminate\x12\x15.uatu.driver.v1.Empty\x1a\x15.uatu.driver.v1.Empty\x123\n" +
 	"\x03Tap\x12\x15.uatu.driver.v1.Point\x1a\x15.uatu.driver.v1.Empty\x12>\n" +
 	"\vTapSelector\x12\x18.uatu.driver.v1.Selector\x1a\x15.uatu.driver.v1.Empty\x128\n" +
-	"\tInputText\x12\x14.uatu.driver.v1.Text\x1a\x15.uatu.driver.v1.Empty\x12:\n" +
+	"\tInputText\x12\x14.uatu.driver.v1.Text\x1a\x15.uatu.driver.v1.Empty\x12<\n" +
+	"\x05Swipe\x12\x1c.uatu.driver.v1.SwipeRequest\x1a\x15.uatu.driver.v1.Empty\x12B\n" +
+	"\bPressKey\x12\x1f.uatu.driver.v1.PressKeyRequest\x1a\x15.uatu.driver.v1.Empty\x12:\n" +
 	"\n" +
 	"Screenshot\x12\x15.uatu.driver.v1.Empty\x1a\x15.uatu.driver.v1.Image\x12A\n" +
-	"\tHierarchy\x12\x15.uatu.driver.v1.Empty\x1a\x1d.uatu.driver.v1.HierarchyJSON\x12>\n" +
+	"\tHierarchy\x12\x15.uatu.driver.v1.Empty\x1a\x1d.uatu.driver.v1.HierarchyJSON\x12K\n" +
+	"\n" +
+	"RecentLogs\x12!.uatu.driver.v1.RecentLogsRequest\x1a\x1a.uatu.driver.v1.LogEntries\x12>\n" +
 	"\vWaitForIdle\x12\x18.uatu.driver.v1.Duration\x1a\x15.uatu.driver.v1.Empty\x12=\n" +
 	"\x06Health\x12\x15.uatu.driver.v1.Empty\x1a\x1c.uatu.driver.v1.HealthStatusBM\n" +
 	"\x12dev.uatu.driver.v1P\x01Z5github.com/priyanshujain/uatu/proto/driverpb;driverpbb\x06proto3"
@@ -523,42 +818,56 @@ func file_driverpb_driver_proto_rawDescGZIP() []byte {
 	return file_driverpb_driver_proto_rawDescData
 }
 
-var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_driverpb_driver_proto_goTypes = []any{
-	(*Empty)(nil),         // 0: uatu.driver.v1.Empty
-	(*LaunchRequest)(nil), // 1: uatu.driver.v1.LaunchRequest
-	(*Point)(nil),         // 2: uatu.driver.v1.Point
-	(*Text)(nil),          // 3: uatu.driver.v1.Text
-	(*Selector)(nil),      // 4: uatu.driver.v1.Selector
-	(*Image)(nil),         // 5: uatu.driver.v1.Image
-	(*HierarchyJSON)(nil), // 6: uatu.driver.v1.HierarchyJSON
-	(*Duration)(nil),      // 7: uatu.driver.v1.Duration
-	(*HealthStatus)(nil),  // 8: uatu.driver.v1.HealthStatus
+	(*Empty)(nil),             // 0: uatu.driver.v1.Empty
+	(*LaunchRequest)(nil),     // 1: uatu.driver.v1.LaunchRequest
+	(*Point)(nil),             // 2: uatu.driver.v1.Point
+	(*Text)(nil),              // 3: uatu.driver.v1.Text
+	(*Selector)(nil),          // 4: uatu.driver.v1.Selector
+	(*Image)(nil),             // 5: uatu.driver.v1.Image
+	(*HierarchyJSON)(nil),     // 6: uatu.driver.v1.HierarchyJSON
+	(*Duration)(nil),          // 7: uatu.driver.v1.Duration
+	(*HealthStatus)(nil),      // 8: uatu.driver.v1.HealthStatus
+	(*SwipeRequest)(nil),      // 9: uatu.driver.v1.SwipeRequest
+	(*PressKeyRequest)(nil),   // 10: uatu.driver.v1.PressKeyRequest
+	(*RecentLogsRequest)(nil), // 11: uatu.driver.v1.RecentLogsRequest
+	(*LogEntries)(nil),        // 12: uatu.driver.v1.LogEntries
+	(*LogEntry)(nil),          // 13: uatu.driver.v1.LogEntry
 }
 var file_driverpb_driver_proto_depIdxs = []int32{
-	1, // 0: uatu.driver.v1.Driver.Launch:input_type -> uatu.driver.v1.LaunchRequest
-	0, // 1: uatu.driver.v1.Driver.Terminate:input_type -> uatu.driver.v1.Empty
-	2, // 2: uatu.driver.v1.Driver.Tap:input_type -> uatu.driver.v1.Point
-	4, // 3: uatu.driver.v1.Driver.TapSelector:input_type -> uatu.driver.v1.Selector
-	3, // 4: uatu.driver.v1.Driver.InputText:input_type -> uatu.driver.v1.Text
-	0, // 5: uatu.driver.v1.Driver.Screenshot:input_type -> uatu.driver.v1.Empty
-	0, // 6: uatu.driver.v1.Driver.Hierarchy:input_type -> uatu.driver.v1.Empty
-	7, // 7: uatu.driver.v1.Driver.WaitForIdle:input_type -> uatu.driver.v1.Duration
-	0, // 8: uatu.driver.v1.Driver.Health:input_type -> uatu.driver.v1.Empty
-	0, // 9: uatu.driver.v1.Driver.Launch:output_type -> uatu.driver.v1.Empty
-	0, // 10: uatu.driver.v1.Driver.Terminate:output_type -> uatu.driver.v1.Empty
-	0, // 11: uatu.driver.v1.Driver.Tap:output_type -> uatu.driver.v1.Empty
-	0, // 12: uatu.driver.v1.Driver.TapSelector:output_type -> uatu.driver.v1.Empty
-	0, // 13: uatu.driver.v1.Driver.InputText:output_type -> uatu.driver.v1.Empty
-	5, // 14: uatu.driver.v1.Driver.Screenshot:output_type -> uatu.driver.v1.Image
-	6, // 15: uatu.driver.v1.Driver.Hierarchy:output_type -> uatu.driver.v1.HierarchyJSON
-	0, // 16: uatu.driver.v1.Driver.WaitForIdle:output_type -> uatu.driver.v1.Empty
-	8, // 17: uatu.driver.v1.Driver.Health:output_type -> uatu.driver.v1.HealthStatus
-	9, // [9:18] is the sub-list for method output_type
-	0, // [0:9] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	2,  // 0: uatu.driver.v1.SwipeRequest.from:type_name -> uatu.driver.v1.Point
+	2,  // 1: uatu.driver.v1.SwipeRequest.to:type_name -> uatu.driver.v1.Point
+	13, // 2: uatu.driver.v1.LogEntries.entries:type_name -> uatu.driver.v1.LogEntry
+	1,  // 3: uatu.driver.v1.Driver.Launch:input_type -> uatu.driver.v1.LaunchRequest
+	0,  // 4: uatu.driver.v1.Driver.Terminate:input_type -> uatu.driver.v1.Empty
+	2,  // 5: uatu.driver.v1.Driver.Tap:input_type -> uatu.driver.v1.Point
+	4,  // 6: uatu.driver.v1.Driver.TapSelector:input_type -> uatu.driver.v1.Selector
+	3,  // 7: uatu.driver.v1.Driver.InputText:input_type -> uatu.driver.v1.Text
+	9,  // 8: uatu.driver.v1.Driver.Swipe:input_type -> uatu.driver.v1.SwipeRequest
+	10, // 9: uatu.driver.v1.Driver.PressKey:input_type -> uatu.driver.v1.PressKeyRequest
+	0,  // 10: uatu.driver.v1.Driver.Screenshot:input_type -> uatu.driver.v1.Empty
+	0,  // 11: uatu.driver.v1.Driver.Hierarchy:input_type -> uatu.driver.v1.Empty
+	11, // 12: uatu.driver.v1.Driver.RecentLogs:input_type -> uatu.driver.v1.RecentLogsRequest
+	7,  // 13: uatu.driver.v1.Driver.WaitForIdle:input_type -> uatu.driver.v1.Duration
+	0,  // 14: uatu.driver.v1.Driver.Health:input_type -> uatu.driver.v1.Empty
+	0,  // 15: uatu.driver.v1.Driver.Launch:output_type -> uatu.driver.v1.Empty
+	0,  // 16: uatu.driver.v1.Driver.Terminate:output_type -> uatu.driver.v1.Empty
+	0,  // 17: uatu.driver.v1.Driver.Tap:output_type -> uatu.driver.v1.Empty
+	0,  // 18: uatu.driver.v1.Driver.TapSelector:output_type -> uatu.driver.v1.Empty
+	0,  // 19: uatu.driver.v1.Driver.InputText:output_type -> uatu.driver.v1.Empty
+	0,  // 20: uatu.driver.v1.Driver.Swipe:output_type -> uatu.driver.v1.Empty
+	0,  // 21: uatu.driver.v1.Driver.PressKey:output_type -> uatu.driver.v1.Empty
+	5,  // 22: uatu.driver.v1.Driver.Screenshot:output_type -> uatu.driver.v1.Image
+	6,  // 23: uatu.driver.v1.Driver.Hierarchy:output_type -> uatu.driver.v1.HierarchyJSON
+	12, // 24: uatu.driver.v1.Driver.RecentLogs:output_type -> uatu.driver.v1.LogEntries
+	0,  // 25: uatu.driver.v1.Driver.WaitForIdle:output_type -> uatu.driver.v1.Empty
+	8,  // 26: uatu.driver.v1.Driver.Health:output_type -> uatu.driver.v1.HealthStatus
+	15, // [15:27] is the sub-list for method output_type
+	3,  // [3:15] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_driverpb_driver_proto_init() }
@@ -572,7 +881,7 @@ func file_driverpb_driver_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_driverpb_driver_proto_rawDesc), len(file_driverpb_driver_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

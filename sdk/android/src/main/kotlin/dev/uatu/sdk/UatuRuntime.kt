@@ -8,21 +8,28 @@ internal class UatuRuntime(
     private val version: String,
     private val platform: String,
     private val appPackage: String,
+    private val exceptionRecorder: ExceptionRecorder = ExceptionRecorder(),
 ) {
     private val extractors = LinkedHashMap<String, () -> Any?>()
     @Volatile private var sender: SocketClient.MessageSender? = null
     private val socketClient = SocketClient(transport, AgentHandler())
 
     fun start() {
+        exceptionRecorder.install()
         socketClient.start()
     }
 
     fun stop() {
         socketClient.stop()
+        exceptionRecorder.uninstall()
     }
 
     fun register(name: String, extractor: () -> Any?) {
         synchronized(extractors) { extractors[name] = extractor }
+    }
+
+    fun reportError(throwable: Throwable) {
+        exceptionRecorder.record(throwable)
     }
 
     internal fun snapshot(): Map<String, Any?> {
@@ -67,9 +74,17 @@ internal class UatuRuntime(
                 Log.w(LOG_TAG, "snapshot failed: $cause")
                 emptyMap()
             }
+            val exceptions = exceptionRecorder.drain().map { entry ->
+                mapOf(
+                    "class" to entry.className,
+                    "message" to entry.message,
+                    "stack_trace" to entry.stackTrace,
+                    "unix_millis" to entry.unixMillis,
+                )
+            }.takeIf { it.isNotEmpty() }
             val activeSender = sender ?: return
             try {
-                activeSender.send(Message.state(id, snapshots))
+                activeSender.send(Message.state(id, snapshots, exceptions))
             } catch (cause: Exception) {
                 Log.w(LOG_TAG, "failed to send STATE: $cause")
             }

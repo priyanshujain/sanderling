@@ -3,15 +3,38 @@ export type {
   AccessibilityTree,
   Action,
   ActionGenerator,
+  EventuallyFormula,
+  ExceptionRecord,
   Extracted,
   Formula,
   InputTextAction,
+  Key,
+  LogEntry,
+  Point,
+  PressKeyAction,
+  Sampler,
   Snapshots,
   State,
+  SwipeAction,
   TapAction,
+  UatuRuntime,
+  WaitAction,
   WeightedEntry,
 } from "./types.ts";
 
 export { extract } from "./extract.ts";
-export { always } from "./ltl.ts";
-export { Tap, InputText, actions, weighted, taps, swipes } from "./actions.ts";
+export { always, eventually, next, now } from "./ltl.ts";
+export {
+  InputText,
+  PressKey,
+  Swipe,
+  Tap,
+  Wait,
+  actions,
+  from,
+  pressKey,
+  swipes,
+  taps,
+  waitOnce,
+  weighted,
+} from "./actions.ts";

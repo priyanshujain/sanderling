@@ -31,7 +31,7 @@ func TestStateAxFindWorks(t *testing.T) {
 		globalThis.count = __uatu__.extract(state => state.ax.findAll("id:select_language").length);
 	`)
 
-	if err := verifier.PushSnapshot(Snapshots{}, tree); err != nil {
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
 		t.Fatal(err)
 	}
 

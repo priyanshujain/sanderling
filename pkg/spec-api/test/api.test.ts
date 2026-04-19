@@ -1,38 +1,127 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Tap, InputText, actions, always, extract, swipes, taps, weighted } from "../src/index.ts";
+import {
+  InputText,
+  PressKey,
+  Swipe,
+  Tap,
+  Wait,
+  actions,
+  always,
+  eventually,
+  extract,
+  from,
+  next,
+  now,
+  pressKey,
+  swipes,
+  taps,
+  waitOnce,
+  weighted,
+} from "../src/index.ts";
 import type {
   AccessibilityElement,
   Action,
   ActionGenerator,
+  EventuallyFormula,
   Extracted,
   Formula,
+  Sampler,
   State,
   UatuRuntime,
   WeightedEntry,
 } from "../src/types.ts";
 
-function installFakeRuntime(): UatuRuntime & {
+interface RecordedRuntime extends UatuRuntime {
   extracts: Array<(state: State) => unknown>;
-  alwaysPredicates: Array<() => boolean>;
+  alwaysArgs: Array<(() => boolean) | Formula>;
+  nowPredicates: Array<() => boolean>;
+  nextPredicates: Array<() => boolean>;
+  eventuallyPredicates: Array<() => boolean>;
+  withinCalls: Array<{ amount: number; unit: string }>;
+  impliesCalls: number;
+  orCalls: number;
+  andCalls: number;
+  notCalls: number;
   actionGenerators: Array<() => Action[]>;
   weightedCalls: WeightedEntry[][];
-} {
+  fromCalls: unknown[][];
+}
+
+function makeChainableFormula(record: RecordedRuntime): Formula {
+  const formula: Formula = {
+    __uatuFormula: true,
+    implies(other: Formula): Formula {
+      record.impliesCalls++;
+      void other;
+      return makeChainableFormula(record);
+    },
+    or(other: Formula): Formula {
+      record.orCalls++;
+      void other;
+      return makeChainableFormula(record);
+    },
+    and(other: Formula): Formula {
+      record.andCalls++;
+      void other;
+      return makeChainableFormula(record);
+    },
+    not(): Formula {
+      record.notCalls++;
+      return makeChainableFormula(record);
+    },
+  };
+  return formula;
+}
+
+function makeChainableEventually(record: RecordedRuntime): EventuallyFormula {
+  const base = makeChainableFormula(record);
+  return {
+    ...base,
+    within(amount, unit) {
+      record.withinCalls.push({ amount, unit });
+      return makeChainableFormula(record);
+    },
+  };
+}
+
+function installFakeRuntime(): RecordedRuntime {
   const calls = {
     extracts: [] as Array<(state: State) => unknown>,
-    alwaysPredicates: [] as Array<() => boolean>,
+    alwaysArgs: [] as Array<(() => boolean) | Formula>,
+    nowPredicates: [] as Array<() => boolean>,
+    nextPredicates: [] as Array<() => boolean>,
+    eventuallyPredicates: [] as Array<() => boolean>,
+    withinCalls: [] as Array<{ amount: number; unit: string }>,
+    impliesCalls: 0,
+    orCalls: 0,
+    andCalls: 0,
+    notCalls: 0,
     actionGenerators: [] as Array<() => Action[]>,
     weightedCalls: [] as WeightedEntry[][],
+    fromCalls: [] as unknown[][],
   };
-  const runtime: UatuRuntime = {
+  const runtime = {
     extract: <T>(getter: (state: State) => T): Extracted<T> => {
       calls.extracts.push(getter as (state: State) => unknown);
       return { current: undefined as unknown as T, previous: undefined };
     },
-    always: (predicate: () => boolean): Formula => {
-      calls.alwaysPredicates.push(predicate);
-      return { __uatuFormula: true };
+    always: (predicateOrFormula: (() => boolean) | Formula): Formula => {
+      calls.alwaysArgs.push(predicateOrFormula);
+      return makeChainableFormula(recorded);
+    },
+    now: (predicate: () => boolean): Formula => {
+      calls.nowPredicates.push(predicate);
+      return makeChainableFormula(recorded);
+    },
+    next: (predicate: () => boolean): Formula => {
+      calls.nextPredicates.push(predicate);
+      return makeChainableFormula(recorded);
+    },
+    eventually: (predicate: () => boolean): EventuallyFormula => {
+      calls.eventuallyPredicates.push(predicate);
+      return makeChainableEventually(recorded);
     },
     actions: (generator: () => Action[]): ActionGenerator => {
       calls.actionGenerators.push(generator);
@@ -42,13 +131,28 @@ function installFakeRuntime(): UatuRuntime & {
       calls.weightedCalls.push(entries);
       return { __uatuActionGenerator: true, generate: () => [] };
     },
+    from: <T>(items: readonly T[]): Sampler<T> => {
+      calls.fromCalls.push(items as unknown[]);
+      return { generate: () => items[0] as T };
+    },
     tap: ({ on }) => ({ kind: "Tap", on }),
     inputText: ({ into, text }) => ({ kind: "InputText", into, text }),
+    swipe: ({ from: fromPoint, to, durationMillis }) => ({
+      kind: "Swipe",
+      from: fromPoint,
+      to,
+      durationMillis,
+    }),
+    pressKey: ({ key }) => ({ kind: "PressKey", key }),
+    wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
     taps: { __uatuActionGenerator: true, generate: () => [] },
     swipes: { __uatuActionGenerator: true, generate: () => [] },
-  };
-  globalThis.__uatu__ = runtime;
-  return Object.assign(runtime, calls);
+    waitOnce: { __uatuActionGenerator: true, generate: () => [] },
+    pressKeys: { __uatuActionGenerator: true, generate: () => [] },
+  } satisfies UatuRuntime;
+  const recorded = Object.assign(runtime, calls) as RecordedRuntime;
+  globalThis.__uatu__ = recorded;
+  return recorded;
 }
 
 test("extract forwards the getter to the runtime", () => {
@@ -63,8 +167,46 @@ test("always wraps a predicate into a formula via the runtime", () => {
   const runtime = installFakeRuntime();
   const predicate = () => true;
   const formula = always(predicate);
-  assert.equal(runtime.alwaysPredicates[0], predicate);
+  assert.equal(runtime.alwaysArgs[0], predicate);
   assert.equal(formula.__uatuFormula, true);
+});
+
+test("always accepts a formula handle", () => {
+  const runtime = installFakeRuntime();
+  const inner = now(() => true);
+  const wrapped = always(inner);
+  assert.equal(runtime.alwaysArgs.at(-1), inner);
+  assert.equal(wrapped.__uatuFormula, true);
+});
+
+test("now/next/eventually forward predicates", () => {
+  const runtime = installFakeRuntime();
+  const p1 = () => true;
+  const p2 = () => false;
+  const p3 = () => true;
+  now(p1);
+  next(p2);
+  eventually(p3);
+  assert.equal(runtime.nowPredicates[0], p1);
+  assert.equal(runtime.nextPredicates[0], p2);
+  assert.equal(runtime.eventuallyPredicates[0], p3);
+});
+
+test("eventually().within forwards unit and amount", () => {
+  const runtime = installFakeRuntime();
+  eventually(() => true).within(3, "seconds");
+  assert.deepEqual(runtime.withinCalls[0], { amount: 3, unit: "seconds" });
+});
+
+test("formula chaining exposes implies/or/and/not", () => {
+  const runtime = installFakeRuntime();
+  const a = now(() => true);
+  const b = now(() => false);
+  a.implies(b).or(b).and(b).not();
+  assert.equal(runtime.impliesCalls, 1);
+  assert.equal(runtime.orCalls, 1);
+  assert.equal(runtime.andCalls, 1);
+  assert.equal(runtime.notCalls, 1);
 });
 
 test("Tap returns a TapAction with the supplied selector", () => {
@@ -87,6 +229,29 @@ test("InputText returns an InputTextAction", () => {
   assert.deepEqual(action, { kind: "InputText", into: "id:phone", text: "+1234567890" });
 });
 
+test("Swipe returns a SwipeAction with the supplied endpoints", () => {
+  installFakeRuntime();
+  const action = Swipe({ from: { x: 10, y: 20 }, to: { x: 30, y: 40 }, durationMillis: 400 });
+  assert.deepEqual(action, {
+    kind: "Swipe",
+    from: { x: 10, y: 20 },
+    to: { x: 30, y: 40 },
+    durationMillis: 400,
+  });
+});
+
+test("PressKey returns a PressKeyAction", () => {
+  installFakeRuntime();
+  const action = PressKey({ key: "back" });
+  assert.deepEqual(action, { kind: "PressKey", key: "back" });
+});
+
+test("Wait returns a WaitAction", () => {
+  installFakeRuntime();
+  const action = Wait({ durationMillis: 500 });
+  assert.deepEqual(action, { kind: "Wait", durationMillis: 500 });
+});
+
 test("actions wraps a generator into the runtime's ActionGenerator", () => {
   const runtime = installFakeRuntime();
   const generator = () => [Tap({ on: "id:x" })];
@@ -105,9 +270,17 @@ test("weighted forwards weighted entries to the runtime", () => {
   assert.deepEqual(runtime.weightedCalls[0], entries);
 });
 
-test("taps and swipes proxy through to the runtime defaults", () => {
+test("from forwards items to the runtime", () => {
+  const runtime = installFakeRuntime();
+  const sampler = from(["a", "b", "c"]);
+  assert.deepEqual(runtime.fromCalls[0], ["a", "b", "c"]);
+  assert.equal(sampler.generate(), "a");
+});
+
+test("default generators proxy through to the runtime", () => {
   installFakeRuntime();
   assert.equal(taps.__uatuActionGenerator, true);
   assert.equal(swipes.__uatuActionGenerator, true);
-  assert.equal(typeof taps.generate, "function");
+  assert.equal(waitOnce.__uatuActionGenerator, true);
+  assert.equal(pressKey.__uatuActionGenerator, true);
 });

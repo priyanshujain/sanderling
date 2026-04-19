@@ -31,6 +31,7 @@ data class Message(
     val platform: String? = null,
     val appPackage: String? = null,
     val snapshots: Map<String, Any?>? = null,
+    val exceptions: List<Map<String, Any?>>? = null,
     val extractor: String? = null,
     val result: Any? = null,
     val error: String? = null,
@@ -50,8 +51,16 @@ data class Message(
 
         fun resume(id: Long): Message = Message(MessageType.RESUME, id = id)
 
-        fun state(id: Long, snapshots: Map<String, Any?>): Message =
-            Message(MessageType.STATE, id = id, snapshots = snapshots)
+        fun state(
+            id: Long,
+            snapshots: Map<String, Any?>,
+            exceptions: List<Map<String, Any?>>? = null,
+        ): Message = Message(
+            MessageType.STATE,
+            id = id,
+            snapshots = snapshots,
+            exceptions = exceptions,
+        )
 
         fun extractResult(id: Long, extractor: String, result: Any?, error: String? = null): Message =
             Message(MessageType.EXTRACT_RESULT, id = id, extractor = extractor, result = result, error = error)
@@ -106,6 +115,15 @@ object Protocol {
             }
             json.put("snapshots", snapshotsJson)
         }
+        message.exceptions?.let { exceptions ->
+            val array = JSONArray()
+            for (entry in exceptions) {
+                val entryJson = JSONObject()
+                for ((key, value) in entry) entryJson.put(key, wrap(value))
+                array.put(entryJson)
+            }
+            json.put("exceptions", array)
+        }
         message.extractor?.let { json.put("extractor", it) }
         message.result?.let { json.put("result", wrap(it)) }
         message.error?.let { json.put("error", it) }
@@ -125,6 +143,14 @@ object Protocol {
             appPackage = json.optStringOrNull("app_package"),
             snapshots = json.optJSONObject("snapshots")?.let { snapshotsJson ->
                 snapshotsJson.keys().asSequence().associateWith { unwrap(snapshotsJson.get(it)) }
+            },
+            exceptions = json.optJSONArray("exceptions")?.let { array ->
+                buildList {
+                    for (index in 0 until array.length()) {
+                        val item = array.optJSONObject(index) ?: continue
+                        add(item.keys().asSequence().associateWith { unwrap(item.get(it)) })
+                    }
+                }
             },
             extractor = json.optStringOrNull("extractor"),
             result = if (json.has("result") && !json.isNull("result")) unwrap(json.get("result")) else null,

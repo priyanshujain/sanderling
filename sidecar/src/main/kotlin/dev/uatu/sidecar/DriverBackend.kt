@@ -6,11 +6,21 @@ interface DriverBackend {
     fun tap(x: Int, y: Int)
     fun tapSelector(selector: String)
     fun inputText(text: String)
+    fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long)
+    fun pressKey(key: String)
     fun screenshot(): Triple<ByteArray, Int, Int>
     fun hierarchy(): String
+    fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine>
     fun waitForIdle(durationMillis: Long)
     fun healthy(): Boolean
 }
+
+data class LogLine(
+    val unixMillis: Long,
+    val level: String,
+    val tag: String,
+    val message: String,
+)
 
 /**
  * StubDriverBackend records calls but takes no real device action. Real
@@ -78,6 +88,56 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
             }
             return null
         }
+
+        internal val KEY_MAP: Map<String, String> = mapOf(
+            "back" to "KEYCODE_BACK",
+            "home" to "KEYCODE_HOME",
+            "enter" to "KEYCODE_ENTER",
+            "tab" to "KEYCODE_TAB",
+            "up" to "KEYCODE_DPAD_UP",
+            "down" to "KEYCODE_DPAD_DOWN",
+            "left" to "KEYCODE_DPAD_LEFT",
+            "right" to "KEYCODE_DPAD_RIGHT",
+        )
+
+        internal fun formatAdbLogcatTimestamp(unixMillis: Long): String {
+            val seconds = unixMillis / 1000
+            val millis = unixMillis % 1000
+            return "$seconds.${millis.toString().padStart(3, '0')}"
+        }
+
+        // Logcat default threadtime format:
+        //   MM-dd HH:mm:ss.SSS  PID  TID L TAG: message
+        // The leading date is the local year-inferred date; we convert to a
+        // unix-millis best-effort using the current year.
+        private val LOGCAT_LINE = Regex(
+            "^(\\d{2})-(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2})\\.(\\d{3})" +
+                "\\s+\\d+\\s+\\d+\\s+([VDIWEFS])\\s+([^:]+?):\\s?(.*)$",
+        )
+
+        internal fun parseLogcatOutput(output: String): List<LogLine> {
+            if (output.isBlank()) return emptyList()
+            val calendar = java.util.Calendar.getInstance()
+            val year = calendar.get(java.util.Calendar.YEAR)
+            val result = mutableListOf<LogLine>()
+            for (line in output.lines()) {
+                val match = LOGCAT_LINE.matchEntire(line) ?: continue
+                val month = match.groupValues[1].toInt() - 1
+                val day = match.groupValues[2].toInt()
+                val hour = match.groupValues[3].toInt()
+                val minute = match.groupValues[4].toInt()
+                val second = match.groupValues[5].toInt()
+                val millis = match.groupValues[6].toInt()
+                val level = match.groupValues[7]
+                val tag = match.groupValues[8].trim()
+                val message = match.groupValues[9]
+                calendar.clear()
+                calendar.set(year, month, day, hour, minute, second)
+                calendar.set(java.util.Calendar.MILLISECOND, millis)
+                result.add(LogLine(calendar.timeInMillis, level, tag, message))
+            }
+            return result
+        }
     }
 
     override fun terminate(bundleId: String) {
@@ -100,6 +160,52 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         lastInputText = text
         runAdb(listOf("shell", "input", "text", text.replace(" ", "%s")))
     }
+
+    @Volatile var lastSwipe: SwipeRecord? = null
+        private set
+    @Volatile var lastKey: String? = null
+        private set
+
+    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {
+        lastSwipe = SwipeRecord(fromX, fromY, toX, toY, durationMillis)
+        val effectiveDuration = if (durationMillis > 0) durationMillis else 250L
+        runAdb(
+            listOf(
+                "shell", "input", "swipe",
+                fromX.toString(), fromY.toString(),
+                toX.toString(), toY.toString(),
+                effectiveDuration.toString(),
+            ),
+        )
+    }
+
+    override fun pressKey(key: String) {
+        lastKey = key
+        val keyCode = KEY_MAP[key.lowercase()]
+            ?: throw IllegalArgumentException("unsupported pressKey value: $key")
+        runAdb(listOf("shell", "input", "keyevent", keyCode))
+    }
+
+    override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> {
+        val level = if (minLevel.isEmpty()) "E" else minLevel
+        val since = if (sinceUnixMillis > 0) formatAdbLogcatTimestamp(sinceUnixMillis) else null
+        val arguments = mutableListOf("logcat", "-d", "*:$level")
+        if (since != null) {
+            arguments.add("-T")
+            arguments.add(since)
+        }
+        return try {
+            val process = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(false).start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            parseLogcatOutput(output)
+        } catch (cause: Exception) {
+            println("adb logcat failed: $cause")
+            emptyList()
+        }
+    }
+
+    data class SwipeRecord(val fromX: Int, val fromY: Int, val toX: Int, val toY: Int, val durationMillis: Long)
 
     private fun runAdb(arguments: List<String>) {
         try {

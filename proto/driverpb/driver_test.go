@@ -18,8 +18,11 @@ func TestDriverServiceDescriptor(t *testing.T) {
 		"Tap":         true,
 		"TapSelector": true,
 		"InputText":   true,
+		"Swipe":       true,
+		"PressKey":    true,
 		"Screenshot":  true,
 		"Hierarchy":   true,
+		"RecentLogs":  true,
 		"WaitForIdle": true,
 		"Health":      true,
 	}
