@@ -14,10 +14,9 @@ const sampleAppHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
   <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
     <node index="0" class="android.widget.LinearLayout" bounds="[64,96][1016,2336]">
-      <node index="0" class="android.widget.TextView" text="Clicks: 0" bounds="[100,200][900,300]" />
-      <node index="1" class="android.widget.Button" text="Click me" clickable="true" enabled="true" bounds="[400,800][680,920]" />
-      <node index="2" class="android.widget.TextView" text="Username: " bounds="[100,1000][900,1080]" />
-      <node index="3" class="android.widget.EditText" content-desc="username_field" clickable="true" enabled="true" bounds="[100,1200][900,1320]" />
+      <node index="0" class="android.widget.TextView" text="Sign in" bounds="[100,200][900,300]" />
+      <node index="1" class="android.widget.EditText" content-desc="phone_field" clickable="true" enabled="true" bounds="[100,400][900,520]" />
+      <node index="2" class="android.widget.Button" text="Continue" clickable="true" enabled="true" bounds="[400,800][680,920]" />
     </node>
   </node>
 </hierarchy>`
@@ -34,9 +33,16 @@ func bundleSampleAppSpec(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defaultsPath, err := filepath.Abs("../../pkg/spec-api/src/defaults/properties.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile: specPath,
-		Aliases:   map[string]string{"@uatu/spec": apiPath},
+		Aliases: map[string]string{
+			"@uatu/spec":                    apiPath,
+			"@uatu/spec/defaults/properties": defaultsPath,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -44,9 +50,10 @@ func bundleSampleAppSpec(t *testing.T) string {
 	return string(bundle.JavaScript)
 }
 
-// TestSampleAppSpecTapsClickMe verifies the bundled sample-app spec emits a
-// Tap on the "Click me" button when that button is present in the hierarchy.
-func TestSampleAppSpecTapsClickMe(t *testing.T) {
+// TestSampleAppSpecFiresLoginActions verifies the bundled sample-app spec
+// emits Tap/InputText actions targeting the login screen elements when they
+// are present in the hierarchy.
+func TestSampleAppSpecFiresLoginActions(t *testing.T) {
 	v := newVerifier(t)
 	if err := v.Load(bundleSampleAppSpec(t)); err != nil {
 		t.Fatal(err)
@@ -57,85 +64,67 @@ func TestSampleAppSpecTapsClickMe(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshots := Snapshots{
-		"app_state":   json.RawMessage(`"running"`),
-		"click_count": json.RawMessage(`0`),
+		"route":         json.RawMessage(`"login"`),
+		"logged_in":     json.RawMessage(`false`),
+		"account_count": json.RawMessage(`0`),
 	}
 	if err := v.PushSnapshot(SnapshotInput{Snapshots: snapshots, Tree: tree}); err != nil {
 		t.Fatal(err)
 	}
 
-	tapHits := 0
-	inputHits := 0
+	tapContinueHits := 0
+	typePhoneHits := 0
 	for range 400 {
 		action, err := v.NextAction()
 		if err != nil {
 			continue
 		}
 		switch {
-		case action.Kind == ActionKindTap && action.On == "text:Click me":
-			tapHits++
-		case action.Kind == ActionKindInputText && action.On == "desc:username_field" && action.Text == "alice":
-			inputHits++
+		case action.Kind == ActionKindTap && action.On == "text:Continue":
+			tapContinueHits++
+		case action.Kind == ActionKindInputText && action.On == "desc:phone_field":
+			typePhoneHits++
 		}
 	}
-	if tapHits == 0 {
-		t.Fatal("tapClickMe never fired on sample-app hierarchy")
+	if tapContinueHits == 0 {
+		t.Fatal("tapContinue never fired on sample-app hierarchy")
 	}
-	if inputHits == 0 {
-		t.Fatal("typeUsername never fired on sample-app hierarchy")
+	if typePhoneHits == 0 {
+		t.Fatal("typePhone never fired on sample-app hierarchy")
 	}
 }
 
-// TestSampleAppSpecPropertiesHold checks the three properties declared in the
-// sample-app spec evaluate correctly across a realistic snapshot sequence.
-func TestSampleAppSpecPropertiesHold(t *testing.T) {
+// TestSampleAppSpecPropertiesEvaluate checks the properties declared in the
+// sample-app spec evaluate sensibly across a small snapshot sequence. The
+// spec mixes safety and liveness properties; Pending verdicts are expected
+// for liveness properties that haven't had time to resolve yet.
+func TestSampleAppSpecPropertiesEvaluate(t *testing.T) {
 	v := newVerifier(t)
 	if err := v.Load(bundleSampleAppSpec(t)); err != nil {
 		t.Fatal(err)
 	}
 
-	steps := []struct {
-		appState   string
-		clickCount int
-		username   string
-		want       map[string]ltl.Verdict
-	}{
-		{"running", 0, "", map[string]ltl.Verdict{
-			"appIsRunning":             ltl.VerdictHolds,
-			"clickCountNonNegative":    ltl.VerdictHolds,
-			"clickCountNeverDecreases": ltl.VerdictHolds,
-			"usernameNeverShrinks":     ltl.VerdictHolds,
-		}},
-		{"running", 5, "alice", map[string]ltl.Verdict{
-			"appIsRunning":             ltl.VerdictHolds,
-			"clickCountNonNegative":    ltl.VerdictHolds,
-			"clickCountNeverDecreases": ltl.VerdictHolds,
-			"usernameNeverShrinks":     ltl.VerdictHolds,
-		}},
-		{"running", 3, "al", map[string]ltl.Verdict{
-			"appIsRunning":             ltl.VerdictHolds,
-			"clickCountNonNegative":    ltl.VerdictHolds,
-			"clickCountNeverDecreases": ltl.VerdictViolated,
-			"usernameNeverShrinks":     ltl.VerdictViolated,
-		}},
+	tree, err := hierarchy.Parse(sampleAppHierarchyXML)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for index, step := range steps {
-		stateRaw, _ := json.Marshal(step.appState)
-		countRaw, _ := json.Marshal(step.clickCount)
-		usernameRaw, _ := json.Marshal(step.username)
-		if err := v.PushSnapshot(SnapshotInput{Snapshots: Snapshots{
-			"app_state":   stateRaw,
-			"click_count": countRaw,
-			"username":    usernameRaw,
-		}}); err != nil {
-			t.Fatalf("step %d: %v", index, err)
-		}
-		got := v.EvaluateProperties()
-		for property, want := range step.want {
-			if got[property] != want {
-				t.Errorf("step %d %q: got %v, want %v", index, property, got[property], want)
-			}
-		}
+	snapshots := Snapshots{
+		"route":         json.RawMessage(`"login"`),
+		"logged_in":     json.RawMessage(`false`),
+		"account_count": json.RawMessage(`0`),
+	}
+	if err := v.PushSnapshot(SnapshotInput{Snapshots: snapshots, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	verdicts := v.EvaluateProperties()
+	if verdicts["accountCountNonNegative"] != ltl.VerdictHolds {
+		t.Errorf("accountCountNonNegative: got %v, want holds", verdicts["accountCountNonNegative"])
+	}
+	if verdicts["noUncaughtExceptions"] != ltl.VerdictHolds {
+		t.Errorf("noUncaughtExceptions: got %v, want holds", verdicts["noUncaughtExceptions"])
+	}
+	// Liveness: eventuallyLoggedIn hasn't resolved yet.
+	if verdicts["eventuallyLoggedIn"] != ltl.VerdictPending {
+		t.Errorf("eventuallyLoggedIn: got %v, want pending", verdicts["eventuallyLoggedIn"])
 	}
 }

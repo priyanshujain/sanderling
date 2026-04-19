@@ -36,6 +36,10 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	aliases := map[string]string{}
 	if specApiPath := resolveSpecAPIPath(options.spec); specApiPath != "" {
 		aliases["@uatu/spec"] = specApiPath
+		// Also alias published subpath exports so specs importing from
+		// "@uatu/spec/defaults/properties" resolve to the in-tree source.
+		base := filepath.Dir(specApiPath)
+		aliases["@uatu/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
 	}
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile: options.spec,

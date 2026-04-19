@@ -21,5 +21,16 @@ class SampleApplication : Application() {
                 is Route.AddTransaction -> "add-transaction"
             }
         }
+        maybeInjectDebugError()
+    }
+
+    // Fires a synthetic Uatu.reportError when the system property
+    // `uatu.inject_error` is set (for example via `adb shell setprop`). Used
+    // by the e2e test to verify the noUncaughtExceptions property surfaces
+    // SDK-captured errors in the trace.
+    private fun maybeInjectDebugError() {
+        if (System.getProperty("uatu.inject_error") == "true") {
+            Uatu.reportError(RuntimeException("synthetic"))
+        }
     }
 }
