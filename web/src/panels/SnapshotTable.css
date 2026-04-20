@@ -16,8 +16,7 @@
 }
 
 .snapshot-row[data-changed="true"] {
-  border-left-color: var(--accent-change);
-  background: color-mix(in srgb, var(--accent-change) 8%, transparent);
+  border-left-color: var(--border-strong);
 }
 
 .snapshot-path {
