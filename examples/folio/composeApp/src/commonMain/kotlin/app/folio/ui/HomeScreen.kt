@@ -32,7 +32,7 @@ import app.folio.initialsOf
 import app.folio.signedAmount
 
 @Composable
-fun HomePage(user: String, onLogout: () -> Unit) {
+fun HomeScreen(user: String, onLogout: () -> Unit) {
     val t = LocalTokens.current
     val accounts by Repository.accounts.collectAsState()
     val txns by Repository.transactions.collectAsState()

@@ -15,7 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import app.folio.ui.AddAccountPage
 import app.folio.ui.AddTransactionPage
-import app.folio.ui.HomePage
+import app.folio.ui.HomeScreen
 import app.folio.ui.LedgerPage
 import app.folio.ui.LedgerTheme
 import app.folio.ui.LocalTokens
@@ -47,7 +47,7 @@ fun App() {
                 Column(Modifier.fillMaxSize()) {
                     when (val r = route) {
                         Route.Login -> LoginScreen(onLoggedIn = { Navigator.replace(Route.Home) })
-                        Route.Home -> HomePage(
+                        Route.Home -> HomeScreen(
                             user = session?.user ?: "",
                             onLogout = {
                                 Repository.clearSession()
