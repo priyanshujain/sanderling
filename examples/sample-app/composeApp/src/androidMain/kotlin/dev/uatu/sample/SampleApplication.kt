@@ -22,6 +22,21 @@ class SampleApplication : Application() {
                 is Route.AddTransaction -> "add-transaction"
             }
         }
+        Uatu.extract("auth_status") {
+            if (Repository.session.value != null) "logged-in" else "logged-out"
+        }
+        Uatu.extract("accounts") {
+            val txns = Repository.transactions.value
+            Repository.accounts.value.map { a ->
+                val rows = txns.filter { it.accountId == a.id }
+                mapOf(
+                    "id" to a.id,
+                    "name" to a.name,
+                    "balance" to balanceOf(rows),
+                    "txnCount" to rows.size,
+                )
+            }
+        }
         maybeInjectDebugError()
     }
 
