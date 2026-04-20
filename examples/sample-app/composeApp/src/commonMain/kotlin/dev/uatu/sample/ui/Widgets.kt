@@ -36,6 +36,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import dev.uatu.sample.FocusTracker
 
 enum class ButtonStyle { Primary, Secondary, Ghost }
 
@@ -84,6 +85,7 @@ fun TextInput(
     textAlign: TextAlign = TextAlign.Start,
     textStyle: TextStyle = Type.body,
     label: String? = null,
+    description: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val t = LocalTokens.current
@@ -116,9 +118,16 @@ fun TextInput(
             cursorBrush = SolidColor(t.text),
             modifier = Modifier
                 .fillMaxWidth()
-                .onFocusChanged { focused = it.isFocused }
+                .onFocusChanged {
+                    focused = it.isFocused
+                    if (description != null) {
+                        if (it.isFocused) FocusTracker.enter(description)
+                        else FocusTracker.leave(description)
+                    }
+                }
                 .semantics {
-                    if (label != null) contentDescription = label
+                    val desc = description ?: label
+                    if (desc != null) contentDescription = desc
                     if (invalid) stateDescription = "Invalid"
                 },
         )
