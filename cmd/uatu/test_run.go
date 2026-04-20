@@ -159,7 +159,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		return fmt.Errorf("trace writer: %w", err)
 	}
 	defer traceWriter.Close()
-	if err := traceWriter.WriteMeta(trace.Meta{
+	meta := trace.Meta{
 		Seed:         seed,
 		SpecPath:     options.spec,
 		BundleSHA256: bundle.SHA256,
@@ -167,9 +167,15 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		BundleID:     options.bundleID,
 		StartedAt:    time.Now().UTC(),
 		UatuVersion:  "0.0.1",
-	}); err != nil {
+	}
+	if err := traceWriter.WriteMeta(meta); err != nil {
 		return fmt.Errorf("trace meta: %w", err)
 	}
+	defer func() {
+		endedAt := time.Now().UTC()
+		meta.EndedAt = &endedAt
+		_ = traceWriter.WriteMeta(meta)
+	}()
 	fmt.Fprintf(stdout, "trace dir: %s\n", runDirectory)
 
 	fmt.Fprintf(stdout, "running for %s (seed=%d)\n", options.duration, seed)

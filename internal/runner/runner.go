@@ -116,9 +116,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		nextAction, nextErr := options.Verifier.NextAction()
 		var traceAction *trace.Action
 		if nextErr == nil {
-			traceAction = traceActionFor(nextAction)
+			traceAction = traceActionFor(nextAction, tree)
 		} else if !errors.Is(nextErr, verifier.ErrNoAction) {
 			return summary, fmt.Errorf("step %d next action: %w", stepIndex, nextErr)
+		}
+
+		residuals, residualErr := encodeResiduals(options.Verifier.Residuals())
+		if residualErr != nil {
+			logger.Warn("residual encode failed", "step", stepIndex, "err", residualErr)
 		}
 
 		step := trace.Step{
@@ -129,6 +134,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			Action:     traceAction,
 			Exceptions: traceExceptions(exceptions),
 			Violations: violations,
+			Hierarchy:  tree,
+			Residuals:  residuals,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
@@ -334,13 +341,17 @@ func fetchHierarchy(ctx context.Context, drv driver.Driver) (*hierarchy.Tree, er
 	return hierarchy.Parse(xmlText)
 }
 
-func traceActionFor(action verifier.Action) *trace.Action {
+func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {
 	traceAction := &trace.Action{Kind: string(action.Kind), X: action.X, Y: action.Y}
 	switch action.Kind {
 	case verifier.ActionKindTap:
 		traceAction.Text = action.On
+		traceAction.Selector = action.On
+		stampSelectorTarget(traceAction, action, tree)
 	case verifier.ActionKindInputText:
 		traceAction.Text = action.Text
+		traceAction.Selector = action.On
+		stampSelectorTarget(traceAction, action, tree)
 	case verifier.ActionKindSwipe:
 		traceAction.FromX = action.FromX
 		traceAction.FromY = action.FromY
@@ -355,6 +366,54 @@ func traceActionFor(action verifier.Action) *trace.Action {
 		traceAction.DurationMillis = action.DurationMillis
 	}
 	return traceAction
+}
+
+// stampSelectorTarget mirrors applyAction's coordinate-resolution rule so the
+// trace records the same point the runner taps. When the spec passed an ax
+// element directly, action.X/Y are already populated and we use them; when the
+// spec passed a string selector, we resolve it against the captured hierarchy.
+func stampSelectorTarget(traceAction *trace.Action, action verifier.Action, tree *hierarchy.Tree) {
+	if action.X > 0 && action.Y > 0 {
+		traceAction.TapPoint = &trace.PointRecord{X: action.X, Y: action.Y}
+		return
+	}
+	if tree == nil || action.On == "" {
+		return
+	}
+	element := tree.Find(action.On)
+	if element == nil {
+		return
+	}
+	bounds := element.Bounds
+	traceAction.ResolvedBounds = &trace.BoundsRecord{
+		X:      bounds.Left,
+		Y:      bounds.Top,
+		Width:  bounds.Width(),
+		Height: bounds.Height(),
+	}
+	x, y := bounds.Center()
+	if x > 0 && y > 0 {
+		traceAction.TapPoint = &trace.PointRecord{X: x, Y: y}
+	}
+}
+
+func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessage, error) {
+	if len(residuals) == 0 {
+		return nil, nil
+	}
+	encoded := make(map[string]json.RawMessage, len(residuals))
+	var firstErr error
+	for name, formula := range residuals {
+		body, err := json.Marshal(formula)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		encoded[name] = body
+	}
+	return encoded, firstErr
 }
 
 func traceExceptions(exceptions []verifier.Exception) []trace.Exception {

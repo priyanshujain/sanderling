@@ -273,6 +273,22 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 	return verdicts
 }
 
+// Residuals returns the residual formula for each registered property after
+// the most recent EvaluateProperties call. Properties that errored during
+// predicate evaluation surface as ErrorFormula so the inspect UI can render
+// "predicate threw" inline.
+func (v *Verifier) Residuals() map[string]ltl.Formula {
+	residuals := map[string]ltl.Formula{}
+	for name, evaluator := range v.evaluators {
+		if predicateErr := v.PredicateError(name); predicateErr != nil {
+			residuals[name] = ltl.ErrorFormula{Message: predicateErr.Error()}
+			continue
+		}
+		residuals[name] = evaluator.Residual()
+	}
+	return residuals
+}
+
 // NextAction resolves the root action generator into a single Action.
 // Returns ErrNoAction when no branch of the generator produces one after a
 // small number of retries. Retrying avoids wedging when most branches of a
