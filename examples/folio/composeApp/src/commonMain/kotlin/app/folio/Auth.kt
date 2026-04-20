@@ -1,6 +1,6 @@
 package app.folio
 
-const val DEMO_EMAIL = "demo@ledger.app"
+const val DEMO_EMAIL = "demo@folio.app"
 const val DEMO_PASSWORD = "ledger123"
 
 fun checkCredentials(email: String, password: String): Boolean {

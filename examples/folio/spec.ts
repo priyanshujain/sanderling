@@ -274,7 +274,7 @@ const liveness = {
   txnErrorClears,
 };
 
-const DEMO_EMAIL = "demo@ledger.app";
+const DEMO_EMAIL = "demo@folio.app";
 const DEMO_PASSWORD = "ledger123";
 
 const loginHelper = actions(() => {

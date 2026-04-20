@@ -46,7 +46,7 @@ launches.
 ## Demo credentials
 
 ```
-email:    demo@ledger.app
+email:    demo@folio.app
 password: ledger123
 ```
 
