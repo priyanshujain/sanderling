@@ -26,10 +26,10 @@ import androidx.compose.runtime.collectAsState
 import app.folio.data.Repository
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
-import app.folio.balanceOf
-import app.folio.formatCents
-import app.folio.initialsOf
-import app.folio.signedAmount
+import app.folio.platform.balanceOf
+import app.folio.platform.formatCents
+import app.folio.platform.initialsOf
+import app.folio.platform.signedAmount
 
 @Composable
 fun HomeScreen(user: String, onLogout: () -> Unit) {

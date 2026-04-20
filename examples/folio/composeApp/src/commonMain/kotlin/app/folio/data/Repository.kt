@@ -1,6 +1,6 @@
 package app.folio.data
 
-import app.folio.Platform
+import app.folio.platform.Platform
 import kotlinx.coroutines.flow.StateFlow
 
 object Repository {

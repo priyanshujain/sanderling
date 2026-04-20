@@ -26,10 +26,10 @@ import app.folio.data.Repository
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
 import app.folio.data.TxnType
-import app.folio.balanceOf
-import app.folio.formatCents
-import app.folio.formatDate
-import app.folio.signedAmount
+import app.folio.platform.balanceOf
+import app.folio.platform.formatCents
+import app.folio.platform.formatDate
+import app.folio.platform.signedAmount
 
 @Composable
 fun LedgerScreen(accountId: String) {

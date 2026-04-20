@@ -1,4 +1,4 @@
-package app.folio
+package app.folio.platform
 
 expect object Platform {
     fun now(): Long

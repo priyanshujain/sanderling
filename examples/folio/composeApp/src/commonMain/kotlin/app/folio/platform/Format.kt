@@ -1,4 +1,4 @@
-package app.folio
+package app.folio.platform
 
 import app.folio.data.Transaction
 import app.folio.data.TxnType

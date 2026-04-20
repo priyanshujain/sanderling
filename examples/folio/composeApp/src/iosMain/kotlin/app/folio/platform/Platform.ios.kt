@@ -1,4 +1,4 @@
-package app.folio
+package app.folio.platform
 
 import platform.Foundation.NSDate
 import platform.Foundation.NSUUID

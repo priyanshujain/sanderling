@@ -1,4 +1,4 @@
-package app.folio
+package app.folio.platform
 
 import java.text.SimpleDateFormat
 import java.util.Date

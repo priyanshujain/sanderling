@@ -20,7 +20,7 @@ import app.folio.navigation.Navigator
 import app.folio.navigation.Route
 import app.folio.data.TxnType
 import app.folio.UiState
-import app.folio.parseCents
+import app.folio.platform.parseCents
 
 private val AMOUNT_REGEX = Regex("""^\d*(\.\d{0,2})?$""")
 
