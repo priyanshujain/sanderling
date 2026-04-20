@@ -2,6 +2,7 @@ import {
   actions,
   always,
   extract,
+  now,
   pressKey,
   swipes,
   taps,
@@ -89,10 +90,105 @@ const anyAccountCard = extract((state) => state.ax.find("descPrefix:account_card
 
 const accountCountNonNegative = always(() => accountCount.current >= 0);
 
+const onHome = () => route.current === "home";
+const onLedger = () =>
+  route.current === "ledger" || route.current === "add-transaction";
+const isInteger = (n: number) => Number.isFinite(n) && Math.floor(n) === n;
+
+const totalBalanceMatchesAccounts = always(
+  now(onHome).implies(
+    now(() => {
+      const sum = accounts.current.reduce((acc, a) => acc + a.balance, 0);
+      return sum === totalBalance.current;
+    }),
+  ),
+);
+
+const ledgerBalanceMatchesRows = always(
+  now(onLedger).implies(
+    now(() => {
+      const sum = ledgerRows.current.reduce((acc, r) => acc + r.signed, 0);
+      return sum === ledgerBalance.current;
+    }),
+  ),
+);
+
+const ledgerRowsWellFormed = always(() => {
+  for (const row of ledgerRows.current) {
+    if (row.type !== "credit" && row.type !== "debit") return false;
+    if (!(row.amount > 0)) return false;
+    const expected = row.type === "credit" ? row.amount : -row.amount;
+    if (row.signed !== expected) return false;
+  }
+  return true;
+});
+
+const balancesAreIntegerCents = always(() => {
+  if (!isInteger(totalBalance.current)) return false;
+  if (!isInteger(ledgerBalance.current)) return false;
+  for (const a of accounts.current) if (!isInteger(a.balance)) return false;
+  for (const r of ledgerRows.current) {
+    if (!isInteger(r.amount) || !isInteger(r.signed)) return false;
+  }
+  return true;
+});
+
+const accountCountMatchesList = always(
+  () => accountCount.current === accounts.current.length,
+);
+
+const ledgerCountMatchesRows = always(
+  now(onLedger).implies(
+    now(() => {
+      const active = activeAccountId.current;
+      if (active === null) return true;
+      const fromAccounts = accounts.current.find((a) => a.id === active);
+      if (!fromAccounts) return true;
+      return fromAccounts.txnCount === ledgerRows.current.length;
+    }),
+  ),
+);
+
+const zeroTxnsMeansZeroBalance = always(() => {
+  for (const a of accounts.current) {
+    if (a.txnCount === 0 && a.balance !== 0) return false;
+  }
+  return true;
+});
+
+const noOrphanTransactions = always(() => {
+  const active = activeAccountId.current;
+  if (active === null) return ledgerRows.current.length === 0;
+  return ledgerRows.current.every((r) => r.accountId === active);
+});
+
+const uniqueAccountNames = always(() => {
+  const seen = new Set<string>();
+  for (const a of accounts.current) {
+    const key = a.name.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+});
+
+const accountingInvariants = {
+  totalBalanceMatchesAccounts,
+  ledgerBalanceMatchesRows,
+  ledgerRowsWellFormed,
+  balancesAreIntegerCents,
+  accountCountMatchesList,
+  ledgerCountMatchesRows,
+  zeroTxnsMeansZeroBalance,
+  noOrphanTransactions,
+  uniqueAccountNames,
+};
+
 const noopAction = actions(() => []);
 
 export const properties = {
   accountCountNonNegative,
+  ...accountingInvariants,
   noUncaughtExceptions,
   noLogcatErrors,
 };
