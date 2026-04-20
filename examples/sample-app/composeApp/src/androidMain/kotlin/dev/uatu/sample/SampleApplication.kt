@@ -37,6 +37,41 @@ class SampleApplication : Application() {
                 )
             }
         }
+        Uatu.extract("active_account_id") {
+            when (val r = Navigator.current.value) {
+                is Route.Ledger -> r.accountId
+                is Route.AddTransaction -> r.accountId
+                else -> null
+            }
+        }
+        Uatu.extract("ledger_rows") {
+            val active = when (val r = Navigator.current.value) {
+                is Route.Ledger -> r.accountId
+                is Route.AddTransaction -> r.accountId
+                else -> null
+            }
+            if (active == null) emptyList()
+            else Repository.transactions.value
+                .filter { it.accountId == active }
+                .map {
+                    mapOf(
+                        "id" to it.id,
+                        "accountId" to it.accountId,
+                        "type" to if (it.type == TxnType.credit) "credit" else "debit",
+                        "amount" to it.amount,
+                        "signed" to signedAmount(it),
+                    )
+                }
+        }
+        Uatu.extract("ledger_balance") {
+            val active = when (val r = Navigator.current.value) {
+                is Route.Ledger -> r.accountId
+                is Route.AddTransaction -> r.accountId
+                else -> null
+            }
+            if (active == null) 0L
+            else balanceOf(Repository.transactions.value.filter { it.accountId == active })
+        }
         maybeInjectDebugError()
     }
 
