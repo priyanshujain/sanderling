@@ -10,7 +10,7 @@ import (
 	"github.com/priyanshujain/uatu/internal/ltl"
 )
 
-const sampleAppHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
+const loginHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
   <node index="0" class="android.widget.FrameLayout" package="app.folio" bounds="[0,0][1080,2400]">
     <node index="0" class="android.widget.LinearLayout" bounds="[64,96][1016,2336]">
@@ -61,9 +61,9 @@ const addTxnHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
   </node>
 </hierarchy>`
 
-// bundleSampleAppSpec bundles examples/folio/spec.ts via the real
+// bundleFolioSpec bundles examples/folio/spec.ts via the real
 // @uatu/spec API so the integration test exercises the same path the CLI uses.
-func bundleSampleAppSpec(t *testing.T) string {
+func bundleFolioSpec(t *testing.T) string {
 	t.Helper()
 	specPath, err := filepath.Abs("../../examples/folio/spec.ts")
 	if err != nil {
@@ -159,16 +159,16 @@ func addTxnSnapshots() Snapshots {
 	return s
 }
 
-// TestSampleAppSpecFiresLoginActions verifies the bundled sample-app spec
+// TestFolioSpecFiresLoginActions verifies the bundled folio spec
 // emits Tap actions targeting the login screen elements when they are present
 // in the hierarchy.
-func TestSampleAppSpecFiresLoginActions(t *testing.T) {
+func TestFolioSpecFiresLoginActions(t *testing.T) {
 	v := newVerifier(t)
-	if err := v.Load(bundleSampleAppSpec(t)); err != nil {
+	if err := v.Load(bundleFolioSpec(t)); err != nil {
 		t.Fatal(err)
 	}
 
-	tree, err := hierarchy.Parse(sampleAppHierarchyXML)
+	tree, err := hierarchy.Parse(loginHierarchyXML)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,24 +191,24 @@ func TestSampleAppSpecFiresLoginActions(t *testing.T) {
 		}
 	}
 	if typeEmailHits == 0 {
-		t.Fatal("loginHelper never typed into desc:login_email on sample-app hierarchy")
+		t.Fatal("loginHelper never typed into desc:login_email on folio hierarchy")
 	}
 	if tapSubmitHits == 0 {
-		t.Fatal("adversarialLogin never tapped desc:login_submit on sample-app hierarchy")
+		t.Fatal("adversarialLogin never tapped desc:login_submit on folio hierarchy")
 	}
 }
 
-// TestSampleAppSpecPropertiesEvaluate checks the properties declared in the
-// sample-app spec evaluate sensibly across a small snapshot sequence. The
+// TestFolioSpecPropertiesEvaluate checks the properties declared in the
+// folio spec evaluate sensibly across a small snapshot sequence. The
 // spec mixes safety and liveness properties; Pending verdicts are expected
 // for liveness properties that haven't had time to resolve yet.
-func TestSampleAppSpecPropertiesEvaluate(t *testing.T) {
+func TestFolioSpecPropertiesEvaluate(t *testing.T) {
 	v := newVerifier(t)
-	if err := v.Load(bundleSampleAppSpec(t)); err != nil {
+	if err := v.Load(bundleFolioSpec(t)); err != nil {
 		t.Fatal(err)
 	}
 
-	tree, err := hierarchy.Parse(sampleAppHierarchyXML)
+	tree, err := hierarchy.Parse(loginHierarchyXML)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,11 +234,11 @@ func TestSampleAppSpecPropertiesEvaluate(t *testing.T) {
 	}
 }
 
-// TestSampleAppSpecActionsFireOnEachRoute pushes a hierarchy + snapshot pair
-// representative of each sample-app route and verifies the expected action
+// TestFolioSpecActionsFireOnEachRoute pushes a hierarchy + snapshot pair
+// representative of each folio route and verifies the expected action
 // generators fire against that state. Guards against silent breakage of any
 // one route's generators (a regression only e2e would otherwise catch).
-func TestSampleAppSpecActionsFireOnEachRoute(t *testing.T) {
+func TestFolioSpecActionsFireOnEachRoute(t *testing.T) {
 	cases := []struct {
 		name       string
 		xml        string
@@ -287,7 +287,7 @@ func TestSampleAppSpecActionsFireOnEachRoute(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			v := newVerifier(t)
-			if err := v.Load(bundleSampleAppSpec(t)); err != nil {
+			if err := v.Load(bundleFolioSpec(t)); err != nil {
 				t.Fatal(err)
 			}
 			tree, err := hierarchy.Parse(tc.xml)
