@@ -6,6 +6,7 @@ import app.folio.data.Repository
 import app.folio.data.TxnType
 import app.folio.feature.account.AddAccountUiState
 import app.folio.feature.auth.LoginUiState
+import app.folio.feature.ledger.AddTransactionUiState
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
 import app.folio.platform.balanceOf
@@ -81,12 +82,12 @@ class FolioApplication : Application() {
             else balanceOf(Repository.transactions.value.filter { it.accountId == active })
         }
         Uatu.extract("focused_input") { FocusTracker.current.value }
-        Uatu.extract("txn_form_type") { UiState.txnFormType.value }
+        Uatu.extract("txn_form_type") { AddTransactionUiState.txnFormType.value }
         Uatu.extract("txn_form_account_id") {
             (Navigator.current.value as? Route.AddTransaction)?.accountId
         }
         Uatu.extract("login_error") { LoginUiState.loginError.value }
         Uatu.extract("add_account_error") { AddAccountUiState.addAccountError.value }
-        Uatu.extract("txn_error") { UiState.txnError.value }
+        Uatu.extract("txn_error") { AddTransactionUiState.txnError.value }
     }
 }

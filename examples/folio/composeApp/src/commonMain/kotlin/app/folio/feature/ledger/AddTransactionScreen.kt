@@ -1,4 +1,4 @@
-package app.folio.ui
+package app.folio.feature.ledger
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,11 +16,22 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.folio.data.Repository
+import app.folio.data.TxnType
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
-import app.folio.data.TxnType
-import app.folio.UiState
 import app.folio.platform.parseCents
+import app.folio.ui.AppButton
+import app.folio.ui.BackButton
+import app.folio.ui.BackHandler
+import app.folio.ui.ButtonStyle
+import app.folio.ui.EmptyState
+import app.folio.ui.ErrorText
+import app.folio.ui.FieldLabel
+import app.folio.ui.Header
+import app.folio.ui.Screen
+import app.folio.ui.Segmented
+import app.folio.ui.TextInput
+import app.folio.ui.Type
 
 private val AMOUNT_REGEX = Regex("""^\d*(\.\d{0,2})?$""")
 
@@ -50,31 +61,31 @@ fun AddTransactionScreen(accountId: String) {
     var type by remember { mutableStateOf(TxnType.credit) }
     var amount by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
-    val err by UiState.txnError.collectAsState()
+    val err by AddTransactionUiState.txnError.collectAsState()
 
     DisposableEffect(type) {
-        UiState.txnFormType.value = if (type == TxnType.credit) "credit" else "debit"
-        onDispose { UiState.txnFormType.value = null }
+        AddTransactionUiState.txnFormType.value = if (type == TxnType.credit) "credit" else "debit"
+        onDispose { AddTransactionUiState.txnFormType.value = null }
     }
 
     DisposableEffect(Unit) {
-        onDispose { UiState.txnError.value = "" }
+        onDispose { AddTransactionUiState.txnError.value = "" }
     }
 
     fun submit() {
         val cents = parseCents(amount)
         if (cents == null) {
-            UiState.txnError.value = "Enter a valid amount (e.g. 12.34)"; return
+            AddTransactionUiState.txnError.value = "Enter a valid amount (e.g. 12.34)"; return
         }
         if (cents <= 0) {
-            UiState.txnError.value = "Amount must be greater than zero"; return
+            AddTransactionUiState.txnError.value = "Amount must be greater than zero"; return
         }
         try {
             Repository.createTransaction(accountId, type, cents, note)
-            UiState.txnError.value = ""
+            AddTransactionUiState.txnError.value = ""
             Navigator.back(Route.Home)
         } catch (e: IllegalArgumentException) {
-            UiState.txnError.value = e.message ?: "Could not save transaction"
+            AddTransactionUiState.txnError.value = e.message ?: "Could not save transaction"
         }
     }
 
@@ -104,7 +115,7 @@ fun AddTransactionScreen(accountId: String) {
                 selected = if (type == TxnType.credit) 0 else 1,
                 labels = listOf("Credit", "Debit"),
                 onSelect = {
-                    UiState.txnError.value = ""
+                    AddTransactionUiState.txnError.value = ""
                     type = if (it == 0) TxnType.credit else TxnType.debit
                 },
                 descriptions = listOf("txn_credit", "txn_debit"),
@@ -114,7 +125,7 @@ fun AddTransactionScreen(accountId: String) {
                 TextInput(
                     value = amount,
                     onChange = {
-                        UiState.txnError.value = ""
+                        AddTransactionUiState.txnError.value = ""
                         if (AMOUNT_REGEX.matches(it) || it.isEmpty()) {
                             amount = it
                         }
@@ -133,7 +144,7 @@ fun AddTransactionScreen(accountId: String) {
                 TextInput(
                     value = note,
                     onChange = {
-                        UiState.txnError.value = ""
+                        AddTransactionUiState.txnError.value = ""
                         note = it.take(80)
                     },
                     placeholder = "What's this for?",

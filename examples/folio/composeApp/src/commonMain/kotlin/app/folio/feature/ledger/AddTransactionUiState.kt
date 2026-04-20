@@ -1,10 +1,8 @@
-package app.folio
+package app.folio.feature.ledger
 
 import kotlinx.coroutines.flow.MutableStateFlow
 
-object UiState {
-    val loginError = MutableStateFlow("")
-    val addAccountError = MutableStateFlow("")
+object AddTransactionUiState {
     val txnError = MutableStateFlow("")
     val txnFormType = MutableStateFlow<String?>(null)
 }

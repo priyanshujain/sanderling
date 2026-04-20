@@ -17,10 +17,10 @@ import app.folio.data.Repository
 import app.folio.feature.account.AddAccountScreen
 import app.folio.feature.auth.LoginScreen
 import app.folio.feature.home.HomeScreen
+import app.folio.feature.ledger.AddTransactionScreen
+import app.folio.feature.ledger.LedgerScreen
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
-import app.folio.ui.AddTransactionScreen
-import app.folio.ui.LedgerScreen
 import app.folio.ui.LedgerTheme
 import app.folio.ui.LocalTokens
 import app.folio.ui.Tokens
