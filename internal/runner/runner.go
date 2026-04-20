@@ -356,7 +356,6 @@ func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action 
 	traceAction := &trace.Action{Kind: string(action.Kind), X: action.X, Y: action.Y}
 	switch action.Kind {
 	case verifier.ActionKindTap:
-		traceAction.Text = action.On
 		traceAction.Selector = action.On
 		stampSelectorTarget(traceAction, action, tree)
 	case verifier.ActionKindInputText:
