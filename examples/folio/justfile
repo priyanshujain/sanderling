@@ -5,7 +5,7 @@ uatu     := env_var_or_default("UATU", "uatu")
 avd      := env_var_or_default("AVD", "")
 duration := env_var_or_default("DURATION", "1m")
 seed     := env_var_or_default("SEED", "0")
-output   := env_var_or_default("OUTPUT", justfile_directory() / "runs")
+output   := env_var_or_default("OUTPUT", justfile_directory() / "uatu" / "runs")
 ios_device := env_var_or_default("IOS_DEVICE", "iPhone 17 Pro")
 
 default:
@@ -91,7 +91,7 @@ test:
       avd_flag=(--avd "{{avd}}")
     fi
     "{{uatu}}" test \
-      --spec "{{justfile_directory()}}/spec.ts" \
+      --spec "{{justfile_directory()}}/uatu/spec.ts" \
       --bundle-id app.folio \
       "${avd_flag[@]}" \
       --duration "{{duration}}" \

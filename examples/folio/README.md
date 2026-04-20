@@ -70,7 +70,7 @@ AVD=Pixel_7
 DURATION=5m
 ```
 
-Traces land in `./runs/<timestamp>/`.
+Traces land in `./uatu/runs/<timestamp>/`.
 
 ## Layout
 
@@ -83,8 +83,10 @@ iosApp/
   project.yml                              xcodegen spec
   iosApp/iOSApp.swift                      SwiftUI host
   iosApp/Info.plist
+uatu/
+  spec.ts                                  uatu test spec
+  package.json                             @uatu/spec dependency
 justfile
-spec.ts                                    uatu test spec
 ```
 
 ## How it connects to uatu
@@ -92,6 +94,6 @@ spec.ts                                    uatu test spec
 - `composeApp/src/androidMain/.../FolioApplication.kt` calls `Uatu.start(this)`
   and registers snapshot extractors (`logged_in`, `account_count`,
   `total_balance`, `route`)
-- `spec.ts` imports `@uatu/spec`, reads those snapshots, asserts properties,
-  and weights the actions the fuzzer picks from
+- `uatu/spec.ts` imports `@uatu/spec`, reads those snapshots, asserts
+  properties, and weights the actions the fuzzer picks from
 - `just test` invokes `uatu test` against the installed APK

@@ -6,6 +6,7 @@ iosApp/build/
 iosApp/iosApp.xcodeproj/
 iosApp/iosApp.xcodeproj/**
 .DS_Store
-runs/
+uatu/node_modules/
+uatu/runs/
 .playwright-mcp/
 web-*.png

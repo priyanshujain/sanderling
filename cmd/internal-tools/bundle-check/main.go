@@ -17,7 +17,7 @@ func main() {
 	specApiPath := filepath.Join(repoRoot, "pkg/spec-api/src/index.ts")
 
 	result, err := bundler.Bundle(bundler.Options{
-		EntryFile: "examples/folio/spec.ts",
+		EntryFile: "examples/folio/uatu/spec.ts",
 		Aliases: map[string]string{
 			"@uatu/spec": specApiPath,
 		},
