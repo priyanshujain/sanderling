@@ -108,6 +108,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			stepIndex, screen, treeSize)
 		verdicts := options.Verifier.EvaluateProperties()
 		violations := violationNames(verdicts)
+		for _, name := range violations {
+			if predicateErr := options.Verifier.PredicateError(name); predicateErr != nil {
+				logger.Warn("predicate error", "step", stepIndex, "property", name, "err", predicateErr)
+			}
+		}
 
 		nextAction, nextErr := options.Verifier.NextAction()
 		var traceAction *trace.Action
