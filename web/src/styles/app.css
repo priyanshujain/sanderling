@@ -60,6 +60,8 @@ button:hover {
 .run-table {
   width: 100%;
   border-collapse: collapse;
+  align-self: flex-start;
+  flex: 0 0 auto;
 }
 
 .run-table th,
