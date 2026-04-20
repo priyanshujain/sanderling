@@ -138,8 +138,8 @@ button:hover {
 .detail-grid {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) minmax(0, 220px);
+  grid-template-columns: 340px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 140px);
   grid-template-areas:
     "actions before after"
     "metrics metrics metrics";

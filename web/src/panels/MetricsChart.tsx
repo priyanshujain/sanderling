@@ -19,11 +19,11 @@ export interface MetricsChartProps {
 
 const CHART_WIDTH = 1000;
 const LABEL_WIDTH = 60;
-const LANE_HEIGHT = 40;
-const LANE_GAP = 10;
-const AXIS_HEIGHT = 14;
-const STATUS_LANE_HEIGHT = 10;
-const TICK_COUNT = 3;
+const LANE_HEIGHT = 32;
+const LANE_GAP = 6;
+const AXIS_HEIGHT = 12;
+const STATUS_LANE_HEIGHT = 8;
+const TICK_COUNT = 2;
 
 const MB = 1024 * 1024;
 

@@ -148,6 +148,26 @@ export default function RunDetail() {
         />
       ),
     },
+    {
+      id: "violations",
+      label: "Violations",
+      badge:
+        violationsBefore.length > 0 ? (
+          <span className="tabs-badge" data-kind="violation">
+            {violationsBefore.length}
+          </span>
+        ) : undefined,
+      content: (
+        <ViolationsPanel
+          propertyNames={history?.names ?? []}
+          violations={violationsBefore}
+          residuals={residualsBefore}
+          onJumpToFirstViolation={jumpToFirstViolation}
+          hasFirstViolation={history?.firstViolationStep !== undefined}
+          violationsOnly
+        />
+      ),
+    },
   ];
 
   const afterTabs: TabDefinition[] = [
@@ -176,6 +196,26 @@ export default function RunDetail() {
           residuals={residualsAfter}
           onJumpToFirstViolation={jumpToFirstViolation}
           hasFirstViolation={history?.firstViolationStep !== undefined}
+        />
+      ),
+    },
+    {
+      id: "violations",
+      label: "Violations",
+      badge:
+        violationsAfter.length > 0 ? (
+          <span className="tabs-badge" data-kind="violation">
+            {violationsAfter.length}
+          </span>
+        ) : undefined,
+      content: (
+        <ViolationsPanel
+          propertyNames={history?.names ?? []}
+          violations={violationsAfter}
+          residuals={residualsAfter}
+          onJumpToFirstViolation={jumpToFirstViolation}
+          hasFirstViolation={history?.firstViolationStep !== undefined}
+          violationsOnly
         />
       ),
     },
