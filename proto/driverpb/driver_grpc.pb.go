@@ -31,6 +31,7 @@ const (
 	Driver_RecentLogs_FullMethodName  = "/uatu.driver.v1.Driver/RecentLogs"
 	Driver_WaitForIdle_FullMethodName = "/uatu.driver.v1.Driver/WaitForIdle"
 	Driver_Health_FullMethodName      = "/uatu.driver.v1.Driver/Health"
+	Driver_Metrics_FullMethodName     = "/uatu.driver.v1.Driver/Metrics"
 )
 
 // DriverClient is the client API for Driver service.
@@ -49,6 +50,7 @@ type DriverClient interface {
 	RecentLogs(ctx context.Context, in *RecentLogsRequest, opts ...grpc.CallOption) (*LogEntries, error)
 	WaitForIdle(ctx context.Context, in *Duration, opts ...grpc.CallOption) (*Empty, error)
 	Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthStatus, error)
+	Metrics(ctx context.Context, in *MetricsRequest, opts ...grpc.CallOption) (*MetricsResponse, error)
 }
 
 type driverClient struct {
@@ -179,6 +181,16 @@ func (c *driverClient) Health(ctx context.Context, in *Empty, opts ...grpc.CallO
 	return out, nil
 }
 
+func (c *driverClient) Metrics(ctx context.Context, in *MetricsRequest, opts ...grpc.CallOption) (*MetricsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MetricsResponse)
+	err := c.cc.Invoke(ctx, Driver_Metrics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DriverServer is the server API for Driver service.
 // All implementations must embed UnimplementedDriverServer
 // for forward compatibility.
@@ -195,6 +207,7 @@ type DriverServer interface {
 	RecentLogs(context.Context, *RecentLogsRequest) (*LogEntries, error)
 	WaitForIdle(context.Context, *Duration) (*Empty, error)
 	Health(context.Context, *Empty) (*HealthStatus, error)
+	Metrics(context.Context, *MetricsRequest) (*MetricsResponse, error)
 	mustEmbedUnimplementedDriverServer()
 }
 
@@ -240,6 +253,9 @@ func (UnimplementedDriverServer) WaitForIdle(context.Context, *Duration) (*Empty
 }
 func (UnimplementedDriverServer) Health(context.Context, *Empty) (*HealthStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
+}
+func (UnimplementedDriverServer) Metrics(context.Context, *MetricsRequest) (*MetricsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Metrics not implemented")
 }
 func (UnimplementedDriverServer) mustEmbedUnimplementedDriverServer() {}
 func (UnimplementedDriverServer) testEmbeddedByValue()                {}
@@ -478,6 +494,24 @@ func _Driver_Health_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Driver_Metrics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MetricsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DriverServer).Metrics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Driver_Metrics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DriverServer).Metrics(ctx, req.(*MetricsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Driver_ServiceDesc is the grpc.ServiceDesc for Driver service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -532,6 +566,10 @@ var Driver_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Health",
 			Handler:    _Driver_Health_Handler,
+		},
+		{
+			MethodName: "Metrics",
+			Handler:    _Driver_Metrics_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
