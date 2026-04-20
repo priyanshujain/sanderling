@@ -44,7 +44,7 @@ fun HomePage(user: String, onLogout: () -> Unit) {
                 title = "Accounts",
                 subtitle = user,
                 right = {
-                    IconButton(onClick = onLogout, description = "Sign out", icon = Icons.Logout)
+                    IconButton(onClick = onLogout, description = "logout_button", icon = Icons.Logout)
                 },
             )
         },
@@ -65,6 +65,7 @@ fun HomePage(user: String, onLogout: () -> Unit) {
                 text = "+ Add account",
                 onClick = { Navigator.push(Route.AddAccount) },
                 style = ButtonStyle.Primary,
+                description = "add_account_button",
             )
         },
     ) {
@@ -80,6 +81,7 @@ fun HomePage(user: String, onLogout: () -> Unit) {
                     val bal = txns.filter { it.accountId == a.id }.sumOf { signedAmount(it) }
                     val count = txns.count { it.accountId == a.id }
                     AccountCard(
+                        id = a.id,
                         name = a.name,
                         initials = initialsOf(a.name),
                         count = count,
@@ -94,6 +96,7 @@ fun HomePage(user: String, onLogout: () -> Unit) {
 
 @Composable
 private fun AccountCard(
+    id: String,
     name: String,
     initials: String,
     count: Int,
@@ -102,14 +105,13 @@ private fun AccountCard(
 ) {
     val t = LocalTokens.current
     val txnLabel = if (count == 1) "1 transaction" else "$count transactions"
-    val a11y = "$name account, balance ${formatCents(balance)}, $txnLabel"
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(RadiusLg))
             .background(t.surface)
             .border(1.dp, t.border, RoundedCornerShape(RadiusLg))
-            .semantics(mergeDescendants = true) { contentDescription = a11y }
+            .semantics(mergeDescendants = true) { contentDescription = "account_card:$id" }
             .clickable(role = Role.Button, onClick = onClick)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
