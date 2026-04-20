@@ -127,13 +127,13 @@ function SwipeArrow({ fromX, fromY, toX, toY, stroke, headSize }: SwipeArrowProp
         y1={fromY}
         x2={toX}
         y2={toY}
-        stroke="var(--accent-change)"
+        stroke="var(--text-muted)"
         strokeWidth={stroke}
         strokeLinecap="round"
       />
       <polygon
         points={points}
-        fill="var(--accent-change)"
+        fill="var(--text-muted)"
         transform={`rotate(${angle} ${toX} ${toY})`}
       />
     </g>
