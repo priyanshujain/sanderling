@@ -183,6 +183,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		Duration:        options.duration,
 		SnapshotTimeout: 5 * time.Second,
 		IdleTimeout:     1 * time.Second,
+		BundleID:        options.bundleID,
 		Connection:      connection,
 		Driver:          driverClient,
 		Verifier:        verifierInstance,

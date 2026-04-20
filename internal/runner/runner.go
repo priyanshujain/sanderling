@@ -21,6 +21,7 @@ type Options struct {
 	SnapshotTimeout time.Duration
 	IdleTimeout     time.Duration
 
+	BundleID    string
 	Connection  *agent.Conn
 	Driver      driver.Driver
 	Verifier    *verifier.Verifier
@@ -126,6 +127,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			logger.Warn("residual encode failed", "step", stepIndex, "err", residualErr)
 		}
 
+		metrics := captureMetrics(ctx, options, logger, stepIndex)
+
 		step := trace.Step{
 			Index:      stepIndex,
 			Timestamp:  stepStart,
@@ -136,17 +139,12 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			Violations: violations,
 			Hierarchy:  tree,
 			Residuals:  residuals,
+			Metrics:    metrics,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
 		}
-		if image, screenshotErr := options.Driver.Screenshot(ctx); screenshotErr != nil {
-			logger.Warn("screenshot capture failed", "step", stepIndex, "err", screenshotErr)
-		} else if len(image.PNG) > 0 {
-			if writeErr := options.TraceWriter.WriteScreenshot(stepIndex, image.PNG); writeErr != nil {
-				logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
-			}
-		}
+		captureScreenshot(ctx, options, logger, stepIndex, false)
 		summary.Steps = stepIndex
 		if len(violations) > 0 {
 			summary.Violations = append(summary.Violations, ViolationRecord{
@@ -171,6 +169,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 
 		idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
 		idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
+		if nextErr == nil {
+			captureScreenshot(ctx, options, logger, stepIndex, true)
+		}
 		if idleErr != nil && idleCtx.Err() == nil {
 			logger.Warn("wait_for_idle failed", "step", stepIndex, "err", idleErr)
 		}
@@ -401,6 +402,45 @@ func stampSelectorTarget(traceAction *trace.Action, action verifier.Action, tree
 	x, y := bounds.Center()
 	if x > 0 && y > 0 {
 		traceAction.TapPoint = &trace.PointRecord{X: x, Y: y}
+	}
+}
+
+func captureMetrics(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) *trace.Metrics {
+	if options.BundleID == "" {
+		return nil
+	}
+	sample, err := options.Driver.Metrics(ctx, options.BundleID)
+	if err != nil {
+		logger.Warn("metrics capture failed", "step", stepIndex, "err", err)
+		return nil
+	}
+	if sample.CPUPercent == 0 && sample.HeapBytes == 0 && sample.TotalMemoryBytes == 0 {
+		return nil
+	}
+	return &trace.Metrics{
+		CPUPercent:       sample.CPUPercent,
+		HeapBytes:        sample.HeapBytes,
+		TotalMemoryBytes: sample.TotalMemoryBytes,
+	}
+}
+
+func captureScreenshot(ctx context.Context, options Options, logger *slog.Logger, stepIndex int, after bool) {
+	image, err := options.Driver.Screenshot(ctx)
+	if err != nil {
+		logger.Warn("screenshot capture failed", "step", stepIndex, "after", after, "err", err)
+		return
+	}
+	if len(image.PNG) == 0 {
+		return
+	}
+	var writeErr error
+	if after {
+		writeErr = options.TraceWriter.WriteScreenshotAfter(stepIndex, image.PNG)
+	} else {
+		writeErr = options.TraceWriter.WriteScreenshot(stepIndex, image.PNG)
+	}
+	if writeErr != nil {
+		logger.Warn("screenshot write failed", "step", stepIndex, "after", after, "err", writeErr)
 	}
 }
 

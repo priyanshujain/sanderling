@@ -22,6 +22,13 @@ type Step struct {
 	Violations []string                   `json:"violations,omitempty"`
 	Hierarchy  *hierarchy.Tree            `json:"hierarchy,omitempty"`
 	Residuals  map[string]json.RawMessage `json:"residuals,omitempty"`
+	Metrics    *Metrics                   `json:"metrics,omitempty"`
+}
+
+type Metrics struct {
+	CPUPercent       float64 `json:"cpu_percent,omitempty"`
+	HeapBytes        int64   `json:"heap_bytes,omitempty"`
+	TotalMemoryBytes int64   `json:"total_memory_bytes,omitempty"`
 }
 
 type Action struct {
@@ -115,6 +122,17 @@ func (w *Writer) WriteStep(step Step) error {
 }
 
 func (w *Writer) WriteScreenshot(stepIndex int, png []byte) error {
+	return w.writePNG(fmt.Sprintf("step-%05d.png", stepIndex), png)
+}
+
+// WriteScreenshotAfter writes the post-action screenshot for a step.
+// Callers use this after applyAction + waitForIdle so the UI can show a
+// before/after pair.
+func (w *Writer) WriteScreenshotAfter(stepIndex int, png []byte) error {
+	return w.writePNG(fmt.Sprintf("step-%05d-after.png", stepIndex), png)
+}
+
+func (w *Writer) writePNG(name string, png []byte) error {
 	if len(png) == 0 {
 		return nil
 	}
@@ -122,8 +140,7 @@ func (w *Writer) WriteScreenshot(stepIndex int, png []byte) error {
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return fmt.Errorf("mkdir screenshots: %w", err)
 	}
-	path := filepath.Join(directory, fmt.Sprintf("step-%05d.png", stepIndex))
-	return os.WriteFile(path, png, 0o644)
+	return os.WriteFile(filepath.Join(directory, name), png, 0o644)
 }
 
 func (w *Writer) Close() error {
