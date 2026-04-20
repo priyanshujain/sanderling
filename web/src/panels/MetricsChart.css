@@ -72,3 +72,31 @@
   stroke-dasharray: 3 3;
   pointer-events: none;
 }
+
+.metrics-status-cell {
+  cursor: pointer;
+  outline: none;
+  shape-rendering: crispEdges;
+}
+
+.metrics-status-cell[data-status="violated"] {
+  fill: var(--accent-violation);
+}
+
+.metrics-status-cell[data-status="exception"] {
+  fill: var(--accent-violation);
+  opacity: 0.55;
+}
+
+.metrics-status-cell[data-status="holds"] {
+  fill: color-mix(in srgb, var(--accent-positive) 55%, transparent);
+}
+
+.metrics-status-cell[data-status="pending"] {
+  fill: color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+.metrics-status-cell:hover {
+  stroke: var(--text-primary);
+  stroke-width: 1;
+}

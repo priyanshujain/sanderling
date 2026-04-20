@@ -1,4 +1,5 @@
 import type { Metrics } from "../types";
+import type { PropertyLane } from "./Timeline";
 import "./MetricsChart.css";
 
 export interface MetricsSample {
@@ -12,13 +13,16 @@ export interface MetricsChartProps {
   selectedIndex: number;
   onSelect: (stepIndex: number) => void;
   exceptionStepIndices?: number[];
+  propertyLanes?: PropertyLane[];
+  violationStepIndices?: number[];
 }
 
 const CHART_WIDTH = 1000;
 const LABEL_WIDTH = 60;
-const LANE_HEIGHT = 60;
-const LANE_GAP = 14;
-const AXIS_HEIGHT = 16;
+const LANE_HEIGHT = 40;
+const LANE_GAP = 10;
+const AXIS_HEIGHT = 14;
+const STATUS_LANE_HEIGHT = 10;
 const TICK_COUNT = 3;
 
 const MB = 1024 * 1024;
@@ -94,6 +98,8 @@ export default function MetricsChart({
   selectedIndex,
   onSelect,
   exceptionStepIndices,
+  propertyLanes,
+  violationStepIndices,
 }: MetricsChartProps) {
   if (samples.length === 0) {
     return <div className="status-block">no metrics</div>;
@@ -106,6 +112,8 @@ export default function MetricsChart({
 
   const plotWidth = CHART_WIDTH - LABEL_WIDTH;
   const columnWidth = plotWidth / samples.length;
+  const violationSet = new Set(violationStepIndices ?? []);
+  const exceptionSet = new Set(exceptionStepIndices ?? []);
 
   const heapMax = samples.reduce((max, sample) => {
     const value = sample.metrics?.heap_bytes;
@@ -119,19 +127,22 @@ export default function MetricsChart({
   }, 0);
   const cpuTop = cpuCeiling(cpuMax);
 
+  const statusTop = 0;
+  const statusBottom = statusTop + STATUS_LANE_HEIGHT;
+  const heapTopY = statusBottom + LANE_GAP;
   const heapGeometry: LaneGeometry = {
-    top: 0,
-    bottom: LANE_HEIGHT,
+    top: heapTopY,
+    bottom: heapTopY + LANE_HEIGHT,
     plotLeft: LABEL_WIDTH,
     plotRight: CHART_WIDTH,
   };
   const cpuGeometry: LaneGeometry = {
-    top: LANE_HEIGHT + LANE_GAP,
-    bottom: LANE_HEIGHT + LANE_GAP + LANE_HEIGHT,
+    top: heapGeometry.bottom + LANE_GAP,
+    bottom: heapGeometry.bottom + LANE_GAP + LANE_HEIGHT,
     plotLeft: LABEL_WIDTH,
     plotRight: CHART_WIDTH,
   };
-  const axisTop = cpuGeometry.bottom + LANE_GAP;
+  const axisTop = cpuGeometry.bottom + LANE_GAP / 2;
   const totalHeight = axisTop + AXIS_HEIGHT;
 
   const heapPoints = buildPolyline(
@@ -156,6 +167,8 @@ export default function MetricsChart({
   const highlightX =
     selectedColumn >= 0 ? LABEL_WIDTH + selectedColumn * columnWidth + columnWidth / 2 : null;
 
+  const anyStatus = (propertyLanes?.length ?? 0) > 0 || violationSet.size > 0;
+
   return (
     <svg
       className="metrics-chart"
@@ -163,6 +176,50 @@ export default function MetricsChart({
       role="img"
       aria-label="metrics chart"
     >
+      <g className="metrics-lane" data-lane="STATUS">
+        <text
+          className="metrics-lane-label"
+          x={LABEL_WIDTH - 8}
+          y={statusTop + STATUS_LANE_HEIGHT / 2}
+          dominantBaseline="middle"
+          textAnchor="end"
+        >
+          STEPS
+        </text>
+        {samples.map((sample, index) => {
+          const x = LABEL_WIDTH + index * columnWidth + 1;
+          const w = Math.max(columnWidth - 2, 1);
+          let status: "violated" | "holds" | "pending" | "exception" = "holds";
+          if (propertyLanes && propertyLanes.length > 0) {
+            const statuses = propertyLanes.map((lane) => lane.statuses[index]);
+            if (statuses.includes("violated")) status = "violated";
+            else if (statuses.every((s) => s === "holds")) status = "holds";
+            else status = "pending";
+          } else {
+            status = violationSet.has(sample.stepIndex) ? "violated" : "holds";
+          }
+          if (exceptionSet.has(sample.stepIndex) && status !== "violated") {
+            status = "exception";
+          }
+          return (
+            <rect
+              key={`status-${sample.stepIndex}`}
+              className="metrics-status-cell"
+              data-status={status}
+              data-step-index={sample.stepIndex}
+              x={x}
+              y={statusTop}
+              width={w}
+              height={STATUS_LANE_HEIGHT}
+              onClick={() => onSelect(sample.stepIndex)}
+            >
+              <title>{`step ${sample.stepIndex}: ${status}`}</title>
+            </rect>
+          );
+        })}
+        {!anyStatus ? null : null}
+      </g>
+
       <g className="metrics-lane" data-lane="HEAP">
         <rect
           x={LABEL_WIDTH}
@@ -376,7 +433,7 @@ export default function MetricsChart({
                 data-step-index={stepIndex}
                 x1={x}
                 x2={x}
-                y1={heapGeometry.top}
+                y1={statusTop}
                 y2={cpuGeometry.bottom}
                 pointerEvents="none"
               />
@@ -390,7 +447,7 @@ export default function MetricsChart({
           data-selected="true"
           x1={highlightX}
           x2={highlightX}
-          y1={heapGeometry.top}
+          y1={statusTop}
           y2={cpuGeometry.bottom}
           stroke="var(--text-primary)"
           strokeWidth={1}
