@@ -32,6 +32,7 @@ Usage:
 
 Commands:
   test     Run a spec against an app for a fixed duration.
+  inspect  Serve a local web UI for browsing runs/.
   doctor   Check that the host environment is ready to run uatu.
   version  Print the uatu version.
 
@@ -87,6 +88,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		return runTest(options, stdout)
+	case "inspect":
+		options, err := parseInspectArgs(args[2:], stderr)
+		if err != nil {
+			return err
+		}
+		return runInspect(options, stdout)
 	case "doctor":
 		return runDoctor(stdout)
 	case "version", "-v", "--version":
