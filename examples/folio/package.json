@@ -1,5 +1,5 @@
 {
-  "name": "uatu-sample",
+  "name": "folio",
   "private": true,
   "description": "Minimal uatu integration example.",
   "devDependencies": {

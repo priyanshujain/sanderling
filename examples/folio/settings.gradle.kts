@@ -15,6 +15,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "uatu-sample"
+rootProject.name = "folio"
 
 include(":composeApp")
