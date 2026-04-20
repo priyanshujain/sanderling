@@ -138,6 +138,34 @@ func TestCacheStep_LazyDecodeReturnsFullStep(t *testing.T) {
 	}
 }
 
+func TestDecodeStepSummary_ActionLabelPerKind(t *testing.T) {
+	cases := []struct {
+		line      string
+		wantKind  string
+		wantLabel string
+	}{
+		{`{"step":1,"timestamp":"2026-04-20T10:00:00Z","action":{"kind":"Tap","selector":"id:save"}}`, "Tap", "id:save"},
+		{`{"step":2,"timestamp":"2026-04-20T10:00:01Z","action":{"kind":"Tap","x":140,"y":220}}`, "Tap", "(140,220)"},
+		{`{"step":3,"timestamp":"2026-04-20T10:00:02Z","action":{"kind":"InputText","text":"alice"}}`, "InputText", `"alice"`},
+		{`{"step":4,"timestamp":"2026-04-20T10:00:03Z","action":{"kind":"Swipe","from_x":10,"from_y":500,"to_x":10,"to_y":50}}`, "Swipe", "up"},
+		{`{"step":5,"timestamp":"2026-04-20T10:00:04Z","action":{"kind":"Swipe","from_x":100,"from_y":50,"to_x":600,"to_y":50}}`, "Swipe", "right"},
+		{`{"step":6,"timestamp":"2026-04-20T10:00:05Z","action":{"kind":"PressKey","key":"back"}}`, "PressKey", "back"},
+		{`{"step":7,"timestamp":"2026-04-20T10:00:06Z","action":{"kind":"Wait","duration_millis":500}}`, "Wait", "500ms"},
+	}
+	for _, tc := range cases {
+		summary, _, err := decodeStepSummary([]byte(tc.line))
+		if err != nil {
+			t.Fatalf("decode %s: %v", tc.line, err)
+		}
+		if summary.ActionKind != tc.wantKind {
+			t.Errorf("kind = %q, want %q (line=%s)", summary.ActionKind, tc.wantKind, tc.line)
+		}
+		if summary.ActionLabel != tc.wantLabel {
+			t.Errorf("label = %q, want %q (line=%s)", summary.ActionLabel, tc.wantLabel, tc.line)
+		}
+	}
+}
+
 func TestCacheOpen_RejectsTraversalIDs(t *testing.T) {
 	cache := NewCache(t.TempDir())
 	for _, id := range []string{"", ".", "..", "../etc", "a/b", "a\\b"} {

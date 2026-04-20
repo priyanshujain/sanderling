@@ -44,6 +44,7 @@ type StepSummary struct {
 	Timestamp     time.Time `json:"timestamp"`
 	Screen        string    `json:"screen,omitempty"`
 	ActionKind    string    `json:"action_kind,omitempty"`
+	ActionLabel   string    `json:"action_label,omitempty"`
 	HasViolations bool      `json:"has_violations"`
 	HasExceptions bool      `json:"has_exceptions"`
 }
@@ -281,11 +282,21 @@ func scanSteps(tracePath string) ([]StepSummary, []int64, int, time.Time, error)
 
 func decodeStepSummary(line []byte) (StepSummary, int, error) {
 	var partial struct {
-		Index      int       `json:"step"`
-		Timestamp  time.Time `json:"timestamp"`
-		Screen     string    `json:"screen,omitempty"`
-		Action     *struct {
-			Kind string `json:"kind"`
+		Index     int       `json:"step"`
+		Timestamp time.Time `json:"timestamp"`
+		Screen    string    `json:"screen,omitempty"`
+		Action    *struct {
+			Kind           string `json:"kind"`
+			X              int    `json:"x,omitempty"`
+			Y              int    `json:"y,omitempty"`
+			FromX          int    `json:"from_x,omitempty"`
+			FromY          int    `json:"from_y,omitempty"`
+			ToX            int    `json:"to_x,omitempty"`
+			ToY            int    `json:"to_y,omitempty"`
+			Key            string `json:"key,omitempty"`
+			Text           string `json:"text,omitempty"`
+			Selector       string `json:"selector,omitempty"`
+			DurationMillis int    `json:"duration_millis,omitempty"`
 		} `json:"action,omitempty"`
 		Exceptions []json.RawMessage `json:"exceptions,omitempty"`
 		Violations []string          `json:"violations,omitempty"`
@@ -302,8 +313,54 @@ func decodeStepSummary(line []byte) (StepSummary, int, error) {
 	}
 	if partial.Action != nil {
 		summary.ActionKind = partial.Action.Kind
+		switch partial.Action.Kind {
+		case "Tap":
+			if partial.Action.Selector != "" {
+				summary.ActionLabel = partial.Action.Selector
+			} else if partial.Action.Text != "" {
+				summary.ActionLabel = partial.Action.Text
+			} else if partial.Action.X != 0 || partial.Action.Y != 0 {
+				summary.ActionLabel = fmt.Sprintf("(%d,%d)", partial.Action.X, partial.Action.Y)
+			}
+		case "InputText":
+			summary.ActionLabel = fmt.Sprintf("%q", partial.Action.Text)
+		case "Swipe":
+			summary.ActionLabel = swipeDirectionLabel(
+				partial.Action.FromX, partial.Action.FromY,
+				partial.Action.ToX, partial.Action.ToY,
+			)
+		case "PressKey":
+			summary.ActionLabel = partial.Action.Key
+		case "Wait":
+			if partial.Action.DurationMillis > 0 {
+				summary.ActionLabel = fmt.Sprintf("%dms", partial.Action.DurationMillis)
+			}
+		}
 	}
 	return summary, len(partial.Violations), nil
+}
+
+func swipeDirectionLabel(fromX, fromY, toX, toY int) string {
+	dx := toX - fromX
+	dy := toY - fromY
+	absX := dx
+	if absX < 0 {
+		absX = -absX
+	}
+	absY := dy
+	if absY < 0 {
+		absY = -absY
+	}
+	if absY >= absX {
+		if dy < 0 {
+			return "up"
+		}
+		return "down"
+	}
+	if dx < 0 {
+		return "left"
+	}
+	return "right"
 }
 
 // Step decodes the full Step record at index n (1-based, matching trace.Step.Index).
