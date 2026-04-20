@@ -9,6 +9,8 @@ export interface ViolationsPanelProps {
   residuals?: Record<string, ResidualNode>;
   onJumpToFirstViolation: () => void;
   hasFirstViolation: boolean;
+  /** When true, only render violated rows and hide the header button row. */
+  violationsOnly?: boolean;
 }
 
 type Status = "violated" | "pending" | "holds";
@@ -40,38 +42,45 @@ export default function ViolationsPanel({
   residuals,
   onJumpToFirstViolation,
   hasFirstViolation,
+  violationsOnly = false,
 }: ViolationsPanelProps) {
   const violationSet = useMemo(() => new Set(violations), [violations]);
 
   const rows = useMemo(() => {
     const sorted = [...propertyNames].sort((a, b) => a.localeCompare(b));
-    return sorted
-      .map((name) => ({
-        name,
-        status: statusFor(name, violationSet, residuals),
-      }))
-      .sort((a, b) => {
-        const groupDelta = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
-        if (groupDelta !== 0) {
-          return groupDelta;
-        }
-        return a.name.localeCompare(b.name);
-      });
-  }, [propertyNames, violationSet, residuals]);
+    const all = sorted.map((name) => ({
+      name,
+      status: statusFor(name, violationSet, residuals),
+    }));
+    const filtered = violationsOnly ? all.filter((row) => row.status === "violated") : all;
+    return filtered.sort((a, b) => {
+      const groupDelta = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+      if (groupDelta !== 0) {
+        return groupDelta;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }, [propertyNames, violationSet, residuals, violationsOnly]);
+
+  if (violationsOnly && rows.length === 0) {
+    return <div className="status-block">no violations</div>;
+  }
 
   return (
     <section className="violations-panel">
-      <header className="violations-panel-header">
-        <h2 className="violations-panel-title">properties</h2>
-        <button
-          type="button"
-          className="violations-panel-jump"
-          onClick={onJumpToFirstViolation}
-          disabled={!hasFirstViolation}
-        >
-          jump to first violation
-        </button>
-      </header>
+      {violationsOnly ? null : (
+        <header className="violations-panel-header">
+          <h2 className="violations-panel-title">properties</h2>
+          <button
+            type="button"
+            className="violations-panel-jump"
+            onClick={onJumpToFirstViolation}
+            disabled={!hasFirstViolation}
+          >
+            jump to first violation
+          </button>
+        </header>
+      )}
       <ul className="violations-panel-list">
         {rows.map(({ name, status }) => {
           const residual = residuals?.[name];
