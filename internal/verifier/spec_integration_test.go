@@ -12,7 +12,7 @@ import (
 
 const sampleAppHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
-  <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
+  <node index="0" class="android.widget.FrameLayout" package="app.folio" bounds="[0,0][1080,2400]">
     <node index="0" class="android.widget.LinearLayout" bounds="[64,96][1016,2336]">
       <node index="0" class="android.widget.TextView" text="Sign in" bounds="[100,200][900,300]" />
       <node index="1" class="android.view.View" content-desc="login_email" clickable="true" enabled="true" bounds="[100,400][900,520]" />
@@ -24,7 +24,7 @@ const sampleAppHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 
 const homeHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
-  <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
+  <node index="0" class="android.widget.FrameLayout" package="app.folio" bounds="[0,0][1080,2400]">
     <node index="0" class="android.view.View" content-desc="logout_button" clickable="true" bounds="[980,80][1060,160]" />
     <node index="1" class="android.view.View" content-desc="account_card:acc-1" clickable="true" bounds="[64,320][1016,440]" />
     <node index="2" class="android.view.View" content-desc="account_card:acc-2" clickable="true" bounds="[64,460][1016,580]" />
@@ -34,7 +34,7 @@ const homeHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 
 const addAccountHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
-  <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
+  <node index="0" class="android.widget.FrameLayout" package="app.folio" bounds="[0,0][1080,2400]">
     <node index="0" class="android.view.View" content-desc="Back" clickable="true" bounds="[32,80][112,160]" />
     <node index="1" class="android.view.View" content-desc="account_name_field" clickable="true" bounds="[64,320][1016,440]" />
     <node index="2" class="android.view.View" content-desc="add_account_submit" clickable="true" bounds="[64,2200][1016,2320]" />
@@ -43,7 +43,7 @@ const addAccountHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 
 const ledgerHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
-  <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
+  <node index="0" class="android.widget.FrameLayout" package="app.folio" bounds="[0,0][1080,2400]">
     <node index="0" class="android.view.View" content-desc="Back" clickable="true" bounds="[32,80][112,160]" />
     <node index="1" class="android.view.View" content-desc="add_txn_button" clickable="true" bounds="[64,2200][1016,2320]" />
   </node>
@@ -51,7 +51,7 @@ const ledgerHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 
 const addTxnHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
-  <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
+  <node index="0" class="android.widget.FrameLayout" package="app.folio" bounds="[0,0][1080,2400]">
     <node index="0" class="android.view.View" content-desc="Back" clickable="true" bounds="[32,80][112,160]" />
     <node index="1" class="android.view.View" content-desc="txn_credit" clickable="true" bounds="[64,280][540,360]" />
     <node index="2" class="android.view.View" content-desc="txn_debit" clickable="true" bounds="[540,280][1016,360]" />
