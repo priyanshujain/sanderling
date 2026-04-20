@@ -1,0 +1,69 @@
+.action-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.action-list-item {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.action-list-item:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.action-list-item:focus-visible {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.action-list-item[data-active="true"] {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  border-left-color: currentColor;
+}
+
+.action-list-item[data-active="true"][data-violations="true"] {
+  border-left-color: var(--accent-violation);
+}
+
+.action-list-index {
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.action-list-kind {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-list-markers {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.action-list-marker-violation {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-violation);
+}
+
+.action-list-marker-exception {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--accent-change);
+  background: transparent;
+}
