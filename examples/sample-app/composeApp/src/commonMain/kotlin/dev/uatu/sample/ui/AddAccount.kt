@@ -37,6 +37,7 @@ fun AddAccountPage() {
         try {
             Repository.createAccount(trimmed)
             UiState.addAccountError.value = ""
+            UiState.accountNameInput.value = ""
             Navigator.replace(Route.Home)
         } catch (e: IllegalArgumentException) {
             UiState.addAccountError.value = e.message ?: "Could not create account"
@@ -65,7 +66,11 @@ fun AddAccountPage() {
                 FieldLabel("Account name")
                 TextInput(
                     value = name,
-                    onChange = { name = it; UiState.addAccountError.value = "" },
+                    onChange = {
+                        name = it
+                        UiState.accountNameInput.value = it
+                        UiState.addAccountError.value = ""
+                    },
                     placeholder = "e.g. Checking",
                     invalid = err.isNotEmpty(),
                     label = "Account name",

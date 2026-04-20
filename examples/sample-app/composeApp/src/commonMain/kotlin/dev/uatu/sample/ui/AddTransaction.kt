@@ -68,6 +68,7 @@ fun AddTransactionPage(accountId: String) {
         try {
             Repository.createTransaction(accountId, type, cents, note)
             UiState.txnError.value = ""
+            UiState.txnAmountInput.value = ""
             Navigator.back(Route.Home)
         } catch (e: IllegalArgumentException) {
             UiState.txnError.value = e.message ?: "Could not save transaction"
@@ -108,7 +109,9 @@ fun AddTransactionPage(accountId: String) {
                     value = amount,
                     onChange = {
                         if (AMOUNT_REGEX.matches(it) || it.isEmpty()) {
-                            amount = it; UiState.txnError.value = ""
+                            amount = it
+                            UiState.txnAmountInput.value = it
+                            UiState.txnError.value = ""
                         }
                     },
                     placeholder = "0.00",
