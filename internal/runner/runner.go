@@ -80,6 +80,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			treeSize = len(tree.Elements)
 		}
 
+		// Sample metrics now, while the app is still running freely.
+		// Measuring after snapshotStep would see the SDK-paused app and
+		// report CPU=0 for every step.
+		metrics := captureMetrics(ctx, options, logger, stepIndex)
+
 		snapshot, err := snapshotStep(ctx, options)
 		if err != nil {
 			return summary, fmt.Errorf("step %d snapshot: %w", stepIndex, err)
@@ -126,8 +131,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if residualErr != nil {
 			logger.Warn("residual encode failed", "step", stepIndex, "err", residualErr)
 		}
-
-		metrics := captureMetrics(ctx, options, logger, stepIndex)
 
 		step := trace.Step{
 			Index:      stepIndex,

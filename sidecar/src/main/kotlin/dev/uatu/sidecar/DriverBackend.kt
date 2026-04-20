@@ -335,11 +335,21 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
 
     override fun healthy(): Boolean = true
 
+    // Stateful CPU delta tracker. Reading /proc/<pid>/stat gives cumulative
+    // utime+stime in jiffies; CPU % over a step is (delta_ticks / delta_wall)
+    // * 100. First call returns 0 because we have no prior sample.
+    private data class CpuSample(val pid: Int, val ticks: Long, val wallNanos: Long)
+    @Volatile private var lastCpuSample: CpuSample? = null
+    private val clockTicksPerSecond: Long by lazy { resolveClockTicksPerSecond() }
+
     override fun metrics(bundleId: String): MetricsSample {
         if (bundleId.isEmpty()) return MetricsSample(0.0, 0L, 0L)
         return try {
             val pid = runAdbOutput(listOf("shell", "pidof", bundleId)).trim().split(Regex("\\s+")).firstOrNull()?.toIntOrNull()
-                ?: return MetricsSample(0.0, 0L, 0L)
+                ?: run {
+                    lastCpuSample = null
+                    return MetricsSample(0.0, 0L, 0L)
+                }
             val cpu = sampleCpuPercent(pid)
             val (rssBytes, vmSizeBytes) = sampleProcessMemory(pid)
             MetricsSample(cpu, rssBytes, vmSizeBytes)
@@ -350,17 +360,33 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     }
 
     private fun sampleCpuPercent(pid: Int): Double {
-        // Use `top -n 1 -p <pid>` which samples in a short window. Output format:
-        //   "PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND"
-        val output = runAdbOutput(listOf("shell", "top", "-b", "-n", "1", "-p", pid.toString()))
-        val line = output.lineSequence()
-            .map(String::trim)
-            .firstOrNull { it.startsWith(pid.toString()) }
-            ?: return 0.0
-        val columns = line.split(Regex("\\s+"))
-        // [0] PID [1] USER [2] PR [3] NI [4] VIRT [5] RES [6] SHR [7] S [8] %CPU
-        if (columns.size < 9) return 0.0
-        return columns[8].toDoubleOrNull() ?: 0.0
+        val stat = runAdbOutput(listOf("shell", "cat", "/proc/$pid/stat")).trim()
+        if (stat.isEmpty()) return 0.0
+        // /proc/<pid>/stat format: pid (comm) state ppid ... utime stime ...
+        // comm is parenthesized and may contain spaces; rsplit on ')' to skip it.
+        val afterComm = stat.substringAfterLast(')').trim()
+        val fields = afterComm.split(Regex("\\s+"))
+        // After the ')' we are at the "state" field (index 0 in afterComm).
+        // utime is proc(14) = afterComm[11], stime is proc(15) = afterComm[12].
+        if (fields.size < 13) return 0.0
+        val utime = fields[11].toLongOrNull() ?: return 0.0
+        val stime = fields[12].toLongOrNull() ?: return 0.0
+        val ticks = utime + stime
+        val now = System.nanoTime()
+        val previous = lastCpuSample
+        lastCpuSample = CpuSample(pid, ticks, now)
+        if (previous == null || previous.pid != pid) return 0.0
+        val deltaTicks = ticks - previous.ticks
+        val deltaWallNanos = now - previous.wallNanos
+        if (deltaTicks <= 0 || deltaWallNanos <= 0) return 0.0
+        val tickHz = clockTicksPerSecond.coerceAtLeast(1L)
+        val deltaCpuNanos = deltaTicks * 1_000_000_000.0 / tickHz
+        return (deltaCpuNanos / deltaWallNanos) * 100.0
+    }
+
+    private fun resolveClockTicksPerSecond(): Long {
+        val output = runAdbOutput(listOf("shell", "getconf", "CLK_TCK")).trim()
+        return output.toLongOrNull() ?: 100L
     }
 
     private fun sampleProcessMemory(pid: Int): Pair<Long, Long> {
