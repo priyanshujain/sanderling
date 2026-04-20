@@ -11,8 +11,21 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+:root[data-theme="dark"],
+:root[data-theme="dark"] body {
+  --background: #0e0e0e;
+  --surface: #161616;
+  --surface-elevated: #1d1d1d;
+  --border: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --text-primary: #f0f0f0;
+  --text-muted: #9a9a9a;
+  --accent-violation: #f06b6b;
+  --accent-change: #d4a44a;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --background: #0e0e0e;
     --surface: #161616;
     --surface-elevated: #1d1d1d;
@@ -23,4 +36,11 @@
     --accent-violation: #f06b6b;
     --accent-change: #d4a44a;
   }
+}
+
+body {
+  background: var(--background);
+  color: var(--text-primary);
+  margin: 0;
+  font-family: var(--font-mono);
 }

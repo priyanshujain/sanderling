@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listRuns } from "../api";
 import type { RunSummary } from "../types";
+import { useSse } from "../hooks/useSse";
 
 function formatDuration(milliseconds?: number): string {
   if (!milliseconds) {
@@ -31,23 +32,19 @@ export default function RunList() {
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const refresh = useCallback(() => {
     listRuns()
-      .then((result) => {
-        if (!cancelled) {
-          setRuns(result);
-        }
-      })
+      .then(setRuns)
       .catch((failure: unknown) => {
-        if (!cancelled) {
-          setError(failure instanceof Error ? failure.message : String(failure));
-        }
+        setError(failure instanceof Error ? failure.message : String(failure));
       });
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useSse("runs.changed", refresh);
 
   if (error) {
     return <div className="status-block status-error">failed to load runs: {error}</div>;

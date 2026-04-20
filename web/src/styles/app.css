@@ -87,9 +87,43 @@ button:hover {
 
 .detail-grid {
   display: grid;
-  grid-template-columns: 280px 1fr 320px;
-  gap: 16px;
-  height: calc(100vh - 90px);
+  grid-template-columns: 240px 1fr 360px;
+  grid-template-rows: 1fr auto;
+  grid-template-areas:
+    "actions screenshot side"
+    "timeline timeline timeline";
+  gap: 12px;
+  height: calc(100vh - 60px);
+}
+
+.detail-grid > .detail-actions {
+  grid-area: actions;
+}
+
+.detail-grid > .detail-screenshot {
+  grid-area: screenshot;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.detail-grid > .detail-side {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.detail-grid > .detail-side > * {
+  min-height: 0;
+  overflow: auto;
+}
+
+.detail-grid > .detail-timeline {
+  grid-area: timeline;
+  max-height: 200px;
+  overflow: auto;
 }
 
 .detail-panel {
@@ -97,6 +131,7 @@ button:hover {
   background: var(--surface-elevated);
   padding: 12px;
   overflow: auto;
+  min-height: 0;
 }
 
 .detail-panel h2 {
@@ -104,6 +139,33 @@ button:hover {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.detail-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-toolbar-meta {
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.detail-toolbar-meta strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.theme-toggle {
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
