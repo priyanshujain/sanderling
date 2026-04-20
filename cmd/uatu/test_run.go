@@ -181,6 +181,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		Driver:          driverClient,
 		Verifier:        verifierInstance,
 		TraceWriter:     traceWriter,
+		Logger:          newProgressLogger(stdout),
 	})
 
 	terminateCtx, terminateCancel := context.WithTimeout(context.Background(), 5*time.Second)
