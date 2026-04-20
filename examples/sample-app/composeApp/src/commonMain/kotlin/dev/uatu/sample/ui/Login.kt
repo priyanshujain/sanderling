@@ -54,6 +54,7 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
                     invalid = err != null,
                     keyboardType = KeyboardType.Email,
                     label = "Email",
+                    description = "login_email",
                 )
             }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -66,6 +67,7 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
                     invalid = err != null,
                     keyboardType = KeyboardType.Password,
                     label = "Password",
+                    description = "login_password",
                 )
             }
             ErrorText(err)
@@ -73,6 +75,7 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
                 text = "Sign in",
                 onClick = ::submit,
                 style = ButtonStyle.Primary,
+                description = "login_submit",
             )
             Spacer(Modifier.height(4.dp))
             Card(dashed = true) {
