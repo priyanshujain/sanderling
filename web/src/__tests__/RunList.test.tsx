@@ -20,14 +20,15 @@ describe("RunList", () => {
     const sample: RunSummary[] = [
       {
         id: "run-abc",
-        startedAt: "2026-04-20T10:00:00Z",
-        specPath: "specs/checkout.spec.ts",
+        started_at: "2026-04-20T10:00:00Z",
+        spec_path: "specs/checkout.spec.ts",
         seed: 7,
         platform: "android",
-        bundleId: "com.example.folio",
-        stepCount: 12,
-        violationCount: 2,
-        inProgress: false,
+        bundle_id: "com.example.folio",
+        duration_millis: 0,
+        step_count: 12,
+        violation_count: 2,
+        in_progress: false,
       },
     ];
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({

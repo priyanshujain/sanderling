@@ -1,24 +1,40 @@
+export interface Meta {
+  seed: number;
+  spec_path: string;
+  bundle_sha256: string;
+  platform: string;
+  bundle_id: string;
+  started_at: string;
+  ended_at?: string;
+  uatu_version: string;
+}
+
 export interface RunSummary {
   id: string;
-  startedAt: string;
-  endedAt?: string;
-  specPath: string;
+  started_at: string;
+  ended_at?: string;
+  spec_path: string;
   seed: number;
   platform: string;
-  bundleId: string;
-  durationMillis?: number;
-  stepCount: number;
-  violationCount: number;
-  inProgress: boolean;
+  bundle_id: string;
+  duration_millis: number;
+  step_count: number;
+  violation_count: number;
+  in_progress: boolean;
 }
 
 export interface StepSummary {
   index: number;
   timestamp: string;
   screen?: string;
-  actionKind?: string;
-  hasViolations: boolean;
-  hasExceptions: boolean;
+  action_kind?: string;
+  has_violations: boolean;
+  has_exceptions: boolean;
+}
+
+export interface Run extends RunSummary {
+  meta: Meta;
+  steps: StepSummary[];
 }
 
 export interface BoundsRect {
@@ -35,6 +51,10 @@ export interface HierarchyElement {
   class?: string;
   package?: string;
   clickable?: boolean;
+  enabled?: boolean;
+  checked?: boolean;
+  focused?: boolean;
+  selected?: boolean;
   bounds: BoundsRect;
 }
 
@@ -42,27 +62,39 @@ export interface Hierarchy {
   elements: HierarchyElement[];
 }
 
+export interface BoundsRecord {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PointRecord {
+  x: number;
+  y: number;
+}
+
 export interface Action {
   kind: string;
   x?: number;
   y?: number;
-  selector?: string;
-  resolvedBounds?: { x: number; y: number; width: number; height: number };
-  tapPoint?: { x: number; y: number };
-  fromX?: number;
-  fromY?: number;
-  toX?: number;
-  toY?: number;
-  durationMillis?: number;
+  from_x?: number;
+  from_y?: number;
+  to_x?: number;
+  to_y?: number;
   key?: string;
   text?: string;
+  duration_millis?: number;
+  selector?: string;
+  resolvedBounds?: BoundsRecord;
+  tapPoint?: PointRecord;
 }
 
 export interface Exception {
   class: string;
   message?: string;
-  stackTrace?: string;
-  unixMillis?: number;
+  stack_trace?: string;
+  unix_millis?: number;
 }
 
 export type ResidualNode =
@@ -74,16 +106,14 @@ export type ResidualNode =
   | { op: "predicate"; name?: string }
   | { op: "error"; message: string };
 
-export interface Step extends StepSummary {
+export interface Step {
+  step: number;
+  timestamp: string;
+  screen?: string;
   snapshots?: Record<string, unknown>;
   action?: Action;
   exceptions?: Exception[];
   violations?: string[];
   hierarchy?: Hierarchy;
   residuals?: Record<string, ResidualNode>;
-}
-
-export interface Run {
-  meta: RunSummary;
-  steps: StepSummary[];
 }

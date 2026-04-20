@@ -63,12 +63,12 @@ export default function RunDetail() {
             return (
               <li key={entry.index} style={{ padding: "4px 0" }}>
                 <Link
-                  to={`/runs/${run.meta.id}/steps/${entry.index}`}
+                  to={`/runs/${run.id}/steps/${entry.index}`}
                   style={{ fontWeight: isActive ? 500 : 400 }}
                 >
-                  {entry.index}. {entry.actionKind ?? "(no action)"}
+                  {entry.index}. {entry.action_kind ?? "(no action)"}
                 </Link>
-                {entry.hasViolations ? (
+                {entry.has_violations ? (
                   <span className="chip chip-violation" style={{ marginLeft: 8 }}>
                     !
                   </span>
@@ -82,7 +82,7 @@ export default function RunDetail() {
       <section className="detail-panel">
         <h2>screenshot</h2>
         {currentStep ? (
-          <div className="status-block">screenshot panel placeholder (step {currentStep.index})</div>
+          <div className="status-block">screenshot panel placeholder (step {currentStep.step})</div>
         ) : (
           <div className="status-block">loading step...</div>
         )}

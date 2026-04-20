@@ -4,7 +4,7 @@ import { listRuns } from "../api";
 import type { RunSummary } from "../types";
 
 function formatDuration(milliseconds?: number): string {
-  if (milliseconds === undefined) {
+  if (!milliseconds) {
     return "-";
   }
   if (milliseconds < 1000) {
@@ -77,21 +77,21 @@ export default function RunList() {
         {runs.map((run) => (
           <tr key={run.id}>
             <td>
-              <Link to={`/runs/${run.id}`}>{formatStartedAt(run.startedAt)}</Link>
+              <Link to={`/runs/${run.id}`}>{formatStartedAt(run.started_at)}</Link>
             </td>
-            <td>{run.specPath}</td>
+            <td>{run.spec_path}</td>
             <td>{run.seed}</td>
             <td>{run.platform}</td>
-            <td>{formatDuration(run.durationMillis)}</td>
-            <td>{run.stepCount}</td>
+            <td>{formatDuration(run.duration_millis)}</td>
+            <td>{run.step_count}</td>
             <td>
-              {run.violationCount > 0 ? (
-                <span className="chip chip-violation">{run.violationCount}</span>
+              {run.violation_count > 0 ? (
+                <span className="chip chip-violation">{run.violation_count}</span>
               ) : (
                 "0"
               )}
             </td>
-            <td>{run.inProgress ? <span className="chip chip-progress">in progress</span> : null}</td>
+            <td>{run.in_progress ? <span className="chip chip-progress">in progress</span> : null}</td>
           </tr>
         ))}
       </tbody>
