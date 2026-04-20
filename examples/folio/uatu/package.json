@@ -1,0 +1,8 @@
+{
+  "name": "folio",
+  "private": true,
+  "description": "Minimal uatu integration example.",
+  "devDependencies": {
+    "@uatu/spec": "next"
+  }
+}

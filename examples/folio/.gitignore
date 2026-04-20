@@ -1,0 +1,12 @@
+.gradle/
+build/
+.kotlin/
+local.properties
+iosApp/build/
+iosApp/iosApp.xcodeproj/
+iosApp/iosApp.xcodeproj/**
+.DS_Store
+uatu/node_modules/
+uatu/runs/
+.playwright-mcp/
+web-*.png

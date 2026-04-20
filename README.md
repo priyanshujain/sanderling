@@ -8,5 +8,5 @@ Autonomous property-based testing for mobile apps. Specs in TypeScript. Core in 
 
 - [Getting started](https://priyanshujain.github.io/uatu/manual/getting-started.html)
 - [Writing specs](https://priyanshujain.github.io/uatu/manual/writing-specs.html)
-- [Example](https://github.com/priyanshujain/uatu/tree/master/examples/sample-app)
+- [Example](https://github.com/priyanshujain/uatu/tree/master/examples/folio)
 - [Architecture](https://priyanshujain.github.io/uatu/development/architecture.html)

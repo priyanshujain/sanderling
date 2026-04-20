@@ -50,14 +50,14 @@ dependencies {
 
 ## Your first run
 
-The repo ships a working sample at `examples/sample-app`. From that directory:
+The repo ships a working sample at `examples/folio`. From that directory:
 
 ```sh
 npm install
 (cd android && ./gradlew installDebug)
 uatu test \
   --spec spec.ts \
-  --bundle-id dev.uatu.sample \
+  --bundle-id app.folio \
   --platform android \
   --duration 2m
 ```
