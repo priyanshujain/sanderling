@@ -1,0 +1,40 @@
+.timeline {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--font-mono);
+}
+
+.timeline-label {
+  font-size: 11px;
+  fill: var(--text-muted);
+}
+
+.timeline-cell {
+  cursor: pointer;
+  outline: none;
+}
+
+.timeline-cell:hover {
+  stroke: var(--text-primary);
+  stroke-width: 1;
+}
+
+.timeline-cell:focus-visible {
+  stroke: var(--text-primary);
+  stroke-width: 1;
+}
+
+.timeline-action {
+  cursor: pointer;
+  outline: none;
+}
+
+.timeline-action:hover,
+.timeline-action:focus-visible {
+  fill: var(--text-primary);
+}
+
+.timeline-highlight {
+  pointer-events: none;
+}
