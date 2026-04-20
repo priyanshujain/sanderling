@@ -41,6 +41,10 @@ type extractorState struct {
 
 type formulaState struct {
 	predicate goja.Callable
+	// err latches the first goja error returned by predicate. The thunk
+	// returns false on error so the LTL evaluator marks the property
+	// violated; PredicateError surfaces the underlying cause.
+	err error
 }
 
 type specKind int

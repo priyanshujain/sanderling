@@ -42,6 +42,10 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, snapshots []map[string]json.RawMessage) *harness {
+	return newHarnessWithSpec(t, snapshots, fixtureSpec)
+}
+
+func newHarnessWithSpec(t *testing.T, snapshots []map[string]json.RawMessage, spec string) *harness {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -57,7 +61,7 @@ func newHarness(t *testing.T, snapshots []map[string]json.RawMessage) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifierInstance.Load(fixtureSpec); err != nil {
+	if err := verifierInstance.Load(spec); err != nil {
 		t.Fatal(err)
 	}
 	state := &harness{
@@ -185,6 +189,43 @@ func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
 	}
 	if !containsProperty(summary.Violations, "balanceNonNegative") {
 		t.Errorf("expected balanceNonNegative in violations: %v", summary.Violations)
+	}
+}
+
+func TestRunner_ThrowingPredicateIsLoggedNotPanic(t *testing.T) {
+	const throwingSpec = `
+globalThis.properties = {
+  broken: __uatu__.always(() => { throw new Error("bad predicate"); }),
+};
+globalThis.actions = __uatu__.actions(() => [__uatu__.tap({ on: "id:next" })]);
+`
+	state := newHarnessWithSpec(t, []map[string]json.RawMessage{{}, {}}, throwingSpec)
+	state.startSDK(t)
+	state.acceptConnection(t)
+
+	var buffer bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:        100 * time.Millisecond,
+		SnapshotTimeout: 2 * time.Second,
+		IdleTimeout:     50 * time.Millisecond,
+		Connection:      state.conn,
+		Driver:          state.mock,
+		Verifier:        state.verifier,
+		TraceWriter:     state.writer,
+		Logger:          logger,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !containsProperty(summary.Violations, "broken") {
+		t.Errorf("expected broken in violations: %v", summary.Violations)
+	}
+	if !strings.Contains(buffer.String(), "bad predicate") {
+		t.Errorf("expected predicate error in log, got %q", buffer.String())
 	}
 }
 
