@@ -8,7 +8,7 @@
 
 .snapshot-row {
   display: grid;
-  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 160px) minmax(0, 1fr);
   gap: 12px;
   align-items: baseline;
   padding: 4px 8px;
@@ -29,5 +29,16 @@
 
 .snapshot-value {
   margin: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.snapshot-row[data-long-value="true"] .snapshot-value {
+  white-space: pre-wrap;
+  max-height: 6em;
+  overflow-y: auto;
+  text-align: left;
 }

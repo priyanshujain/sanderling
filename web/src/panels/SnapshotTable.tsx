@@ -153,7 +153,9 @@ export default function SnapshotTable({ snapshots, previousSnapshots }: Snapshot
             <dt className="snapshot-path" title={row.path}>
               {row.path}
             </dt>
-            <dd className="snapshot-value">{formatted}</dd>
+            <dd className="snapshot-value" title={formatted}>
+              {formatted}
+            </dd>
           </div>
         );
       })}
