@@ -316,25 +316,12 @@ const loginHelper = actions(() => {
   return password ? [Tap({ on: password })] : [];
 });
 
-const badCredentials = from([
-  { email: "nobody@nowhere.dev", password: "wrong" },
-  { email: "demo@ledger.app", password: "not-the-password" },
-  { email: "", password: "" },
-  { email: "   ", password: "x" },
-]);
-
 const adversarialLogin = actions(() => {
   if (loggedIn.current) return [];
-  const email = loginEmailField.current;
-  const password = loginPasswordField.current;
+  if (loginEmailValue.current !== "" || loginPasswordLength.current !== 0) return [];
   const submit = loginSubmitButton.current;
-  if (!email || !password || !submit) return [];
-  const creds = badCredentials.generate();
-  return [
-    InputText({ into: email, text: creds.email }),
-    InputText({ into: password, text: creds.password }),
-    Tap({ on: submit }),
-  ];
+  if (!submit) return [];
+  return [Tap({ on: submit })];
 });
 
 const accountNameSampler = from([
@@ -353,7 +340,6 @@ const accountNameSampler = from([
 
 const typeAccountName = actions(() => {
   if (route.current !== "add-account") return [];
-  if (accountNameInput.current.trim().length > 0) return [];
   const field = accountNameField.current;
   if (!field) return [];
   return [InputText({ into: field, text: accountNameSampler.generate() })];
@@ -404,7 +390,6 @@ const amountSampler = from([
 
 const typeAmount = actions(() => {
   if (route.current !== "add-transaction") return [];
-  if (txnAmountInput.current.length > 0) return [];
   const field = txnAmountField.current;
   if (!field) return [];
   return [InputText({ into: field, text: amountSampler.generate() })];
