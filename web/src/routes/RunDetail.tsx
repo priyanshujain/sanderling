@@ -241,44 +241,52 @@ export default function RunDetail() {
       <div className="detail-grid">
         <aside className="detail-actions detail-panel">
           <h2>actions</h2>
-          <ActionList
-            steps={run.steps}
-            selectedIndex={stepIndex}
-            onSelect={goTo}
-            runStartMillis={runStartMillis}
-            selectedStep={currentStep ?? undefined}
-          />
+          <div className="detail-panel-body">
+            <ActionList
+              steps={run.steps}
+              selectedIndex={stepIndex}
+              onSelect={goTo}
+              runStartMillis={runStartMillis}
+              selectedStep={currentStep ?? undefined}
+            />
+          </div>
         </aside>
 
         <section className="detail-state-before detail-panel">
           <h2>state before</h2>
-          <Tabs tabs={beforeTabs} defaultTabId="screenshot" ariaLabel="state before" />
+          <div className="detail-panel-body">
+            <Tabs tabs={beforeTabs} defaultTabId="screenshot" ariaLabel="state before" />
+          </div>
         </section>
 
         <section className="detail-state-after detail-panel">
           <h2>state after</h2>
-          <Tabs tabs={afterTabs} defaultTabId="screenshot" ariaLabel="state after" />
+          <div className="detail-panel-body">
+            <Tabs tabs={afterTabs} defaultTabId="screenshot" ariaLabel="state after" />
+          </div>
         </section>
 
         <section className="detail-metrics detail-panel">
-          <MetricsChart
-            samples={history?.metricsSamples ?? []}
-            selectedIndex={stepIndex}
-            onSelect={goTo}
-            exceptionStepIndices={history?.exceptionStepIndices}
-            violationStepIndices={history?.violationStepIndices}
-            propertyLanes={history?.lanes}
-          />
-          {(exceptionsForStep && exceptionsForStep.length > 0) ||
-          history?.firstExceptionStep !== undefined ? (
-            <div className="detail-metrics-exceptions">
-              <ExceptionsPanel
-                exceptions={exceptionsForStep}
-                onJumpToFirstException={jumpToFirstException}
-                hasFirstException={history?.firstExceptionStep !== undefined}
-              />
-            </div>
-          ) : null}
+          <div className="detail-panel-body">
+            <MetricsChart
+              samples={history?.metricsSamples ?? []}
+              selectedIndex={stepIndex}
+              onSelect={goTo}
+              exceptionStepIndices={history?.exceptionStepIndices}
+              violationStepIndices={history?.violationStepIndices}
+              propertyLanes={history?.lanes}
+            />
+            {(exceptionsForStep && exceptionsForStep.length > 0) ||
+            history?.firstExceptionStep !== undefined ? (
+              <div className="detail-metrics-exceptions">
+                <ExceptionsPanel
+                  exceptions={exceptionsForStep}
+                  onJumpToFirstException={jumpToFirstException}
+                  hasFirstException={history?.firstExceptionStep !== undefined}
+                />
+              </div>
+            ) : null}
+          </div>
         </section>
       </div>
     </div>

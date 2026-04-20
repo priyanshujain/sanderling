@@ -111,7 +111,7 @@ button:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 12px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
@@ -143,8 +143,8 @@ button:hover {
   grid-template-areas:
     "actions before after"
     "metrics metrics metrics";
-  gap: 8px;
-  padding: 8px;
+  gap: 0;
+  padding: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -152,14 +152,14 @@ button:hover {
 .detail-grid > .detail-actions {
   grid-area: actions;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .detail-grid > .detail-state-before,
 .detail-grid > .detail-state-after {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -171,6 +171,11 @@ button:hover {
 
 .detail-grid > .detail-state-after {
   grid-area: after;
+}
+
+.detail-grid > .detail-actions,
+.detail-grid > .detail-state-before {
+  border-right: 1px solid var(--border);
 }
 
 .detail-grid > .detail-state-before .screenshot-frame,
@@ -190,6 +195,7 @@ button:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  border-top: 1px solid var(--border);
 }
 
 .detail-grid > .detail-metrics .metrics-chart {
@@ -199,30 +205,43 @@ button:hover {
 }
 
 .detail-metrics-exceptions {
-  margin-top: 6px;
-  padding-top: 6px;
+  padding: 4px 8px;
   border-top: 1px solid var(--border);
   overflow: auto;
   max-height: 80px;
 }
 
 .detail-panel {
-  border: 1px solid var(--border);
-  background: var(--surface-elevated);
-  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  padding: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
 .detail-panel h2 {
-  margin: 0 0 6px;
+  margin: 0;
+  padding: 4px 8px;
   font-size: 10px;
   font-weight: 500;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+}
+
+.detail-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-actions .detail-panel-body {
+  padding: 0;
 }
 
 .status-block {
