@@ -1,6 +1,6 @@
 name: iosApp
 options:
-  bundleIdPrefix: dev.uatu.sample
+  bundleIdPrefix: app.folio
   deploymentTarget:
     iOS: "15.0"
   xcodeVersion: "16.0"
@@ -24,7 +24,7 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.uatu.sample
+        PRODUCT_BUNDLE_IDENTIFIER: app.folio
         PRODUCT_NAME: iosApp
         INFOPLIST_FILE: iosApp/Info.plist
         FRAMEWORK_SEARCH_PATHS:
