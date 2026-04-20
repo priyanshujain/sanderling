@@ -11,12 +11,13 @@ export interface MetricsChartProps {
   samples: MetricsSample[];
   selectedIndex: number;
   onSelect: (stepIndex: number) => void;
+  exceptionStepIndices?: number[];
 }
 
 const CHART_WIDTH = 1000;
 const LABEL_WIDTH = 60;
 const LANE_HEIGHT = 60;
-const LANE_GAP = 4;
+const LANE_GAP = 14;
 const AXIS_HEIGHT = 16;
 const TICK_COUNT = 3;
 
@@ -88,7 +89,12 @@ function buildPolyline(
   return points.join(" ");
 }
 
-export default function MetricsChart({ samples, selectedIndex, onSelect }: MetricsChartProps) {
+export default function MetricsChart({
+  samples,
+  selectedIndex,
+  onSelect,
+  exceptionStepIndices,
+}: MetricsChartProps) {
   if (samples.length === 0) {
     return <div className="status-block">no metrics</div>;
   }
@@ -175,6 +181,7 @@ export default function MetricsChart({ samples, selectedIndex, onSelect }: Metri
           HEAP
         </text>
         {heapTicks.map((tick, index) => {
+          if (index === 0) return null;
           const ratio = heapTop === 0 ? 0 : tick / heapTop;
           const y = heapGeometry.bottom - ratio * (heapGeometry.bottom - heapGeometry.top);
           return (
@@ -262,6 +269,7 @@ export default function MetricsChart({ samples, selectedIndex, onSelect }: Metri
           CPU
         </text>
         {cpuTicks.map((tick, index) => {
+          if (index === 0) return null;
           const ratio = cpuTop === 0 ? 0 : tick / cpuTop;
           const y = cpuGeometry.bottom - ratio * (cpuGeometry.bottom - cpuGeometry.top);
           return (
@@ -355,6 +363,26 @@ export default function MetricsChart({ samples, selectedIndex, onSelect }: Metri
           );
         })}
       </g>
+
+      {exceptionStepIndices && exceptionStepIndices.length > 0
+        ? exceptionStepIndices.map((stepIndex) => {
+            const column = samples.findIndex((sample) => sample.stepIndex === stepIndex);
+            if (column < 0) return null;
+            const x = LABEL_WIDTH + column * columnWidth + columnWidth / 2;
+            return (
+              <line
+                key={`exc-${stepIndex}`}
+                className="metrics-exception-marker"
+                data-step-index={stepIndex}
+                x1={x}
+                x2={x}
+                y1={heapGeometry.top}
+                y2={cpuGeometry.bottom}
+                pointerEvents="none"
+              />
+            );
+          })
+        : null}
 
       {highlightX !== null ? (
         <line

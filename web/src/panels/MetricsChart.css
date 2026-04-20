@@ -65,3 +65,10 @@
 .metrics-highlight {
   pointer-events: none;
 }
+
+.metrics-exception-marker {
+  stroke: var(--accent-violation);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
