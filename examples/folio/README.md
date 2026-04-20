@@ -12,10 +12,6 @@ uatu runs its property-based specs against.
 - kotlinx.coroutines for state flows
 - uatu `sdk-android` for harness integration on Android
 
-Everything in `composeApp/src/commonMain/kotlin/app/folio/` is shared
-between platforms. Platform-specific I/O (file storage, clock, UUID) lives
-in `androidMain/` and `iosMain/` as `actual`s of the `Platform` expect object.
-
 ## Prerequisites
 
 - `just`
@@ -60,7 +56,7 @@ If no device is connected, uatu boots the single AVD it finds. With multiple
 AVDs, pick one:
 
 ```sh
-just AVD=Pixel_7 test
+AVD=Pixel_7 just test
 ```
 
 Persistent settings can live in `.env` alongside the justfile:
@@ -71,23 +67,6 @@ DURATION=5m
 ```
 
 Traces land in `./uatu/runs/<timestamp>/`.
-
-## Layout
-
-```
-composeApp/
-  src/commonMain/kotlin/app/folio/         shared domain, state, UI
-  src/androidMain/                         Android Application + Activity
-  src/iosMain/                             iOS UIViewController entry
-iosApp/
-  project.yml                              xcodegen spec
-  iosApp/iOSApp.swift                      SwiftUI host
-  iosApp/Info.plist
-uatu/
-  spec.ts                                  uatu test spec
-  package.json                             @uatu/spec dependency
-justfile
-```
 
 ## How it connects to uatu
 
