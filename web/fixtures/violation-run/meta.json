@@ -1,0 +1,10 @@
+{
+  "seed": 7,
+  "spec_path": "examples/folio/uatu/spec.ts",
+  "bundle_sha256": "fixture000000000000000000000000000000000000000000000000000000000",
+  "platform": "android",
+  "bundle_id": "com.example.folio",
+  "started_at": "2026-04-20T10:05:00Z",
+  "ended_at": "2026-04-20T10:05:25Z",
+  "uatu_version": "0.0.1-fixture"
+}
