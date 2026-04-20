@@ -4,6 +4,7 @@ import android.app.Application
 import app.folio.data.AndroidLedgerContext
 import app.folio.data.Repository
 import app.folio.data.TxnType
+import app.folio.feature.account.AddAccountUiState
 import app.folio.feature.auth.LoginUiState
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
@@ -85,7 +86,7 @@ class FolioApplication : Application() {
             (Navigator.current.value as? Route.AddTransaction)?.accountId
         }
         Uatu.extract("login_error") { LoginUiState.loginError.value }
-        Uatu.extract("add_account_error") { UiState.addAccountError.value }
+        Uatu.extract("add_account_error") { AddAccountUiState.addAccountError.value }
         Uatu.extract("txn_error") { UiState.txnError.value }
     }
 }

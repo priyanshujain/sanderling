@@ -1,4 +1,4 @@
-package app.folio.ui
+package app.folio.feature.account
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,34 +17,44 @@ import androidx.compose.ui.unit.dp
 import app.folio.data.Repository
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
-import app.folio.UiState
+import app.folio.ui.AppButton
+import app.folio.ui.BackButton
+import app.folio.ui.BackHandler
+import app.folio.ui.ButtonStyle
+import app.folio.ui.ErrorText
+import app.folio.ui.FieldLabel
+import app.folio.ui.Header
+import app.folio.ui.LocalTokens
+import app.folio.ui.Screen
+import app.folio.ui.TextInput
+import app.folio.ui.Type
 
 @Composable
 fun AddAccountScreen() {
     val t = LocalTokens.current
     var name by remember { mutableStateOf("") }
-    val err by UiState.addAccountError.collectAsState()
+    val err by AddAccountUiState.addAccountError.collectAsState()
 
     BackHandler { Navigator.back(Route.Home) }
 
     DisposableEffect(Unit) {
-        onDispose { UiState.addAccountError.value = "" }
+        onDispose { AddAccountUiState.addAccountError.value = "" }
     }
 
     fun submit() {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) {
-            UiState.addAccountError.value = "Account name is required"; return
+            AddAccountUiState.addAccountError.value = "Account name is required"; return
         }
         if (trimmed.length > 40) {
-            UiState.addAccountError.value = "Name is too long (max 40 characters)"; return
+            AddAccountUiState.addAccountError.value = "Name is too long (max 40 characters)"; return
         }
         try {
             Repository.createAccount(trimmed)
-            UiState.addAccountError.value = ""
+            AddAccountUiState.addAccountError.value = ""
             Navigator.replace(Route.Home)
         } catch (e: IllegalArgumentException) {
-            UiState.addAccountError.value = e.message ?: "Could not create account"
+            AddAccountUiState.addAccountError.value = e.message ?: "Could not create account"
         }
     }
 
@@ -70,7 +80,7 @@ fun AddAccountScreen() {
                 FieldLabel("Account name")
                 TextInput(
                     value = name,
-                    onChange = { name = it; UiState.addAccountError.value = "" },
+                    onChange = { name = it; AddAccountUiState.addAccountError.value = "" },
                     placeholder = "e.g. Checking",
                     invalid = err.isNotEmpty(),
                     label = "Account name",
