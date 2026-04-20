@@ -191,7 +191,6 @@ func TestServer_AcceptCancelsOnContext(t *testing.T) {
 	acceptErr := make(chan error, 1)
 	go func() { _, err := server.Accept(ctx); acceptErr <- err }()
 
-	time.Sleep(50 * time.Millisecond)
 	cancel()
 
 	select {
