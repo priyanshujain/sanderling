@@ -17,8 +17,9 @@ type fakeServer struct {
 	driverpb.UnimplementedDriverServer
 	mutex sync.Mutex
 
-	healthReady bool
-	healthCalls int
+	healthReady          bool
+	healthCalls          int
+	healthReadyAfterCall int
 
 	launchedBundleID string
 	launcherActivity string
@@ -43,7 +44,11 @@ func (s *fakeServer) Health(_ context.Context, _ *driverpb.Empty) (*driverpb.Hea
 	if s.healthError != nil {
 		return nil, s.healthError
 	}
-	return &driverpb.HealthStatus{Ready: s.healthReady, Version: "test", Platform: "android"}, nil
+	ready := s.healthReady
+	if s.healthReadyAfterCall > 0 && s.healthCalls >= s.healthReadyAfterCall {
+		ready = true
+	}
+	return &driverpb.HealthStatus{Ready: ready, Version: "test", Platform: "android"}, nil
 }
 
 func (s *fakeServer) Launch(_ context.Context, request *driverpb.LaunchRequest) (*driverpb.Empty, error) {
@@ -144,25 +149,23 @@ func TestClient_HealthRoundTrip(t *testing.T) {
 
 func TestClient_WaitForHealth_PollsUntilReady(t *testing.T) {
 	state := newHarness(t)
+	state.fake.mutex.Lock()
 	state.fake.healthReady = false
+	state.fake.healthReadyAfterCall = 2
+	state.fake.mutex.Unlock()
 	client, err := Dial(state.address)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
 
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		state.fake.mutex.Lock()
-		state.fake.healthReady = true
-		state.fake.mutex.Unlock()
-	}()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := client.WaitForHealth(ctx, 25*time.Millisecond); err != nil {
 		t.Fatalf("WaitForHealth: %v", err)
 	}
+	state.fake.mutex.Lock()
+	defer state.fake.mutex.Unlock()
 	if state.fake.healthCalls < 2 {
 		t.Errorf("expected at least 2 health polls, got %d", state.fake.healthCalls)
 	}

@@ -191,7 +191,6 @@ func TestServer_AcceptCancelsOnContext(t *testing.T) {
 	acceptErr := make(chan error, 1)
 	go func() { _, err := server.Accept(ctx); acceptErr <- err }()
 
-	time.Sleep(50 * time.Millisecond)
 	cancel()
 
 	select {
@@ -321,12 +320,14 @@ func TestConn_SnapshotAfterAcceptContextCancel(t *testing.T) {
 func TestConn_SnapshotTimesOutIfSDKSilent(t *testing.T) {
 	server := newLoopbackServer(t)
 
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
 	go func() {
 		client, _ := net.Dial("tcp", server.Addr().String())
 		defer client.Close()
 		_ = WriteMessage(client, Hello("0.0.1", "android", "com.x"))
-		// Never respond to PAUSE.
-		time.Sleep(2 * time.Second)
+		// Never respond to PAUSE; stay alive until the test ends.
+		<-done
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
