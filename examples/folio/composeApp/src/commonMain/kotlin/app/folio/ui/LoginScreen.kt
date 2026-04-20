@@ -19,7 +19,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.folio.DEMO_EMAIL
 import app.folio.DEMO_PASSWORD
-import app.folio.Repository
+import app.folio.data.Repository
 import app.folio.UiState
 import app.folio.checkCredentials
 

@@ -1,4 +1,4 @@
-package app.folio
+package app.folio.data
 
 import app.cash.sqldelight.db.SqlDriver
 

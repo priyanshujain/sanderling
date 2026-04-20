@@ -23,7 +23,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.folio.Navigator
-import app.folio.Repository
+import app.folio.data.Repository
 import app.folio.Route
 import app.folio.data.TxnType
 import app.folio.balanceOf

@@ -16,7 +16,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.folio.Navigator
-import app.folio.Repository
+import app.folio.data.Repository
 import app.folio.Route
 import app.folio.data.TxnType
 import app.folio.UiState

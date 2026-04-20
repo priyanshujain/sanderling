@@ -24,7 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
 import app.folio.Navigator
-import app.folio.Repository
+import app.folio.data.Repository
 import app.folio.Route
 import app.folio.balanceOf
 import app.folio.formatCents

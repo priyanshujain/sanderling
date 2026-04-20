@@ -1,9 +1,5 @@
-package app.folio
+package app.folio.data
 
-import app.folio.data.Account
-import app.folio.data.Session
-import app.folio.data.Transaction
-import app.folio.data.TxnType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
