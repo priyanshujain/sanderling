@@ -23,6 +23,7 @@ const (
 	ActionRecentLogs  ActionKind = "recent_logs"
 	ActionWaitForIdle ActionKind = "wait_for_idle"
 	ActionHealth      ActionKind = "health"
+	ActionMetrics     ActionKind = "metrics"
 )
 
 type Action struct {
@@ -53,6 +54,7 @@ type Driver struct {
 	ImageData     driver.Image
 	HealthInfo    driver.Health
 	LogEntries    []driver.LogEntry
+	MetricsData   driver.Metrics
 	Failures      map[ActionKind]error
 }
 
@@ -206,6 +208,16 @@ func (d *Driver) Health(ctx context.Context) (driver.Health, error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 	return d.HealthInfo, nil
+}
+
+func (d *Driver) Metrics(ctx context.Context, bundleID string) (driver.Metrics, error) {
+	if err := d.failure(ActionMetrics); err != nil {
+		return driver.Metrics{}, err
+	}
+	d.record(Action{Kind: ActionMetrics, BundleID: bundleID})
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	return d.MetricsData, nil
 }
 
 var _ driver.Driver = (*Driver)(nil)
