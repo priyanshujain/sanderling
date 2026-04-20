@@ -87,11 +87,11 @@ button:hover {
 
 .detail-grid {
   display: grid;
-  grid-template-columns: 240px 1fr 360px;
-  grid-template-rows: 1fr auto;
+  grid-template-columns: 280px 1fr 1fr 320px;
+  grid-template-rows: 1fr 200px;
   grid-template-areas:
-    "actions screenshot side"
-    "timeline timeline timeline";
+    "actions before after side"
+    "metrics metrics metrics metrics";
   gap: 12px;
   height: calc(100vh - 60px);
 }
@@ -100,11 +100,29 @@ button:hover {
   grid-area: actions;
 }
 
-.detail-grid > .detail-screenshot {
-  grid-area: screenshot;
+.detail-grid > .detail-state-before {
+  grid-area: before;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.detail-grid > .detail-state-after {
+  grid-area: after;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.detail-grid > .detail-state-before > .screenshot-frame,
+.detail-grid > .detail-state-after > .screenshot-frame,
+.detail-grid > .detail-state-before > .screenshot-placeholder,
+.detail-grid > .detail-state-after > .screenshot-placeholder {
+  flex: 0 0 auto;
+  max-height: 45%;
+  margin: 0 auto;
 }
 
 .detail-grid > .detail-side {
@@ -120,9 +138,8 @@ button:hover {
   overflow: auto;
 }
 
-.detail-grid > .detail-timeline {
-  grid-area: timeline;
-  max-height: 200px;
+.detail-grid > .detail-metrics {
+  grid-area: metrics;
   overflow: auto;
 }
 

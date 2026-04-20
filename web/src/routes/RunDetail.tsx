@@ -8,20 +8,23 @@ import SnapshotTable from "../panels/SnapshotTable";
 import ViolationsPanel from "../panels/ViolationsPanel";
 import ExceptionsPanel from "../panels/ExceptionsPanel";
 import Timeline, { type LaneStatus, type PropertyLane } from "../panels/Timeline";
+import MetricsChart, { type MetricsSample } from "../panels/MetricsChart";
 import { useStep } from "../hooks/useStep";
 import { useKeyboardNav } from "../hooks/useKeyboardNav";
 import { useTheme } from "../hooks/useTheme";
 
-interface PropertyHistory {
+interface RunHistory {
   names: string[];
   lanes: PropertyLane[];
   firstViolationStep?: number;
   firstExceptionStep?: number;
+  metricsSamples: MetricsSample[];
+  steps: (Step | null)[];
 }
 
 export default function RunDetail() {
   const [run, setRun] = useState<Run | null>(null);
-  const [history, setHistory] = useState<PropertyHistory | null>(null);
+  const [history, setHistory] = useState<RunHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { theme, toggle } = useTheme();
 
@@ -53,31 +56,9 @@ export default function RunDetail() {
     };
   }, [runId]);
 
-  const [currentStep, setCurrentStep] = useState<Step | null>(null);
-  const [previousStep, setPreviousStep] = useState<Step | null>(null);
-
-  useEffect(() => {
-    if (!runId || !stepCount) return;
-    let cancelled = false;
-    setCurrentStep(null);
-    getStep(runId, stepIndex)
-      .then((loaded) => {
-        if (!cancelled) setCurrentStep(loaded);
-      })
-      .catch(() => {});
-    if (stepIndex > 1) {
-      getStep(runId, stepIndex - 1)
-        .then((loaded) => {
-          if (!cancelled) setPreviousStep(loaded);
-        })
-        .catch(() => {});
-    } else {
-      setPreviousStep(null);
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [runId, stepIndex, stepCount]);
+  const currentStep = history?.steps[stepIndex - 1] ?? null;
+  const previousStep = stepIndex > 1 ? history?.steps[stepIndex - 2] ?? null : null;
+  const nextStep = history && stepIndex < history.steps.length ? history.steps[stepIndex] ?? null : null;
 
   const jumpToFirstViolation = useCallback(() => {
     if (history?.firstViolationStep) {
@@ -107,10 +88,20 @@ export default function RunDetail() {
     onJumpNextViolation: jumpToNextViolation,
   });
 
-  const screenshotSource = useMemo(() => {
+  const beforeScreenshot = useMemo(() => {
     if (!runId || !currentStep) return undefined;
     return screenshotUrl(runId, `step-${String(currentStep.step).padStart(5, "0")}.png`);
   }, [runId, currentStep]);
+
+  const afterScreenshot = useMemo(() => {
+    if (!runId || !currentStep) return undefined;
+    return screenshotUrl(runId, `step-${String(currentStep.step).padStart(5, "0")}-after.png`);
+  }, [runId, currentStep]);
+
+  const runStartMillis = useMemo(() => {
+    if (!run?.steps.length) return 0;
+    return new Date(run.steps[0].timestamp).getTime();
+  }, [run]);
 
   if (error) {
     return <div className="status-block status-error">failed: {error}</div>;
@@ -119,9 +110,11 @@ export default function RunDetail() {
     return <div className="status-block">loading run...</div>;
   }
 
-  const violationsForStep = currentStep?.violations ?? [];
+  const violationsBefore = currentStep?.violations ?? [];
+  const violationsAfter = nextStep?.violations ?? violationsBefore;
+  const residualsBefore = currentStep?.residuals;
+  const residualsAfter = nextStep?.residuals ?? residualsBefore;
   const exceptionsForStep = currentStep?.exceptions;
-  const residualsForStep = currentStep?.residuals;
 
   return (
     <div>
@@ -143,28 +136,48 @@ export default function RunDetail() {
       <div className="detail-grid">
         <aside className="detail-actions detail-panel">
           <h2>actions</h2>
-          <ActionList steps={run.steps} selectedIndex={stepIndex} onSelect={goTo} />
+          <ActionList
+            steps={run.steps}
+            selectedIndex={stepIndex}
+            onSelect={goTo}
+            runStartMillis={runStartMillis}
+            selectedStep={currentStep ?? undefined}
+          />
         </aside>
-        <section className="detail-screenshot detail-panel">
-          <Screenshot src={screenshotSource} action={currentStep?.action} />
+
+        <section className="detail-state-before detail-panel">
+          <h2>state before</h2>
+          <Screenshot src={beforeScreenshot} action={currentStep?.action} />
+          <SnapshotTable
+            snapshots={currentStep?.snapshots}
+            previousSnapshots={previousStep?.snapshots ?? undefined}
+          />
+          <ViolationsPanel
+            propertyNames={history?.names ?? []}
+            violations={violationsBefore}
+            residuals={residualsBefore}
+            onJumpToFirstViolation={jumpToFirstViolation}
+            hasFirstViolation={history?.firstViolationStep !== undefined}
+          />
         </section>
+
+        <section className="detail-state-after detail-panel">
+          <h2>state after</h2>
+          <Screenshot src={afterScreenshot} action={undefined} />
+          <SnapshotTable
+            snapshots={nextStep?.snapshots ?? currentStep?.snapshots}
+            previousSnapshots={currentStep?.snapshots ?? undefined}
+          />
+          <ViolationsPanel
+            propertyNames={history?.names ?? []}
+            violations={violationsAfter}
+            residuals={residualsAfter}
+            onJumpToFirstViolation={jumpToFirstViolation}
+            hasFirstViolation={history?.firstViolationStep !== undefined}
+          />
+        </section>
+
         <aside className="detail-side">
-          <div className="detail-panel">
-            <h2>snapshots</h2>
-            <SnapshotTable
-              snapshots={currentStep?.snapshots}
-              previousSnapshots={previousStep?.snapshots ?? undefined}
-            />
-          </div>
-          <div className="detail-panel">
-            <ViolationsPanel
-              propertyNames={history?.names ?? []}
-              violations={violationsForStep}
-              residuals={residualsForStep}
-              onJumpToFirstViolation={jumpToFirstViolation}
-              hasFirstViolation={history?.firstViolationStep !== undefined}
-            />
-          </div>
           <div className="detail-panel">
             <h2>exceptions</h2>
             <ExceptionsPanel
@@ -173,11 +186,20 @@ export default function RunDetail() {
               hasFirstException={history?.firstExceptionStep !== undefined}
             />
           </div>
+          <div className="detail-panel detail-timeline-inline">
+            <h2>timeline</h2>
+            <Timeline
+              steps={run.steps}
+              lanes={history?.lanes ?? []}
+              selectedIndex={stepIndex}
+              onSelect={goTo}
+            />
+          </div>
         </aside>
-        <section className="detail-timeline detail-panel">
-          <Timeline
-            steps={run.steps}
-            lanes={history?.lanes ?? []}
+
+        <section className="detail-metrics detail-panel">
+          <MetricsChart
+            samples={history?.metricsSamples ?? []}
             selectedIndex={stepIndex}
             onSelect={goTo}
           />
@@ -187,7 +209,7 @@ export default function RunDetail() {
   );
 }
 
-async function loadHistory(run: Run): Promise<PropertyHistory> {
+async function loadHistory(run: Run): Promise<RunHistory> {
   const responses = await Promise.all(
     run.steps.map((entry) => getStep(run.id, entry.index).catch(() => null)),
   );
@@ -198,11 +220,18 @@ async function loadHistory(run: Run): Promise<PropertyHistory> {
   }));
   const firstViolationStep = run.steps.find((entry) => entry.has_violations)?.index;
   const firstExceptionStep = run.steps.find((entry) => entry.has_exceptions)?.index;
+  const metricsSamples: MetricsSample[] = run.steps.map((entry, position) => ({
+    stepIndex: entry.index,
+    timestamp: entry.timestamp,
+    metrics: responses[position]?.metrics,
+  }));
   return {
     names: propertyNames,
     lanes: sortLanes(lanes),
     firstViolationStep,
     firstExceptionStep,
+    metricsSamples,
+    steps: responses,
   };
 }
 
