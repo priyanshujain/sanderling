@@ -76,19 +76,6 @@ const addAccountError = extract<string>(
 const txnError = extract<string>(
   (state) => (state.snapshots.txn_error as string) ?? "",
 );
-const loginEmailValue = extract<string>(
-  (state) => (state.snapshots.login_email_value as string) ?? "",
-);
-const loginPasswordLength = extract<number>(
-  (state) => (state.snapshots.login_password_length as number) ?? 0,
-);
-const accountNameInput = extract<string>(
-  (state) => (state.snapshots.account_name_input as string) ?? "",
-);
-const txnAmountInput = extract<string>(
-  (state) => (state.snapshots.txn_amount_input as string) ?? "",
-);
-
 const loginEmailField = extract((state) => state.ax.find("desc:login_email"));
 const loginPasswordField = extract((state) => state.ax.find("desc:login_password"));
 const loginSubmitButton = extract((state) => state.ax.find("desc:login_submit"));
@@ -294,31 +281,19 @@ const loginHelper = actions(() => {
   const email = loginEmailField.current;
   const password = loginPasswordField.current;
   const submit = loginSubmitButton.current;
-  const emailFilled = loginEmailValue.current === DEMO_EMAIL;
-  const passwordFilled = loginPasswordLength.current >= DEMO_PASSWORD.length;
 
-  if (emailFilled && passwordFilled) {
-    return submit ? [Tap({ on: submit })] : [];
-  }
   if (focus === "login_password") {
-    if (!passwordFilled && password) {
-      return [InputText({ into: password, text: DEMO_PASSWORD })];
-    }
     return submit ? [Tap({ on: submit })] : [];
   }
   if (focus === "login_email") {
-    if (!emailFilled && email) {
-      return [InputText({ into: email, text: DEMO_EMAIL })];
-    }
-    return password ? [Tap({ on: password })] : [];
+    return password ? [InputText({ into: password, text: DEMO_PASSWORD })] : [];
   }
-  if (!emailFilled) return email ? [Tap({ on: email })] : [];
-  return password ? [Tap({ on: password })] : [];
+  return email ? [InputText({ into: email, text: DEMO_EMAIL })] : [];
 });
 
 const adversarialLogin = actions(() => {
   if (loggedIn.current) return [];
-  if (loginEmailValue.current !== "" || loginPasswordLength.current !== 0) return [];
+  if (focusedInput.current !== null) return [];
   const submit = loginSubmitButton.current;
   if (!submit) return [];
   return [Tap({ on: submit })];
