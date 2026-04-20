@@ -302,10 +302,44 @@ func (v *Verifier) formulaThunk(index int) func() bool {
 		formula := v.formulas[index]
 		result, err := formula.predicate(goja.Undefined())
 		if err != nil {
-			panic(fmt.Errorf("predicate panic: %w", err))
+			if formula.err == nil {
+				formula.err = err
+			}
+			return false
 		}
 		return result.ToBoolean()
 	}
+}
+
+// PredicateError returns the first goja error raised by any thunk in the
+// named property's formula tree, or nil if none fired. Callers typically
+// consult this after EvaluateProperties reports a violation to distinguish
+// a genuine predicate-false verdict from a malformed spec.
+func (v *Verifier) PredicateError(name string) error {
+	rootIndex, ok := v.properties[name]
+	if !ok {
+		return nil
+	}
+	return v.firstThunkError(rootIndex)
+}
+
+func (v *Verifier) firstThunkError(index int) error {
+	if index < 0 || index >= len(v.formulaSpecs) {
+		return nil
+	}
+	spec := v.formulaSpecs[index]
+	switch spec.kind {
+	case specKindThunk:
+		return v.formulas[spec.predicateIndex].err
+	case specKindImplies, specKindOr, specKindAnd:
+		if err := v.firstThunkError(spec.childA); err != nil {
+			return err
+		}
+		return v.firstThunkError(spec.childB)
+	case specKindNow, specKindNext, specKindEventually, specKindNot, specKindAlways:
+		return v.firstThunkError(spec.childA)
+	}
+	return nil
 }
 
 func (v *Verifier) resolveGenerator(generator goja.Value) (Action, error) {

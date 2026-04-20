@@ -219,6 +219,33 @@ func TestLoad_PropagatesSyntaxError(t *testing.T) {
 	}
 }
 
+func TestEvaluateProperties_ThrowingPredicateDoesNotPanic(t *testing.T) {
+	const spec = `
+globalThis.properties = {
+  broken: __uatu__.always(() => { throw new Error("bad predicate"); }),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	verdicts := verifier.EvaluateProperties()
+	if got := verdicts["broken"]; got != ltl.VerdictViolated {
+		t.Errorf("verdict: got %v, want %v", got, ltl.VerdictViolated)
+	}
+
+	predicateErr := verifier.PredicateError("broken")
+	if predicateErr == nil {
+		t.Fatal("PredicateError: got nil, want non-nil")
+	}
+	if !strings.Contains(predicateErr.Error(), "bad predicate") {
+		t.Errorf("PredicateError message: got %q, want to contain %q", predicateErr.Error(), "bad predicate")
+	}
+}
+
 func TestLoad_AcceptsSpecWithoutPropertiesOrActions(t *testing.T) {
 	verifier := newVerifier(t)
 	if err := verifier.Load(`const noop = 1;`); err != nil {
