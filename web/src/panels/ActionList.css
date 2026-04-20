@@ -7,28 +7,64 @@
 }
 
 .action-list-item {
-  display: grid;
-  grid-template-columns: 28px auto 1fr auto;
-  align-items: baseline;
-  gap: 6px;
-  padding: 6px 8px;
+  display: block;
+  padding: 4px 8px;
   border-left: 2px solid transparent;
   cursor: pointer;
   color: var(--text-primary);
   outline: none;
 }
 
-.action-list-kind {
+.action-list-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.action-list-index {
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.action-list-body {
+  display: inline-flex;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-list-verb {
   color: var(--text-primary);
   font-weight: 500;
 }
 
-.action-list-detail {
+.action-list-target {
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+}
+
+.action-list-target-tag {
+  color: var(--text-primary);
+}
+
+.action-list-markers {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.action-list-elapsed {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding-left: 8px;
 }
 
 .action-list-item:hover {
@@ -48,18 +84,6 @@
   border-left-color: var(--accent-violation);
 }
 
-.action-list-index {
-  text-align: right;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.action-list-markers {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .action-list-marker-violation {
   width: 8px;
   height: 8px;
@@ -71,6 +95,33 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 1px solid var(--accent-change);
+  border: 1px solid var(--text-muted);
   background: transparent;
+}
+
+.action-list-details {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 8px;
+  padding: 4px 0 2px 0;
+  font-size: 12px;
+}
+
+.action-list-detail-row {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.action-list-detail-label {
+  color: var(--text-muted);
+}
+
+.action-list-detail-value {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
