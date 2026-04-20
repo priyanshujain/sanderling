@@ -43,6 +43,11 @@ pkg/spec-api/dist/
 !/internal/inspect/dist/.gitkeep
 !/internal/inspect/dist/index.html
 
+# inspect web frontend
+web/node_modules/
+web/dist/
+web/.vite/
+
 # coding agent files
 .claude/
 .claude/*
