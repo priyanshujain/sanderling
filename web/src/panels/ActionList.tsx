@@ -159,15 +159,60 @@ export default function ActionList({
     }
   }, [selectedIndex]);
 
+  const focusIndex = (index: number) => {
+    const node = itemRefs.current.get(index);
+    if (node && typeof node.focus === "function") {
+      node.focus();
+    }
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLLIElement>, index: number) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      onSelect(index);
+    const position = steps.findIndex((entry) => entry.index === index);
+    switch (event.key) {
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        onSelect(index);
+        return;
+      case "ArrowDown": {
+        if (position < 0 || position >= steps.length - 1) return;
+        event.preventDefault();
+        const next = steps[position + 1].index;
+        onSelect(next);
+        focusIndex(next);
+        return;
+      }
+      case "ArrowUp": {
+        if (position <= 0) return;
+        event.preventDefault();
+        const prev = steps[position - 1].index;
+        onSelect(prev);
+        focusIndex(prev);
+        return;
+      }
+      case "Home": {
+        event.preventDefault();
+        const first = steps[0]?.index;
+        if (first !== undefined) {
+          onSelect(first);
+          focusIndex(first);
+        }
+        return;
+      }
+      case "End": {
+        event.preventDefault();
+        const last = steps[steps.length - 1]?.index;
+        if (last !== undefined) {
+          onSelect(last);
+          focusIndex(last);
+        }
+        return;
+      }
     }
   };
 
   return (
-    <ol className="action-list">
+    <ol className="action-list" role="listbox" aria-label="Steps">
       {steps.map((step) => {
         const isActive = step.index === selectedIndex;
         const { verb, target, targetIsTag } = formatActionRow(step);
@@ -195,8 +240,9 @@ export default function ActionList({
               }
             }}
             className="action-list-item"
-            role="button"
-            tabIndex={0}
+            role="option"
+            tabIndex={isActive ? 0 : -1}
+            aria-selected={isActive}
             aria-label={ariaLabel}
             data-active={isActive ? "true" : "false"}
             data-violations={step.has_violations ? "true" : "false"}

@@ -3,16 +3,21 @@
   padding: 0;
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 11px;
 }
 
 .action-list-item {
   display: block;
-  padding: 4px 8px;
+  padding: 3px 6px;
   border-left: 2px solid transparent;
   cursor: pointer;
   color: var(--text-primary);
   outline: none;
+}
+
+.action-list-item:focus-visible {
+  outline: 1px solid var(--text-primary);
+  outline-offset: -1px;
 }
 
 .action-list-row {
@@ -102,16 +107,16 @@
 .action-list-details {
   display: grid;
   grid-template-columns: 28px 1fr;
-  gap: 8px;
-  padding: 4px 0 2px 0;
-  font-size: 12px;
+  gap: 6px;
+  padding: 2px 0 2px 0;
+  font-size: 10px;
 }
 
 .action-list-detail-row {
   grid-column: 2;
   display: grid;
-  grid-template-columns: 80px 1fr;
-  gap: 8px;
+  grid-template-columns: 70px 1fr;
+  gap: 6px;
   color: var(--text-muted);
 }
 

@@ -161,7 +161,7 @@ describe("ActionList", () => {
         runStartMillis={runStart}
       />,
     );
-    const rows = screen.getAllByRole("button");
+    const rows = screen.getAllByRole("option");
     expect(rows).toHaveLength(sampleSteps.length);
   });
 
@@ -174,7 +174,7 @@ describe("ActionList", () => {
         runStartMillis={runStart}
       />,
     );
-    const row = screen.getByRole("button", { name: /step 1 click <buttonlogin\/>/i });
+    const row = screen.getByRole("option", { name: /step 1 click <buttonlogin\/>/i });
     expect(row).toBeInTheDocument();
     expect(row.textContent).toContain("Click");
     expect(row.textContent).toContain("<buttonLogin/>");
@@ -189,7 +189,7 @@ describe("ActionList", () => {
         runStartMillis={runStart}
       />,
     );
-    const row = screen.getByRole("button", { name: /step 3 type "hello"/i });
+    const row = screen.getByRole("option", { name: /step 3 type "hello"/i });
     expect(row).toBeInTheDocument();
     expect(row.textContent).toContain("Type");
     expect(row.textContent).toContain('"hello"');
@@ -204,7 +204,7 @@ describe("ActionList", () => {
         runStartMillis={runStart}
       />,
     );
-    const row = screen.getByRole("button", { name: /step 2 swipe <up\/>/i });
+    const row = screen.getByRole("option", { name: /step 2 swipe <up\/>/i });
     expect(row.textContent).toContain("<up/>");
   });
 
@@ -218,7 +218,7 @@ describe("ActionList", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: /step 4 observe/i }),
+      screen.getByRole("option", { name: /step 4 observe/i }),
     ).toBeInTheDocument();
   });
 
@@ -232,7 +232,7 @@ describe("ActionList", () => {
         runStartMillis={runStart}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /step 2/i }));
+    fireEvent.click(screen.getByRole("option", { name: /step 2/i }));
     expect(onSelect).toHaveBeenCalledWith(2);
   });
 
@@ -245,9 +245,9 @@ describe("ActionList", () => {
         runStartMillis={runStart}
       />,
     );
-    const activeRow = screen.getByRole("button", { name: /step 3/i });
+    const activeRow = screen.getByRole("option", { name: /step 3/i });
     expect(activeRow).toHaveAttribute("data-active", "true");
-    const inactiveRow = screen.getByRole("button", { name: /step 1/i });
+    const inactiveRow = screen.getByRole("option", { name: /step 1/i });
     expect(inactiveRow).toHaveAttribute("data-active", "false");
   });
 
@@ -262,7 +262,7 @@ describe("ActionList", () => {
     );
     const violationMarkers = screen.getAllByLabelText("violations");
     expect(violationMarkers).toHaveLength(1);
-    const violationRow = screen.getByRole("button", { name: /step 3/i });
+    const violationRow = screen.getByRole("option", { name: /step 3/i });
     expect(violationRow).toHaveAttribute("data-violations", "true");
   });
 
@@ -276,7 +276,7 @@ describe("ActionList", () => {
         runStartMillis={runStart}
       />,
     );
-    const row = screen.getByRole("button", { name: /step 2/i });
+    const row = screen.getByRole("option", { name: /step 2/i });
     row.focus();
     fireEvent.keyDown(row, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith(2);
@@ -292,7 +292,7 @@ describe("ActionList", () => {
         runStartMillis={runStart}
       />,
     );
-    const row = screen.getByRole("button", { name: /step 4/i });
+    const row = screen.getByRole("option", { name: /step 4/i });
     row.focus();
     fireEvent.keyDown(row, { key: " " });
     expect(onSelect).toHaveBeenCalledWith(4);
@@ -343,12 +343,12 @@ describe("ActionList", () => {
     );
     const detailBlocks = container.querySelectorAll(".action-list-details");
     expect(detailBlocks).toHaveLength(1);
-    const activeRow = screen.getByRole("button", { name: /step 3/i });
+    const activeRow = screen.getByRole("option", { name: /step 3/i });
     expect(activeRow.textContent).toContain("Position");
     expect(activeRow.textContent).toContain("512.0, 108.9");
     expect(activeRow.textContent).toContain("Content");
     expect(activeRow.textContent).toContain("hello");
-    const inactiveRow = screen.getByRole("button", { name: /step 1/i });
+    const inactiveRow = screen.getByRole("option", { name: /step 1/i });
     expect(inactiveRow.querySelector(".action-list-details")).toBeNull();
   });
 
