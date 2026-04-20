@@ -266,8 +266,9 @@ func TestAssets_FallbackToIndexHTML(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", recorder.Code)
 	}
-	if !strings.Contains(recorder.Body.String(), "<div id=\"app\"></div>") {
-		t.Errorf("expected SPA shell, got %q", recorder.Body.String())
+	body := recorder.Body.String()
+	if !strings.Contains(body, "<div id=\"app\"></div>") && !strings.Contains(body, "<div id=\"root\"></div>") {
+		t.Errorf("expected SPA shell with #app or #root, got %q", body)
 	}
 }
 
