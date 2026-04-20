@@ -89,7 +89,7 @@ spec.ts                                    uatu test spec
 
 ## How it connects to uatu
 
-- `composeApp/src/androidMain/.../SampleApplication.kt` calls `Uatu.start(this)`
+- `composeApp/src/androidMain/.../FolioApplication.kt` calls `Uatu.start(this)`
   and registers snapshot extractors (`logged_in`, `account_count`,
   `total_balance`, `route`)
 - `spec.ts` imports `@uatu/spec`, reads those snapshots, asserts properties,

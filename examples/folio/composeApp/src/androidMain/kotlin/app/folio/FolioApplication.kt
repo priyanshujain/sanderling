@@ -3,7 +3,7 @@ package app.folio
 import android.app.Application
 import dev.uatu.sdk.Uatu
 
-class SampleApplication : Application() {
+class FolioApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         AndroidLedgerContext.context = applicationContext
