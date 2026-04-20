@@ -35,7 +35,7 @@ kotlin {
         target.binaries.framework {
             baseName = "ComposeApp"
             isStatic = true
-            binaryOption("bundleId", "dev.uatu.sample")
+            binaryOption("bundleId", "app.folio")
         }
     }
 
@@ -93,11 +93,11 @@ kotlin {
 }
 
 android {
-    namespace = "dev.uatu.sample"
+    namespace = "app.folio"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "dev.uatu.sample"
+        applicationId = "app.folio"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -124,7 +124,7 @@ android {
 sqldelight {
     databases {
         create("LedgerDatabase") {
-            packageName.set("dev.uatu.sample.db")
+            packageName.set("app.folio.db")
         }
     }
 }
