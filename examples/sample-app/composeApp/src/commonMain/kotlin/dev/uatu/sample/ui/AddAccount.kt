@@ -50,6 +50,7 @@ fun AddAccountPage() {
                 onClick = ::submit,
                 style = ButtonStyle.Primary,
                 enabled = name.trim().isNotEmpty(),
+                description = "add_account_submit",
             )
         },
     ) {
@@ -65,6 +66,7 @@ fun AddAccountPage() {
                     placeholder = "e.g. Checking",
                     invalid = err != null,
                     label = "Account name",
+                    description = "account_name_field",
                 )
             }
             ErrorText(err)
