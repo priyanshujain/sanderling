@@ -76,6 +76,18 @@ const addAccountError = extract<string>(
 const txnError = extract<string>(
   (state) => (state.snapshots.txn_error as string) ?? "",
 );
+const loginEmailValue = extract<string>(
+  (state) => (state.snapshots.login_email_value as string) ?? "",
+);
+const loginPasswordLength = extract<number>(
+  (state) => (state.snapshots.login_password_length as number) ?? 0,
+);
+const accountNameInput = extract<string>(
+  (state) => (state.snapshots.account_name_input as string) ?? "",
+);
+const txnAmountInput = extract<string>(
+  (state) => (state.snapshots.txn_amount_input as string) ?? "",
+);
 
 const loginEmailField = extract((state) => state.ax.find("desc:login_email"));
 const loginPasswordField = extract((state) => state.ax.find("desc:login_password"));
@@ -279,21 +291,29 @@ const DEMO_PASSWORD = "ledger123";
 const loginHelper = actions(() => {
   if (loggedIn.current) return [];
   const focus = focusedInput.current;
-  if (focus === "login_email") {
-    const field = loginEmailField.current;
-    if (!field) return [];
-    return [InputText({ into: field, text: DEMO_EMAIL })];
+  const email = loginEmailField.current;
+  const password = loginPasswordField.current;
+  const submit = loginSubmitButton.current;
+  const emailFilled = loginEmailValue.current === DEMO_EMAIL;
+  const passwordFilled = loginPasswordLength.current >= DEMO_PASSWORD.length;
+
+  if (emailFilled && passwordFilled) {
+    return submit ? [Tap({ on: submit })] : [];
   }
   if (focus === "login_password") {
-    const field = loginPasswordField.current;
-    if (!field) return [];
-    const submit = loginSubmitButton.current;
-    const typeAction = InputText({ into: field, text: DEMO_PASSWORD });
-    return submit ? [typeAction, Tap({ on: submit })] : [typeAction];
+    if (!passwordFilled && password) {
+      return [InputText({ into: password, text: DEMO_PASSWORD })];
+    }
+    return submit ? [Tap({ on: submit })] : [];
   }
-  const email = loginEmailField.current;
-  if (email) return [Tap({ on: email })];
-  return [];
+  if (focus === "login_email") {
+    if (!emailFilled && email) {
+      return [InputText({ into: email, text: DEMO_EMAIL })];
+    }
+    return password ? [Tap({ on: password })] : [];
+  }
+  if (!emailFilled) return email ? [Tap({ on: email })] : [];
+  return password ? [Tap({ on: password })] : [];
 });
 
 const badCredentials = from([
@@ -333,6 +353,7 @@ const accountNameSampler = from([
 
 const typeAccountName = actions(() => {
   if (route.current !== "add-account") return [];
+  if (accountNameInput.current.trim().length > 0) return [];
   const field = accountNameField.current;
   if (!field) return [];
   return [InputText({ into: field, text: accountNameSampler.generate() })];
@@ -383,6 +404,7 @@ const amountSampler = from([
 
 const typeAmount = actions(() => {
   if (route.current !== "add-transaction") return [];
+  if (txnAmountInput.current.length > 0) return [];
   const field = txnAmountField.current;
   if (!field) return [];
   return [InputText({ into: field, text: amountSampler.generate() })];
