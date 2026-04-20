@@ -11,12 +11,27 @@ export interface UseKeyboardNavOptions {
 }
 
 const NAVIGATION_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+const ARROW_OWNING_ROLES = new Set(["tab", "tablist", "option", "listbox", "menuitem", "menu"]);
+
+function targetOwnsArrowKeys(target: HTMLElement | null): boolean {
+  let node: HTMLElement | null = target;
+  while (node) {
+    const role = node.getAttribute?.("role");
+    if (role && ARROW_OWNING_ROLES.has(role)) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
 
 export function useKeyboardNav(options: UseKeyboardNavOptions) {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && (NAVIGATION_TAGS.has(target.tagName) || target.isContentEditable)) {
+        return;
+      }
+      const isArrow = event.key.startsWith("Arrow");
+      if (isArrow && targetOwnsArrowKeys(target)) {
         return;
       }
       if (event.metaKey || event.ctrlKey || event.altKey) {
