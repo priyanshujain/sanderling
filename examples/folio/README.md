@@ -1,9 +1,9 @@
-# uatu sample app
+# Folio
 
-A minimal Kotlin Multiplatform ledger app that mirrors the React reference:
-login with demo credentials, create accounts, add credits and debits. Same
-features, monospace look, and demo creds, shared across Android and iOS via
-Compose Multiplatform.
+A minimal Kotlin Multiplatform personal-ledger app: login with demo
+credentials, create accounts, add credits and debits. Shared UI across
+Android, iOS, and Web via Compose Multiplatform. Doubles as the example
+uatu runs its property-based specs against.
 
 ## Stack
 
@@ -12,7 +12,7 @@ Compose Multiplatform.
 - kotlinx.coroutines for state flows
 - uatu `sdk-android` for harness integration on Android
 
-Everything in `composeApp/src/commonMain/kotlin/dev/uatu/sample/` is shared
+Everything in `composeApp/src/commonMain/kotlin/app/folio/` is shared
 between platforms. Platform-specific I/O (file storage, clock, UUID) lives
 in `androidMain/` and `iosMain/` as `actual`s of the `Platform` expect object.
 
@@ -76,7 +76,7 @@ Traces land in `./runs/<timestamp>/`.
 
 ```
 composeApp/
-  src/commonMain/kotlin/dev/uatu/sample/   shared domain, state, UI
+  src/commonMain/kotlin/app/folio/         shared domain, state, UI
   src/androidMain/                         Android Application + Activity
   src/iosMain/                             iOS UIViewController entry
 iosApp/

@@ -57,7 +57,7 @@ npm install
 (cd android && ./gradlew installDebug)
 uatu test \
   --spec spec.ts \
-  --bundle-id dev.uatu.sample \
+  --bundle-id app.folio \
   --platform android \
   --duration 2m
 ```

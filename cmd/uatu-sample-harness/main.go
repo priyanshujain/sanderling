@@ -45,7 +45,7 @@ func main() {
 	defer cancel()
 
 	server := agent.NewServer(listener)
-	fmt.Println("waiting for SDK to connect (launch the sample app on the device)...")
+	fmt.Println("waiting for SDK to connect (launch the app under test on the device)...")
 	conn, err := server.Accept(ctx)
 	if err != nil {
 		die("accept: %v", err)
