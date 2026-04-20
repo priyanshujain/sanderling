@@ -1,5 +1,5 @@
+import { useState } from "react";
 import type { Metrics } from "../types";
-import type { PropertyLane } from "./Timeline";
 import "./MetricsChart.css";
 
 export interface MetricsSample {
@@ -12,374 +12,281 @@ export interface MetricsChartProps {
   samples: MetricsSample[];
   selectedIndex: number;
   onSelect: (stepIndex: number) => void;
-  exceptionStepIndices?: number[];
-  propertyLanes?: PropertyLane[];
-  violationStepIndices?: number[];
+  runStartMillis?: number;
 }
-
-const CHART_WIDTH = 1000;
-const LEFT_GUTTER = 18;
-const RIGHT_GUTTER = 44;
-const LANE_HEIGHT = 40;
-const LANE_GAP = 10;
-const AXIS_HEIGHT = 14;
-const PLAYHEAD_WIDTH = 22;
 
 const MB = 1024 * 1024;
 
-interface LaneGeometry {
-  top: number;
-  bottom: number;
-  plotLeft: number;
-  plotRight: number;
-}
-
-function heapCeiling(maxBytes: number): number {
-  if (maxBytes <= 0) return 50 * MB;
-  const steps = [
-    50 * MB,
-    100 * MB,
-    200 * MB,
-    300 * MB,
-    500 * MB,
-    750 * MB,
-    1024 * MB,
-    1536 * MB,
-    2048 * MB,
-  ];
-  for (const step of steps) {
-    if (maxBytes <= step) return step;
-  }
-  const gib = 1024 * MB;
-  return Math.ceil(maxBytes / gib) * gib;
-}
-
-function formatHeapTop(bytes: number): string {
+function formatHeap(bytes: number): string {
+  if (bytes <= 0) return "0B";
   if (bytes < MB) return `${Math.round(bytes / 1024)}K`;
   if (bytes < 1024 * MB) return `${Math.round(bytes / MB)}M`;
   return `${(bytes / (1024 * MB)).toFixed(1)}G`;
 }
 
-function formatHeapTooltip(bytes: number): string {
-  if (bytes === 0) return "0B";
-  if (bytes < MB) return `${Math.round(bytes / 1024)}KB`;
-  if (bytes < 1024 * MB) return `${Math.round(bytes / MB)}MB`;
-  return `${(bytes / (1024 * MB)).toFixed(1)}GB`;
-}
-
-function cpuCeiling(maxPercent: number): number {
-  if (maxPercent <= 100) return 100;
-  return Math.ceil(maxPercent / 50) * 50;
-}
-
-function formatClock(millis: number): string {
+function formatTime(millis: number): string {
   const safe = Math.max(0, Math.floor(millis));
-  const totalSeconds = Math.floor(safe / 1000);
-  const mm = Math.floor(totalSeconds / 60);
-  const ss = totalSeconds % 60;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(mm)}:${pad(ss)}`;
+  const seconds = Math.floor(safe / 1000);
+  const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const ss = String(seconds % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
 }
 
-function parseMillis(value: string): number {
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
+function fractionFor(index: number, count: number): number {
+  if (count <= 1) return 0.5;
+  return index / (count - 1);
 }
 
-function buildTimeTicks(samples: MetricsSample[], count: number): { t: number; label: string }[] {
-  const firstMs = parseMillis(samples[0].timestamp);
-  const lastMs = parseMillis(samples[samples.length - 1].timestamp);
-  const duration = Math.max(0, lastMs - firstMs);
-  const ticks: { t: number; label: string }[] = [];
-  const segments = Math.max(1, count - 1);
-  for (let i = 0; i < count; i += 1) {
-    const t = (duration * i) / segments;
-    ticks.push({ t, label: formatClock(t) });
-  }
-  return ticks;
-}
-
-function buildPolyline(
+function buildPath(
   samples: MetricsSample[],
   getValue: (sample: MetricsSample) => number | undefined,
   ceiling: number,
-  geometry: LaneGeometry,
-  columnWidth: number,
 ): string {
-  const points: string[] = [];
+  const segments: string[] = [];
+  let pendingCommand = "M";
+  samples.forEach((sample, index) => {
+    const value = getValue(sample);
+    if (value === undefined) {
+      pendingCommand = "M";
+      return;
+    }
+    const x = fractionFor(index, samples.length);
+    const ratio = ceiling === 0 ? 0 : Math.min(value / ceiling, 1);
+    const y = 1 - ratio;
+    segments.push(`${pendingCommand}${x.toFixed(4)},${y.toFixed(4)}`);
+    pendingCommand = "L";
+  });
+  return segments.join(" ");
+}
+
+interface LaneDot {
+  key: number | string;
+  x: number;
+  y: number;
+}
+
+interface LaneHover {
+  fraction: number;
+  y: number;
+  label: string;
+}
+
+interface LaneProps {
+  label: string;
+  path: string;
+  dots: LaneDot[];
+  topTickLabel: string;
+  bottomTickLabel: string;
+  selectedFraction: number | null;
+  hover: LaneHover | null;
+}
+
+function Lane({
+  label,
+  path,
+  dots,
+  topTickLabel,
+  bottomTickLabel,
+  selectedFraction,
+  hover,
+}: LaneProps) {
+  return (
+    <div className="metrics-lane">
+      <div className="metrics-lane-label">{label}</div>
+      <div className="metrics-lane-plot">
+        {selectedFraction !== null ? (
+          <div
+            className="metrics-lane-highlight"
+            style={{ left: `${selectedFraction * 100}%` }}
+          />
+        ) : null}
+        <div className="metrics-lane-canvas">
+          <svg
+            className="metrics-lane-svg"
+            viewBox="0 0 1 1"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            {path ? <path d={path} className="metrics-lane-path" /> : null}
+          </svg>
+          {dots.map((dot) => (
+            <div
+              key={dot.key}
+              className="metrics-lane-dot"
+              style={{ left: `${dot.x * 100}%`, top: `${dot.y * 100}%` }}
+              data-active={hover !== null && Math.abs(hover.fraction - dot.x) < 1e-6 ? "true" : undefined}
+            />
+          ))}
+          {hover ? (
+            <div
+              className="metrics-lane-tooltip"
+              data-placement={hover.y < 0.35 ? "below" : "above"}
+              style={{ left: `${hover.fraction * 100}%`, top: `${hover.y * 100}%` }}
+            >
+              {hover.label}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="metrics-lane-ticks">
+        <span>{topTickLabel}</span>
+        <span>{bottomTickLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+function buildDots(
+  samples: MetricsSample[],
+  getValue: (sample: MetricsSample) => number | undefined,
+  ceiling: number,
+): LaneDot[] {
+  const dots: LaneDot[] = [];
   samples.forEach((sample, index) => {
     const value = getValue(sample);
     if (value === undefined) return;
-    const x = geometry.plotLeft + index * columnWidth + columnWidth / 2;
     const ratio = ceiling === 0 ? 0 : Math.min(value / ceiling, 1);
-    const y = geometry.bottom - ratio * (geometry.bottom - geometry.top);
-    points.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+    dots.push({
+      key: sample.stepIndex,
+      x: fractionFor(index, samples.length),
+      y: 1 - ratio,
+    });
   });
-  return points.join(" ");
+  return dots;
 }
 
 export default function MetricsChart({
   samples,
   selectedIndex,
   onSelect,
+  runStartMillis,
 }: MetricsChartProps) {
-  if (samples.length === 0) {
+  if (samples.length === 0 || !samples.some((sample) => sample.metrics !== undefined)) {
     return <div className="status-block">no metrics</div>;
   }
 
-  const hasMetrics = samples.some((sample) => sample.metrics !== undefined);
-  if (!hasMetrics) {
-    return <div className="status-block">no metrics</div>;
-  }
-
-  const plotLeft = LEFT_GUTTER;
-  const plotRight = CHART_WIDTH - RIGHT_GUTTER;
-  const plotWidth = plotRight - plotLeft;
-  const columnWidth = plotWidth / samples.length;
-
-  const heapMax = samples.reduce((max, sample) => {
-    const value = sample.metrics?.heap_bytes;
-    return value !== undefined && value > max ? value : max;
-  }, 0);
-  const heapTop = heapCeiling(heapMax);
-
-  const cpuMax = samples.reduce((max, sample) => {
-    const value = sample.metrics?.cpu_percent;
-    return value !== undefined && value > max ? value : max;
-  }, 0);
-  const cpuTop = cpuCeiling(cpuMax);
-
-  const heapGeometry: LaneGeometry = {
-    top: 0,
-    bottom: LANE_HEIGHT,
-    plotLeft,
-    plotRight,
-  };
-  const cpuGeometry: LaneGeometry = {
-    top: heapGeometry.bottom + LANE_GAP,
-    bottom: heapGeometry.bottom + LANE_GAP + LANE_HEIGHT,
-    plotLeft,
-    plotRight,
-  };
-  const axisTop = cpuGeometry.bottom + 4;
-  const totalHeight = axisTop + AXIS_HEIGHT;
-
-  const heapPoints = buildPolyline(
-    samples,
-    (sample) => sample.metrics?.heap_bytes,
-    heapTop,
-    heapGeometry,
-    columnWidth,
+  const heapTop = samples.reduce(
+    (max, sample) => Math.max(max, sample.metrics?.heap_bytes ?? 0),
+    0,
   );
-  const cpuPoints = buildPolyline(
-    samples,
-    (sample) => sample.metrics?.cpu_percent,
-    cpuTop,
-    cpuGeometry,
-    columnWidth,
+  const cpuObservedMax = samples.reduce(
+    (max, sample) => Math.max(max, sample.metrics?.cpu_percent ?? 0),
+    0,
   );
+  const cpuTop = Math.max(100, cpuObservedMax);
+
+  const heapPath = buildPath(samples, (sample) => sample.metrics?.heap_bytes, heapTop);
+  const cpuPath = buildPath(samples, (sample) => sample.metrics?.cpu_percent, cpuTop);
+  const heapDots = buildDots(samples, (sample) => sample.metrics?.heap_bytes, heapTop);
+  const cpuDots = buildDots(samples, (sample) => sample.metrics?.cpu_percent, cpuTop);
+
+  const baseMillis = runStartMillis ?? new Date(samples[0].timestamp).getTime();
+
+  const axisCount = Math.min(5, samples.length);
+  const axisTicks = Array.from({ length: axisCount }, (_, i) => {
+    const idx =
+      axisCount === 1
+        ? 0
+        : Math.round((i / (axisCount - 1)) * (samples.length - 1));
+    const sample = samples[idx];
+    const sampleMillis = new Date(sample.timestamp).getTime();
+    const elapsed =
+      Number.isFinite(sampleMillis) && Number.isFinite(baseMillis)
+        ? sampleMillis - baseMillis
+        : NaN;
+    return {
+      key: sample.stepIndex,
+      fraction: fractionFor(idx, samples.length),
+      label: Number.isFinite(elapsed) ? formatTime(elapsed) : String(sample.stepIndex),
+    };
+  });
 
   const selectedColumn = samples.findIndex((sample) => sample.stepIndex === selectedIndex);
-  const highlightCenterX =
-    selectedColumn >= 0 ? plotLeft + selectedColumn * columnWidth + columnWidth / 2 : null;
+  const selectedFraction =
+    selectedColumn >= 0 ? fractionFor(selectedColumn, samples.length) : null;
 
-  const timeTicks = buildTimeTicks(samples, 5);
-  const firstMs = parseMillis(samples[0].timestamp);
-  const lastMs = parseMillis(samples[samples.length - 1].timestamp);
-  const totalDuration = Math.max(0, lastMs - firstMs);
+  const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
+  const hoveredSample =
+    hoveredColumn !== null && hoveredColumn >= 0 && hoveredColumn < samples.length
+      ? samples[hoveredColumn]
+      : null;
+  const hoverFraction =
+    hoveredColumn !== null ? fractionFor(hoveredColumn, samples.length) : null;
+
+  const heapHover: LaneHover | null =
+    hoveredSample && hoverFraction !== null && hoveredSample.metrics?.heap_bytes !== undefined
+      ? {
+          fraction: hoverFraction,
+          y: 1 - (heapTop === 0 ? 0 : Math.min(hoveredSample.metrics.heap_bytes / heapTop, 1)),
+          label: formatHeap(hoveredSample.metrics.heap_bytes),
+        }
+      : null;
+  const cpuHover: LaneHover | null =
+    hoveredSample && hoverFraction !== null && hoveredSample.metrics?.cpu_percent !== undefined
+      ? {
+          fraction: hoverFraction,
+          y: 1 - (cpuTop === 0 ? 0 : Math.min(hoveredSample.metrics.cpu_percent / cpuTop, 1)),
+          label: `${hoveredSample.metrics.cpu_percent.toFixed(1)}%`,
+        }
+      : null;
 
   return (
-    <svg
-      className="metrics-chart"
-      viewBox={`0 0 ${CHART_WIDTH} ${totalHeight}`}
-      role="img"
-      aria-label="metrics chart"
-    >
-      <defs>
-        <pattern
-          id="metrics-playhead-pattern"
-          patternUnits="userSpaceOnUse"
-          width="4"
-          height="4"
-        >
-          <circle cx="1" cy="1" r="0.6" className="metrics-playhead-dot" />
-        </pattern>
-      </defs>
-
-      <g className="metrics-lane" data-lane="HEAP">
-        <rect
-          x={plotLeft}
-          y={heapGeometry.top}
-          width={plotWidth}
-          height={LANE_HEIGHT}
-          className="metrics-lane-bg"
+    <div className="metrics-chart">
+      <div className="metrics-lanes">
+        <Lane
+          label="HEAP"
+          path={heapPath}
+          dots={heapDots}
+          topTickLabel={formatHeap(heapTop)}
+          bottomTickLabel="0B"
+          selectedFraction={selectedFraction}
+          hover={heapHover}
         />
-        <text
-          className="metrics-lane-label"
-          x={LEFT_GUTTER / 2}
-          y={heapGeometry.top + LANE_HEIGHT / 2}
-          textAnchor="middle"
-          transform={`rotate(-90 ${LEFT_GUTTER / 2} ${heapGeometry.top + LANE_HEIGHT / 2})`}
-        >
-          HEAP
-        </text>
-        <text
-          x={CHART_WIDTH - 4}
-          y={heapGeometry.top + 8}
-          textAnchor="end"
-          className="metrics-tick-label"
-        >
-          {formatHeapTop(heapTop)}
-        </text>
-        <text
-          x={CHART_WIDTH - 4}
-          y={heapGeometry.bottom - 2}
-          textAnchor="end"
-          className="metrics-tick-label"
-        >
-          0B
-        </text>
-        {heapPoints.length > 0 ? (
-          <polyline
-            className="metrics-line"
-            data-series="heap"
-            points={heapPoints}
-            fill="none"
-          />
-        ) : null}
-        {samples.map((sample) => {
-          const value = sample.metrics?.heap_bytes;
-          if (value === undefined) return null;
-          return (
-            <g key={`heap-point-${sample.stepIndex}`} className="metrics-point" data-step-index={sample.stepIndex}>
-              <title>{`step ${sample.stepIndex}: ${formatHeapTooltip(value)}`}</title>
-            </g>
-          );
-        })}
-        {samples.map((sample, index) => {
-          const x = plotLeft + index * columnWidth;
-          return (
-            <rect
-              key={`heap-hit-${sample.stepIndex}`}
-              className="metrics-hit"
-              data-step-index={sample.stepIndex}
-              data-lane-hit="HEAP"
-              x={x}
-              y={heapGeometry.top}
-              width={columnWidth}
-              height={LANE_HEIGHT}
-              onClick={() => onSelect(sample.stepIndex)}
-            >
-              <title>{`step ${sample.stepIndex}`}</title>
-            </rect>
-          );
-        })}
-      </g>
-
-      <g className="metrics-lane" data-lane="CPU">
-        <rect
-          x={plotLeft}
-          y={cpuGeometry.top}
-          width={plotWidth}
-          height={LANE_HEIGHT}
-          className="metrics-lane-bg"
+        <Lane
+          label="CPU"
+          path={cpuPath}
+          dots={cpuDots}
+          topTickLabel={`${Math.round(cpuTop)}%`}
+          bottomTickLabel="0%"
+          selectedFraction={selectedFraction}
+          hover={cpuHover}
         />
-        <text
-          className="metrics-lane-label"
-          x={LEFT_GUTTER / 2}
-          y={cpuGeometry.top + LANE_HEIGHT / 2}
-          textAnchor="middle"
-          transform={`rotate(-90 ${LEFT_GUTTER / 2} ${cpuGeometry.top + LANE_HEIGHT / 2})`}
-        >
-          CPU
-        </text>
-        <text
-          x={CHART_WIDTH - 4}
-          y={cpuGeometry.top + 8}
-          textAnchor="end"
-          className="metrics-tick-label"
-        >
-          100%
-        </text>
-        <text
-          x={CHART_WIDTH - 4}
-          y={cpuGeometry.bottom - 2}
-          textAnchor="end"
-          className="metrics-tick-label"
-        >
-          0%
-        </text>
-        {cpuPoints.length > 0 ? (
-          <polyline
-            className="metrics-line"
-            data-series="cpu"
-            points={cpuPoints}
-            fill="none"
-          />
-        ) : null}
-        {samples.map((sample) => {
-          const value = sample.metrics?.cpu_percent;
-          if (value === undefined) return null;
-          return (
-            <g key={`cpu-point-${sample.stepIndex}`} className="metrics-point" data-step-index={sample.stepIndex}>
-              <title>{`step ${sample.stepIndex}: ${value.toFixed(1)}%`}</title>
-            </g>
-          );
-        })}
-        {samples.map((sample, index) => {
-          const x = plotLeft + index * columnWidth;
-          return (
-            <rect
-              key={`cpu-hit-${sample.stepIndex}`}
-              className="metrics-hit"
-              data-step-index={sample.stepIndex}
-              data-lane-hit="CPU"
-              x={x}
-              y={cpuGeometry.top}
-              width={columnWidth}
-              height={LANE_HEIGHT}
-              onClick={() => onSelect(sample.stepIndex)}
-            >
-              <title>{`step ${sample.stepIndex}`}</title>
-            </rect>
-          );
-        })}
-      </g>
-
-      <g className="metrics-axis" data-row="axis">
-        {timeTicks.map((tick, index) => {
-          const ratio = totalDuration === 0 ? index / Math.max(1, timeTicks.length - 1) : tick.t / totalDuration;
-          const x = plotLeft + ratio * plotWidth;
-          const isLast = index === timeTicks.length - 1;
-          const isFirst = index === 0;
-          const anchor = isLast ? "end" : isFirst ? "start" : "middle";
-          return (
-            <g key={`axis-${index}`} className="metrics-axis-tick">
-              <text
-                x={x}
-                y={axisTop + AXIS_HEIGHT - 2}
-                textAnchor={anchor}
-                className="metrics-axis-label"
-              >
-                {tick.label}
-              </text>
-            </g>
-          );
-        })}
-      </g>
-
-      {highlightCenterX !== null ? (
-        <rect
-          className="metrics-highlight"
-          data-selected="true"
-          x={highlightCenterX - PLAYHEAD_WIDTH / 2}
-          y={heapGeometry.top}
-          width={PLAYHEAD_WIDTH}
-          height={cpuGeometry.bottom - heapGeometry.top}
-          fill="url(#metrics-playhead-pattern)"
-          pointerEvents="none"
-        />
-      ) : null}
-    </svg>
+        <div className="metrics-hits" role="presentation">
+          {samples.map((sample, index) => {
+            const left = (() => {
+              if (samples.length === 1) return 0;
+              const half = 0.5 / (samples.length - 1);
+              return Math.max(0, fractionFor(index, samples.length) - half);
+            })();
+            const width = samples.length === 1 ? 1 : 1 / (samples.length - 1);
+            return (
+              <button
+                key={sample.stepIndex}
+                type="button"
+                className="metrics-hit"
+                style={{ left: `${left * 100}%`, width: `${width * 100}%` }}
+                onClick={() => onSelect(sample.stepIndex)}
+                onPointerEnter={() => setHoveredColumn(index)}
+                onPointerLeave={() =>
+                  setHoveredColumn((current) => (current === index ? null : current))
+                }
+                aria-label={`select step ${sample.stepIndex}`}
+              />
+            );
+          })}
+        </div>
+      </div>
+      <div className="metrics-axis">
+        {axisTicks.map((tick) => (
+          <span
+            key={tick.key}
+            className="metrics-axis-label"
+            style={{ left: `${tick.fraction * 100}%` }}
+          >
+            {tick.label}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }

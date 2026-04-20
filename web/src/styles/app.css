@@ -132,16 +132,28 @@ button:hover {
 }
 
 .theme-toggle {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-muted);
+}
+
+.theme-toggle:hover {
+  color: var(--text-primary);
+}
+
+.theme-toggle svg {
+  display: block;
 }
 
 .detail-grid {
   flex: 1 1 auto;
   display: grid;
   grid-template-columns: 340px minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) minmax(0, 140px);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 130px);
   grid-template-areas:
     "actions before after"
     "metrics metrics metrics";
@@ -204,6 +216,10 @@ button:hover {
   flex: 1 1 auto;
   min-height: 0;
   max-height: 100%;
+}
+
+.detail-metrics .detail-panel-body {
+  overflow: hidden;
 }
 
 .detail-metrics-exceptions {

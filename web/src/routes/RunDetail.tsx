@@ -234,8 +234,38 @@ export default function RunDetail() {
             step {stepIndex} / {stepCount ?? 0}
           </span>
         </div>
-        <button type="button" className="theme-toggle" onClick={toggle}>
-          {theme === "dark" ? "light" : "dark"}
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={toggle}
+          aria-label={theme === "dark" ? "switch to light theme" : "switch to dark theme"}
+          title={theme === "dark" ? "switch to light theme" : "switch to dark theme"}
+        >
+          {theme === "dark" ? (
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" strokeWidth="1.25" />
+              <g stroke="currentColor" strokeWidth="1.25" strokeLinecap="round">
+                <line x1="8" y1="1.5" x2="8" y2="3.5" />
+                <line x1="8" y1="12.5" x2="8" y2="14.5" />
+                <line x1="1.5" y1="8" x2="3.5" y2="8" />
+                <line x1="12.5" y1="8" x2="14.5" y2="8" />
+                <line x1="3.4" y1="3.4" x2="4.8" y2="4.8" />
+                <line x1="11.2" y1="11.2" x2="12.6" y2="12.6" />
+                <line x1="3.4" y1="12.6" x2="4.8" y2="11.2" />
+                <line x1="11.2" y1="4.8" x2="12.6" y2="3.4" />
+              </g>
+            </svg>
+          ) : (
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+              <path
+                d="M13.2 9.8A5.2 5.2 0 0 1 6.2 2.8a5.2 5.2 0 1 0 7 7Z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.25"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
         </button>
       </div>
       <div className="detail-grid">
@@ -272,9 +302,7 @@ export default function RunDetail() {
               samples={history?.metricsSamples ?? []}
               selectedIndex={stepIndex}
               onSelect={goTo}
-              exceptionStepIndices={history?.exceptionStepIndices}
-              violationStepIndices={history?.violationStepIndices}
-              propertyLanes={history?.lanes}
+              runStartMillis={runStartMillis}
             />
             {(exceptionsForStep && exceptionsForStep.length > 0) ||
             history?.firstExceptionStep !== undefined ? (

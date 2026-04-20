@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { Action } from "../types";
 import "./Screenshot.css";
 
@@ -16,6 +16,8 @@ export default function Screenshot({ src, action, deviceWidth, deviceHeight }: S
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const previousSrc = useRef<string | undefined>(src);
+  const reactId = useId();
+  const maskId = `screenshot-spotlight-${reactId.replace(/:/g, "")}`;
 
   useEffect(() => {
     if (previousSrc.current !== src) {
@@ -38,6 +40,7 @@ export default function Screenshot({ src, action, deviceWidth, deviceHeight }: S
   const stroke = Math.max(2, width / 200);
   const tapRadius = Math.max(12, width / 60);
   const arrowHeadSize = Math.max(18, width / 40);
+  const spotlightRadius = tapRadius * 3;
 
   const bounds = action?.resolvedBounds;
   const tap = action?.tapPoint;
@@ -71,6 +74,36 @@ export default function Screenshot({ src, action, deviceWidth, deviceHeight }: S
         preserveAspectRatio="xMidYMid meet"
         aria-hidden="true"
       >
+        {tap && (
+          <>
+            <defs>
+              <radialGradient
+                id={`${maskId}-gradient`}
+                cx={tap.x}
+                cy={tap.y}
+                r={spotlightRadius}
+                gradientUnits="userSpaceOnUse"
+              >
+                <stop offset="0%" stopColor="black" />
+                <stop offset="55%" stopColor="black" />
+                <stop offset="100%" stopColor="white" />
+              </radialGradient>
+              <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width={width} height={height}>
+                <rect x="0" y="0" width={width} height={height} fill={`url(#${maskId}-gradient)`} />
+              </mask>
+            </defs>
+            <rect
+              data-testid="screenshot-spotlight"
+              x="0"
+              y="0"
+              width={width}
+              height={height}
+              fill="black"
+              opacity="0.5"
+              mask={`url(#${maskId})`}
+            />
+          </>
+        )}
         {bounds && (
           <rect
             x={bounds.x}
@@ -79,16 +112,6 @@ export default function Screenshot({ src, action, deviceWidth, deviceHeight }: S
             height={bounds.height}
             fill="none"
             stroke="var(--accent-violation)"
-            strokeWidth={stroke}
-          />
-        )}
-        {tap && (
-          <circle
-            cx={tap.x}
-            cy={tap.y}
-            r={tapRadius}
-            fill="none"
-            stroke="var(--text-primary)"
             strokeWidth={stroke}
           />
         )}

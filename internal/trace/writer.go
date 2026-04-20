@@ -26,7 +26,7 @@ type Step struct {
 }
 
 type Metrics struct {
-	CPUPercent       float64 `json:"cpu_percent,omitempty"`
+	CPUPercent       float64 `json:"cpu_percent"`
 	HeapBytes        int64   `json:"heap_bytes,omitempty"`
 	TotalMemoryBytes int64   `json:"total_memory_bytes,omitempty"`
 }

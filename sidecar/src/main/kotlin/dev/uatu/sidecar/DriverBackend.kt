@@ -337,10 +337,11 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
 
     // Stateful CPU delta tracker. Reading /proc/<pid>/stat gives cumulative
     // utime+stime in jiffies; CPU % over a step is (delta_ticks / delta_wall)
-    // * 100. First call returns 0 because we have no prior sample.
+    // * 100. First call blocks briefly for a real reading instead of 0.
     private data class CpuSample(val pid: Int, val ticks: Long, val wallNanos: Long)
     @Volatile private var lastCpuSample: CpuSample? = null
     private val clockTicksPerSecond: Long by lazy { resolveClockTicksPerSecond() }
+    private val cpuFirstSampleSleepMillis: Long = 50L
 
     override fun metrics(bundleId: String): MetricsSample {
         if (bundleId.isEmpty()) return MetricsSample(0.0, 0L, 0L)
@@ -360,25 +361,53 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     }
 
     private fun sampleCpuPercent(pid: Int): Double {
+        val previous = lastCpuSample
+        if (previous != null && previous.pid == pid) {
+            val ticks = readCpuTicks(pid) ?: return 0.0
+            val now = System.nanoTime()
+            lastCpuSample = CpuSample(pid, ticks, now)
+            return cpuPercentFromDelta(ticks - previous.ticks, now - previous.wallNanos)
+        }
+        // No baseline for this PID: one adb round-trip with a device-side sleep
+        // so the first step gets a real reading instead of 0.
+        val pair = readCpuTicksPair(pid, cpuFirstSampleSleepMillis) ?: return 0.0
+        lastCpuSample = CpuSample(pid, pair.second, System.nanoTime())
+        return cpuPercentFromDelta(pair.second - pair.first, cpuFirstSampleSleepMillis * 1_000_000L)
+    }
+
+    private fun readCpuTicks(pid: Int): Long? {
         val stat = runAdbOutput(listOf("shell", "cat", "/proc/$pid/stat")).trim()
-        if (stat.isEmpty()) return 0.0
+        if (stat.isEmpty()) return null
+        return parseCpuTicks(stat)
+    }
+
+    private fun readCpuTicksPair(pid: Int, sleepMillis: Long): Pair<Long, Long>? {
+        // "sleep 0.050" — toybox sleep accepts fractional seconds on modern Android.
+        val sleepArg = "0.${"%03d".format(sleepMillis)}"
+        val command = "cat /proc/$pid/stat; sleep $sleepArg; cat /proc/$pid/stat"
+        val output = runAdbOutput(listOf("shell", command))
+        val lines = output.lines().filter { it.isNotBlank() }
+        if (lines.size < 2) return null
+        val first = parseCpuTicks(lines[0]) ?: return null
+        val second = parseCpuTicks(lines[1]) ?: return null
+        return Pair(first, second)
+    }
+
+    private fun parseCpuTicks(statLine: String): Long? {
         // /proc/<pid>/stat format: pid (comm) state ppid ... utime stime ...
         // comm is parenthesized and may contain spaces; rsplit on ')' to skip it.
-        val afterComm = stat.substringAfterLast(')').trim()
+        val afterComm = statLine.substringAfterLast(')').trim()
         val fields = afterComm.split(Regex("\\s+"))
         // After the ')' we are at the "state" field (index 0 in afterComm).
         // utime is proc(14) = afterComm[11], stime is proc(15) = afterComm[12].
-        if (fields.size < 13) return 0.0
-        val utime = fields[11].toLongOrNull() ?: return 0.0
-        val stime = fields[12].toLongOrNull() ?: return 0.0
-        val ticks = utime + stime
-        val now = System.nanoTime()
-        val previous = lastCpuSample
-        lastCpuSample = CpuSample(pid, ticks, now)
-        if (previous == null || previous.pid != pid) return 0.0
-        val deltaTicks = ticks - previous.ticks
-        val deltaWallNanos = now - previous.wallNanos
-        if (deltaTicks <= 0 || deltaWallNanos <= 0) return 0.0
+        if (fields.size < 13) return null
+        val utime = fields[11].toLongOrNull() ?: return null
+        val stime = fields[12].toLongOrNull() ?: return null
+        return utime + stime
+    }
+
+    private fun cpuPercentFromDelta(deltaTicks: Long, deltaWallNanos: Long): Double {
+        if (deltaTicks < 0 || deltaWallNanos <= 0) return 0.0
         val tickHz = clockTicksPerSecond.coerceAtLeast(1L)
         val deltaCpuNanos = deltaTicks * 1_000_000_000.0 / tickHz
         return (deltaCpuNanos / deltaWallNanos) * 100.0

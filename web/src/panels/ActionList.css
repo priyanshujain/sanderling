@@ -22,13 +22,13 @@
 
 .action-list-row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto;
   align-items: baseline;
-  gap: 8px;
+  column-gap: 4px;
 }
 
 .action-list-index {
-  text-align: right;
+  text-align: left;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -106,9 +106,9 @@
 
 .action-list-details {
   display: grid;
-  grid-template-columns: 28px 1fr;
-  gap: 6px;
-  padding: 2px 0 2px 0;
+  grid-template-columns: 20px 1fr;
+  column-gap: 4px;
+  padding: 2px 0;
   font-size: 10px;
 }
 
