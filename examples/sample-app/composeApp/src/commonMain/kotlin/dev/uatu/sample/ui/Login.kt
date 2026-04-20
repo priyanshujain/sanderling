@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -18,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import dev.uatu.sample.DEMO_EMAIL
 import dev.uatu.sample.DEMO_PASSWORD
 import dev.uatu.sample.Repository
+import dev.uatu.sample.UiState
 import dev.uatu.sample.checkCredentials
 
 @Composable
@@ -25,15 +27,16 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
     val t = LocalTokens.current
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var err by remember { mutableStateOf<String?>(null) }
+    val err by UiState.loginError.collectAsState()
 
     fun submit() {
         if (email.isBlank() || password.isEmpty()) {
-            err = "Enter email and password"; return
+            UiState.loginError.value = "Enter email and password"; return
         }
         if (!checkCredentials(email, password)) {
-            err = "Invalid email or password"; return
+            UiState.loginError.value = "Invalid email or password"; return
         }
+        UiState.loginError.value = ""
         val user = email.trim().lowercase()
         Repository.setSession(user)
         onLoggedIn(user)
@@ -49,9 +52,9 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
                 FieldLabel("Email")
                 TextInput(
                     value = email,
-                    onChange = { email = it; err = null },
+                    onChange = { email = it; UiState.loginError.value = "" },
                     placeholder = DEMO_EMAIL,
-                    invalid = err != null,
+                    invalid = err.isNotEmpty(),
                     keyboardType = KeyboardType.Email,
                     label = "Email",
                     description = "login_email",
@@ -61,10 +64,10 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
                 FieldLabel("Password")
                 TextInput(
                     value = password,
-                    onChange = { password = it; err = null },
+                    onChange = { password = it; UiState.loginError.value = "" },
                     placeholder = "••••••••",
                     password = true,
-                    invalid = err != null,
+                    invalid = err.isNotEmpty(),
                     keyboardType = KeyboardType.Password,
                     label = "Password",
                     description = "login_password",

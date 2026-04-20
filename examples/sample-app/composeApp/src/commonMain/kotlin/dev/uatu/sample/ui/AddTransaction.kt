@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
@@ -18,6 +19,7 @@ import dev.uatu.sample.Navigator
 import dev.uatu.sample.Repository
 import dev.uatu.sample.Route
 import dev.uatu.sample.TxnType
+import dev.uatu.sample.UiState
 import dev.uatu.sample.parseCents
 
 private val AMOUNT_REGEX = Regex("""^\d*(\.\d{0,2})?$""")
@@ -48,21 +50,27 @@ fun AddTransactionPage(accountId: String) {
     var type by remember { mutableStateOf(TxnType.credit) }
     var amount by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
-    var err by remember { mutableStateOf<String?>(null) }
+    val err by UiState.txnError.collectAsState()
+
+    DisposableEffect(type) {
+        UiState.txnFormType.value = if (type == TxnType.credit) "credit" else "debit"
+        onDispose { UiState.txnFormType.value = null }
+    }
 
     fun submit() {
         val cents = parseCents(amount)
         if (cents == null) {
-            err = "Enter a valid amount (e.g. 12.34)"; return
+            UiState.txnError.value = "Enter a valid amount (e.g. 12.34)"; return
         }
         if (cents <= 0) {
-            err = "Amount must be greater than zero"; return
+            UiState.txnError.value = "Amount must be greater than zero"; return
         }
         try {
             Repository.createTransaction(accountId, type, cents, note)
+            UiState.txnError.value = ""
             Navigator.back(Route.Home)
         } catch (e: IllegalArgumentException) {
-            err = e.message ?: "Could not save transaction"
+            UiState.txnError.value = e.message ?: "Could not save transaction"
         }
     }
 
@@ -100,11 +108,11 @@ fun AddTransactionPage(accountId: String) {
                     value = amount,
                     onChange = {
                         if (AMOUNT_REGEX.matches(it) || it.isEmpty()) {
-                            amount = it; err = null
+                            amount = it; UiState.txnError.value = ""
                         }
                     },
                     placeholder = "0.00",
-                    invalid = err != null,
+                    invalid = err.isNotEmpty(),
                     keyboardType = KeyboardType.Decimal,
                     textAlign = TextAlign.Center,
                     textStyle = Type.amountInput,
