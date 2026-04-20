@@ -25,7 +25,7 @@ import app.folio.parseCents
 private val AMOUNT_REGEX = Regex("""^\d*(\.\d{0,2})?$""")
 
 @Composable
-fun AddTransactionPage(accountId: String) {
+fun AddTransactionScreen(accountId: String) {
     val accounts by Repository.accounts.collectAsState()
     val account = accounts.firstOrNull { it.id == accountId }
 

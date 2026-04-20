@@ -14,7 +14,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import app.folio.ui.AddAccountScreen
-import app.folio.ui.AddTransactionPage
+import app.folio.ui.AddTransactionScreen
 import app.folio.ui.HomeScreen
 import app.folio.ui.LedgerScreen
 import app.folio.ui.LedgerTheme
@@ -56,7 +56,7 @@ fun App() {
                         )
                         Route.AddAccount -> AddAccountScreen()
                         is Route.Ledger -> LedgerScreen(accountId = r.accountId)
-                        is Route.AddTransaction -> AddTransactionPage(accountId = r.accountId)
+                        is Route.AddTransaction -> AddTransactionScreen(accountId = r.accountId)
                     }
                 }
             }
