@@ -58,10 +58,7 @@ fun AddTransactionPage(accountId: String) {
     }
 
     DisposableEffect(Unit) {
-        onDispose {
-            UiState.txnError.value = ""
-            UiState.txnAmountInput.value = ""
-        }
+        onDispose { UiState.txnError.value = "" }
     }
 
     fun submit() {
@@ -75,7 +72,6 @@ fun AddTransactionPage(accountId: String) {
         try {
             Repository.createTransaction(accountId, type, cents, note)
             UiState.txnError.value = ""
-            UiState.txnAmountInput.value = ""
             Navigator.back(Route.Home)
         } catch (e: IllegalArgumentException) {
             UiState.txnError.value = e.message ?: "Could not save transaction"
@@ -117,7 +113,6 @@ fun AddTransactionPage(accountId: String) {
                     onChange = {
                         if (AMOUNT_REGEX.matches(it) || it.isEmpty()) {
                             amount = it
-                            UiState.txnAmountInput.value = it
                             UiState.txnError.value = ""
                         }
                     },

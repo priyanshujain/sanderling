@@ -31,11 +31,7 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
     val err by UiState.loginError.collectAsState()
 
     DisposableEffect(Unit) {
-        onDispose {
-            UiState.loginError.value = ""
-            UiState.loginEmail.value = ""
-            UiState.loginPasswordLength.value = 0
-        }
+        onDispose { UiState.loginError.value = "" }
     }
 
     fun submit() {
@@ -48,8 +44,6 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
         UiState.loginError.value = ""
         val user = email.trim().lowercase()
         Repository.setSession(user)
-        UiState.loginEmail.value = ""
-        UiState.loginPasswordLength.value = 0
         onLoggedIn(user)
     }
 
@@ -63,11 +57,7 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
                 FieldLabel("Email")
                 TextInput(
                     value = email,
-                    onChange = {
-                        email = it
-                        UiState.loginEmail.value = it
-                        UiState.loginError.value = ""
-                    },
+                    onChange = { email = it; UiState.loginError.value = "" },
                     placeholder = DEMO_EMAIL,
                     invalid = err.isNotEmpty(),
                     keyboardType = KeyboardType.Email,
@@ -79,11 +69,7 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
                 FieldLabel("Password")
                 TextInput(
                     value = password,
-                    onChange = {
-                        password = it
-                        UiState.loginPasswordLength.value = it.length
-                        UiState.loginError.value = ""
-                    },
+                    onChange = { password = it; UiState.loginError.value = "" },
                     placeholder = "••••••••",
                     password = true,
                     invalid = err.isNotEmpty(),
