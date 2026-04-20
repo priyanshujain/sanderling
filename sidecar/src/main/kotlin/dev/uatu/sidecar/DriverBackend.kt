@@ -291,7 +291,19 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         }
     }
 
-    override fun screenshot(): Triple<ByteArray, Int, Int> = Triple(ByteArray(0), 0, 0)
+    override fun screenshot(): Triple<ByteArray, Int, Int> {
+        return try {
+            val process = ProcessBuilder(listOf("adb", "exec-out", "screencap", "-p"))
+                .redirectErrorStream(false)
+                .start()
+            val png = process.inputStream.readAllBytes()
+            process.waitFor()
+            if (png.isEmpty()) Triple(ByteArray(0), 0, 0) else Triple(png, 0, 0)
+        } catch (cause: Exception) {
+            println("adb screencap failed: $cause")
+            Triple(ByteArray(0), 0, 0)
+        }
+    }
 
     override fun hierarchy(): String {
         return try {
