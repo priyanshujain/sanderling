@@ -47,6 +47,7 @@ fun AppButton(
     modifier: Modifier = Modifier,
     style: ButtonStyle = ButtonStyle.Secondary,
     enabled: Boolean = true,
+    description: String? = null,
 ) {
     val t = LocalTokens.current
     val (bg, fg, border) = when (style) {
@@ -60,6 +61,10 @@ fun AppButton(
             .clip(RoundedCornerShape(RadiusMd))
             .background(if (enabled) bg else t.surface3)
             .border(BorderStroke(1.dp, if (enabled) border else t.border), RoundedCornerShape(RadiusMd))
+            .then(
+                if (description != null) Modifier.semantics { contentDescription = description }
+                else Modifier
+            )
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(vertical = 14.dp, horizontal = 16.dp),
         contentAlignment = Alignment.Center,
@@ -164,7 +169,12 @@ fun ErrorText(err: String?) {
 }
 
 @Composable
-fun Segmented(selected: Int, labels: List<String>, onSelect: (Int) -> Unit) {
+fun Segmented(
+    selected: Int,
+    labels: List<String>,
+    onSelect: (Int) -> Unit,
+    descriptions: List<String>? = null,
+) {
     val t = LocalTokens.current
     Row(
         modifier = Modifier
@@ -177,12 +187,16 @@ fun Segmented(selected: Int, labels: List<String>, onSelect: (Int) -> Unit) {
     ) {
         labels.forEachIndexed { i, label ->
             val active = i == selected
+            val desc = descriptions?.getOrNull(i)
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(RadiusSm))
                     .background(if (active) t.surface3 else t.surface)
-                    .semantics { this.selected = active }
+                    .semantics {
+                        this.selected = active
+                        if (desc != null) contentDescription = desc
+                    }
                     .clickable(role = Role.Tab) { onSelect(i) }
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center,
