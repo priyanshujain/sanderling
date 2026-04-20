@@ -17,7 +17,7 @@
 
 .action-list-row {
   display: grid;
-  grid-template-columns: 28px 1fr auto auto;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
   align-items: baseline;
   gap: 8px;
 }
