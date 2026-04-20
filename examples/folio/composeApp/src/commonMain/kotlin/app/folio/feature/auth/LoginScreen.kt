@@ -18,13 +18,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.folio.data.Repository
-import app.folio.ui.AppButton
-import app.folio.ui.ButtonStyle
-import app.folio.ui.Card
-import app.folio.ui.ErrorText
-import app.folio.ui.FieldLabel
-import app.folio.ui.Screen
-import app.folio.ui.TextInput
+import app.folio.ui.component.AppButton
+import app.folio.ui.component.ButtonStyle
+import app.folio.ui.component.Card
+import app.folio.ui.component.ErrorText
+import app.folio.ui.component.FieldLabel
+import app.folio.ui.component.Screen
+import app.folio.ui.component.TextInput
 import app.folio.ui.theme.LocalTokens
 import app.folio.ui.theme.Type
 

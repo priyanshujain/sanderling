@@ -17,15 +17,15 @@ import androidx.compose.ui.unit.dp
 import app.folio.data.Repository
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
-import app.folio.ui.AppButton
-import app.folio.ui.BackButton
 import app.folio.ui.BackHandler
-import app.folio.ui.ButtonStyle
-import app.folio.ui.ErrorText
-import app.folio.ui.FieldLabel
-import app.folio.ui.Header
-import app.folio.ui.Screen
-import app.folio.ui.TextInput
+import app.folio.ui.component.AppButton
+import app.folio.ui.component.BackButton
+import app.folio.ui.component.ButtonStyle
+import app.folio.ui.component.ErrorText
+import app.folio.ui.component.FieldLabel
+import app.folio.ui.component.Header
+import app.folio.ui.component.Screen
+import app.folio.ui.component.TextInput
 import app.folio.ui.theme.LocalTokens
 import app.folio.ui.theme.Type
 
