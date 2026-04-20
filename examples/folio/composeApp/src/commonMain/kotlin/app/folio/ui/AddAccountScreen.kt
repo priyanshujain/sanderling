@@ -14,9 +14,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import app.folio.Navigator
 import app.folio.data.Repository
-import app.folio.Route
+import app.folio.navigation.Navigator
+import app.folio.navigation.Route
 import app.folio.UiState
 
 @Composable

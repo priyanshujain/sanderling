@@ -1,16 +1,8 @@
-package app.folio
+package app.folio.navigation
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-
-sealed interface Route {
-    data object Login : Route
-    data object Home : Route
-    data object AddAccount : Route
-    data class Ledger(val accountId: String) : Route
-    data class AddTransaction(val accountId: String) : Route
-}
 
 object Navigator {
     private val stack = ArrayDeque<Route>().apply { addLast(Route.Home) }
