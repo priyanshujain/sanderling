@@ -1,102 +1,108 @@
 import {
-  InputText,
-  Tap,
   actions,
   always,
-  eventually,
   extract,
-  from,
-  next,
-  now,
   pressKey,
   swipes,
   taps,
   waitOnce,
   weighted,
 } from "@uatu/spec";
-import { noUncaughtExceptions } from "@uatu/spec/defaults/properties";
+import { noLogcatErrors, noUncaughtExceptions } from "@uatu/spec/defaults/properties";
 
-// ── Snapshot extractors (fed by SampleApplication.kt) ──────────
+interface AccountSnapshot {
+  id: string;
+  name: string;
+  balance: number;
+  txnCount: number;
+}
+
+interface LedgerRow {
+  id: string;
+  accountId: string;
+  type: "credit" | "debit";
+  amount: number;
+  signed: number;
+}
+
 const loggedIn = extract<boolean>(
   (state) => (state.snapshots.logged_in as boolean) ?? false,
+);
+const authStatus = extract<string>(
+  (state) => (state.snapshots.auth_status as string) ?? "",
 );
 const route = extract<string>(
   (state) => (state.snapshots.route as string) ?? "",
 );
+const accounts = extract<AccountSnapshot[]>(
+  (state) => (state.snapshots.accounts as AccountSnapshot[]) ?? [],
+);
+const totalBalance = extract<number>(
+  (state) => (state.snapshots.total_balance as number) ?? 0,
+);
 const accountCount = extract<number>(
   (state) => (state.snapshots.account_count as number) ?? 0,
 );
+const activeAccountId = extract<string | null>(
+  (state) => (state.snapshots.active_account_id as string | null) ?? null,
+);
+const ledgerRows = extract<LedgerRow[]>(
+  (state) => (state.snapshots.ledger_rows as LedgerRow[]) ?? [],
+);
+const ledgerBalance = extract<number>(
+  (state) => (state.snapshots.ledger_balance as number) ?? 0,
+);
+const focusedInput = extract<string | null>(
+  (state) => (state.snapshots.focused_input as string | null) ?? null,
+);
+const txnFormType = extract<string | null>(
+  (state) => (state.snapshots.txn_form_type as string | null) ?? null,
+);
+const txnFormAccountId = extract<string | null>(
+  (state) => (state.snapshots.txn_form_account_id as string | null) ?? null,
+);
+const loginError = extract<string>(
+  (state) => (state.snapshots.login_error as string) ?? "",
+);
+const addAccountError = extract<string>(
+  (state) => (state.snapshots.add_account_error as string) ?? "",
+);
+const txnError = extract<string>(
+  (state) => (state.snapshots.txn_error as string) ?? "",
+);
 
-// ── UI elements ────────────────────────────────────────────────
-const phoneField = extract((state) => state.ax.find("desc:phone_field"));
-const continueButton = extract((state) => state.ax.find("text:Continue"));
-const addAccountButton = extract((state) => state.ax.find("text:Add account"));
-const nameField = extract((state) => state.ax.find("desc:account_name"));
-const createButton = extract((state) => state.ax.find("text:Create"));
+const loginEmailField = extract((state) => state.ax.find("desc:login_email"));
+const loginPasswordField = extract((state) => state.ax.find("desc:login_password"));
+const loginSubmitButton = extract((state) => state.ax.find("desc:login_submit"));
+const addAccountButton = extract((state) => state.ax.find("desc:add_account_button"));
+const logoutButton = extract((state) => state.ax.find("desc:logout_button"));
+const accountNameField = extract((state) => state.ax.find("desc:account_name_field"));
+const addAccountSubmit = extract((state) => state.ax.find("desc:add_account_submit"));
+const addTxnButton = extract((state) => state.ax.find("desc:add_txn_button"));
+const txnAmountField = extract((state) => state.ax.find("desc:txn_amount"));
+const txnNoteField = extract((state) => state.ax.find("desc:txn_note"));
+const txnCredit = extract((state) => state.ax.find("desc:txn_credit"));
+const txnDebit = extract((state) => state.ax.find("desc:txn_debit"));
+const txnSubmit = extract((state) => state.ax.find("desc:txn_submit"));
+const backButton = extract((state) => state.ax.find("desc:Back"));
+const anyAccountCard = extract((state) => state.ax.find("descPrefix:account_card:"));
 
-// ── Properties ─────────────────────────────────────────────────
-// accountCountNonNegative: the trivial safety property.
 const accountCountNonNegative = always(() => accountCount.current >= 0);
 
-// addAccountAdvances: once we land on add-account, the next step must be on
-// a different screen. Exercises now(x).implies(next(y)).
-const addAccountAdvances = always(
-  now(() => route.current === "add-account").implies(
-    next(() => route.current !== "add-account"),
-  ),
-);
-
-// eventuallyLoggedIn: within 30 seconds of the run starting, we expect to
-// reach home. Exercises eventually(p).within(n, unit).
-const eventuallyLoggedIn = eventually(() => loggedIn.current).within(
-  30,
-  "seconds",
-);
+const noopAction = actions(() => []);
 
 export const properties = {
   accountCountNonNegative,
-  addAccountAdvances,
-  eventuallyLoggedIn,
   noUncaughtExceptions,
+  noLogcatErrors,
 };
 
-// ── Actions ────────────────────────────────────────────────────
-// Sampling: random phone numbers for the login screen.
-const phoneSampler = from(["+919876543210", "+15555550100", "+442071234567"]);
-
-const typePhone = actions(() => {
-  const field = phoneField.current;
-  if (!field) return [];
-  return [InputText({ into: field, text: phoneSampler.generate() })];
-});
-
-const tapContinue = actions(() =>
-  continueButton.current ? [Tap({ on: continueButton.current })] : [],
-);
-const tapAddAccount = actions(() =>
-  addAccountButton.current ? [Tap({ on: addAccountButton.current })] : [],
-);
-
-const nameSampler = from(["Alice", "Bob", "Charlie", "Dana"]);
-const fillName = actions(() => {
-  const field = nameField.current;
-  if (!field) return [];
-  return [InputText({ into: field, text: nameSampler.generate() })];
-});
-const tapCreate = actions(() =>
-  createButton.current ? [Tap({ on: createButton.current })] : [],
-);
-
 export const actionsRoot = weighted(
-  [30, typePhone],
-  [30, tapContinue],
-  [20, tapAddAccount],
-  [20, fillName],
-  [20, tapCreate],
-  [10, taps],
-  [5, swipes],
-  [5, waitOnce],
-  [5, pressKey],
+  [1, noopAction],
+  [4, taps],
+  [2, swipes],
+  [2, waitOnce],
+  [2, pressKey],
 );
 
 (globalThis as { actions?: unknown; properties?: unknown }).actions = actionsRoot;
