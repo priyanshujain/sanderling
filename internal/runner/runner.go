@@ -140,6 +140,13 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
 		}
+		if image, screenshotErr := options.Driver.Screenshot(ctx); screenshotErr != nil {
+			logger.Warn("screenshot capture failed", "step", stepIndex, "err", screenshotErr)
+		} else if len(image.PNG) > 0 {
+			if writeErr := options.TraceWriter.WriteScreenshot(stepIndex, image.PNG); writeErr != nil {
+				logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
+			}
+		}
 		summary.Steps = stepIndex
 		if len(violations) > 0 {
 			summary.Violations = append(summary.Violations, ViolationRecord{
