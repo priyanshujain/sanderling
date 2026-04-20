@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.dp
 import app.folio.Navigator
 import app.folio.Repository
 import app.folio.Route
-import app.folio.TxnType
+import app.folio.data.TxnType
 import app.folio.UiState
 import app.folio.parseCents
 

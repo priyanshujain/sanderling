@@ -1,5 +1,7 @@
 package app.folio
 
+import app.folio.data.Transaction
+import app.folio.data.TxnType
 import kotlin.math.absoluteValue
 
 private const val CURRENCY = "$"

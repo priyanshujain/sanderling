@@ -1,6 +1,7 @@
 package app.folio
 
 import android.app.Application
+import app.folio.data.TxnType
 import dev.uatu.sdk.Uatu
 
 class FolioApplication : Application() {

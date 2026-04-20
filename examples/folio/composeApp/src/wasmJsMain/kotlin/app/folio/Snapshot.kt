@@ -1,5 +1,10 @@
 package app.folio
 
+import app.folio.data.Account
+import app.folio.data.Session
+import app.folio.data.Transaction
+import app.folio.data.TxnType
+
 internal data class Snapshot(
     val accounts: List<Account>,
     val transactions: List<Transaction>,
