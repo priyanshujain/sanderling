@@ -433,7 +433,19 @@ export const properties = {
 };
 
 export const actionsRoot = weighted(
-  [1, noopAction],
+  [30, loginHelper],
+  [2, adversarialLogin],
+  [18, typeAccountName],
+  [14, submitAddAccount],
+  [18, typeAmount],
+  [8, typeNote],
+  [6, toggleTxnType],
+  [16, submitTxn],
+  [14, openAddAccount],
+  [14, openRandomAccount],
+  [12, openAddTxn],
+  [6, goBack],
+  [1, logoutAction],
   [4, taps],
   [2, swipes],
   [2, waitOnce],
