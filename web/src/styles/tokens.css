@@ -7,7 +7,7 @@
   --text-primary: #111111;
   --text-muted: #6b6b6b;
   --accent-violation: #d32f2f;
-  --accent-change: #b8860b;
+  --accent-positive: #2e7d32;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -21,7 +21,7 @@
   --text-primary: #f0f0f0;
   --text-muted: #9a9a9a;
   --accent-violation: #f06b6b;
-  --accent-change: #d4a44a;
+  --accent-positive: #7cc47c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -34,7 +34,7 @@
     --text-primary: #f0f0f0;
     --text-muted: #9a9a9a;
     --accent-violation: #f06b6b;
-    --accent-change: #d4a44a;
+    --accent-positive: #7cc47c;
   }
 }
 
