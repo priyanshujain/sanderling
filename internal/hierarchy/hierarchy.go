@@ -19,7 +19,10 @@ import (
 
 // Bounds is an inclusive rectangle in device pixels.
 type Bounds struct {
-	Left, Top, Right, Bottom int
+	Left   int `json:"left"`
+	Top    int `json:"top"`
+	Right  int `json:"right"`
+	Bottom int `json:"bottom"`
 }
 
 // Center returns the center point of the bounds.
@@ -35,22 +38,22 @@ func (b Bounds) Height() int { return b.Bottom - b.Top }
 
 // Element is a flattened view of one uiautomator node.
 type Element struct {
-	ResourceID  string
-	Text        string
-	Description string
-	Class       string
-	Package     string
-	Clickable   bool
-	Enabled     bool
-	Checked     bool
-	Focused     bool
-	Selected    bool
-	Bounds      Bounds
+	ResourceID  string `json:"resourceId,omitempty"`
+	Text        string `json:"text,omitempty"`
+	Description string `json:"description,omitempty"`
+	Class       string `json:"class,omitempty"`
+	Package     string `json:"package,omitempty"`
+	Clickable   bool   `json:"clickable,omitempty"`
+	Enabled     bool   `json:"enabled,omitempty"`
+	Checked     bool   `json:"checked,omitempty"`
+	Focused     bool   `json:"focused,omitempty"`
+	Selected    bool   `json:"selected,omitempty"`
+	Bounds      Bounds `json:"bounds"`
 }
 
 // Tree is a flat collection of every node in a hierarchy dump, in pre-order.
 type Tree struct {
-	Elements []*Element
+	Elements []*Element `json:"elements"`
 }
 
 // Parse parses a uiautomator-style XML dump.

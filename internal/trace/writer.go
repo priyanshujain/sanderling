@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/priyanshujain/uatu/internal/hierarchy"
 )
 
 type Step struct {
@@ -18,19 +20,36 @@ type Step struct {
 	Action     *Action                    `json:"action,omitempty"`
 	Exceptions []Exception                `json:"exceptions,omitempty"`
 	Violations []string                   `json:"violations,omitempty"`
+	Hierarchy  *hierarchy.Tree            `json:"hierarchy,omitempty"`
+	Residuals  map[string]json.RawMessage `json:"residuals,omitempty"`
 }
 
 type Action struct {
-	Kind  string `json:"kind"`
-	X     int    `json:"x,omitempty"`
-	Y     int    `json:"y,omitempty"`
-	FromX int    `json:"from_x,omitempty"`
-	FromY int    `json:"from_y,omitempty"`
-	ToX   int    `json:"to_x,omitempty"`
-	ToY   int    `json:"to_y,omitempty"`
-	Key   string `json:"key,omitempty"`
-	Text  string `json:"text,omitempty"`
-	DurationMillis int `json:"duration_millis,omitempty"`
+	Kind           string        `json:"kind"`
+	X              int           `json:"x,omitempty"`
+	Y              int           `json:"y,omitempty"`
+	FromX          int           `json:"from_x,omitempty"`
+	FromY          int           `json:"from_y,omitempty"`
+	ToX            int           `json:"to_x,omitempty"`
+	ToY            int           `json:"to_y,omitempty"`
+	Key            string        `json:"key,omitempty"`
+	Text           string        `json:"text,omitempty"`
+	DurationMillis int           `json:"duration_millis,omitempty"`
+	Selector       string        `json:"selector,omitempty"`
+	ResolvedBounds *BoundsRecord `json:"resolvedBounds,omitempty"`
+	TapPoint       *PointRecord  `json:"tapPoint,omitempty"`
+}
+
+type BoundsRecord struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+type PointRecord struct {
+	X int `json:"x"`
+	Y int `json:"y"`
 }
 
 type Exception struct {
@@ -41,13 +60,14 @@ type Exception struct {
 }
 
 type Meta struct {
-	Seed         int64     `json:"seed"`
-	SpecPath     string    `json:"spec_path"`
-	BundleSHA256 string    `json:"bundle_sha256"`
-	Platform     string    `json:"platform"`
-	BundleID     string    `json:"bundle_id"`
-	StartedAt    time.Time `json:"started_at"`
-	UatuVersion  string    `json:"uatu_version"`
+	Seed         int64      `json:"seed"`
+	SpecPath     string     `json:"spec_path"`
+	BundleSHA256 string     `json:"bundle_sha256"`
+	Platform     string     `json:"platform"`
+	BundleID     string     `json:"bundle_id"`
+	StartedAt    time.Time  `json:"started_at"`
+	EndedAt      *time.Time `json:"ended_at,omitempty"`
+	UatuVersion  string     `json:"uatu_version"`
 }
 
 type Writer struct {
