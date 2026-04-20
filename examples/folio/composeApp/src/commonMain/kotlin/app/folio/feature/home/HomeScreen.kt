@@ -1,4 +1,4 @@
-package app.folio.ui
+package app.folio.feature.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,6 +30,16 @@ import app.folio.platform.balanceOf
 import app.folio.platform.formatCents
 import app.folio.platform.initialsOf
 import app.folio.platform.signedAmount
+import app.folio.ui.AppButton
+import app.folio.ui.ButtonStyle
+import app.folio.ui.EmptyState
+import app.folio.ui.Header
+import app.folio.ui.IconButton
+import app.folio.ui.Icons
+import app.folio.ui.LocalTokens
+import app.folio.ui.RadiusLg
+import app.folio.ui.Screen
+import app.folio.ui.Type
 
 @Composable
 fun HomeScreen(user: String, onLogout: () -> Unit) {

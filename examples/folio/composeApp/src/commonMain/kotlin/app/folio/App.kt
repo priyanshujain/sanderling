@@ -15,11 +15,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import app.folio.data.Repository
 import app.folio.feature.auth.LoginScreen
+import app.folio.feature.home.HomeScreen
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
 import app.folio.ui.AddAccountScreen
 import app.folio.ui.AddTransactionScreen
-import app.folio.ui.HomeScreen
 import app.folio.ui.LedgerScreen
 import app.folio.ui.LedgerTheme
 import app.folio.ui.LocalTokens
