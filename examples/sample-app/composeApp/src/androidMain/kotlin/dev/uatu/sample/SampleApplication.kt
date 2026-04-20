@@ -72,6 +72,14 @@ class SampleApplication : Application() {
             if (active == null) 0L
             else balanceOf(Repository.transactions.value.filter { it.accountId == active })
         }
+        Uatu.extract("focused_input") { FocusTracker.current.value }
+        Uatu.extract("txn_form_type") { UiState.txnFormType.value }
+        Uatu.extract("txn_form_account_id") {
+            (Navigator.current.value as? Route.AddTransaction)?.accountId
+        }
+        Uatu.extract("login_error") { UiState.loginError.value }
+        Uatu.extract("add_account_error") { UiState.addAccountError.value }
+        Uatu.extract("txn_error") { UiState.txnError.value }
         maybeInjectDebugError()
     }
 
