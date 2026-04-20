@@ -14,7 +14,7 @@ export default function ActionList({ steps, selectedIndex, onSelect }: ActionLis
 
   useEffect(() => {
     const node = itemRefs.current.get(selectedIndex);
-    if (node) {
+    if (node && typeof node.scrollIntoView === "function") {
       node.scrollIntoView({ block: "nearest" });
     }
   }, [selectedIndex]);
