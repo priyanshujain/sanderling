@@ -1,8 +1,11 @@
 import {
+  InputText,
+  Tap,
   actions,
   always,
   eventually,
   extract,
+  from,
   next,
   now,
   pressKey,
@@ -270,7 +273,99 @@ const liveness = {
   txnErrorClears,
 };
 
-const noopAction = actions(() => []);
+const DEMO_EMAIL = "demo@ledger.app";
+const DEMO_PASSWORD = "ledger123";
+
+const loginHelper = actions(() => {
+  if (loggedIn.current) return [];
+  const focus = focusedInput.current;
+  if (focus === "login_email") {
+    const field = loginEmailField.current;
+    if (!field) return [];
+    return [InputText({ into: field, text: DEMO_EMAIL })];
+  }
+  if (focus === "login_password") {
+    const field = loginPasswordField.current;
+    if (!field) return [];
+    const submit = loginSubmitButton.current;
+    const typeAction = InputText({ into: field, text: DEMO_PASSWORD });
+    return submit ? [typeAction, Tap({ on: submit })] : [typeAction];
+  }
+  const email = loginEmailField.current;
+  if (email) return [Tap({ on: email })];
+  return [];
+});
+
+const badCredentials = from([
+  { email: "nobody@nowhere.dev", password: "wrong" },
+  { email: "demo@ledger.app", password: "not-the-password" },
+  { email: "", password: "" },
+  { email: "   ", password: "x" },
+]);
+
+const adversarialLogin = actions(() => {
+  if (loggedIn.current) return [];
+  const email = loginEmailField.current;
+  const password = loginPasswordField.current;
+  const submit = loginSubmitButton.current;
+  if (!email || !password || !submit) return [];
+  const creds = badCredentials.generate();
+  return [
+    InputText({ into: email, text: creds.email }),
+    InputText({ into: password, text: creds.password }),
+    Tap({ on: submit }),
+  ];
+});
+
+const accountNameSampler = from([
+  "Checking",
+  "Savings",
+  "Travel",
+  "Rent",
+  "Emergency Fund",
+  "Investments",
+  "Groceries",
+  "  ",
+  "Checking",
+  "A".repeat(41),
+  "Petty Cash",
+]);
+
+const typeAccountName = actions(() => {
+  if (route.current !== "add-account") return [];
+  const field = accountNameField.current;
+  if (!field) return [];
+  return [InputText({ into: field, text: accountNameSampler.generate() })];
+});
+
+const submitAddAccount = actions(() => {
+  if (route.current !== "add-account") return [];
+  const submit = addAccountSubmit.current;
+  return submit ? [Tap({ on: submit })] : [];
+});
+
+const openAddAccount = actions(() => {
+  if (route.current !== "home") return [];
+  const button = addAccountButton.current;
+  return button ? [Tap({ on: button })] : [];
+});
+
+const openRandomAccount = actions(() => {
+  if (route.current !== "home") return [];
+  const card = anyAccountCard.current;
+  return card ? [Tap({ on: card })] : [];
+});
+
+const logoutAction = actions(() => {
+  if (route.current !== "home") return [];
+  const button = logoutButton.current;
+  return button ? [Tap({ on: button })] : [];
+});
+
+const goBack = actions(() => {
+  const button = backButton.current;
+  return button ? [Tap({ on: button })] : [];
+});
 
 export const properties = {
   accountCountNonNegative,
