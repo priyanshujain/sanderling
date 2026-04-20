@@ -367,6 +367,62 @@ const goBack = actions(() => {
   return button ? [Tap({ on: button })] : [];
 });
 
+const amountSampler = from([
+  "12.34",
+  "100",
+  "0.01",
+  "999.99",
+  "5.5",
+  "42",
+  "0",
+  "",
+  "1e4",
+  "0.001",
+  "-5",
+]);
+
+const typeAmount = actions(() => {
+  if (route.current !== "add-transaction") return [];
+  const field = txnAmountField.current;
+  if (!field) return [];
+  return [InputText({ into: field, text: amountSampler.generate() })];
+});
+
+const noteSampler = from([
+  "Coffee",
+  "Paycheck",
+  "Gas",
+  "Refund",
+  "",
+  "Groceries for the week",
+]);
+
+const typeNote = actions(() => {
+  if (route.current !== "add-transaction") return [];
+  const field = txnNoteField.current;
+  if (!field) return [];
+  return [InputText({ into: field, text: noteSampler.generate() })];
+});
+
+const toggleTxnType = actions(() => {
+  if (route.current !== "add-transaction") return [];
+  const current = txnFormType.current;
+  const target = current === "credit" ? txnDebit.current : txnCredit.current;
+  return target ? [Tap({ on: target })] : [];
+});
+
+const submitTxn = actions(() => {
+  if (route.current !== "add-transaction") return [];
+  const submit = txnSubmit.current;
+  return submit ? [Tap({ on: submit })] : [];
+});
+
+const openAddTxn = actions(() => {
+  if (route.current !== "ledger") return [];
+  const button = addTxnButton.current;
+  return button ? [Tap({ on: button })] : [];
+});
+
 export const properties = {
   accountCountNonNegative,
   ...accountingInvariants,
