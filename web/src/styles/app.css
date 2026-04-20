@@ -81,8 +81,8 @@ button:hover {
 }
 
 .chip-progress {
-  border-color: var(--accent-change);
-  color: var(--accent-change);
+  border-color: var(--border-strong);
+  color: var(--text-muted);
 }
 
 .detail-grid {
