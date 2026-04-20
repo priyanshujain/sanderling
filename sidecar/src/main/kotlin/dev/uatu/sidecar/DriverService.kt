@@ -10,6 +10,8 @@ import dev.uatu.driver.v1.Image
 import dev.uatu.driver.v1.LaunchRequest
 import dev.uatu.driver.v1.LogEntries
 import dev.uatu.driver.v1.LogEntry
+import dev.uatu.driver.v1.MetricsRequest
+import dev.uatu.driver.v1.MetricsResponse
 import dev.uatu.driver.v1.Point
 import dev.uatu.driver.v1.PressKeyRequest
 import dev.uatu.driver.v1.RecentLogsRequest
@@ -128,6 +130,18 @@ class DriverService(
                 .setReady(backend.healthy())
                 .setVersion(VERSION)
                 .setPlatform(platform)
+                .build()
+        }
+    }
+
+    override fun metrics(request: MetricsRequest, responseObserver: StreamObserver<MetricsResponse>) {
+        runRpc(responseObserver) {
+            val bundleId = if (request.bundleId.isNotEmpty()) request.bundleId else launchedBundleId.get().orEmpty()
+            val sample = backend.metrics(bundleId)
+            MetricsResponse.newBuilder()
+                .setCpuPercent(sample.cpuPercent)
+                .setHeapBytes(sample.heapBytes)
+                .setTotalMemoryBytes(sample.totalMemoryBytes)
                 .build()
         }
     }

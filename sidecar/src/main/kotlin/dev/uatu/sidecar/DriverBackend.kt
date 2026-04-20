@@ -13,7 +13,14 @@ interface DriverBackend {
     fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine>
     fun waitForIdle(durationMillis: Long)
     fun healthy(): Boolean
+    fun metrics(bundleId: String): MetricsSample
 }
+
+data class MetricsSample(
+    val cpuPercent: Double,
+    val heapBytes: Long,
+    val totalMemoryBytes: Long,
+)
 
 data class LogLine(
     val unixMillis: Long,
@@ -327,4 +334,63 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     }
 
     override fun healthy(): Boolean = true
+
+    override fun metrics(bundleId: String): MetricsSample {
+        if (bundleId.isEmpty()) return MetricsSample(0.0, 0L, 0L)
+        return try {
+            val pid = runAdbOutput(listOf("shell", "pidof", bundleId)).trim().split(Regex("\\s+")).firstOrNull()?.toIntOrNull()
+                ?: return MetricsSample(0.0, 0L, 0L)
+            val cpu = sampleCpuPercent(pid)
+            val (rssBytes, vmSizeBytes) = sampleProcessMemory(pid)
+            MetricsSample(cpu, rssBytes, vmSizeBytes)
+        } catch (cause: Exception) {
+            println("metrics capture failed: $cause")
+            MetricsSample(0.0, 0L, 0L)
+        }
+    }
+
+    private fun sampleCpuPercent(pid: Int): Double {
+        // Use `top -n 1 -p <pid>` which samples in a short window. Output format:
+        //   "PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND"
+        val output = runAdbOutput(listOf("shell", "top", "-b", "-n", "1", "-p", pid.toString()))
+        val line = output.lineSequence()
+            .map(String::trim)
+            .firstOrNull { it.startsWith(pid.toString()) }
+            ?: return 0.0
+        val columns = line.split(Regex("\\s+"))
+        // [0] PID [1] USER [2] PR [3] NI [4] VIRT [5] RES [6] SHR [7] S [8] %CPU
+        if (columns.size < 9) return 0.0
+        return columns[8].toDoubleOrNull() ?: 0.0
+    }
+
+    private fun sampleProcessMemory(pid: Int): Pair<Long, Long> {
+        val status = runAdbOutput(listOf("shell", "cat", "/proc/$pid/status"))
+        var rssKb = 0L
+        var vmSizeKb = 0L
+        for (raw in status.lineSequence()) {
+            val line = raw.trim()
+            when {
+                line.startsWith("VmRSS:") -> rssKb = parseKb(line) ?: rssKb
+                line.startsWith("VmSize:") -> vmSizeKb = parseKb(line) ?: vmSizeKb
+            }
+        }
+        return Pair(rssKb * 1024L, vmSizeKb * 1024L)
+    }
+
+    private fun parseKb(line: String): Long? {
+        val parts = line.split(Regex("\\s+"))
+        if (parts.size < 2) return null
+        return parts[1].toLongOrNull()
+    }
+
+    private fun runAdbOutput(arguments: List<String>): String {
+        return try {
+            val process = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(false).start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            output
+        } catch (cause: Exception) {
+            ""
+        }
+    }
 }
