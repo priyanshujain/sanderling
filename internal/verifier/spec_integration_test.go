@@ -53,25 +53,21 @@ func bundleSampleAppSpec(t *testing.T) string {
 
 func loginSnapshots() Snapshots {
 	return Snapshots{
-		"route":                 json.RawMessage(`"login"`),
-		"logged_in":             json.RawMessage(`false`),
-		"auth_status":           json.RawMessage(`"logged-out"`),
-		"account_count":         json.RawMessage(`0`),
-		"accounts":              json.RawMessage(`[]`),
-		"total_balance":         json.RawMessage(`0`),
-		"active_account_id":     json.RawMessage(`null`),
-		"ledger_rows":           json.RawMessage(`[]`),
-		"ledger_balance":        json.RawMessage(`0`),
-		"focused_input":         json.RawMessage(`null`),
-		"txn_form_type":         json.RawMessage(`null`),
-		"txn_form_account_id":   json.RawMessage(`null`),
-		"login_error":           json.RawMessage(`""`),
-		"add_account_error":     json.RawMessage(`""`),
-		"txn_error":             json.RawMessage(`""`),
-		"login_email_value":     json.RawMessage(`""`),
-		"login_password_length": json.RawMessage(`0`),
-		"account_name_input":    json.RawMessage(`""`),
-		"txn_amount_input":      json.RawMessage(`""`),
+		"route":               json.RawMessage(`"login"`),
+		"logged_in":           json.RawMessage(`false`),
+		"auth_status":         json.RawMessage(`"logged-out"`),
+		"account_count":       json.RawMessage(`0`),
+		"accounts":            json.RawMessage(`[]`),
+		"total_balance":       json.RawMessage(`0`),
+		"active_account_id":   json.RawMessage(`null`),
+		"ledger_rows":         json.RawMessage(`[]`),
+		"ledger_balance":      json.RawMessage(`0`),
+		"focused_input":       json.RawMessage(`null`),
+		"txn_form_type":       json.RawMessage(`null`),
+		"txn_form_account_id": json.RawMessage(`null`),
+		"login_error":         json.RawMessage(`""`),
+		"add_account_error":   json.RawMessage(`""`),
+		"txn_error":           json.RawMessage(`""`),
 	}
 }
 
@@ -92,7 +88,7 @@ func TestSampleAppSpecFiresLoginActions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tapEmailHits := 0
+	typeEmailHits := 0
 	tapSubmitHits := 0
 	for range 400 {
 		action, err := v.NextAction()
@@ -100,14 +96,14 @@ func TestSampleAppSpecFiresLoginActions(t *testing.T) {
 			continue
 		}
 		switch {
-		case action.Kind == ActionKindTap && action.On == "desc:login_email":
-			tapEmailHits++
+		case action.Kind == ActionKindInputText && action.On == "desc:login_email":
+			typeEmailHits++
 		case action.Kind == ActionKindTap && action.On == "desc:login_submit":
 			tapSubmitHits++
 		}
 	}
-	if tapEmailHits == 0 {
-		t.Fatal("loginHelper never tapped desc:login_email on sample-app hierarchy")
+	if typeEmailHits == 0 {
+		t.Fatal("loginHelper never typed into desc:login_email on sample-app hierarchy")
 	}
 	if tapSubmitHits == 0 {
 		t.Fatal("adversarialLogin never tapped desc:login_submit on sample-app hierarchy")
