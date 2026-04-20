@@ -104,8 +104,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if screenErr != nil {
 			logger.Warn("screen snapshot decode failed", "step", stepIndex, "err", screenErr)
 		}
-		fmt.Printf("step %d: screen=%q hierarchy=%d nodes\n",
-			stepIndex, screen, treeSize)
+		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
 		verdicts := options.Verifier.EvaluateProperties()
 		violations := violationNames(verdicts)
 		for _, name := range violations {
