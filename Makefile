@@ -15,7 +15,10 @@ DOCS_SRC := $(shell find docs -type f -name '*.md' -not -path 'docs/_*')
 DOCS_OUT := $(patsubst docs/%.md,build/site/%.html,$(DOCS_SRC))
 DOCS_TEMPLATE := docs/_template/page.html
 
-.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu install test test-go test-kotlin test-spec-api docs clean release-cli release-android-local release-npm-dry
+INSPECT_DIST := internal/inspect/dist
+WEB_DIST := web/dist
+
+.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu install test test-go test-kotlin test-spec-api test-web web-build web-dev inspect-dev docs clean release-cli release-android-local release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -37,23 +40,40 @@ sdk-android-publish:
 
 uatu: $(UATU_BIN)
 
-$(UATU_BIN): $(SIDECAR_JAR)
+$(UATU_BIN): $(SIDECAR_JAR) web-build
 	mkdir -p bin $(dir $(SIDECAR_EMBED))
 	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
 	$(GO) build -tags withsidecar -o $(UATU_BIN) ./cmd/uatu
 
 # Installs `uatu` into $GOBIN (or $GOPATH/bin) so it's directly on PATH for
 # anyone with a standard Go toolchain setup.
-install: $(SIDECAR_JAR)
+install: $(SIDECAR_JAR) web-build
 	mkdir -p $(dir $(SIDECAR_EMBED))
 	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
 	$(GO) install -tags withsidecar ./cmd/uatu
 	@dest="$$($(GO) env GOBIN)"; [ -n "$$dest" ] || dest="$$($(GO) env GOPATH)/bin"; echo "installed uatu to $$dest"
 
+web-build:
+	cd web && bun install --frozen-lockfile && bun run build
+	mkdir -p $(INSPECT_DIST)
+	rm -rf $(INSPECT_DIST)/assets $(INSPECT_DIST)/fonts
+	cp -R $(WEB_DIST)/. $(INSPECT_DIST)/
+
+web-dev:
+	cd web && bun run dev
+
+inspect-dev: $(SIDECAR_JAR)
+	mkdir -p $(dir $(SIDECAR_EMBED))
+	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
+	$(GO) run -tags withsidecar ./cmd/uatu inspect --dev
+
+test-web:
+	cd web && bun install --frozen-lockfile && bun run typecheck && bun run test
+
 $(SIDECAR_JAR):
 	$(MAKE) sidecar
 
-test: test-go test-kotlin test-spec-api
+test: test-go test-kotlin test-spec-api test-web
 
 test-go:
 	$(GO) test $(GO_PACKAGES)

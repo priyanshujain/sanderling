@@ -23,6 +23,18 @@ Run a spec against an app for a fixed duration.
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
 | `--output` | `./runs` | Output directory for traces. |
 
+## `uatu inspect [run-or-runs-dir]`
+
+Serve a local web UI for browsing traces. The positional argument is optional and may point at either a runs directory (the parent of many runs) or a single run directory (auto-detected by the presence of `meta.json`). Defaults to `./runs`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--port` | `0` (ephemeral) | TCP port to listen on. |
+| `--no-open` | `false` | Skip opening the default browser on startup. |
+| `--dev` | `false` | Reverse-proxy non-API requests to the Vite dev server on `127.0.0.1:5173`. |
+
+See [the inspect UI page](inspect.md) for the panel reference and keyboard shortcuts.
+
 ## `uatu doctor`
 
 Check the host environment for a working uatu setup: Go toolchain, JDK, Maestro availability, emulator reachability, SDK linkage hints.
@@ -36,6 +48,5 @@ Print the CLI version.
 - `--permissions` to pre-set OS-level permissions (for example `--permissions location=allow,notifications=deny`).
 - `--max-steps` hard cap on step count.
 - `--exit-on-violation` stop the run on the first property violation.
-- `uatu inspect` command for browsing traces in the built-in UI.
 
 Tracked in [issue #4](https://github.com/priyanshujain/uatu/issues/4).

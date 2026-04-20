@@ -8,5 +8,8 @@ Autonomous property-based testing for mobile apps. Specs in TypeScript. Core in 
 
 - [Getting started](https://priyanshujain.github.io/uatu/manual/getting-started.html)
 - [Writing specs](https://priyanshujain.github.io/uatu/manual/writing-specs.html)
+- [`uatu inspect` UI](https://priyanshujain.github.io/uatu/manual/inspect.html)
 - [Example](https://github.com/priyanshujain/uatu/tree/master/examples/folio)
 - [Architecture](https://priyanshujain.github.io/uatu/development/architecture.html)
+
+After a `uatu test` run, browse traces locally with `uatu inspect`. It opens a web UI for stepping through actions, screenshots, snapshots, residual formulas, and exceptions.
