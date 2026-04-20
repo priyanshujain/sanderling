@@ -1,4 +1,4 @@
-package app.folio.ui
+package app.folio.feature.auth
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,31 +17,43 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import app.folio.DEMO_EMAIL
-import app.folio.DEMO_PASSWORD
 import app.folio.data.Repository
-import app.folio.UiState
-import app.folio.checkCredentials
+import app.folio.ui.AppButton
+import app.folio.ui.ButtonStyle
+import app.folio.ui.Card
+import app.folio.ui.ErrorText
+import app.folio.ui.FieldLabel
+import app.folio.ui.LocalTokens
+import app.folio.ui.Screen
+import app.folio.ui.TextInput
+import app.folio.ui.Type
+
+const val DEMO_EMAIL = "demo@folio.app"
+const val DEMO_PASSWORD = "ledger123"
+
+private fun checkCredentials(email: String, password: String): Boolean {
+    return email.trim().lowercase() == DEMO_EMAIL && password == DEMO_PASSWORD
+}
 
 @Composable
 fun LoginScreen(onLoggedIn: (String) -> Unit) {
     val t = LocalTokens.current
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    val err by UiState.loginError.collectAsState()
+    val err by LoginUiState.loginError.collectAsState()
 
     DisposableEffect(Unit) {
-        onDispose { UiState.loginError.value = "" }
+        onDispose { LoginUiState.loginError.value = "" }
     }
 
     fun submit() {
         if (email.isBlank() || password.isEmpty()) {
-            UiState.loginError.value = "Enter email and password"; return
+            LoginUiState.loginError.value = "Enter email and password"; return
         }
         if (!checkCredentials(email, password)) {
-            UiState.loginError.value = "Invalid email or password"; return
+            LoginUiState.loginError.value = "Invalid email or password"; return
         }
-        UiState.loginError.value = ""
+        LoginUiState.loginError.value = ""
         val user = email.trim().lowercase()
         Repository.setSession(user)
         onLoggedIn(user)
@@ -57,7 +69,7 @@ fun LoginScreen(onLoggedIn: (String) -> Unit) {
                 FieldLabel("Email")
                 TextInput(
                     value = email,
-                    onChange = { email = it; UiState.loginError.value = "" },
+                    onChange = { email = it; LoginUiState.loginError.value = "" },
                     placeholder = DEMO_EMAIL,
                     invalid = err.isNotEmpty(),
                     keyboardType = KeyboardType.Email,
@@ -69,7 +81,7 @@ fun LoginScreen(onLoggedIn: (String) -> Unit) {
                 FieldLabel("Password")
                 TextInput(
                     value = password,
-                    onChange = { password = it; UiState.loginError.value = "" },
+                    onChange = { password = it; LoginUiState.loginError.value = "" },
                     placeholder = "••••••••",
                     password = true,
                     invalid = err.isNotEmpty(),
