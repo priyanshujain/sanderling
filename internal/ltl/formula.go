@@ -1,6 +1,7 @@
 package ltl
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,26 @@ import (
 type Formula interface {
 	isFormula()
 	describe() string
+}
+
+// PredicateLabel lets a ThunkFormula carry a human-readable name for the
+// closure it wraps. Verifier wires this in when the spec gives the predicate
+// a property name; otherwise it stays empty and serializes without a name.
+type PredicateLabel interface {
+	PredicateName() string
+}
+
+// ErrorFormula represents a thunk that threw during evaluation. The verifier
+// substitutes one of these into the residual when MarshalJSON would otherwise
+// have to encode an opaque thunk that already errored. It exists so that the
+// inspect UI can render "predicate threw" inline.
+type ErrorFormula struct {
+	Message string
+}
+
+func (ErrorFormula) isFormula() {}
+func (e ErrorFormula) describe() string {
+	return fmt.Sprintf("Error(%q)", e.Message)
 }
 
 type AlwaysFormula struct {
@@ -146,3 +167,104 @@ func (n NotFormula) describe() string { return "Not(" + n.Inner.describe() + ")"
 
 // Describe returns a debug-friendly representation of the formula.
 func Describe(formula Formula) string { return formula.describe() }
+
+// withinNode mirrors the optional `within` clause attached to bounded
+// Eventually nodes in the JSON AST.
+type withinNode struct {
+	Amount int64  `json:"amount"`
+	Unit   string `json:"unit"`
+}
+
+func (a AlwaysFormula) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Op  string  `json:"op"`
+		Arg Formula `json:"arg"`
+	}{"always", a.Inner})
+}
+
+func (n NowFormula) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Op  string  `json:"op"`
+		Arg Formula `json:"arg"`
+	}{"now", n.Inner})
+}
+
+func (n NextFormula) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Op  string  `json:"op"`
+		Arg Formula `json:"arg"`
+	}{"next", n.Inner})
+}
+
+func (n NotFormula) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Op  string  `json:"op"`
+		Arg Formula `json:"arg"`
+	}{"not", n.Inner})
+}
+
+func (e EventuallyFormula) MarshalJSON() ([]byte, error) {
+	payload := struct {
+		Op     string      `json:"op"`
+		Arg    Formula     `json:"arg"`
+		Within *withinNode `json:"within,omitempty"`
+	}{Op: "eventually", Arg: e.Inner}
+	switch {
+	case e.HasStepBound:
+		payload.Within = &withinNode{Amount: int64(e.StepBound), Unit: "steps"}
+	case e.Duration > 0:
+		payload.Within = &withinNode{Amount: e.Duration.Milliseconds(), Unit: "milliseconds"}
+	case e.HasDeadline:
+		payload.Within = &withinNode{Amount: e.Deadline.UnixMilli(), Unit: "deadline"}
+	}
+	return json.Marshal(payload)
+}
+
+func (a AndFormula) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Op    string  `json:"op"`
+		Left  Formula `json:"left"`
+		Right Formula `json:"right"`
+	}{"and", a.Left, a.Right})
+}
+
+func (o OrFormula) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Op    string  `json:"op"`
+		Left  Formula `json:"left"`
+		Right Formula `json:"right"`
+	}{"or", o.Left, o.Right})
+}
+
+func (i ImpliesFormula) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Op    string  `json:"op"`
+		Left  Formula `json:"left"`
+		Right Formula `json:"right"`
+	}{"implies", i.Antecedent, i.Consequent})
+}
+
+func (p PureFormula) MarshalJSON() ([]byte, error) {
+	if p.Value {
+		return []byte(`{"op":"true"}`), nil
+	}
+	return []byte(`{"op":"false"}`), nil
+}
+
+func (t ThunkFormula) MarshalJSON() ([]byte, error) {
+	payload := struct {
+		Op   string `json:"op"`
+		Name string `json:"name,omitempty"`
+	}{Op: "predicate"}
+	if labeled, ok := any(t).(PredicateLabel); ok {
+		payload.Name = labeled.PredicateName()
+	}
+	return json.Marshal(payload)
+}
+
+func (e ErrorFormula) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Op      string `json:"op"`
+		Message string `json:"message"`
+	}{"error", e.Message})
+}

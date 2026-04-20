@@ -77,6 +77,26 @@ func (e *Evaluator) ObserveAt(now time.Time) Verdict {
 	return VerdictHolds
 }
 
+// Residual returns a single Formula describing what the evaluator still has
+// to prove after the most recent ObserveAt. PureFormula{true} means the
+// property holds for the run so far; PureFormula{false} means it has latched
+// to violated. When obligations are still pending, they are folded together
+// with AndFormula in the order they were registered so the JSON AST reflects
+// the same order the evaluator processes them in.
+func (e *Evaluator) Residual() Formula {
+	if e.violated {
+		return PureFormula{Value: false}
+	}
+	if len(e.pending) == 0 {
+		return PureFormula{Value: true}
+	}
+	combined := e.pending[0]
+	for _, formula := range e.pending[1:] {
+		combined = AndFormula{Left: combined, Right: formula}
+	}
+	return combined
+}
+
 // rootObligation returns the formula to instantiate at each step. An outer
 // Always is stripped so its inner is re-evaluated every step; any other root
 // formula is itself re-instantiated each step (matching the v0.1 semantics
