@@ -35,14 +35,14 @@ _android-home:
     echo "could not locate Android SDK (set ANDROID_HOME)" >&2
     exit 1
 
-# Build and install the sample APK on a running emulator/device.
+# Build and install the folio APK on a running emulator/device.
 install:
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
     ./gradlew :composeApp:installDebug
 
-# Remove the sample APK from the connected device.
+# Remove the folio APK from the connected device.
 uninstall:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -79,9 +79,9 @@ ios:
       -derivedDataPath iosApp/build \
       build | tail -5
     xcrun simctl install booted iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app
-    xcrun simctl launch booted dev.uatu.sample
+    xcrun simctl launch booted app.folio
 
-# Run 'uatu test' against the sample app. Uses a connected device if one is
+# Run 'uatu test' against the folio app. Uses a connected device if one is
 # online, otherwise boots AVD=<name> if provided.
 test:
     #!/usr/bin/env bash
@@ -92,7 +92,7 @@ test:
     fi
     "{{uatu}}" test \
       --spec "{{justfile_directory()}}/spec.ts" \
-      --bundle-id dev.uatu.sample \
+      --bundle-id app.folio \
       "${avd_flag[@]}" \
       --duration "{{duration}}" \
       --seed "{{seed}}" \
