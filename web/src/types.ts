@@ -107,6 +107,12 @@ export type ResidualNode =
   | { op: "predicate"; name?: string }
   | { op: "error"; message: string };
 
+export interface Metrics {
+  cpu_percent?: number;
+  heap_bytes?: number;
+  total_memory_bytes?: number;
+}
+
 export interface Step {
   step: number;
   timestamp: string;
@@ -117,4 +123,5 @@ export interface Step {
   violations?: string[];
   hierarchy?: Hierarchy;
   residuals?: Record<string, ResidualNode>;
+  metrics?: Metrics;
 }
