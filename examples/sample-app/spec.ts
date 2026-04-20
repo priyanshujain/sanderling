@@ -237,12 +237,46 @@ const stateMachine = {
   loggedOutReachesLogin,
 };
 
+const loginReachable = eventually(() => loggedIn.current).within(90, "seconds");
+const accountCreationReachable = eventually(
+  () => accounts.current.length > 0,
+).within(180, "seconds");
+const someTransactionExists = eventually(() =>
+  accounts.current.some((a) => a.txnCount > 0),
+).within(300, "seconds");
+
+const loginErrorClears = always(
+  now(() => loginError.current !== "").implies(
+    eventually(() => loginError.current === "").within(30, "seconds"),
+  ),
+);
+const addAccountErrorClears = always(
+  now(() => addAccountError.current !== "").implies(
+    eventually(() => addAccountError.current === "").within(30, "seconds"),
+  ),
+);
+const txnErrorClears = always(
+  now(() => txnError.current !== "").implies(
+    eventually(() => txnError.current === "").within(30, "seconds"),
+  ),
+);
+
+const liveness = {
+  loginReachable,
+  accountCreationReachable,
+  someTransactionExists,
+  loginErrorClears,
+  addAccountErrorClears,
+  txnErrorClears,
+};
+
 const noopAction = actions(() => []);
 
 export const properties = {
   accountCountNonNegative,
   ...accountingInvariants,
   ...stateMachine,
+  ...liveness,
   noUncaughtExceptions,
   noLogcatErrors,
 };
