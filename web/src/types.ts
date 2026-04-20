@@ -28,6 +28,7 @@ export interface StepSummary {
   timestamp: string;
   screen?: string;
   action_kind?: string;
+  action_label?: string;
   has_violations: boolean;
   has_exceptions: boolean;
 }

@@ -30,7 +30,11 @@ export default function ActionList({ steps, selectedIndex, onSelect }: ActionLis
     <ol className="action-list">
       {steps.map((step) => {
         const isActive = step.index === selectedIndex;
-        const kindLabel = step.action_kind ?? "--";
+        const kindLabel = step.action_kind ?? "observe";
+        const detailLabel = step.action_label ?? (step.screen ? `@ ${step.screen}` : "");
+        const ariaLabel = detailLabel
+          ? `Step ${step.index} ${kindLabel} ${detailLabel}`
+          : `Step ${step.index} ${kindLabel}`;
         return (
           <li
             key={step.index}
@@ -44,15 +48,17 @@ export default function ActionList({ steps, selectedIndex, onSelect }: ActionLis
             className="action-list-item"
             role="button"
             tabIndex={0}
-            aria-label={`Step ${step.index} ${kindLabel}`}
+            aria-label={ariaLabel}
             data-active={isActive ? "true" : "false"}
             data-violations={step.has_violations ? "true" : "false"}
             data-exceptions={step.has_exceptions ? "true" : "false"}
             onClick={() => onSelect(step.index)}
             onKeyDown={(event) => handleKeyDown(event, step.index)}
+            title={detailLabel || undefined}
           >
             <span className="action-list-index">{step.index}</span>
             <span className="action-list-kind">{kindLabel}</span>
+            <span className="action-list-detail">{detailLabel}</span>
             <span className="action-list-markers">
               {step.has_exceptions ? (
                 <span

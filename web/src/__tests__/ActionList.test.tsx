@@ -45,7 +45,7 @@ describe("ActionList", () => {
     expect(screen.getByRole("button", { name: /step 1 tap/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /step 2 swipe/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /step 3 inputtext/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /step 4 --/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /step 4 observe/i })).toBeInTheDocument();
   });
 
   it("calls onSelect with the step index when a row is clicked", () => {
@@ -78,6 +78,30 @@ describe("ActionList", () => {
     row.focus();
     fireEvent.keyDown(row, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith(2);
+  });
+
+  it("renders the action_label next to the kind when present", () => {
+    const steps: StepSummary[] = [
+      {
+        index: 1,
+        timestamp: "2026-04-20T10:00:00Z",
+        action_kind: "Tap",
+        action_label: "id:save",
+        has_violations: false,
+        has_exceptions: false,
+      },
+      {
+        index: 2,
+        timestamp: "2026-04-20T10:00:01Z",
+        action_kind: "InputText",
+        action_label: '"hello"',
+        has_violations: false,
+        has_exceptions: false,
+      },
+    ];
+    render(<ActionList steps={steps} selectedIndex={1} onSelect={() => {}} />);
+    expect(screen.getByRole("button", { name: /step 1 tap id:save/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /step 2 inputtext "hello"/i })).toBeInTheDocument();
   });
 
   it("invokes onSelect when Space is pressed on a focused row", () => {
