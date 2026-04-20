@@ -80,10 +80,6 @@ class SampleApplication : Application() {
         Uatu.extract("login_error") { UiState.loginError.value }
         Uatu.extract("add_account_error") { UiState.addAccountError.value }
         Uatu.extract("txn_error") { UiState.txnError.value }
-        Uatu.extract("login_email_value") { UiState.loginEmail.value }
-        Uatu.extract("login_password_length") { UiState.loginPasswordLength.value }
-        Uatu.extract("account_name_input") { UiState.accountNameInput.value }
-        Uatu.extract("txn_amount_input") { UiState.txnAmountInput.value }
         maybeInjectDebugError()
     }
 
