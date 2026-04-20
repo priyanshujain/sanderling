@@ -20,7 +20,7 @@ import app.folio.Route
 import app.folio.UiState
 
 @Composable
-fun AddAccountPage() {
+fun AddAccountScreen() {
     val t = LocalTokens.current
     var name by remember { mutableStateOf("") }
     val err by UiState.addAccountError.collectAsState()

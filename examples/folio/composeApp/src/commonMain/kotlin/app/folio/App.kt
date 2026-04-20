@@ -13,7 +13,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import app.folio.ui.AddAccountPage
+import app.folio.ui.AddAccountScreen
 import app.folio.ui.AddTransactionPage
 import app.folio.ui.HomeScreen
 import app.folio.ui.LedgerPage
@@ -54,7 +54,7 @@ fun App() {
                                 Navigator.replace(Route.Login)
                             },
                         )
-                        Route.AddAccount -> AddAccountPage()
+                        Route.AddAccount -> AddAccountScreen()
                         is Route.Ledger -> LedgerPage(accountId = r.accountId)
                         is Route.AddTransaction -> AddTransactionPage(accountId = r.accountId)
                     }
