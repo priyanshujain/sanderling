@@ -32,7 +32,7 @@ import app.folio.formatDate
 import app.folio.signedAmount
 
 @Composable
-fun LedgerPage(accountId: String) {
+fun LedgerScreen(accountId: String) {
     val t = LocalTokens.current
     val accounts by Repository.accounts.collectAsState()
     val allTxns by Repository.transactions.collectAsState()
