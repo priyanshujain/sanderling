@@ -18,12 +18,12 @@ export interface MetricsChartProps {
 }
 
 const CHART_WIDTH = 1000;
-const LABEL_WIDTH = 60;
-const LANE_HEIGHT = 32;
-const LANE_GAP = 6;
-const AXIS_HEIGHT = 12;
-const STATUS_LANE_HEIGHT = 8;
-const TICK_COUNT = 2;
+const LEFT_GUTTER = 18;
+const RIGHT_GUTTER = 44;
+const LANE_HEIGHT = 40;
+const LANE_GAP = 10;
+const AXIS_HEIGHT = 14;
+const PLAYHEAD_WIDTH = 22;
 
 const MB = 1024 * 1024;
 
@@ -54,7 +54,13 @@ function heapCeiling(maxBytes: number): number {
   return Math.ceil(maxBytes / gib) * gib;
 }
 
-function formatHeap(bytes: number): string {
+function formatHeapTop(bytes: number): string {
+  if (bytes < MB) return `${Math.round(bytes / 1024)}K`;
+  if (bytes < 1024 * MB) return `${Math.round(bytes / MB)}M`;
+  return `${(bytes / (1024 * MB)).toFixed(1)}G`;
+}
+
+function formatHeapTooltip(bytes: number): string {
   if (bytes === 0) return "0B";
   if (bytes < MB) return `${Math.round(bytes / 1024)}KB`;
   if (bytes < 1024 * MB) return `${Math.round(bytes / MB)}MB`;
@@ -66,10 +72,29 @@ function cpuCeiling(maxPercent: number): number {
   return Math.ceil(maxPercent / 50) * 50;
 }
 
-function buildTicks(ceiling: number, count: number): number[] {
-  const ticks: number[] = [];
-  for (let i = 0; i <= count; i += 1) {
-    ticks.push((ceiling * i) / count);
+function formatClock(millis: number): string {
+  const safe = Math.max(0, Math.floor(millis));
+  const totalSeconds = Math.floor(safe / 1000);
+  const mm = Math.floor(totalSeconds / 60);
+  const ss = totalSeconds % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(mm)}:${pad(ss)}`;
+}
+
+function parseMillis(value: string): number {
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildTimeTicks(samples: MetricsSample[], count: number): { t: number; label: string }[] {
+  const firstMs = parseMillis(samples[0].timestamp);
+  const lastMs = parseMillis(samples[samples.length - 1].timestamp);
+  const duration = Math.max(0, lastMs - firstMs);
+  const ticks: { t: number; label: string }[] = [];
+  const segments = Math.max(1, count - 1);
+  for (let i = 0; i < count; i += 1) {
+    const t = (duration * i) / segments;
+    ticks.push({ t, label: formatClock(t) });
   }
   return ticks;
 }
@@ -97,9 +122,6 @@ export default function MetricsChart({
   samples,
   selectedIndex,
   onSelect,
-  exceptionStepIndices,
-  propertyLanes,
-  violationStepIndices,
 }: MetricsChartProps) {
   if (samples.length === 0) {
     return <div className="status-block">no metrics</div>;
@@ -110,10 +132,10 @@ export default function MetricsChart({
     return <div className="status-block">no metrics</div>;
   }
 
-  const plotWidth = CHART_WIDTH - LABEL_WIDTH;
+  const plotLeft = LEFT_GUTTER;
+  const plotRight = CHART_WIDTH - RIGHT_GUTTER;
+  const plotWidth = plotRight - plotLeft;
   const columnWidth = plotWidth / samples.length;
-  const violationSet = new Set(violationStepIndices ?? []);
-  const exceptionSet = new Set(exceptionStepIndices ?? []);
 
   const heapMax = samples.reduce((max, sample) => {
     const value = sample.metrics?.heap_bytes;
@@ -127,22 +149,19 @@ export default function MetricsChart({
   }, 0);
   const cpuTop = cpuCeiling(cpuMax);
 
-  const statusTop = 0;
-  const statusBottom = statusTop + STATUS_LANE_HEIGHT;
-  const heapTopY = statusBottom + LANE_GAP;
   const heapGeometry: LaneGeometry = {
-    top: heapTopY,
-    bottom: heapTopY + LANE_HEIGHT,
-    plotLeft: LABEL_WIDTH,
-    plotRight: CHART_WIDTH,
+    top: 0,
+    bottom: LANE_HEIGHT,
+    plotLeft,
+    plotRight,
   };
   const cpuGeometry: LaneGeometry = {
     top: heapGeometry.bottom + LANE_GAP,
     bottom: heapGeometry.bottom + LANE_GAP + LANE_HEIGHT,
-    plotLeft: LABEL_WIDTH,
-    plotRight: CHART_WIDTH,
+    plotLeft,
+    plotRight,
   };
-  const axisTop = cpuGeometry.bottom + LANE_GAP / 2;
+  const axisTop = cpuGeometry.bottom + 4;
   const totalHeight = axisTop + AXIS_HEIGHT;
 
   const heapPoints = buildPolyline(
@@ -160,14 +179,14 @@ export default function MetricsChart({
     columnWidth,
   );
 
-  const heapTicks = buildTicks(heapTop, TICK_COUNT);
-  const cpuTicks = buildTicks(cpuTop, TICK_COUNT);
-
   const selectedColumn = samples.findIndex((sample) => sample.stepIndex === selectedIndex);
-  const highlightX =
-    selectedColumn >= 0 ? LABEL_WIDTH + selectedColumn * columnWidth + columnWidth / 2 : null;
+  const highlightCenterX =
+    selectedColumn >= 0 ? plotLeft + selectedColumn * columnWidth + columnWidth / 2 : null;
 
-  const anyStatus = (propertyLanes?.length ?? 0) > 0 || violationSet.size > 0;
+  const timeTicks = buildTimeTicks(samples, 5);
+  const firstMs = parseMillis(samples[0].timestamp);
+  const lastMs = parseMillis(samples[samples.length - 1].timestamp);
+  const totalDuration = Math.max(0, lastMs - firstMs);
 
   return (
     <svg
@@ -176,53 +195,20 @@ export default function MetricsChart({
       role="img"
       aria-label="metrics chart"
     >
-      <g className="metrics-lane" data-lane="STATUS">
-        <text
-          className="metrics-lane-label"
-          x={LABEL_WIDTH - 8}
-          y={statusTop + STATUS_LANE_HEIGHT / 2}
-          dominantBaseline="middle"
-          textAnchor="end"
+      <defs>
+        <pattern
+          id="metrics-playhead-pattern"
+          patternUnits="userSpaceOnUse"
+          width="4"
+          height="4"
         >
-          STEPS
-        </text>
-        {samples.map((sample, index) => {
-          const x = LABEL_WIDTH + index * columnWidth + 1;
-          const w = Math.max(columnWidth - 2, 1);
-          let status: "violated" | "holds" | "pending" | "exception" = "holds";
-          if (propertyLanes && propertyLanes.length > 0) {
-            const statuses = propertyLanes.map((lane) => lane.statuses[index]);
-            if (statuses.includes("violated")) status = "violated";
-            else if (statuses.every((s) => s === "holds")) status = "holds";
-            else status = "pending";
-          } else {
-            status = violationSet.has(sample.stepIndex) ? "violated" : "holds";
-          }
-          if (exceptionSet.has(sample.stepIndex) && status !== "violated") {
-            status = "exception";
-          }
-          return (
-            <rect
-              key={`status-${sample.stepIndex}`}
-              className="metrics-status-cell"
-              data-status={status}
-              data-step-index={sample.stepIndex}
-              x={x}
-              y={statusTop}
-              width={w}
-              height={STATUS_LANE_HEIGHT}
-              onClick={() => onSelect(sample.stepIndex)}
-            >
-              <title>{`step ${sample.stepIndex}: ${status}`}</title>
-            </rect>
-          );
-        })}
-        {!anyStatus ? null : null}
-      </g>
+          <circle cx="1" cy="1" r="0.6" className="metrics-playhead-dot" />
+        </pattern>
+      </defs>
 
       <g className="metrics-lane" data-lane="HEAP">
         <rect
-          x={LABEL_WIDTH}
+          x={plotLeft}
           y={heapGeometry.top}
           width={plotWidth}
           height={LANE_HEIGHT}
@@ -230,37 +216,29 @@ export default function MetricsChart({
         />
         <text
           className="metrics-lane-label"
-          x={LABEL_WIDTH - 8}
+          x={LEFT_GUTTER / 2}
           y={heapGeometry.top + LANE_HEIGHT / 2}
-          dominantBaseline="middle"
-          textAnchor="end"
+          textAnchor="middle"
+          transform={`rotate(-90 ${LEFT_GUTTER / 2} ${heapGeometry.top + LANE_HEIGHT / 2})`}
         >
           HEAP
         </text>
-        {heapTicks.map((tick, index) => {
-          if (index === 0) return null;
-          const ratio = heapTop === 0 ? 0 : tick / heapTop;
-          const y = heapGeometry.bottom - ratio * (heapGeometry.bottom - heapGeometry.top);
-          return (
-            <g key={`heap-tick-${index}`} className="metrics-tick">
-              <line
-                x1={LABEL_WIDTH}
-                x2={CHART_WIDTH}
-                y1={y}
-                y2={y}
-                className="metrics-gridline"
-              />
-              <text
-                x={CHART_WIDTH - 4}
-                y={y - 2}
-                textAnchor="end"
-                className="metrics-tick-label"
-              >
-                {formatHeap(tick)}
-              </text>
-            </g>
-          );
-        })}
+        <text
+          x={CHART_WIDTH - 4}
+          y={heapGeometry.top + 8}
+          textAnchor="end"
+          className="metrics-tick-label"
+        >
+          {formatHeapTop(heapTop)}
+        </text>
+        <text
+          x={CHART_WIDTH - 4}
+          y={heapGeometry.bottom - 2}
+          textAnchor="end"
+          className="metrics-tick-label"
+        >
+          0B
+        </text>
         {heapPoints.length > 0 ? (
           <polyline
             className="metrics-line"
@@ -269,27 +247,17 @@ export default function MetricsChart({
             fill="none"
           />
         ) : null}
-        {samples.map((sample, index) => {
+        {samples.map((sample) => {
           const value = sample.metrics?.heap_bytes;
           if (value === undefined) return null;
-          const ratio = heapTop === 0 ? 0 : Math.min(value / heapTop, 1);
-          const cx = LABEL_WIDTH + index * columnWidth + columnWidth / 2;
-          const cy = heapGeometry.bottom - ratio * (heapGeometry.bottom - heapGeometry.top);
           return (
-            <circle
-              key={`heap-point-${sample.stepIndex}`}
-              className="metrics-point"
-              data-step-index={sample.stepIndex}
-              cx={cx}
-              cy={cy}
-              r={2}
-            >
-              <title>{`step ${sample.stepIndex}: ${formatHeap(value)}`}</title>
-            </circle>
+            <g key={`heap-point-${sample.stepIndex}`} className="metrics-point" data-step-index={sample.stepIndex}>
+              <title>{`step ${sample.stepIndex}: ${formatHeapTooltip(value)}`}</title>
+            </g>
           );
         })}
         {samples.map((sample, index) => {
-          const x = LABEL_WIDTH + index * columnWidth;
+          const x = plotLeft + index * columnWidth;
           return (
             <rect
               key={`heap-hit-${sample.stepIndex}`}
@@ -310,7 +278,7 @@ export default function MetricsChart({
 
       <g className="metrics-lane" data-lane="CPU">
         <rect
-          x={LABEL_WIDTH}
+          x={plotLeft}
           y={cpuGeometry.top}
           width={plotWidth}
           height={LANE_HEIGHT}
@@ -318,37 +286,29 @@ export default function MetricsChart({
         />
         <text
           className="metrics-lane-label"
-          x={LABEL_WIDTH - 8}
+          x={LEFT_GUTTER / 2}
           y={cpuGeometry.top + LANE_HEIGHT / 2}
-          dominantBaseline="middle"
-          textAnchor="end"
+          textAnchor="middle"
+          transform={`rotate(-90 ${LEFT_GUTTER / 2} ${cpuGeometry.top + LANE_HEIGHT / 2})`}
         >
           CPU
         </text>
-        {cpuTicks.map((tick, index) => {
-          if (index === 0) return null;
-          const ratio = cpuTop === 0 ? 0 : tick / cpuTop;
-          const y = cpuGeometry.bottom - ratio * (cpuGeometry.bottom - cpuGeometry.top);
-          return (
-            <g key={`cpu-tick-${index}`} className="metrics-tick">
-              <line
-                x1={LABEL_WIDTH}
-                x2={CHART_WIDTH}
-                y1={y}
-                y2={y}
-                className="metrics-gridline"
-              />
-              <text
-                x={CHART_WIDTH - 4}
-                y={y - 2}
-                textAnchor="end"
-                className="metrics-tick-label"
-              >
-                {`${Math.round(tick)}%`}
-              </text>
-            </g>
-          );
-        })}
+        <text
+          x={CHART_WIDTH - 4}
+          y={cpuGeometry.top + 8}
+          textAnchor="end"
+          className="metrics-tick-label"
+        >
+          100%
+        </text>
+        <text
+          x={CHART_WIDTH - 4}
+          y={cpuGeometry.bottom - 2}
+          textAnchor="end"
+          className="metrics-tick-label"
+        >
+          0%
+        </text>
         {cpuPoints.length > 0 ? (
           <polyline
             className="metrics-line"
@@ -357,27 +317,17 @@ export default function MetricsChart({
             fill="none"
           />
         ) : null}
-        {samples.map((sample, index) => {
+        {samples.map((sample) => {
           const value = sample.metrics?.cpu_percent;
           if (value === undefined) return null;
-          const ratio = cpuTop === 0 ? 0 : Math.min(value / cpuTop, 1);
-          const cx = LABEL_WIDTH + index * columnWidth + columnWidth / 2;
-          const cy = cpuGeometry.bottom - ratio * (cpuGeometry.bottom - cpuGeometry.top);
           return (
-            <circle
-              key={`cpu-point-${sample.stepIndex}`}
-              className="metrics-point"
-              data-step-index={sample.stepIndex}
-              cx={cx}
-              cy={cy}
-              r={2}
-            >
+            <g key={`cpu-point-${sample.stepIndex}`} className="metrics-point" data-step-index={sample.stepIndex}>
               <title>{`step ${sample.stepIndex}: ${value.toFixed(1)}%`}</title>
-            </circle>
+            </g>
           );
         })}
         {samples.map((sample, index) => {
-          const x = LABEL_WIDTH + index * columnWidth;
+          const x = plotLeft + index * columnWidth;
           return (
             <rect
               key={`cpu-hit-${sample.stepIndex}`}
@@ -397,60 +347,36 @@ export default function MetricsChart({
       </g>
 
       <g className="metrics-axis" data-row="axis">
-        {samples.map((sample, index) => {
-          const cx = LABEL_WIDTH + index * columnWidth + columnWidth / 2;
+        {timeTicks.map((tick, index) => {
+          const ratio = totalDuration === 0 ? index / Math.max(1, timeTicks.length - 1) : tick.t / totalDuration;
+          const x = plotLeft + ratio * plotWidth;
+          const isLast = index === timeTicks.length - 1;
+          const isFirst = index === 0;
+          const anchor = isLast ? "end" : isFirst ? "start" : "middle";
           return (
-            <g key={`axis-${sample.stepIndex}`} className="metrics-axis-tick">
-              <line
-                x1={cx}
-                x2={cx}
-                y1={axisTop}
-                y2={axisTop + 4}
-                className="metrics-axis-mark"
-              />
+            <g key={`axis-${index}`} className="metrics-axis-tick">
               <text
-                x={cx}
+                x={x}
                 y={axisTop + AXIS_HEIGHT - 2}
-                textAnchor="middle"
+                textAnchor={anchor}
                 className="metrics-axis-label"
               >
-                {sample.stepIndex}
+                {tick.label}
               </text>
             </g>
           );
         })}
       </g>
 
-      {exceptionStepIndices && exceptionStepIndices.length > 0
-        ? exceptionStepIndices.map((stepIndex) => {
-            const column = samples.findIndex((sample) => sample.stepIndex === stepIndex);
-            if (column < 0) return null;
-            const x = LABEL_WIDTH + column * columnWidth + columnWidth / 2;
-            return (
-              <line
-                key={`exc-${stepIndex}`}
-                className="metrics-exception-marker"
-                data-step-index={stepIndex}
-                x1={x}
-                x2={x}
-                y1={statusTop}
-                y2={cpuGeometry.bottom}
-                pointerEvents="none"
-              />
-            );
-          })
-        : null}
-
-      {highlightX !== null ? (
-        <line
+      {highlightCenterX !== null ? (
+        <rect
           className="metrics-highlight"
           data-selected="true"
-          x1={highlightX}
-          x2={highlightX}
-          y1={statusTop}
-          y2={cpuGeometry.bottom}
-          stroke="var(--text-primary)"
-          strokeWidth={1}
+          x={highlightCenterX - PLAYHEAD_WIDTH / 2}
+          y={heapGeometry.top}
+          width={PLAYHEAD_WIDTH}
+          height={cpuGeometry.bottom - heapGeometry.top}
+          fill="url(#metrics-playhead-pattern)"
           pointerEvents="none"
         />
       ) : null}

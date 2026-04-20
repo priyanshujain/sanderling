@@ -103,28 +103,29 @@ describe("MetricsChart", () => {
     expect(onSelect).toHaveBeenCalledWith(4);
   });
 
-  it("renders the selected-step highlight line with data-selected=true", () => {
+  it("renders the selected-step highlight with data-selected=true", () => {
     const { container } = render(
       <MetricsChart samples={samplesWithMetrics} selectedIndex={2} onSelect={() => {}} />,
     );
-    const highlight = container.querySelector('line[data-selected="true"]');
+    const highlight = container.querySelector('[data-selected="true"]');
     expect(highlight).not.toBeNull();
   });
 
-  it("positions the highlight at the selected index column", () => {
+  it("positions the highlight centered on the selected index column", () => {
     const { container } = render(
       <MetricsChart samples={samplesWithMetrics} selectedIndex={3} onSelect={() => {}} />,
     );
     const highlight = container.querySelector(
-      'line[data-selected="true"]',
-    ) as SVGLineElement | null;
+      'rect[data-selected="true"]',
+    ) as SVGRectElement | null;
     expect(highlight).not.toBeNull();
-    const x1 = Number(highlight?.getAttribute("x1"));
-    const x2 = Number(highlight?.getAttribute("x2"));
-    expect(x1).toBe(x2);
-    // selectedIndex=3 is the 3rd of 4 samples (index 2); column width = (1000-60)/4 = 235
-    // expected cx = 60 + 2*235 + 235/2 = 647.5
-    expect(x1).toBeCloseTo(647.5, 1);
+    const x = Number(highlight?.getAttribute("x"));
+    const width = Number(highlight?.getAttribute("width"));
+    const center = x + width / 2;
+    // selectedIndex=3 is the 3rd of 4 samples (index 2)
+    // plotWidth = 1000 - 18 - 44 = 938; columnWidth = 938/4 = 234.5
+    // expected center = 18 + 2*234.5 + 234.5/2 = 604.25
+    expect(center).toBeCloseTo(604.25, 1);
   });
 
   it("renders point tooltips with step number and formatted value", () => {
@@ -143,6 +144,52 @@ describe("MetricsChart", () => {
     const { container } = render(
       <MetricsChart samples={samplesWithMetrics} selectedIndex={999} onSelect={() => {}} />,
     );
-    expect(container.querySelector('line[data-selected="true"]')).toBeNull();
+    expect(container.querySelector('[data-selected="true"]')).toBeNull();
+  });
+
+  it("does not render a STEPS status lane", () => {
+    const { container } = render(
+      <MetricsChart samples={samplesWithMetrics} selectedIndex={1} onSelect={() => {}} />,
+    );
+    expect(container.querySelector('[data-lane="STATUS"]')).toBeNull();
+    expect(container.querySelector(".metrics-status-cell")).toBeNull();
+  });
+
+  it("does not render circle dot markers on the polylines", () => {
+    const { container } = render(
+      <MetricsChart samples={samplesWithMetrics} selectedIndex={1} onSelect={() => {}} />,
+    );
+    expect(container.querySelectorAll("circle.metrics-point")).toHaveLength(0);
+  });
+
+  it("renders mm:ss time-axis labels instead of step indices", () => {
+    const timed: MetricsSample[] = [
+      { stepIndex: 1, timestamp: "2024-01-01T00:00:00.000Z", metrics: { cpu_percent: 10, heap_bytes: 10 * MB } },
+      { stepIndex: 2, timestamp: "2024-01-01T00:00:12.000Z", metrics: { cpu_percent: 20, heap_bytes: 20 * MB } },
+      { stepIndex: 3, timestamp: "2024-01-01T00:00:24.000Z", metrics: { cpu_percent: 30, heap_bytes: 30 * MB } },
+    ];
+    const { container } = render(
+      <MetricsChart samples={timed} selectedIndex={1} onSelect={() => {}} />,
+    );
+    const labels = Array.from(container.querySelectorAll(".metrics-axis-label")).map(
+      (node) => node.textContent,
+    );
+    expect(labels[0]).toBe("00:00");
+    expect(labels[labels.length - 1]).toBe("00:24");
+    expect(labels.every((label) => /^\d{2}:\d{2}$/.test(label ?? ""))).toBe(true);
+  });
+
+  it("renders only min and max tick labels per lane with compact units", () => {
+    const { container } = render(
+      <MetricsChart samples={samplesWithMetrics} selectedIndex={1} onSelect={() => {}} />,
+    );
+    const labels = Array.from(container.querySelectorAll(".metrics-tick-label")).map(
+      (node) => node.textContent,
+    );
+    expect(labels).toContain("0B");
+    expect(labels).toContain("0%");
+    expect(labels).toContain("100%");
+    expect(labels.some((label) => label?.endsWith("M"))).toBe(true);
+    expect(labels.every((label) => !label?.endsWith("MB"))).toBe(true);
   });
 });
