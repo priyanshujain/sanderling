@@ -19,7 +19,7 @@ import app.folio.ui.HomePage
 import app.folio.ui.LedgerPage
 import app.folio.ui.LedgerTheme
 import app.folio.ui.LocalTokens
-import app.folio.ui.LoginPage
+import app.folio.ui.LoginScreen
 import app.folio.ui.Tokens
 
 @Composable
@@ -46,7 +46,7 @@ fun App() {
             ) {
                 Column(Modifier.fillMaxSize()) {
                     when (val r = route) {
-                        Route.Login -> LoginPage(onLoggedIn = { Navigator.replace(Route.Home) })
+                        Route.Login -> LoginScreen(onLoggedIn = { Navigator.replace(Route.Home) })
                         Route.Home -> HomePage(
                             user = session?.user ?: "",
                             onLogout = {

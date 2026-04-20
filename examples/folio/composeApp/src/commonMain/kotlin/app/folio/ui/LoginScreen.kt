@@ -24,7 +24,7 @@ import app.folio.UiState
 import app.folio.checkCredentials
 
 @Composable
-fun LoginPage(onLoggedIn: (String) -> Unit) {
+fun LoginScreen(onLoggedIn: (String) -> Unit) {
     val t = LocalTokens.current
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
