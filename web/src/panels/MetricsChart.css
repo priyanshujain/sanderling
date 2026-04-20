@@ -1,0 +1,67 @@
+.metrics-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--font-mono);
+}
+
+.metrics-lane-bg {
+  fill: var(--surface);
+}
+
+.metrics-lane-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  fill: var(--text-muted);
+}
+
+.metrics-tick-label {
+  font-size: 9px;
+  fill: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics-gridline {
+  stroke: var(--border);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.metrics-line {
+  stroke: var(--text-primary);
+  stroke-width: 1.25;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.metrics-point {
+  fill: var(--text-primary);
+  pointer-events: none;
+}
+
+.metrics-hit {
+  fill: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+.metrics-hit:hover {
+  fill: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.metrics-axis-mark {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.metrics-axis-label {
+  font-size: 9px;
+  fill: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics-highlight {
+  pointer-events: none;
+}
