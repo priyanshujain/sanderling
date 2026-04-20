@@ -35,8 +35,17 @@ internal/sidecar/assets/sidecar-all.jar
 pkg/spec-api/dist/
 
 # goreleaser local output
-dist/
+/dist/
+
+# inspect web bundle output (real bundle wired in Stage 4 via Makefile/CI).
+# Track only the stub index.html + .gitkeep so //go:embed succeeds.
+/internal/inspect/dist/*
+!/internal/inspect/dist/.gitkeep
+!/internal/inspect/dist/index.html
 
 # coding agent files
 .claude/
 .claude/*
+
+# Personal research notes
+/research/
