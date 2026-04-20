@@ -93,6 +93,32 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         // hierarchy that reports an enormous text length for the focused field.
         internal const val MAX_CLEAR_DELETES: Int = 1024
 
+        internal fun buildClearKeyevents(textLength: Int): List<String> {
+            if (textLength <= 0) return emptyList()
+            val deletes = minOf(textLength, MAX_CLEAR_DELETES)
+            val args = mutableListOf("shell", "input", "keyevent", "KEYCODE_MOVE_END")
+            repeat(deletes) { args.add("KEYCODE_DEL") }
+            return args
+        }
+
+        // `adb shell input text` runs through a remote sh, so shell metacharacters
+        // in the payload would be interpreted by the device shell. Substitute
+        // spaces with %s (input's escape) and backslash-escape characters sh
+        // would otherwise expand. Keep this list conservative; anything not
+        // listed passes through literally.
+        internal fun escapeForAdbInputText(text: String): String {
+            val sb = StringBuilder(text.length)
+            for (ch in text) {
+                when (ch) {
+                    ' ' -> sb.append("%s")
+                    '\\', '"', '\'', '&', '|', ';', '<', '>', '(', ')', '*', '?',
+                    '$', '`', '[', ']', '{', '}', '~', '#', -> sb.append('\\').append(ch)
+                    else -> sb.append(ch)
+                }
+            }
+            return sb.toString()
+        }
+
         // Matches a uiautomator-dump <node ...> tag where `focused="true"` is
         // present. Captures only the tag's attribute string so we can pull
         // `text="..."` out of it without building a full XML tree.
@@ -188,16 +214,13 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         // pure replace: read the current value's length from the hierarchy,
         // then move-end + N backspaces before typing.
         clearFocusedField()
-        runAdb(listOf("shell", "input", "text", text.replace(" ", "%s")))
+        runAdb(listOf("shell", "input", "text", escapeForAdbInputText(text)))
     }
 
     private fun clearFocusedField() {
         val current = focusedFieldText() ?: return
         if (current.isEmpty()) return
-        val deletes = minOf(current.length, MAX_CLEAR_DELETES)
-        val keyevents = mutableListOf("shell", "input", "keyevent", "KEYCODE_MOVE_END")
-        repeat(deletes) { keyevents.add("KEYCODE_DEL") }
-        runAdb(keyevents)
+        runAdb(buildClearKeyevents(current.length))
     }
 
     private fun focusedFieldText(): String? {

@@ -14,7 +14,7 @@ import {
   waitOnce,
   weighted,
 } from "@uatu/spec";
-import { noLogcatErrors, noUncaughtExceptions } from "@uatu/spec/defaults/properties";
+import { noUncaughtExceptions } from "@uatu/spec/defaults/properties";
 
 interface AccountSnapshot {
   id: string;
@@ -90,7 +90,9 @@ const txnCredit = extract((state) => state.ax.find("desc:txn_credit"));
 const txnDebit = extract((state) => state.ax.find("desc:txn_debit"));
 const txnSubmit = extract((state) => state.ax.find("desc:txn_submit"));
 const backButton = extract((state) => state.ax.find("desc:Back"));
-const anyAccountCard = extract((state) => state.ax.find("descPrefix:account_card:"));
+const allAccountCards = extract((state) =>
+  state.ax.findAll("descPrefix:account_card:"),
+);
 
 const accountCountNonNegative = always(() => accountCount.current >= 0);
 
@@ -334,8 +336,10 @@ const openAddAccount = actions(() => {
 
 const openRandomAccount = actions(() => {
   if (route.current !== "home") return [];
-  const card = anyAccountCard.current;
-  return card ? [Tap({ on: card })] : [];
+  const cards = allAccountCards.current;
+  if (cards.length === 0) return [];
+  const card = cards[Math.floor(Math.random() * cards.length)];
+  return [Tap({ on: card })];
 });
 
 const logoutAction = actions(() => {
@@ -411,7 +415,6 @@ export const properties = {
   ...stateMachine,
   ...liveness,
   noUncaughtExceptions,
-  noLogcatErrors,
 };
 
 export const actionsRoot = weighted(

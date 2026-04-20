@@ -103,7 +103,10 @@ fun AddTransactionPage(accountId: String) {
             Segmented(
                 selected = if (type == TxnType.credit) 0 else 1,
                 labels = listOf("Credit", "Debit"),
-                onSelect = { type = if (it == 0) TxnType.credit else TxnType.debit },
+                onSelect = {
+                    UiState.txnError.value = ""
+                    type = if (it == 0) TxnType.credit else TxnType.debit
+                },
                 descriptions = listOf("txn_credit", "txn_debit"),
             )
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -111,9 +114,9 @@ fun AddTransactionPage(accountId: String) {
                 TextInput(
                     value = amount,
                     onChange = {
+                        UiState.txnError.value = ""
                         if (AMOUNT_REGEX.matches(it) || it.isEmpty()) {
                             amount = it
-                            UiState.txnError.value = ""
                         }
                     },
                     placeholder = "0.00",
@@ -129,7 +132,10 @@ fun AddTransactionPage(accountId: String) {
                 FieldLabel("Note (optional)")
                 TextInput(
                     value = note,
-                    onChange = { note = it.take(80) },
+                    onChange = {
+                        UiState.txnError.value = ""
+                        note = it.take(80)
+                    },
                     placeholder = "What's this for?",
                     label = "Note",
                     description = "txn_note",

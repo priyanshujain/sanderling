@@ -22,6 +22,45 @@ const sampleAppHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
   </node>
 </hierarchy>`
 
+const homeHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+  <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
+    <node index="0" class="android.view.View" content-desc="logout_button" clickable="true" bounds="[980,80][1060,160]" />
+    <node index="1" class="android.view.View" content-desc="account_card:acc-1" clickable="true" bounds="[64,320][1016,440]" />
+    <node index="2" class="android.view.View" content-desc="account_card:acc-2" clickable="true" bounds="[64,460][1016,580]" />
+    <node index="3" class="android.view.View" content-desc="add_account_button" clickable="true" bounds="[64,2200][1016,2320]" />
+  </node>
+</hierarchy>`
+
+const addAccountHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+  <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
+    <node index="0" class="android.view.View" content-desc="Back" clickable="true" bounds="[32,80][112,160]" />
+    <node index="1" class="android.view.View" content-desc="account_name_field" clickable="true" bounds="[64,320][1016,440]" />
+    <node index="2" class="android.view.View" content-desc="add_account_submit" clickable="true" bounds="[64,2200][1016,2320]" />
+  </node>
+</hierarchy>`
+
+const ledgerHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+  <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
+    <node index="0" class="android.view.View" content-desc="Back" clickable="true" bounds="[32,80][112,160]" />
+    <node index="1" class="android.view.View" content-desc="add_txn_button" clickable="true" bounds="[64,2200][1016,2320]" />
+  </node>
+</hierarchy>`
+
+const addTxnHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+  <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
+    <node index="0" class="android.view.View" content-desc="Back" clickable="true" bounds="[32,80][112,160]" />
+    <node index="1" class="android.view.View" content-desc="txn_credit" clickable="true" bounds="[64,280][540,360]" />
+    <node index="2" class="android.view.View" content-desc="txn_debit" clickable="true" bounds="[540,280][1016,360]" />
+    <node index="3" class="android.view.View" content-desc="txn_amount" clickable="true" bounds="[64,440][1016,560]" />
+    <node index="4" class="android.view.View" content-desc="txn_note" clickable="true" bounds="[64,600][1016,720]" />
+    <node index="5" class="android.view.View" content-desc="txn_submit" clickable="true" bounds="[64,2200][1016,2320]" />
+  </node>
+</hierarchy>`
+
 // bundleSampleAppSpec bundles examples/sample-app/spec.ts via the real
 // @uatu/spec API so the integration test exercises the same path the CLI uses.
 func bundleSampleAppSpec(t *testing.T) string {
@@ -69,6 +108,55 @@ func loginSnapshots() Snapshots {
 		"add_account_error":   json.RawMessage(`""`),
 		"txn_error":           json.RawMessage(`""`),
 	}
+}
+
+// twoAccountsJSON is shared between home, ledger, and add-transaction
+// snapshots so invariants that correlate accounts with ledger rows stay
+// consistent across routes.
+const twoAccountsJSON = `[` +
+	`{"id":"acc-1","name":"Checking","balance":0,"txnCount":0},` +
+	`{"id":"acc-2","name":"Savings","balance":0,"txnCount":0}` +
+	`]`
+
+func homeSnapshots() Snapshots {
+	return Snapshots{
+		"route":               json.RawMessage(`"home"`),
+		"logged_in":           json.RawMessage(`true`),
+		"auth_status":         json.RawMessage(`"logged-in"`),
+		"account_count":       json.RawMessage(`2`),
+		"accounts":            json.RawMessage(twoAccountsJSON),
+		"total_balance":       json.RawMessage(`0`),
+		"active_account_id":   json.RawMessage(`null`),
+		"ledger_rows":         json.RawMessage(`[]`),
+		"ledger_balance":      json.RawMessage(`0`),
+		"focused_input":       json.RawMessage(`null`),
+		"txn_form_type":       json.RawMessage(`null`),
+		"txn_form_account_id": json.RawMessage(`null`),
+		"login_error":         json.RawMessage(`""`),
+		"add_account_error":   json.RawMessage(`""`),
+		"txn_error":           json.RawMessage(`""`),
+	}
+}
+
+func addAccountSnapshots() Snapshots {
+	s := homeSnapshots()
+	s["route"] = json.RawMessage(`"add-account"`)
+	return s
+}
+
+func ledgerSnapshots() Snapshots {
+	s := homeSnapshots()
+	s["route"] = json.RawMessage(`"ledger"`)
+	s["active_account_id"] = json.RawMessage(`"acc-1"`)
+	return s
+}
+
+func addTxnSnapshots() Snapshots {
+	s := ledgerSnapshots()
+	s["route"] = json.RawMessage(`"add-transaction"`)
+	s["txn_form_type"] = json.RawMessage(`"credit"`)
+	s["txn_form_account_id"] = json.RawMessage(`"acc-1"`)
+	return s
 }
 
 // TestSampleAppSpecFiresLoginActions verifies the bundled sample-app spec
@@ -144,4 +232,109 @@ func TestSampleAppSpecPropertiesEvaluate(t *testing.T) {
 	if verdicts["loginReachable"] != ltl.VerdictPending {
 		t.Errorf("loginReachable: got %v, want pending", verdicts["loginReachable"])
 	}
+}
+
+// TestSampleAppSpecActionsFireOnEachRoute pushes a hierarchy + snapshot pair
+// representative of each sample-app route and verifies the expected action
+// generators fire against that state. Guards against silent breakage of any
+// one route's generators (a regression only e2e would otherwise catch).
+func TestSampleAppSpecActionsFireOnEachRoute(t *testing.T) {
+	cases := []struct {
+		name       string
+		xml        string
+		snapshots  Snapshots
+		expectKind ActionKind
+		expectOns  []string
+	}{
+		{
+			name:       "home",
+			xml:        homeHierarchyXML,
+			snapshots:  homeSnapshots(),
+			expectKind: ActionKindTap,
+			expectOns: []string{
+				"desc:add_account_button",
+				"desc:logout_button",
+				"descPrefix:account_card:",
+			},
+		},
+		{
+			name:       "add-account",
+			xml:        addAccountHierarchyXML,
+			snapshots:  addAccountSnapshots(),
+			expectKind: ActionKindTap,
+			expectOns:  []string{"desc:add_account_submit", "desc:Back"},
+		},
+		{
+			name:       "ledger",
+			xml:        ledgerHierarchyXML,
+			snapshots:  ledgerSnapshots(),
+			expectKind: ActionKindTap,
+			expectOns:  []string{"desc:add_txn_button", "desc:Back"},
+		},
+		{
+			name:       "add-transaction",
+			xml:        addTxnHierarchyXML,
+			snapshots:  addTxnSnapshots(),
+			expectKind: ActionKindTap,
+			expectOns: []string{
+				"desc:txn_submit",
+				"desc:txn_debit",
+				"desc:Back",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newVerifier(t)
+			if err := v.Load(bundleSampleAppSpec(t)); err != nil {
+				t.Fatal(err)
+			}
+			tree, err := hierarchy.Parse(tc.xml)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := v.PushSnapshot(SnapshotInput{Snapshots: tc.snapshots, Tree: tree}); err != nil {
+				t.Fatal(err)
+			}
+			sawOn := map[string]bool{}
+			sawInputText := map[string]bool{}
+			for range 800 {
+				action, err := v.NextAction()
+				if err != nil {
+					continue
+				}
+				if action.Kind == tc.expectKind {
+					sawOn[action.On] = true
+				}
+				if action.Kind == ActionKindInputText {
+					sawInputText[action.On] = true
+				}
+			}
+			for _, on := range tc.expectOns {
+				if !sawOn[on] {
+					t.Errorf("%s: no %s action on %q; saw %v", tc.name, tc.expectKind, on, keysOf(sawOn))
+				}
+			}
+			if tc.name == "add-account" && !sawInputText["desc:account_name_field"] {
+				t.Errorf("add-account: typeAccountName never fired; saw %v", keysOf(sawInputText))
+			}
+			if tc.name == "add-transaction" {
+				if !sawInputText["desc:txn_amount"] {
+					t.Errorf("add-transaction: typeAmount never fired; saw %v", keysOf(sawInputText))
+				}
+				if !sawInputText["desc:txn_note"] {
+					t.Errorf("add-transaction: typeNote never fired; saw %v", keysOf(sawInputText))
+				}
+			}
+		})
+	}
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
