@@ -1,4 +1,4 @@
-package app.folio.ui
+package app.folio.ui.icon
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor

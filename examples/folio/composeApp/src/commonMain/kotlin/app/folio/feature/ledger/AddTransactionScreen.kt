@@ -31,7 +31,7 @@ import app.folio.ui.Header
 import app.folio.ui.Screen
 import app.folio.ui.Segmented
 import app.folio.ui.TextInput
-import app.folio.ui.Type
+import app.folio.ui.theme.Type
 
 private val AMOUNT_REGEX = Regex("""^\d*(\.\d{0,2})?$""")
 

@@ -21,9 +21,9 @@ import app.folio.feature.ledger.AddTransactionScreen
 import app.folio.feature.ledger.LedgerScreen
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
-import app.folio.ui.LedgerTheme
-import app.folio.ui.LocalTokens
-import app.folio.ui.Tokens
+import app.folio.ui.theme.LedgerTheme
+import app.folio.ui.theme.LocalTokens
+import app.folio.ui.theme.Tokens
 
 @Composable
 fun App() {

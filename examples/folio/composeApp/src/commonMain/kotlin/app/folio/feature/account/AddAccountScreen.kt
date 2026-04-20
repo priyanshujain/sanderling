@@ -24,10 +24,10 @@ import app.folio.ui.ButtonStyle
 import app.folio.ui.ErrorText
 import app.folio.ui.FieldLabel
 import app.folio.ui.Header
-import app.folio.ui.LocalTokens
 import app.folio.ui.Screen
 import app.folio.ui.TextInput
-import app.folio.ui.Type
+import app.folio.ui.theme.LocalTokens
+import app.folio.ui.theme.Type
 
 @Composable
 fun AddAccountScreen() {

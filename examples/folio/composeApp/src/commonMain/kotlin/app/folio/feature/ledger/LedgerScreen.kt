@@ -37,11 +37,11 @@ import app.folio.ui.ButtonStyle
 import app.folio.ui.Card
 import app.folio.ui.EmptyState
 import app.folio.ui.Header
-import app.folio.ui.Icons
-import app.folio.ui.LocalTokens
-import app.folio.ui.RadiusLg
 import app.folio.ui.Screen
-import app.folio.ui.Type
+import app.folio.ui.icon.Icons
+import app.folio.ui.theme.LocalTokens
+import app.folio.ui.theme.RadiusLg
+import app.folio.ui.theme.Type
 
 @Composable
 fun LedgerScreen(accountId: String) {
