@@ -61,11 +61,11 @@ const addTxnHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
   </node>
 </hierarchy>`
 
-// bundleSampleAppSpec bundles examples/sample-app/spec.ts via the real
+// bundleSampleAppSpec bundles examples/folio/spec.ts via the real
 // @uatu/spec API so the integration test exercises the same path the CLI uses.
 func bundleSampleAppSpec(t *testing.T) string {
 	t.Helper()
-	specPath, err := filepath.Abs("../../examples/sample-app/spec.ts")
+	specPath, err := filepath.Abs("../../examples/folio/spec.ts")
 	if err != nil {
 		t.Fatal(err)
 	}

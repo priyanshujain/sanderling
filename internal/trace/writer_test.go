@@ -20,7 +20,7 @@ func TestWriteMeta_RoundTrip(t *testing.T) {
 
 	meta := Meta{
 		Seed:         42,
-		SpecPath:     "examples/sample-app/spec.ts",
+		SpecPath:     "examples/folio/spec.ts",
 		BundleSHA256: "deadbeef",
 		Platform:     "android",
 		BundleID:     "in.okcredit.merchant",

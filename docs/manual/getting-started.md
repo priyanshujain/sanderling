@@ -50,7 +50,7 @@ dependencies {
 
 ## Your first run
 
-The repo ships a working sample at `examples/sample-app`. From that directory:
+The repo ships a working sample at `examples/folio`. From that directory:
 
 ```sh
 npm install
