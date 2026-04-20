@@ -80,6 +80,7 @@ fun AddTransactionPage(accountId: String) {
                 onClick = ::submit,
                 style = ButtonStyle.Primary,
                 enabled = amount.isNotBlank(),
+                description = "txn_submit",
             )
         },
     ) {
@@ -91,6 +92,7 @@ fun AddTransactionPage(accountId: String) {
                 selected = if (type == TxnType.credit) 0 else 1,
                 labels = listOf("Credit", "Debit"),
                 onSelect = { type = if (it == 0) TxnType.credit else TxnType.debit },
+                descriptions = listOf("txn_credit", "txn_debit"),
             )
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 FieldLabel("Amount")
@@ -107,6 +109,7 @@ fun AddTransactionPage(accountId: String) {
                     textAlign = TextAlign.Center,
                     textStyle = Type.amountInput,
                     label = "Amount",
+                    description = "txn_amount",
                 )
             }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -116,6 +119,7 @@ fun AddTransactionPage(accountId: String) {
                     onChange = { note = it.take(80) },
                     placeholder = "What's this for?",
                     label = "Note",
+                    description = "txn_note",
                 )
             }
             ErrorText(err)
