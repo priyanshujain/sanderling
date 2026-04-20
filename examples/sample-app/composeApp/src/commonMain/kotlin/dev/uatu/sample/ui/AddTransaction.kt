@@ -57,6 +57,13 @@ fun AddTransactionPage(accountId: String) {
         onDispose { UiState.txnFormType.value = null }
     }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            UiState.txnError.value = ""
+            UiState.txnAmountInput.value = ""
+        }
+    }
+
     fun submit() {
         val cents = parseCents(amount)
         if (cents == null) {

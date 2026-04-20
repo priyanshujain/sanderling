@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +26,13 @@ fun AddAccountPage() {
     val err by UiState.addAccountError.collectAsState()
 
     BackHandler { Navigator.back(Route.Home) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            UiState.addAccountError.value = ""
+            UiState.accountNameInput.value = ""
+        }
+    }
 
     fun submit() {
         val trimmed = name.trim()

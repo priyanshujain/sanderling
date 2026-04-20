@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,6 +29,14 @@ fun LoginPage(onLoggedIn: (String) -> Unit) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     val err by UiState.loginError.collectAsState()
+
+    DisposableEffect(Unit) {
+        onDispose {
+            UiState.loginError.value = ""
+            UiState.loginEmail.value = ""
+            UiState.loginPasswordLength.value = 0
+        }
+    }
 
     fun submit() {
         if (email.isBlank() || password.isEmpty()) {
