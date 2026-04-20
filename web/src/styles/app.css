@@ -87,60 +87,94 @@ button:hover {
 
 .detail-grid {
   display: grid;
-  grid-template-columns: 280px 1fr 1fr 320px;
-  grid-template-rows: 1fr 200px;
+  grid-template-columns: 340px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto auto;
   grid-template-areas:
-    "actions before after side"
-    "metrics metrics metrics metrics";
+    "actions before after"
+    "properties properties properties"
+    "timeline timeline timeline"
+    "metrics metrics metrics";
   gap: 12px;
-  height: calc(100vh - 60px);
+  min-height: calc(100vh - 60px);
 }
 
 .detail-grid > .detail-actions {
   grid-area: actions;
+  min-height: 0;
+}
+
+.detail-grid > .detail-state-before,
+.detail-grid > .detail-state-after {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
 }
 
 .detail-grid > .detail-state-before {
   grid-area: before;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
 }
 
 .detail-grid > .detail-state-after {
   grid-area: after;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
 }
 
 .detail-grid > .detail-state-before > .screenshot-frame,
 .detail-grid > .detail-state-after > .screenshot-frame,
 .detail-grid > .detail-state-before > .screenshot-placeholder,
 .detail-grid > .detail-state-after > .screenshot-placeholder {
-  flex: 0 0 auto;
-  max-height: 45%;
+  flex: 1 1 auto;
+  max-height: none;
+  max-width: 100%;
   margin: 0 auto;
 }
 
-.detail-grid > .detail-side {
-  grid-area: side;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
+.detail-grid > .detail-properties {
+  grid-area: properties;
+  max-height: 320px;
+  overflow: auto;
 }
 
-.detail-grid > .detail-side > * {
-  min-height: 0;
+.detail-grid > .detail-timeline {
+  grid-area: timeline;
+  max-height: 160px;
   overflow: auto;
+}
+
+.detail-state-snapshots {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.detail-state-snapshots > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 0 6px;
+  list-style: none;
+}
+
+.detail-state-snapshots > summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail-state-snapshots[open] > summary {
+  color: var(--text-primary);
 }
 
 .detail-grid > .detail-metrics {
   grid-area: metrics;
-  overflow: auto;
+  overflow: visible;
+  position: relative;
+}
+
+.detail-metrics-exceptions {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 
 .detail-panel {

@@ -18,6 +18,7 @@ interface RunHistory {
   lanes: PropertyLane[];
   firstViolationStep?: number;
   firstExceptionStep?: number;
+  exceptionStepIndices: number[];
   metricsSamples: MetricsSample[];
   steps: (Step | null)[];
 }
@@ -113,7 +114,6 @@ export default function RunDetail() {
   const violationsBefore = currentStep?.violations ?? [];
   const violationsAfter = nextStep?.violations ?? violationsBefore;
   const residualsBefore = currentStep?.residuals;
-  const residualsAfter = nextStep?.residuals ?? residualsBefore;
   const exceptionsForStep = currentStep?.exceptions;
 
   return (
@@ -148,10 +148,28 @@ export default function RunDetail() {
         <section className="detail-state-before detail-panel">
           <h2>state before</h2>
           <Screenshot src={beforeScreenshot} action={currentStep?.action} />
-          <SnapshotTable
-            snapshots={currentStep?.snapshots}
-            previousSnapshots={previousStep?.snapshots ?? undefined}
-          />
+          <details className="detail-state-snapshots">
+            <summary>snapshots · {violationsBefore.length} violation{violationsBefore.length === 1 ? "" : "s"}</summary>
+            <SnapshotTable
+              snapshots={currentStep?.snapshots}
+              previousSnapshots={previousStep?.snapshots ?? undefined}
+            />
+          </details>
+        </section>
+
+        <section className="detail-state-after detail-panel">
+          <h2>state after</h2>
+          <Screenshot src={afterScreenshot} action={undefined} />
+          <details className="detail-state-snapshots">
+            <summary>snapshots · {violationsAfter.length} violation{violationsAfter.length === 1 ? "" : "s"}</summary>
+            <SnapshotTable
+              snapshots={nextStep?.snapshots ?? currentStep?.snapshots}
+              previousSnapshots={currentStep?.snapshots ?? undefined}
+            />
+          </details>
+        </section>
+
+        <section className="detail-properties detail-panel">
           <ViolationsPanel
             propertyNames={history?.names ?? []}
             violations={violationsBefore}
@@ -161,48 +179,33 @@ export default function RunDetail() {
           />
         </section>
 
-        <section className="detail-state-after detail-panel">
-          <h2>state after</h2>
-          <Screenshot src={afterScreenshot} action={undefined} />
-          <SnapshotTable
-            snapshots={nextStep?.snapshots ?? currentStep?.snapshots}
-            previousSnapshots={currentStep?.snapshots ?? undefined}
-          />
-          <ViolationsPanel
-            propertyNames={history?.names ?? []}
-            violations={violationsAfter}
-            residuals={residualsAfter}
-            onJumpToFirstViolation={jumpToFirstViolation}
-            hasFirstViolation={history?.firstViolationStep !== undefined}
+        <section className="detail-timeline detail-panel">
+          <h2>timeline</h2>
+          <Timeline
+            steps={run.steps}
+            lanes={history?.lanes ?? []}
+            selectedIndex={stepIndex}
+            onSelect={goTo}
           />
         </section>
-
-        <aside className="detail-side">
-          <div className="detail-panel">
-            <h2>exceptions</h2>
-            <ExceptionsPanel
-              exceptions={exceptionsForStep}
-              onJumpToFirstException={jumpToFirstException}
-              hasFirstException={history?.firstExceptionStep !== undefined}
-            />
-          </div>
-          <div className="detail-panel detail-timeline-inline">
-            <h2>timeline</h2>
-            <Timeline
-              steps={run.steps}
-              lanes={history?.lanes ?? []}
-              selectedIndex={stepIndex}
-              onSelect={goTo}
-            />
-          </div>
-        </aside>
 
         <section className="detail-metrics detail-panel">
           <MetricsChart
             samples={history?.metricsSamples ?? []}
             selectedIndex={stepIndex}
             onSelect={goTo}
+            exceptionStepIndices={history?.exceptionStepIndices}
           />
+          {(exceptionsForStep && exceptionsForStep.length > 0) ||
+          history?.firstExceptionStep !== undefined ? (
+            <div className="detail-metrics-exceptions">
+              <ExceptionsPanel
+                exceptions={exceptionsForStep}
+                onJumpToFirstException={jumpToFirstException}
+                hasFirstException={history?.firstExceptionStep !== undefined}
+              />
+            </div>
+          ) : null}
         </section>
       </div>
     </div>
@@ -220,6 +223,9 @@ async function loadHistory(run: Run): Promise<RunHistory> {
   }));
   const firstViolationStep = run.steps.find((entry) => entry.has_violations)?.index;
   const firstExceptionStep = run.steps.find((entry) => entry.has_exceptions)?.index;
+  const exceptionStepIndices = run.steps
+    .filter((entry) => entry.has_exceptions)
+    .map((entry) => entry.index);
   const metricsSamples: MetricsSample[] = run.steps.map((entry, position) => ({
     stepIndex: entry.index,
     timestamp: entry.timestamp,
@@ -230,6 +236,7 @@ async function loadHistory(run: Run): Promise<RunHistory> {
     lanes: sortLanes(lanes),
     firstViolationStep,
     firstExceptionStep,
+    exceptionStepIndices,
     metricsSamples,
     steps: responses,
   };
