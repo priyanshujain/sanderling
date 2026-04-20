@@ -74,6 +74,7 @@ fun LedgerPage(accountId: String) {
                 text = "+ Add transaction",
                 onClick = { Navigator.push(Route.AddTransaction(accountId)) },
                 style = ButtonStyle.Primary,
+                description = "add_txn_button",
             )
         },
     ) {
@@ -103,7 +104,7 @@ fun LedgerPage(accountId: String) {
                     .padding(horizontal = 16.dp),
             ) {
                 txns.forEachIndexed { i, txn ->
-                    TxnRow(txn.type, txn.amount, txn.note, formatDate(txn.createdAt))
+                    TxnRow(txn.id, txn.type, txn.amount, txn.note, formatDate(txn.createdAt))
                     if (i != txns.lastIndex) {
                         Box(Modifier.fillMaxWidth().height(1.dp).background(t.border))
                     }
@@ -114,16 +115,14 @@ fun LedgerPage(accountId: String) {
 }
 
 @Composable
-private fun TxnRow(type: TxnType, amount: Long, note: String, date: String) {
+private fun TxnRow(id: String, type: TxnType, amount: Long, note: String, date: String) {
     val t = LocalTokens.current
     val signed = if (type == TxnType.credit) amount else -amount
-    val label = "${if (type == TxnType.credit) "Credit" else "Debit"} ${formatCents(signed, signed = true)}" +
-        (if (note.isNotEmpty()) ", $note" else "") + ", $date"
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 14.dp)
-            .semantics(mergeDescendants = true) { contentDescription = label },
+            .semantics(mergeDescendants = true) { contentDescription = "txn_row:$id" },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

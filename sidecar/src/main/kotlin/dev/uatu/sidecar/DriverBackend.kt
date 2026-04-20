@@ -89,6 +89,31 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
             return null
         }
 
+        // Hard cap on KEYCODE_DEL events per clear. Guards against a pathological
+        // hierarchy that reports an enormous text length for the focused field.
+        internal const val MAX_CLEAR_DELETES: Int = 1024
+
+        // Matches a uiautomator-dump <node ...> tag where `focused="true"` is
+        // present. Captures only the tag's attribute string so we can pull
+        // `text="..."` out of it without building a full XML tree.
+        private val FOCUSED_NODE = Regex(
+            "<node\\b([^>]*\\bfocused=\"true\"[^>]*)/?>",
+        )
+        private val TEXT_ATTRIBUTE = Regex("\\btext=\"([^\"]*)\"")
+
+        internal fun parseFocusedText(xml: String): String? {
+            val node = FOCUSED_NODE.find(xml) ?: return null
+            val match = TEXT_ATTRIBUTE.find(node.groupValues[1]) ?: return ""
+            return decodeXmlAttribute(match.groupValues[1])
+        }
+
+        private fun decodeXmlAttribute(value: String): String = value
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+
         internal val KEY_MAP: Map<String, String> = mapOf(
             "back" to "KEYCODE_BACK",
             "home" to "KEYCODE_HOME",
@@ -158,7 +183,32 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
 
     override fun inputText(text: String) {
         lastInputText = text
+        // `adb shell input text` types keystrokes at the caret, so repeated
+        // calls append. Clear the focused field first so the caller sees a
+        // pure replace: read the current value's length from the hierarchy,
+        // then move-end + N backspaces before typing.
+        clearFocusedField()
         runAdb(listOf("shell", "input", "text", text.replace(" ", "%s")))
+    }
+
+    private fun clearFocusedField() {
+        val current = focusedFieldText() ?: return
+        if (current.isEmpty()) return
+        val deletes = minOf(current.length, MAX_CLEAR_DELETES)
+        val keyevents = mutableListOf("shell", "input", "keyevent", "KEYCODE_MOVE_END")
+        repeat(deletes) { keyevents.add("KEYCODE_DEL") }
+        runAdb(keyevents)
+    }
+
+    private fun focusedFieldText(): String? {
+        val xml = try {
+            hierarchy()
+        } catch (cause: Exception) {
+            println("inputText: hierarchy dump failed: $cause")
+            return null
+        }
+        if (xml.isBlank() || xml == "<hierarchy/>") return null
+        return parseFocusedText(xml)
     }
 
     @Volatile var lastSwipe: SwipeRecord? = null

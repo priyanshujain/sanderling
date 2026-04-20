@@ -15,8 +15,9 @@ const sampleAppHierarchyXML = `<?xml version="1.0" encoding="UTF-8"?>
   <node index="0" class="android.widget.FrameLayout" package="dev.uatu.sample" bounds="[0,0][1080,2400]">
     <node index="0" class="android.widget.LinearLayout" bounds="[64,96][1016,2336]">
       <node index="0" class="android.widget.TextView" text="Sign in" bounds="[100,200][900,300]" />
-      <node index="1" class="android.widget.EditText" content-desc="phone_field" clickable="true" enabled="true" bounds="[100,400][900,520]" />
-      <node index="2" class="android.widget.Button" text="Continue" clickable="true" enabled="true" bounds="[400,800][680,920]" />
+      <node index="1" class="android.view.View" content-desc="login_email" clickable="true" enabled="true" bounds="[100,400][900,520]" />
+      <node index="2" class="android.view.View" content-desc="login_password" clickable="true" enabled="true" bounds="[100,560][900,680]" />
+      <node index="3" class="android.view.View" content-desc="login_submit" clickable="true" enabled="true" bounds="[100,800][900,920]" />
     </node>
   </node>
 </hierarchy>`
@@ -40,7 +41,7 @@ func bundleSampleAppSpec(t *testing.T) string {
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile: specPath,
 		Aliases: map[string]string{
-			"@uatu/spec":                    apiPath,
+			"@uatu/spec":                     apiPath,
 			"@uatu/spec/defaults/properties": defaultsPath,
 		},
 	})
@@ -50,9 +51,29 @@ func bundleSampleAppSpec(t *testing.T) string {
 	return string(bundle.JavaScript)
 }
 
+func loginSnapshots() Snapshots {
+	return Snapshots{
+		"route":               json.RawMessage(`"login"`),
+		"logged_in":           json.RawMessage(`false`),
+		"auth_status":         json.RawMessage(`"logged-out"`),
+		"account_count":       json.RawMessage(`0`),
+		"accounts":            json.RawMessage(`[]`),
+		"total_balance":       json.RawMessage(`0`),
+		"active_account_id":   json.RawMessage(`null`),
+		"ledger_rows":         json.RawMessage(`[]`),
+		"ledger_balance":      json.RawMessage(`0`),
+		"focused_input":       json.RawMessage(`null`),
+		"txn_form_type":       json.RawMessage(`null`),
+		"txn_form_account_id": json.RawMessage(`null`),
+		"login_error":         json.RawMessage(`""`),
+		"add_account_error":   json.RawMessage(`""`),
+		"txn_error":           json.RawMessage(`""`),
+	}
+}
+
 // TestSampleAppSpecFiresLoginActions verifies the bundled sample-app spec
-// emits Tap/InputText actions targeting the login screen elements when they
-// are present in the hierarchy.
+// emits Tap actions targeting the login screen elements when they are present
+// in the hierarchy.
 func TestSampleAppSpecFiresLoginActions(t *testing.T) {
 	v := newVerifier(t)
 	if err := v.Load(bundleSampleAppSpec(t)); err != nil {
@@ -63,34 +84,29 @@ func TestSampleAppSpecFiresLoginActions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshots := Snapshots{
-		"route":         json.RawMessage(`"login"`),
-		"logged_in":     json.RawMessage(`false`),
-		"account_count": json.RawMessage(`0`),
-	}
-	if err := v.PushSnapshot(SnapshotInput{Snapshots: snapshots, Tree: tree}); err != nil {
+	if err := v.PushSnapshot(SnapshotInput{Snapshots: loginSnapshots(), Tree: tree}); err != nil {
 		t.Fatal(err)
 	}
 
-	tapContinueHits := 0
-	typePhoneHits := 0
+	typeEmailHits := 0
+	tapSubmitHits := 0
 	for range 400 {
 		action, err := v.NextAction()
 		if err != nil {
 			continue
 		}
 		switch {
-		case action.Kind == ActionKindTap && action.On == "text:Continue":
-			tapContinueHits++
-		case action.Kind == ActionKindInputText && action.On == "desc:phone_field":
-			typePhoneHits++
+		case action.Kind == ActionKindInputText && action.On == "desc:login_email":
+			typeEmailHits++
+		case action.Kind == ActionKindTap && action.On == "desc:login_submit":
+			tapSubmitHits++
 		}
 	}
-	if tapContinueHits == 0 {
-		t.Fatal("tapContinue never fired on sample-app hierarchy")
+	if typeEmailHits == 0 {
+		t.Fatal("loginHelper never typed into desc:login_email on sample-app hierarchy")
 	}
-	if typePhoneHits == 0 {
-		t.Fatal("typePhone never fired on sample-app hierarchy")
+	if tapSubmitHits == 0 {
+		t.Fatal("adversarialLogin never tapped desc:login_submit on sample-app hierarchy")
 	}
 }
 
@@ -108,12 +124,7 @@ func TestSampleAppSpecPropertiesEvaluate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshots := Snapshots{
-		"route":         json.RawMessage(`"login"`),
-		"logged_in":     json.RawMessage(`false`),
-		"account_count": json.RawMessage(`0`),
-	}
-	if err := v.PushSnapshot(SnapshotInput{Snapshots: snapshots, Tree: tree}); err != nil {
+	if err := v.PushSnapshot(SnapshotInput{Snapshots: loginSnapshots(), Tree: tree}); err != nil {
 		t.Fatal(err)
 	}
 	verdicts := v.EvaluateProperties()
@@ -123,8 +134,14 @@ func TestSampleAppSpecPropertiesEvaluate(t *testing.T) {
 	if verdicts["noUncaughtExceptions"] != ltl.VerdictHolds {
 		t.Errorf("noUncaughtExceptions: got %v, want holds", verdicts["noUncaughtExceptions"])
 	}
-	// Liveness: eventuallyLoggedIn hasn't resolved yet.
-	if verdicts["eventuallyLoggedIn"] != ltl.VerdictPending {
-		t.Errorf("eventuallyLoggedIn: got %v, want pending", verdicts["eventuallyLoggedIn"])
+	if verdicts["authStatusIsKnown"] != ltl.VerdictHolds {
+		t.Errorf("authStatusIsKnown: got %v, want holds", verdicts["authStatusIsKnown"])
+	}
+	if verdicts["routeIsKnown"] != ltl.VerdictHolds {
+		t.Errorf("routeIsKnown: got %v, want holds", verdicts["routeIsKnown"])
+	}
+	// Liveness: loginReachable hasn't resolved yet.
+	if verdicts["loginReachable"] != ltl.VerdictPending {
+		t.Errorf("loginReachable: got %v, want pending", verdicts["loginReachable"])
 	}
 }

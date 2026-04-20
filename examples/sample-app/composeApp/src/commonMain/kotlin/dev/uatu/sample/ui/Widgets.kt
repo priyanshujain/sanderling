@@ -36,6 +36,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import dev.uatu.sample.FocusTracker
 
 enum class ButtonStyle { Primary, Secondary, Ghost }
 
@@ -46,6 +47,7 @@ fun AppButton(
     modifier: Modifier = Modifier,
     style: ButtonStyle = ButtonStyle.Secondary,
     enabled: Boolean = true,
+    description: String? = null,
 ) {
     val t = LocalTokens.current
     val (bg, fg, border) = when (style) {
@@ -59,6 +61,10 @@ fun AppButton(
             .clip(RoundedCornerShape(RadiusMd))
             .background(if (enabled) bg else t.surface3)
             .border(BorderStroke(1.dp, if (enabled) border else t.border), RoundedCornerShape(RadiusMd))
+            .then(
+                if (description != null) Modifier.semantics { contentDescription = description }
+                else Modifier
+            )
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(vertical = 14.dp, horizontal = 16.dp),
         contentAlignment = Alignment.Center,
@@ -84,6 +90,7 @@ fun TextInput(
     textAlign: TextAlign = TextAlign.Start,
     textStyle: TextStyle = Type.body,
     label: String? = null,
+    description: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val t = LocalTokens.current
@@ -116,9 +123,16 @@ fun TextInput(
             cursorBrush = SolidColor(t.text),
             modifier = Modifier
                 .fillMaxWidth()
-                .onFocusChanged { focused = it.isFocused }
+                .onFocusChanged {
+                    focused = it.isFocused
+                    if (description != null) {
+                        if (it.isFocused) FocusTracker.enter(description)
+                        else FocusTracker.leave(description)
+                    }
+                }
                 .semantics {
-                    if (label != null) contentDescription = label
+                    val desc = description ?: label
+                    if (desc != null) contentDescription = desc
                     if (invalid) stateDescription = "Invalid"
                 },
         )
@@ -155,7 +169,12 @@ fun ErrorText(err: String?) {
 }
 
 @Composable
-fun Segmented(selected: Int, labels: List<String>, onSelect: (Int) -> Unit) {
+fun Segmented(
+    selected: Int,
+    labels: List<String>,
+    onSelect: (Int) -> Unit,
+    descriptions: List<String>? = null,
+) {
     val t = LocalTokens.current
     Row(
         modifier = Modifier
@@ -168,12 +187,16 @@ fun Segmented(selected: Int, labels: List<String>, onSelect: (Int) -> Unit) {
     ) {
         labels.forEachIndexed { i, label ->
             val active = i == selected
+            val desc = descriptions?.getOrNull(i)
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(RadiusSm))
                     .background(if (active) t.surface3 else t.surface)
-                    .semantics { this.selected = active }
+                    .semantics {
+                        this.selected = active
+                        if (desc != null) contentDescription = desc
+                    }
                     .clickable(role = Role.Tab) { onSelect(i) }
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center,

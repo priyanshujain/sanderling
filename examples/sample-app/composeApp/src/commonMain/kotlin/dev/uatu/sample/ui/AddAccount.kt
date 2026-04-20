@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -15,28 +17,34 @@ import androidx.compose.ui.unit.dp
 import dev.uatu.sample.Navigator
 import dev.uatu.sample.Repository
 import dev.uatu.sample.Route
+import dev.uatu.sample.UiState
 
 @Composable
 fun AddAccountPage() {
     val t = LocalTokens.current
     var name by remember { mutableStateOf("") }
-    var err by remember { mutableStateOf<String?>(null) }
+    val err by UiState.addAccountError.collectAsState()
 
     BackHandler { Navigator.back(Route.Home) }
+
+    DisposableEffect(Unit) {
+        onDispose { UiState.addAccountError.value = "" }
+    }
 
     fun submit() {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) {
-            err = "Account name is required"; return
+            UiState.addAccountError.value = "Account name is required"; return
         }
         if (trimmed.length > 40) {
-            err = "Name is too long (max 40 characters)"; return
+            UiState.addAccountError.value = "Name is too long (max 40 characters)"; return
         }
         try {
             Repository.createAccount(trimmed)
+            UiState.addAccountError.value = ""
             Navigator.replace(Route.Home)
         } catch (e: IllegalArgumentException) {
-            err = e.message ?: "Could not create account"
+            UiState.addAccountError.value = e.message ?: "Could not create account"
         }
     }
 
@@ -50,6 +58,7 @@ fun AddAccountPage() {
                 onClick = ::submit,
                 style = ButtonStyle.Primary,
                 enabled = name.trim().isNotEmpty(),
+                description = "add_account_submit",
             )
         },
     ) {
@@ -61,10 +70,11 @@ fun AddAccountPage() {
                 FieldLabel("Account name")
                 TextInput(
                     value = name,
-                    onChange = { name = it; err = null },
+                    onChange = { name = it; UiState.addAccountError.value = "" },
                     placeholder = "e.g. Checking",
-                    invalid = err != null,
+                    invalid = err.isNotEmpty(),
                     label = "Account name",
+                    description = "account_name_field",
                 )
             }
             ErrorText(err)
