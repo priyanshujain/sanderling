@@ -21,7 +21,7 @@ class WebLedgerStore : LedgerStore {
     }
 
     override fun accountExistsByName(name: String): Boolean =
-        _accounts.value.any { it.name == name }
+        _accounts.value.any { it.name.equals(name, ignoreCase = true) }
 
     override fun insertAccount(id: String, name: String, createdAt: Long) {
         _accounts.value = _accounts.value + Account(id, name, createdAt)
