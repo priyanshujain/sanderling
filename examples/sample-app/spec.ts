@@ -1,7 +1,9 @@
 import {
   actions,
   always,
+  eventually,
   extract,
+  next,
   now,
   pressKey,
   swipes,
@@ -184,11 +186,63 @@ const accountingInvariants = {
   uniqueAccountNames,
 };
 
+const accountsOnlyGrow = always(
+  now(() => true).implies(
+    next(() => accounts.current.length >= (accounts.previous?.length ?? 0)),
+  ),
+);
+
+const ledgerOnlyGrowsPerAccount = always(
+  now(() => activeAccountId.current !== null).implies(
+    next(() => {
+      if (activeAccountId.current !== activeAccountId.previous) return true;
+      return ledgerRows.current.length >= (ledgerRows.previous?.length ?? 0);
+    }),
+  ),
+);
+
+const authStatusIsKnown = always(
+  () => authStatus.current === "logged-in" || authStatus.current === "logged-out",
+);
+
+const routeIsKnown = always(() => {
+  const r = route.current;
+  return (
+    r === "login" ||
+    r === "home" ||
+    r === "add-account" ||
+    r === "ledger" ||
+    r === "add-transaction"
+  );
+});
+
+const loggedInLeavesLogin = always(
+  now(() => loggedIn.current).implies(
+    eventually(() => route.current !== "login").within(3, "seconds"),
+  ),
+);
+
+const loggedOutReachesLogin = always(
+  now(() => !loggedIn.current).implies(
+    eventually(() => route.current === "login").within(3, "seconds"),
+  ),
+);
+
+const stateMachine = {
+  accountsOnlyGrow,
+  ledgerOnlyGrowsPerAccount,
+  authStatusIsKnown,
+  routeIsKnown,
+  loggedInLeavesLogin,
+  loggedOutReachesLogin,
+};
+
 const noopAction = actions(() => []);
 
 export const properties = {
   accountCountNonNegative,
   ...accountingInvariants,
+  ...stateMachine,
   noUncaughtExceptions,
   noLogcatErrors,
 };
