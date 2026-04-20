@@ -7,8 +7,9 @@ import Screenshot from "../panels/Screenshot";
 import SnapshotTable from "../panels/SnapshotTable";
 import ViolationsPanel from "../panels/ViolationsPanel";
 import ExceptionsPanel from "../panels/ExceptionsPanel";
-import Timeline, { type LaneStatus, type PropertyLane } from "../panels/Timeline";
+import type { LaneStatus, PropertyLane } from "../panels/Timeline";
 import MetricsChart, { type MetricsSample } from "../panels/MetricsChart";
+import Tabs, { type TabDefinition } from "../components/Tabs";
 import { useStep } from "../hooks/useStep";
 import { useKeyboardNav } from "../hooks/useKeyboardNav";
 import { useTheme } from "../hooks/useTheme";
@@ -19,6 +20,7 @@ interface RunHistory {
   firstViolationStep?: number;
   firstExceptionStep?: number;
   exceptionStepIndices: number[];
+  violationStepIndices: number[];
   metricsSamples: MetricsSample[];
   steps: (Step | null)[];
 }
@@ -114,10 +116,73 @@ export default function RunDetail() {
   const violationsBefore = currentStep?.violations ?? [];
   const violationsAfter = nextStep?.violations ?? violationsBefore;
   const residualsBefore = currentStep?.residuals;
+  const residualsAfter = nextStep?.residuals ?? residualsBefore;
   const exceptionsForStep = currentStep?.exceptions;
 
+  const beforeTabs: TabDefinition[] = [
+    {
+      id: "screenshot",
+      label: "Screenshot",
+      content: <Screenshot src={beforeScreenshot} action={currentStep?.action} />,
+    },
+    {
+      id: "snapshots",
+      label: "Snapshots",
+      content: (
+        <SnapshotTable
+          snapshots={currentStep?.snapshots}
+          previousSnapshots={previousStep?.snapshots ?? undefined}
+        />
+      ),
+    },
+    {
+      id: "properties",
+      label: "Properties",
+      content: (
+        <ViolationsPanel
+          propertyNames={history?.names ?? []}
+          violations={violationsBefore}
+          residuals={residualsBefore}
+          onJumpToFirstViolation={jumpToFirstViolation}
+          hasFirstViolation={history?.firstViolationStep !== undefined}
+        />
+      ),
+    },
+  ];
+
+  const afterTabs: TabDefinition[] = [
+    {
+      id: "screenshot",
+      label: "Screenshot",
+      content: <Screenshot src={afterScreenshot} action={undefined} />,
+    },
+    {
+      id: "snapshots",
+      label: "Snapshots",
+      content: (
+        <SnapshotTable
+          snapshots={nextStep?.snapshots ?? currentStep?.snapshots}
+          previousSnapshots={currentStep?.snapshots ?? undefined}
+        />
+      ),
+    },
+    {
+      id: "properties",
+      label: "Properties",
+      content: (
+        <ViolationsPanel
+          propertyNames={history?.names ?? []}
+          violations={violationsAfter}
+          residuals={residualsAfter}
+          onJumpToFirstViolation={jumpToFirstViolation}
+          hasFirstViolation={history?.firstViolationStep !== undefined}
+        />
+      ),
+    },
+  ];
+
   return (
-    <div>
+    <div className="detail-root">
       <div className="detail-toolbar">
         <div className="detail-toolbar-meta">
           <Link to="/">runs</Link>
@@ -147,46 +212,12 @@ export default function RunDetail() {
 
         <section className="detail-state-before detail-panel">
           <h2>state before</h2>
-          <Screenshot src={beforeScreenshot} action={currentStep?.action} />
-          <details className="detail-state-snapshots">
-            <summary>snapshots · {violationsBefore.length} violation{violationsBefore.length === 1 ? "" : "s"}</summary>
-            <SnapshotTable
-              snapshots={currentStep?.snapshots}
-              previousSnapshots={previousStep?.snapshots ?? undefined}
-            />
-          </details>
+          <Tabs tabs={beforeTabs} defaultTabId="screenshot" ariaLabel="state before" />
         </section>
 
         <section className="detail-state-after detail-panel">
           <h2>state after</h2>
-          <Screenshot src={afterScreenshot} action={undefined} />
-          <details className="detail-state-snapshots">
-            <summary>snapshots · {violationsAfter.length} violation{violationsAfter.length === 1 ? "" : "s"}</summary>
-            <SnapshotTable
-              snapshots={nextStep?.snapshots ?? currentStep?.snapshots}
-              previousSnapshots={currentStep?.snapshots ?? undefined}
-            />
-          </details>
-        </section>
-
-        <section className="detail-properties detail-panel">
-          <ViolationsPanel
-            propertyNames={history?.names ?? []}
-            violations={violationsBefore}
-            residuals={residualsBefore}
-            onJumpToFirstViolation={jumpToFirstViolation}
-            hasFirstViolation={history?.firstViolationStep !== undefined}
-          />
-        </section>
-
-        <section className="detail-timeline detail-panel">
-          <h2>timeline</h2>
-          <Timeline
-            steps={run.steps}
-            lanes={history?.lanes ?? []}
-            selectedIndex={stepIndex}
-            onSelect={goTo}
-          />
+          <Tabs tabs={afterTabs} defaultTabId="screenshot" ariaLabel="state after" />
         </section>
 
         <section className="detail-metrics detail-panel">
@@ -195,6 +226,8 @@ export default function RunDetail() {
             selectedIndex={stepIndex}
             onSelect={goTo}
             exceptionStepIndices={history?.exceptionStepIndices}
+            violationStepIndices={history?.violationStepIndices}
+            propertyLanes={history?.lanes}
           />
           {(exceptionsForStep && exceptionsForStep.length > 0) ||
           history?.firstExceptionStep !== undefined ? (
@@ -226,6 +259,9 @@ async function loadHistory(run: Run): Promise<RunHistory> {
   const exceptionStepIndices = run.steps
     .filter((entry) => entry.has_exceptions)
     .map((entry) => entry.index);
+  const violationStepIndices = run.steps
+    .filter((entry) => entry.has_violations)
+    .map((entry) => entry.index);
   const metricsSamples: MetricsSample[] = run.steps.map((entry, position) => ({
     stepIndex: entry.index,
     timestamp: entry.timestamp,
@@ -237,6 +273,7 @@ async function loadHistory(run: Run): Promise<RunHistory> {
     firstViolationStep,
     firstExceptionStep,
     exceptionStepIndices,
+    violationStepIndices,
     metricsSamples,
     steps: responses,
   };

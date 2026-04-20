@@ -18,7 +18,6 @@ export default function App() {
   return (
     <BrowserRouter>
       <div className="app-shell">
-        <header className="app-header">uatu inspect</header>
         <main className="app-main">
           <Routes>
             <Route path="/" element={<RunList />} />
