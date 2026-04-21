@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/priyanshujain/uatu/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
 // TestStateAxFindWorks verifies that a Parse+PushSnapshot+extract round trip

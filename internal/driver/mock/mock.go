@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/priyanshujain/uatu/internal/driver"
+	"github.com/priyanshujain/sanderling/internal/driver"
 )
 
 type ActionKind string

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/priyanshujain/uatu/internal/driver"
+	"github.com/priyanshujain/sanderling/internal/driver"
 )
 
 func TestNew_Defaults(t *testing.T) {

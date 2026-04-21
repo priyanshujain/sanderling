@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/priyanshujain/uatu/internal/trace"
+	"github.com/priyanshujain/sanderling/internal/trace"
 )
 
 // Maximum size of a single trace.jsonl line. Hierarchies and snapshots

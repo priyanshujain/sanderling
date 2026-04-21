@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/priyanshujain/uatu/internal/driver"
-	driverpb "github.com/priyanshujain/uatu/proto/driverpb"
+	"github.com/priyanshujain/sanderling/internal/driver"
+	driverpb "github.com/priyanshujain/sanderling/proto/driverpb"
 )
 
 type Client struct {

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/priyanshujain/uatu/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
 type Step struct {

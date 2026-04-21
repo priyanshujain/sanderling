@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/priyanshujain/uatu/internal/inspect"
+	"github.com/priyanshujain/sanderling/internal/inspect"
 )
 
 type inspectOptions struct {

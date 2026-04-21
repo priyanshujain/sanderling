@@ -8,8 +8,8 @@ import (
 
 	"github.com/dop251/goja"
 
-	"github.com/priyanshujain/uatu/internal/hierarchy"
-	"github.com/priyanshujain/uatu/internal/ltl"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/ltl"
 )
 
 type Verifier struct {

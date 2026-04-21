@@ -7,7 +7,7 @@ import (
 
 	"github.com/dop251/goja"
 
-	"github.com/priyanshujain/uatu/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
 // Snapshots is the per-step extractor output forwarded by the SDK.

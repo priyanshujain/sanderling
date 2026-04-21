@@ -12,13 +12,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/priyanshujain/uatu/internal/agent"
-	"github.com/priyanshujain/uatu/internal/bundler"
-	"github.com/priyanshujain/uatu/internal/driver/maestro"
-	"github.com/priyanshujain/uatu/internal/runner"
-	"github.com/priyanshujain/uatu/internal/sidecar"
-	"github.com/priyanshujain/uatu/internal/trace"
-	"github.com/priyanshujain/uatu/internal/verifier"
+	"github.com/priyanshujain/sanderling/internal/agent"
+	"github.com/priyanshujain/sanderling/internal/bundler"
+	"github.com/priyanshujain/sanderling/internal/driver/maestro"
+	"github.com/priyanshujain/sanderling/internal/runner"
+	"github.com/priyanshujain/sanderling/internal/sidecar"
+	"github.com/priyanshujain/sanderling/internal/trace"
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
 const (

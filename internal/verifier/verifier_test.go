@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/priyanshujain/uatu/internal/ltl"
+	"github.com/priyanshujain/sanderling/internal/ltl"
 )
 
 func newVerifier(t *testing.T, options ...Option) *Verifier {

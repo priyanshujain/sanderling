@@ -8,12 +8,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/priyanshujain/uatu/internal/agent"
-	"github.com/priyanshujain/uatu/internal/driver"
-	"github.com/priyanshujain/uatu/internal/hierarchy"
-	"github.com/priyanshujain/uatu/internal/ltl"
-	"github.com/priyanshujain/uatu/internal/trace"
-	"github.com/priyanshujain/uatu/internal/verifier"
+	"github.com/priyanshujain/sanderling/internal/agent"
+	"github.com/priyanshujain/sanderling/internal/driver"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/ltl"
+	"github.com/priyanshujain/sanderling/internal/trace"
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
 type Options struct {

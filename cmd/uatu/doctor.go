@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/priyanshujain/uatu/internal/sidecar"
+	"github.com/priyanshujain/sanderling/internal/sidecar"
 )
 
 type doctorCheck struct {

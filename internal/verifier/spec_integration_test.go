@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/priyanshujain/uatu/internal/bundler"
-	"github.com/priyanshujain/uatu/internal/hierarchy"
-	"github.com/priyanshujain/uatu/internal/ltl"
+	"github.com/priyanshujain/sanderling/internal/bundler"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/ltl"
 )
 
 // bundleIntegrationSpec bundles testdata/integration_spec.ts via the real

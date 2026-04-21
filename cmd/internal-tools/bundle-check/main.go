@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/priyanshujain/uatu/internal/bundler"
+	"github.com/priyanshujain/sanderling/internal/bundler"
 )
 
 func main() {

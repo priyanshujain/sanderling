@@ -917,7 +917,7 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"\vWaitForIdle\x12\x18.uatu.driver.v1.Duration\x1a\x15.uatu.driver.v1.Empty\x12=\n" +
 	"\x06Health\x12\x15.uatu.driver.v1.Empty\x1a\x1c.uatu.driver.v1.HealthStatus\x12J\n" +
 	"\aMetrics\x12\x1e.uatu.driver.v1.MetricsRequest\x1a\x1f.uatu.driver.v1.MetricsResponseBM\n" +
-	"\x12dev.uatu.driver.v1P\x01Z5github.com/priyanshujain/uatu/proto/driverpb;driverpbb\x06proto3"
+	"\x12dev.uatu.driver.v1P\x01Z5github.com/priyanshujain/sanderling/proto/driverpb;driverpbb\x06proto3"
 
 var (
 	file_driverpb_driver_proto_rawDescOnce sync.Once

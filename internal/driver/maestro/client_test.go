@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	driverpb "github.com/priyanshujain/uatu/proto/driverpb"
+	driverpb "github.com/priyanshujain/sanderling/proto/driverpb"
 )
 
 type fakeServer struct {

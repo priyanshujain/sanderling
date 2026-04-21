@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/priyanshujain/uatu/internal/trace"
+	"github.com/priyanshujain/sanderling/internal/trace"
 )
 
 func newFixtureServer(t *testing.T) (*Server, string) {
