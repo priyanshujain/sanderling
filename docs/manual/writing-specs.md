@@ -7,7 +7,7 @@ title: Writing specs
 A spec has three parts: extractors, properties, and actions.
 
 ```ts
-import { extract, always, actions, weighted, Tap, taps, swipes } from "@sanderling/spec";
+import { extract, always, now, actions, weighted, Tap, taps, swipes } from "@sanderling/spec";
 
 // 1. Extractors pull values from each observed state.
 const loggedIn = extract((s) => !!s.ax.find("id:home-tab-bar"));
@@ -105,39 +105,29 @@ Session state (tokens, keychain, prefs) persists through the rest of the run. If
 
 ## Pattern: conditional properties
 
-Use gating extractors the same way inside properties. Express "only check X when Y holds":
+Use gating extractors the same way inside properties. Express "only check X when Y holds" with `now(...).implies(...)`:
 
 ```ts
 const loggedIn = extract((s) => !!s.ax.find("id:home-tab-bar"));
 
 export const properties = {
-  cartPersistsWhenLoggedIn: always(() => {
-    if (!loggedIn.current) return true;
-    return state.snapshots.cart_count !== undefined;
-  }),
+  cartPersistsWhenLoggedIn: always(
+    now(() => loggedIn.current).implies(now(() => cartCount.current !== undefined)),
+  ),
 };
 ```
 
-When `implies` ships in v0.1.0, this becomes:
+`implies`, `and`, `or`, and `not` are methods on any formula. Combine them freely.
 
-```ts
-cartPersistsWhenLoggedIn: always(() =>
-  implies(loggedIn.current, () => cartCount.current !== undefined)
-),
-```
-
-## Pattern: eventually (once the operator lands)
+## Pattern: eventually
 
 `always` asserts something holds at every step. `eventually` asserts it holds at some step, usually with a time bound:
 
 ```ts
-// v0.1.0+
-loginSucceedsWithin30s: eventually(
-  () => loggedIn.current
-).within(30, "seconds"),
+loginSucceedsWithin30s: eventually(() => loggedIn.current).within(30, "seconds"),
 ```
 
-Useful for liveness checks: the loading spinner eventually goes away, the deep link eventually lands on `/home`.
+`within` takes `"milliseconds"`, `"seconds"`, or `"steps"`. Useful for liveness checks: the loading spinner eventually goes away, the deep link eventually lands on `/home`.
 
 ## Pattern: snapshot-backed properties
 
