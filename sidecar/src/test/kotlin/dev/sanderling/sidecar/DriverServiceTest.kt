@@ -1,14 +1,14 @@
 package dev.sanderling.sidecar
 
-import dev.uatu.driver.v1.DriverGrpc
-import dev.uatu.driver.v1.Duration
-import dev.uatu.driver.v1.Empty
-import dev.uatu.driver.v1.LaunchRequest
-import dev.uatu.driver.v1.Point
-import dev.uatu.driver.v1.PressKeyRequest
-import dev.uatu.driver.v1.RecentLogsRequest
-import dev.uatu.driver.v1.SwipeRequest
-import dev.uatu.driver.v1.Text
+import dev.sanderling.driver.v1.DriverGrpc
+import dev.sanderling.driver.v1.Duration
+import dev.sanderling.driver.v1.Empty
+import dev.sanderling.driver.v1.LaunchRequest
+import dev.sanderling.driver.v1.Point
+import dev.sanderling.driver.v1.PressKeyRequest
+import dev.sanderling.driver.v1.RecentLogsRequest
+import dev.sanderling.driver.v1.SwipeRequest
+import dev.sanderling.driver.v1.Text
 import io.grpc.ManagedChannel
 import io.grpc.inprocess.InProcessChannelBuilder
 import io.grpc.inprocess.InProcessServerBuilder

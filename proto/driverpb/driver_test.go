@@ -8,7 +8,7 @@ import (
 
 func TestDriverServiceDescriptor(t *testing.T) {
 	var sd grpc.ServiceDesc = Driver_ServiceDesc
-	if sd.ServiceName != "uatu.driver.v1.Driver" {
+	if sd.ServiceName != "sanderling.driver.v1.Driver" {
 		t.Fatalf("unexpected service name: %q", sd.ServiceName)
 	}
 

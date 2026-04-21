@@ -19,19 +19,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Driver_Launch_FullMethodName      = "/uatu.driver.v1.Driver/Launch"
-	Driver_Terminate_FullMethodName   = "/uatu.driver.v1.Driver/Terminate"
-	Driver_Tap_FullMethodName         = "/uatu.driver.v1.Driver/Tap"
-	Driver_TapSelector_FullMethodName = "/uatu.driver.v1.Driver/TapSelector"
-	Driver_InputText_FullMethodName   = "/uatu.driver.v1.Driver/InputText"
-	Driver_Swipe_FullMethodName       = "/uatu.driver.v1.Driver/Swipe"
-	Driver_PressKey_FullMethodName    = "/uatu.driver.v1.Driver/PressKey"
-	Driver_Screenshot_FullMethodName  = "/uatu.driver.v1.Driver/Screenshot"
-	Driver_Hierarchy_FullMethodName   = "/uatu.driver.v1.Driver/Hierarchy"
-	Driver_RecentLogs_FullMethodName  = "/uatu.driver.v1.Driver/RecentLogs"
-	Driver_WaitForIdle_FullMethodName = "/uatu.driver.v1.Driver/WaitForIdle"
-	Driver_Health_FullMethodName      = "/uatu.driver.v1.Driver/Health"
-	Driver_Metrics_FullMethodName     = "/uatu.driver.v1.Driver/Metrics"
+	Driver_Launch_FullMethodName      = "/sanderling.driver.v1.Driver/Launch"
+	Driver_Terminate_FullMethodName   = "/sanderling.driver.v1.Driver/Terminate"
+	Driver_Tap_FullMethodName         = "/sanderling.driver.v1.Driver/Tap"
+	Driver_TapSelector_FullMethodName = "/sanderling.driver.v1.Driver/TapSelector"
+	Driver_InputText_FullMethodName   = "/sanderling.driver.v1.Driver/InputText"
+	Driver_Swipe_FullMethodName       = "/sanderling.driver.v1.Driver/Swipe"
+	Driver_PressKey_FullMethodName    = "/sanderling.driver.v1.Driver/PressKey"
+	Driver_Screenshot_FullMethodName  = "/sanderling.driver.v1.Driver/Screenshot"
+	Driver_Hierarchy_FullMethodName   = "/sanderling.driver.v1.Driver/Hierarchy"
+	Driver_RecentLogs_FullMethodName  = "/sanderling.driver.v1.Driver/RecentLogs"
+	Driver_WaitForIdle_FullMethodName = "/sanderling.driver.v1.Driver/WaitForIdle"
+	Driver_Health_FullMethodName      = "/sanderling.driver.v1.Driver/Health"
+	Driver_Metrics_FullMethodName     = "/sanderling.driver.v1.Driver/Metrics"
 )
 
 // DriverClient is the client API for Driver service.
@@ -516,7 +516,7 @@ func _Driver_Metrics_Handler(srv interface{}, ctx context.Context, dec func(inte
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Driver_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "uatu.driver.v1.Driver",
+	ServiceName: "sanderling.driver.v1.Driver",
 	HandlerType: (*DriverServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
