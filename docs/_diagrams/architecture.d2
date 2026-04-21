@@ -1,0 +1,60 @@
+grid-rows: 2
+grid-gap: 60
+
+test_run: {
+  label: "Test run"
+  grid-rows: 2
+  grid-gap: 90
+
+  go_binary: sanderling (Go) {
+    direction: right
+
+    bundler: Bundler\nesbuild
+    verifier: Verifier\ngoja + LTL
+    runner: Runner
+    driver: Driver
+    trace: Trace writer\nJSONL + PNG
+
+    bundler -> verifier
+    verifier <-> runner
+    runner -> driver
+    runner -> trace
+  }
+
+  platform: {
+    label: ""
+    direction: right
+    style.stroke-width: 0
+    style.fill: transparent
+
+    sidecar: Maestro sidecar (JVM) {
+      maestro: maestro-client
+    }
+
+    device: Emulator / device {
+      sdk: sanderling-sdk\npause / state\ncoverage / logs
+    }
+
+    sidecar.maestro -> device.sdk: UIAutomator
+  }
+
+  go_binary.driver -> platform.sidecar.maestro: gRPC
+  go_binary.runner -> platform.device.sdk: Unix socket
+}
+
+viewer: {
+  label: "Inspect"
+  grid-columns: 3
+  grid-gap: 40
+
+  runs: runs/ {
+    shape: cylinder
+  }
+  inspect: sanderling inspect\nHTTP + SSE
+  web: Web UI (React)
+
+  runs -> inspect
+  inspect -> web
+}
+
+test_run.go_binary.trace -> viewer.runs
