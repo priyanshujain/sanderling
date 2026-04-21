@@ -345,11 +345,11 @@ func TestRunner_StampsHierarchyResolvedBoundsAndResiduals(t *testing.T) {
 	if !strings.Contains(text, `"selector":"id:next"`) {
 		t.Errorf("expected selector in trace: %s", text)
 	}
-	if !strings.Contains(text, `"resolvedBounds":{"x":40,"y":80,"width":200,"height":80}`) {
-		t.Errorf("expected resolvedBounds in trace: %s", text)
+	if !strings.Contains(text, `"resolved_bounds":{"x":40,"y":80,"width":200,"height":80}`) {
+		t.Errorf("expected resolved_bounds in trace: %s", text)
 	}
-	if !strings.Contains(text, `"tapPoint":{"x":140,"y":120}`) {
-		t.Errorf("expected tapPoint in trace: %s", text)
+	if !strings.Contains(text, `"tap_point":{"x":140,"y":120}`) {
+		t.Errorf("expected tap_point in trace: %s", text)
 	}
 	if !strings.Contains(text, `"hierarchy":{"elements":`) {
 		t.Errorf("expected hierarchy in trace: %s", text)

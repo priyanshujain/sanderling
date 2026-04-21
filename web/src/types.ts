@@ -87,8 +87,8 @@ export interface Action {
   text?: string;
   duration_millis?: number;
   selector?: string;
-  resolvedBounds?: BoundsRecord;
-  tapPoint?: PointRecord;
+  resolved_bounds?: BoundsRecord;
+  tap_point?: PointRecord;
 }
 
 export interface Exception {

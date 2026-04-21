@@ -124,10 +124,10 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 		t.Errorf("selector = %q", got.Action.Selector)
 	}
 	if got.Action.ResolvedBounds == nil || got.Action.ResolvedBounds.Width != 100 {
-		t.Errorf("resolvedBounds round-trip wrong: %+v", got.Action.ResolvedBounds)
+		t.Errorf("resolved_bounds round-trip wrong: %+v", got.Action.ResolvedBounds)
 	}
 	if got.Action.TapPoint == nil || got.Action.TapPoint.X != 60 {
-		t.Errorf("tapPoint round-trip wrong: %+v", got.Action.TapPoint)
+		t.Errorf("tap_point round-trip wrong: %+v", got.Action.TapPoint)
 	}
 	if string(got.Residuals["prop1"]) != `{"op":"true"}` {
 		t.Errorf("residuals round-trip wrong: %s", got.Residuals["prop1"])

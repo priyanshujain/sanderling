@@ -42,8 +42,8 @@ export default function Screenshot({ src, action, deviceWidth, deviceHeight }: S
   const arrowHeadSize = Math.max(18, width / 40);
   const spotlightRadius = tapRadius * 3;
 
-  const bounds = action?.resolvedBounds;
-  const tap = action?.tapPoint;
+  const bounds = action?.resolved_bounds;
+  const tap = action?.tap_point;
   const isSwipe =
     action?.kind === "Swipe" &&
     action.from_x !== undefined &&

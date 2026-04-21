@@ -126,8 +126,8 @@ function positionTextForStep(step: Step): string | null {
   if (!action) {
     return null;
   }
-  if (action.tapPoint) {
-    return `${action.tapPoint.x.toFixed(1)}, ${action.tapPoint.y.toFixed(1)}`;
+  if (action.tap_point) {
+    return `${action.tap_point.x.toFixed(1)}, ${action.tap_point.y.toFixed(1)}`;
   }
   if (typeof action.x === "number" && typeof action.y === "number") {
     return `${action.x.toFixed(1)}, ${action.y.toFixed(1)}`;

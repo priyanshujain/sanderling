@@ -43,8 +43,8 @@ type Action struct {
 	Text           string        `json:"text,omitempty"`
 	DurationMillis int           `json:"duration_millis,omitempty"`
 	Selector       string        `json:"selector,omitempty"`
-	ResolvedBounds *BoundsRecord `json:"resolvedBounds,omitempty"`
-	TapPoint       *PointRecord  `json:"tapPoint,omitempty"`
+	ResolvedBounds *BoundsRecord `json:"resolved_bounds,omitempty"`
+	TapPoint       *PointRecord  `json:"tap_point,omitempty"`
 }
 
 type BoundsRecord struct {
