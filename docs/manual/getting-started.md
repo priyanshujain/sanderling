@@ -18,21 +18,11 @@ Run `sanderling doctor` to check the host environment.
 
 ### CLI
 
-macOS arm64:
-
 ```sh
-curl -L https://github.com/priyanshujain/sanderling/releases/latest/download/sanderling_<version>_darwin_arm64.tar.gz | tar xz
-./sanderling version
+curl -fsSL https://raw.githubusercontent.com/priyanshujain/sanderling/master/install.sh | bash
 ```
 
-Linux amd64:
-
-```sh
-curl -L https://github.com/priyanshujain/sanderling/releases/latest/download/sanderling_<version>_linux_amd64.tar.gz | tar xz
-./sanderling version
-```
-
-Pre-built for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`.
+Installs into `$HOME/.sanderling/bin`. Override the location with `SANDERLING_INSTALL`, or pin a tag with `SANDERLING_VERSION=v0.0.1-rc3`. Pre-built for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`.
 
 ### Spec package (npm)
 
