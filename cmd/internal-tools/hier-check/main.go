@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/priyanshujain/uatu/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
 func main() {

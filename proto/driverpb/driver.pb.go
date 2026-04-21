@@ -849,7 +849,7 @@ var File_driverpb_driver_proto protoreflect.FileDescriptor
 
 const file_driverpb_driver_proto_rawDesc = "" +
 	"\n" +
-	"\x15driverpb/driver.proto\x12\x0euatu.driver.v1\"\a\n" +
+	"\x15driverpb/driver.proto\x12\x14sanderling.driver.v1\"\a\n" +
 	"\x05Empty\"z\n" +
 	"\rLaunchRequest\x12\x1b\n" +
 	"\tbundle_id\x18\x01 \x01(\tR\bbundleId\x12\x1f\n" +
@@ -874,19 +874,19 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"\fHealthStatus\x12\x14\n" +
 	"\x05ready\x18\x01 \x01(\bR\x05ready\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1a\n" +
-	"\bplatform\x18\x03 \x01(\tR\bplatform\"\x89\x01\n" +
-	"\fSwipeRequest\x12)\n" +
-	"\x04from\x18\x01 \x01(\v2\x15.uatu.driver.v1.PointR\x04from\x12%\n" +
-	"\x02to\x18\x02 \x01(\v2\x15.uatu.driver.v1.PointR\x02to\x12'\n" +
+	"\bplatform\x18\x03 \x01(\tR\bplatform\"\x95\x01\n" +
+	"\fSwipeRequest\x12/\n" +
+	"\x04from\x18\x01 \x01(\v2\x1b.sanderling.driver.v1.PointR\x04from\x12+\n" +
+	"\x02to\x18\x02 \x01(\v2\x1b.sanderling.driver.v1.PointR\x02to\x12'\n" +
 	"\x0fduration_millis\x18\x03 \x01(\x03R\x0edurationMillis\"#\n" +
 	"\x0fPressKeyRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\"e\n" +
 	"\x11RecentLogsRequest\x12*\n" +
 	"\x11since_unix_millis\x18\x01 \x01(\x03R\x0fsinceUnixMillis\x12$\n" +
-	"\x0elevel_at_least\x18\x02 \x01(\tR\flevelAtLeast\"@\n" +
+	"\x0elevel_at_least\x18\x02 \x01(\tR\flevelAtLeast\"F\n" +
 	"\n" +
-	"LogEntries\x122\n" +
-	"\aentries\x18\x01 \x03(\v2\x18.uatu.driver.v1.LogEntryR\aentries\"m\n" +
+	"LogEntries\x128\n" +
+	"\aentries\x18\x01 \x03(\v2\x1e.sanderling.driver.v1.LogEntryR\aentries\"m\n" +
 	"\bLogEntry\x12\x1f\n" +
 	"\vunix_millis\x18\x01 \x01(\x03R\n" +
 	"unixMillis\x12\x14\n" +
@@ -900,24 +900,24 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"cpuPercent\x12\x1d\n" +
 	"\n" +
 	"heap_bytes\x18\x02 \x01(\x03R\theapBytes\x12,\n" +
-	"\x12total_memory_bytes\x18\x03 \x01(\x03R\x10totalMemoryBytes2\xcb\x06\n" +
-	"\x06Driver\x12>\n" +
-	"\x06Launch\x12\x1d.uatu.driver.v1.LaunchRequest\x1a\x15.uatu.driver.v1.Empty\x129\n" +
-	"\tTerminate\x12\x15.uatu.driver.v1.Empty\x1a\x15.uatu.driver.v1.Empty\x123\n" +
-	"\x03Tap\x12\x15.uatu.driver.v1.Point\x1a\x15.uatu.driver.v1.Empty\x12>\n" +
-	"\vTapSelector\x12\x18.uatu.driver.v1.Selector\x1a\x15.uatu.driver.v1.Empty\x128\n" +
-	"\tInputText\x12\x14.uatu.driver.v1.Text\x1a\x15.uatu.driver.v1.Empty\x12<\n" +
-	"\x05Swipe\x12\x1c.uatu.driver.v1.SwipeRequest\x1a\x15.uatu.driver.v1.Empty\x12B\n" +
-	"\bPressKey\x12\x1f.uatu.driver.v1.PressKeyRequest\x1a\x15.uatu.driver.v1.Empty\x12:\n" +
+	"\x12total_memory_bytes\x18\x03 \x01(\x03R\x10totalMemoryBytes2\xe7\a\n" +
+	"\x06Driver\x12J\n" +
+	"\x06Launch\x12#.sanderling.driver.v1.LaunchRequest\x1a\x1b.sanderling.driver.v1.Empty\x12E\n" +
+	"\tTerminate\x12\x1b.sanderling.driver.v1.Empty\x1a\x1b.sanderling.driver.v1.Empty\x12?\n" +
+	"\x03Tap\x12\x1b.sanderling.driver.v1.Point\x1a\x1b.sanderling.driver.v1.Empty\x12J\n" +
+	"\vTapSelector\x12\x1e.sanderling.driver.v1.Selector\x1a\x1b.sanderling.driver.v1.Empty\x12D\n" +
+	"\tInputText\x12\x1a.sanderling.driver.v1.Text\x1a\x1b.sanderling.driver.v1.Empty\x12H\n" +
+	"\x05Swipe\x12\".sanderling.driver.v1.SwipeRequest\x1a\x1b.sanderling.driver.v1.Empty\x12N\n" +
+	"\bPressKey\x12%.sanderling.driver.v1.PressKeyRequest\x1a\x1b.sanderling.driver.v1.Empty\x12F\n" +
 	"\n" +
-	"Screenshot\x12\x15.uatu.driver.v1.Empty\x1a\x15.uatu.driver.v1.Image\x12A\n" +
-	"\tHierarchy\x12\x15.uatu.driver.v1.Empty\x1a\x1d.uatu.driver.v1.HierarchyJSON\x12K\n" +
+	"Screenshot\x12\x1b.sanderling.driver.v1.Empty\x1a\x1b.sanderling.driver.v1.Image\x12M\n" +
+	"\tHierarchy\x12\x1b.sanderling.driver.v1.Empty\x1a#.sanderling.driver.v1.HierarchyJSON\x12W\n" +
 	"\n" +
-	"RecentLogs\x12!.uatu.driver.v1.RecentLogsRequest\x1a\x1a.uatu.driver.v1.LogEntries\x12>\n" +
-	"\vWaitForIdle\x12\x18.uatu.driver.v1.Duration\x1a\x15.uatu.driver.v1.Empty\x12=\n" +
-	"\x06Health\x12\x15.uatu.driver.v1.Empty\x1a\x1c.uatu.driver.v1.HealthStatus\x12J\n" +
-	"\aMetrics\x12\x1e.uatu.driver.v1.MetricsRequest\x1a\x1f.uatu.driver.v1.MetricsResponseBM\n" +
-	"\x12dev.uatu.driver.v1P\x01Z5github.com/priyanshujain/uatu/proto/driverpb;driverpbb\x06proto3"
+	"RecentLogs\x12'.sanderling.driver.v1.RecentLogsRequest\x1a .sanderling.driver.v1.LogEntries\x12J\n" +
+	"\vWaitForIdle\x12\x1e.sanderling.driver.v1.Duration\x1a\x1b.sanderling.driver.v1.Empty\x12I\n" +
+	"\x06Health\x12\x1b.sanderling.driver.v1.Empty\x1a\".sanderling.driver.v1.HealthStatus\x12V\n" +
+	"\aMetrics\x12$.sanderling.driver.v1.MetricsRequest\x1a%.sanderling.driver.v1.MetricsResponseBY\n" +
+	"\x18dev.sanderling.driver.v1P\x01Z;github.com/priyanshujain/sanderling/proto/driverpb;driverpbb\x06proto3"
 
 var (
 	file_driverpb_driver_proto_rawDescOnce sync.Once
@@ -933,53 +933,53 @@ func file_driverpb_driver_proto_rawDescGZIP() []byte {
 
 var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_driverpb_driver_proto_goTypes = []any{
-	(*Empty)(nil),             // 0: uatu.driver.v1.Empty
-	(*LaunchRequest)(nil),     // 1: uatu.driver.v1.LaunchRequest
-	(*Point)(nil),             // 2: uatu.driver.v1.Point
-	(*Text)(nil),              // 3: uatu.driver.v1.Text
-	(*Selector)(nil),          // 4: uatu.driver.v1.Selector
-	(*Image)(nil),             // 5: uatu.driver.v1.Image
-	(*HierarchyJSON)(nil),     // 6: uatu.driver.v1.HierarchyJSON
-	(*Duration)(nil),          // 7: uatu.driver.v1.Duration
-	(*HealthStatus)(nil),      // 8: uatu.driver.v1.HealthStatus
-	(*SwipeRequest)(nil),      // 9: uatu.driver.v1.SwipeRequest
-	(*PressKeyRequest)(nil),   // 10: uatu.driver.v1.PressKeyRequest
-	(*RecentLogsRequest)(nil), // 11: uatu.driver.v1.RecentLogsRequest
-	(*LogEntries)(nil),        // 12: uatu.driver.v1.LogEntries
-	(*LogEntry)(nil),          // 13: uatu.driver.v1.LogEntry
-	(*MetricsRequest)(nil),    // 14: uatu.driver.v1.MetricsRequest
-	(*MetricsResponse)(nil),   // 15: uatu.driver.v1.MetricsResponse
+	(*Empty)(nil),             // 0: sanderling.driver.v1.Empty
+	(*LaunchRequest)(nil),     // 1: sanderling.driver.v1.LaunchRequest
+	(*Point)(nil),             // 2: sanderling.driver.v1.Point
+	(*Text)(nil),              // 3: sanderling.driver.v1.Text
+	(*Selector)(nil),          // 4: sanderling.driver.v1.Selector
+	(*Image)(nil),             // 5: sanderling.driver.v1.Image
+	(*HierarchyJSON)(nil),     // 6: sanderling.driver.v1.HierarchyJSON
+	(*Duration)(nil),          // 7: sanderling.driver.v1.Duration
+	(*HealthStatus)(nil),      // 8: sanderling.driver.v1.HealthStatus
+	(*SwipeRequest)(nil),      // 9: sanderling.driver.v1.SwipeRequest
+	(*PressKeyRequest)(nil),   // 10: sanderling.driver.v1.PressKeyRequest
+	(*RecentLogsRequest)(nil), // 11: sanderling.driver.v1.RecentLogsRequest
+	(*LogEntries)(nil),        // 12: sanderling.driver.v1.LogEntries
+	(*LogEntry)(nil),          // 13: sanderling.driver.v1.LogEntry
+	(*MetricsRequest)(nil),    // 14: sanderling.driver.v1.MetricsRequest
+	(*MetricsResponse)(nil),   // 15: sanderling.driver.v1.MetricsResponse
 }
 var file_driverpb_driver_proto_depIdxs = []int32{
-	2,  // 0: uatu.driver.v1.SwipeRequest.from:type_name -> uatu.driver.v1.Point
-	2,  // 1: uatu.driver.v1.SwipeRequest.to:type_name -> uatu.driver.v1.Point
-	13, // 2: uatu.driver.v1.LogEntries.entries:type_name -> uatu.driver.v1.LogEntry
-	1,  // 3: uatu.driver.v1.Driver.Launch:input_type -> uatu.driver.v1.LaunchRequest
-	0,  // 4: uatu.driver.v1.Driver.Terminate:input_type -> uatu.driver.v1.Empty
-	2,  // 5: uatu.driver.v1.Driver.Tap:input_type -> uatu.driver.v1.Point
-	4,  // 6: uatu.driver.v1.Driver.TapSelector:input_type -> uatu.driver.v1.Selector
-	3,  // 7: uatu.driver.v1.Driver.InputText:input_type -> uatu.driver.v1.Text
-	9,  // 8: uatu.driver.v1.Driver.Swipe:input_type -> uatu.driver.v1.SwipeRequest
-	10, // 9: uatu.driver.v1.Driver.PressKey:input_type -> uatu.driver.v1.PressKeyRequest
-	0,  // 10: uatu.driver.v1.Driver.Screenshot:input_type -> uatu.driver.v1.Empty
-	0,  // 11: uatu.driver.v1.Driver.Hierarchy:input_type -> uatu.driver.v1.Empty
-	11, // 12: uatu.driver.v1.Driver.RecentLogs:input_type -> uatu.driver.v1.RecentLogsRequest
-	7,  // 13: uatu.driver.v1.Driver.WaitForIdle:input_type -> uatu.driver.v1.Duration
-	0,  // 14: uatu.driver.v1.Driver.Health:input_type -> uatu.driver.v1.Empty
-	14, // 15: uatu.driver.v1.Driver.Metrics:input_type -> uatu.driver.v1.MetricsRequest
-	0,  // 16: uatu.driver.v1.Driver.Launch:output_type -> uatu.driver.v1.Empty
-	0,  // 17: uatu.driver.v1.Driver.Terminate:output_type -> uatu.driver.v1.Empty
-	0,  // 18: uatu.driver.v1.Driver.Tap:output_type -> uatu.driver.v1.Empty
-	0,  // 19: uatu.driver.v1.Driver.TapSelector:output_type -> uatu.driver.v1.Empty
-	0,  // 20: uatu.driver.v1.Driver.InputText:output_type -> uatu.driver.v1.Empty
-	0,  // 21: uatu.driver.v1.Driver.Swipe:output_type -> uatu.driver.v1.Empty
-	0,  // 22: uatu.driver.v1.Driver.PressKey:output_type -> uatu.driver.v1.Empty
-	5,  // 23: uatu.driver.v1.Driver.Screenshot:output_type -> uatu.driver.v1.Image
-	6,  // 24: uatu.driver.v1.Driver.Hierarchy:output_type -> uatu.driver.v1.HierarchyJSON
-	12, // 25: uatu.driver.v1.Driver.RecentLogs:output_type -> uatu.driver.v1.LogEntries
-	0,  // 26: uatu.driver.v1.Driver.WaitForIdle:output_type -> uatu.driver.v1.Empty
-	8,  // 27: uatu.driver.v1.Driver.Health:output_type -> uatu.driver.v1.HealthStatus
-	15, // 28: uatu.driver.v1.Driver.Metrics:output_type -> uatu.driver.v1.MetricsResponse
+	2,  // 0: sanderling.driver.v1.SwipeRequest.from:type_name -> sanderling.driver.v1.Point
+	2,  // 1: sanderling.driver.v1.SwipeRequest.to:type_name -> sanderling.driver.v1.Point
+	13, // 2: sanderling.driver.v1.LogEntries.entries:type_name -> sanderling.driver.v1.LogEntry
+	1,  // 3: sanderling.driver.v1.Driver.Launch:input_type -> sanderling.driver.v1.LaunchRequest
+	0,  // 4: sanderling.driver.v1.Driver.Terminate:input_type -> sanderling.driver.v1.Empty
+	2,  // 5: sanderling.driver.v1.Driver.Tap:input_type -> sanderling.driver.v1.Point
+	4,  // 6: sanderling.driver.v1.Driver.TapSelector:input_type -> sanderling.driver.v1.Selector
+	3,  // 7: sanderling.driver.v1.Driver.InputText:input_type -> sanderling.driver.v1.Text
+	9,  // 8: sanderling.driver.v1.Driver.Swipe:input_type -> sanderling.driver.v1.SwipeRequest
+	10, // 9: sanderling.driver.v1.Driver.PressKey:input_type -> sanderling.driver.v1.PressKeyRequest
+	0,  // 10: sanderling.driver.v1.Driver.Screenshot:input_type -> sanderling.driver.v1.Empty
+	0,  // 11: sanderling.driver.v1.Driver.Hierarchy:input_type -> sanderling.driver.v1.Empty
+	11, // 12: sanderling.driver.v1.Driver.RecentLogs:input_type -> sanderling.driver.v1.RecentLogsRequest
+	7,  // 13: sanderling.driver.v1.Driver.WaitForIdle:input_type -> sanderling.driver.v1.Duration
+	0,  // 14: sanderling.driver.v1.Driver.Health:input_type -> sanderling.driver.v1.Empty
+	14, // 15: sanderling.driver.v1.Driver.Metrics:input_type -> sanderling.driver.v1.MetricsRequest
+	0,  // 16: sanderling.driver.v1.Driver.Launch:output_type -> sanderling.driver.v1.Empty
+	0,  // 17: sanderling.driver.v1.Driver.Terminate:output_type -> sanderling.driver.v1.Empty
+	0,  // 18: sanderling.driver.v1.Driver.Tap:output_type -> sanderling.driver.v1.Empty
+	0,  // 19: sanderling.driver.v1.Driver.TapSelector:output_type -> sanderling.driver.v1.Empty
+	0,  // 20: sanderling.driver.v1.Driver.InputText:output_type -> sanderling.driver.v1.Empty
+	0,  // 21: sanderling.driver.v1.Driver.Swipe:output_type -> sanderling.driver.v1.Empty
+	0,  // 22: sanderling.driver.v1.Driver.PressKey:output_type -> sanderling.driver.v1.Empty
+	5,  // 23: sanderling.driver.v1.Driver.Screenshot:output_type -> sanderling.driver.v1.Image
+	6,  // 24: sanderling.driver.v1.Driver.Hierarchy:output_type -> sanderling.driver.v1.HierarchyJSON
+	12, // 25: sanderling.driver.v1.Driver.RecentLogs:output_type -> sanderling.driver.v1.LogEntries
+	0,  // 26: sanderling.driver.v1.Driver.WaitForIdle:output_type -> sanderling.driver.v1.Empty
+	8,  // 27: sanderling.driver.v1.Driver.Health:output_type -> sanderling.driver.v1.HealthStatus
+	15, // 28: sanderling.driver.v1.Driver.Metrics:output_type -> sanderling.driver.v1.MetricsResponse
 	16, // [16:29] is the sub-list for method output_type
 	3,  // [3:16] is the sub-list for method input_type
 	3,  // [3:3] is the sub-list for extension type_name

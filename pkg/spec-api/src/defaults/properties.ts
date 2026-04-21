@@ -4,7 +4,7 @@ import type { Formula } from "../types.ts";
 
 const exceptionCount = extract<number>((state) => state.exceptions.length);
 
-// Fails when the SDK captured an uncaught throwable or a Uatu.reportError
+// Fails when the SDK captured an uncaught throwable or a Sanderling.reportError
 // call surfaced one during the run.
 export const noUncaughtExceptions: Formula = always(
   () => exceptionCount.current === 0,

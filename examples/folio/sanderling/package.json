@@ -1,0 +1,8 @@
+{
+  "name": "folio",
+  "private": true,
+  "description": "Minimal sanderling integration example.",
+  "devDependencies": {
+    "@sanderling/spec": "next"
+  }
+}

@@ -11,18 +11,18 @@ import app.folio.navigation.Navigator
 import app.folio.navigation.Route
 import app.folio.platform.balanceOf
 import app.folio.platform.signedAmount
-import dev.uatu.sdk.Uatu
+import dev.sanderling.sdk.Sanderling
 
 class FolioApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         AndroidLedgerContext.context = applicationContext
         Repository.init()
-        Uatu.start(this)
-        Uatu.extract("logged_in") { Repository.session.value != null }
-        Uatu.extract("account_count") { Repository.accounts.value.size }
-        Uatu.extract("total_balance") { balanceOf(Repository.transactions.value) }
-        Uatu.extract("route") {
+        Sanderling.start(this)
+        Sanderling.extract("logged_in") { Repository.session.value != null }
+        Sanderling.extract("account_count") { Repository.accounts.value.size }
+        Sanderling.extract("total_balance") { balanceOf(Repository.transactions.value) }
+        Sanderling.extract("route") {
             when (Navigator.current.value) {
                 Route.Login -> "login"
                 Route.Home -> "home"
@@ -31,10 +31,10 @@ class FolioApplication : Application() {
                 is Route.AddTransaction -> "add-transaction"
             }
         }
-        Uatu.extract("auth_status") {
+        Sanderling.extract("auth_status") {
             if (Repository.session.value != null) "logged-in" else "logged-out"
         }
-        Uatu.extract("accounts") {
+        Sanderling.extract("accounts") {
             val txns = Repository.transactions.value
             Repository.accounts.value.map { a ->
                 val rows = txns.filter { it.accountId == a.id }
@@ -46,14 +46,14 @@ class FolioApplication : Application() {
                 )
             }
         }
-        Uatu.extract("active_account_id") {
+        Sanderling.extract("active_account_id") {
             when (val r = Navigator.current.value) {
                 is Route.Ledger -> r.accountId
                 is Route.AddTransaction -> r.accountId
                 else -> null
             }
         }
-        Uatu.extract("ledger_rows") {
+        Sanderling.extract("ledger_rows") {
             val active = when (val r = Navigator.current.value) {
                 is Route.Ledger -> r.accountId
                 is Route.AddTransaction -> r.accountId
@@ -72,7 +72,7 @@ class FolioApplication : Application() {
                     )
                 }
         }
-        Uatu.extract("ledger_balance") {
+        Sanderling.extract("ledger_balance") {
             val active = when (val r = Navigator.current.value) {
                 is Route.Ledger -> r.accountId
                 is Route.AddTransaction -> r.accountId
@@ -81,13 +81,13 @@ class FolioApplication : Application() {
             if (active == null) 0L
             else balanceOf(Repository.transactions.value.filter { it.accountId == active })
         }
-        Uatu.extract("focused_input") { FocusTracker.current.value }
-        Uatu.extract("txn_form_type") { AddTransactionUiState.txnFormType.value }
-        Uatu.extract("txn_form_account_id") {
+        Sanderling.extract("focused_input") { FocusTracker.current.value }
+        Sanderling.extract("txn_form_type") { AddTransactionUiState.txnFormType.value }
+        Sanderling.extract("txn_form_account_id") {
             (Navigator.current.value as? Route.AddTransaction)?.accountId
         }
-        Uatu.extract("login_error") { LoginUiState.loginError.value }
-        Uatu.extract("add_account_error") { AddAccountUiState.addAccountError.value }
-        Uatu.extract("txn_error") { AddTransactionUiState.txnError.value }
+        Sanderling.extract("login_error") { LoginUiState.loginError.value }
+        Sanderling.extract("add_account_error") { AddAccountUiState.addAccountError.value }
+        Sanderling.extract("txn_error") { AddTransactionUiState.txnError.value }
     }
 }

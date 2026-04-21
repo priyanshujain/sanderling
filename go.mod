@@ -1,4 +1,4 @@
-module github.com/priyanshujain/uatu
+module github.com/priyanshujain/sanderling
 
 go 1.26.1
 

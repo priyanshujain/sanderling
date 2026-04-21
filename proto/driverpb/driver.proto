@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-package uatu.driver.v1;
+package sanderling.driver.v1;
 
-option go_package = "github.com/priyanshujain/uatu/proto/driverpb;driverpb";
-option java_package = "dev.uatu.driver.v1";
+option go_package = "github.com/priyanshujain/sanderling/proto/driverpb;driverpb";
+option java_package = "dev.sanderling.driver.v1";
 option java_multiple_files = true;
 
 service Driver {

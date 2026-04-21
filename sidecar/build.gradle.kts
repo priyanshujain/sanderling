@@ -7,7 +7,7 @@ plugins {
     id("com.google.protobuf") version "0.9.5"
 }
 
-version = findProperty("uatu.version") as String? ?: "0.0.0-dev"
+version = findProperty("sanderling.version") as String? ?: "0.0.0-dev"
 
 java {
     toolchain {
@@ -70,7 +70,7 @@ sourceSets {
 }
 
 application {
-    mainClass.set("dev.uatu.sidecar.MainKt")
+    mainClass.set("dev.sanderling.sidecar.MainKt")
 }
 
 // The Go binary embeds this fat JAR by fixed path (internal/sidecar/assets/

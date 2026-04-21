@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@uatu/inspect-web",
+      "name": "@sanderling/inspect-web",
       "dependencies": {
         "react": "^18.3.1",
         "react-dom": "^18.3.1",

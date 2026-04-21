@@ -10,11 +10,11 @@ plugins {
     id("org.jetbrains.dokka-javadoc") version "2.2.0"
 }
 
-version = findProperty("uatu.version") as String? ?: "0.0.0-dev"
+version = findProperty("sanderling.version") as String? ?: "0.0.0-dev"
 group = "io.github.priyanshujain"
 
 android {
-    namespace = "dev.uatu.sdk"
+    namespace = "dev.sanderling.sdk"
     compileSdk = 35
 
     defaultConfig {
@@ -61,12 +61,12 @@ mavenPublishing {
     )
 
     pom {
-        name.set("uatu sdk-android")
+        name.set("sanderling sdk-android")
         description.set(
-            "Android runtime SDK for uatu, a property-based UI fuzzer for mobile apps. " +
-                "Exposes a content-provider accessibility bridge consumed by the uatu CLI at test time.",
+            "Android runtime SDK for sanderling, a property-based UI fuzzer for mobile apps. " +
+                "Exposes a content-provider accessibility bridge consumed by the sanderling CLI at test time.",
         )
-        url.set("https://github.com/priyanshujain/uatu")
+        url.set("https://github.com/priyanshujain/sanderling")
 
         licenses {
             license {
@@ -85,9 +85,9 @@ mavenPublishing {
         }
 
         scm {
-            url.set("https://github.com/priyanshujain/uatu")
-            connection.set("scm:git:git://github.com/priyanshujain/uatu.git")
-            developerConnection.set("scm:git:ssh://git@github.com/priyanshujain/uatu.git")
+            url.set("https://github.com/priyanshujain/sanderling")
+            connection.set("scm:git:git://github.com/priyanshujain/sanderling.git")
+            developerConnection.set("scm:git:ssh://git@github.com/priyanshujain/sanderling.git")
         }
     }
 }

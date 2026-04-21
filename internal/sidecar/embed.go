@@ -23,12 +23,12 @@ func EmbeddedSHA256() string {
 // matching checksum, no rewrite happens. Returns the JAR path.
 func Extract(dir string) (string, error) {
 	if len(embeddedJAR) == 0 {
-		return "", errors.New("sidecar: binary built without -tags withsidecar; rebuild with `make uatu`")
+		return "", errors.New("sidecar: binary built without -tags withsidecar; rebuild with `make sanderling`")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir %s: %w", dir, err)
 	}
-	jarPath := filepath.Join(dir, "uatu-sidecar.jar")
+	jarPath := filepath.Join(dir, "sanderling-sidecar.jar")
 	checksumPath := jarPath + ".sha256"
 	checksum := EmbeddedSHA256()
 

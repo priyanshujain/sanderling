@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 export type ThemeMode = "light" | "dark";
-const STORAGE_KEY = "uatu-inspect-theme";
+const STORAGE_KEY = "sanderling-inspect-theme";
 
 function detectInitial(): ThemeMode {
   if (typeof window === "undefined") {

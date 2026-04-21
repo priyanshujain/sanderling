@@ -25,7 +25,7 @@ func TestExtract_WritesJARAndChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != filepath.Join(directory, "uatu-sidecar.jar") {
+	if path != filepath.Join(directory, "sanderling-sidecar.jar") {
 		t.Errorf("unexpected path: %s", path)
 	}
 	body, err := os.ReadFile(path)

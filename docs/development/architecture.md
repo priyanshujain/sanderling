@@ -8,7 +8,7 @@ Three processes, two transports.
 
 ```mermaid
 flowchart TB
-    subgraph Go["uatu (Go)"]
+    subgraph Go["sanderling (Go)"]
         Bundler[Bundler<br/>esbuild] --> Verifier[Verifier<br/>goja + LTL]
         Verifier <--> Runner[Runner]
         Runner --> Trace[Trace writer<br/>JSONL + PNG]
@@ -21,7 +21,7 @@ flowchart TB
 
     subgraph Device["Emulator"]
         subgraph App["Android app (debug)"]
-            SDK[uatu-sdk<br/>pause / hierarchy<br/>logs / coverage]
+            SDK[sanderling-sdk<br/>pause / hierarchy<br/>logs / coverage]
         end
     end
 
@@ -33,7 +33,7 @@ flowchart TB
 
 ## Processes
 
-**uatu (Go).** The top-level binary. Bundles the spec with esbuild, evaluates it in goja, runs the main loop, dispatches actions through the driver, writes the trace.
+**sanderling (Go).** The top-level binary. Bundles the spec with esbuild, evaluates it in goja, runs the main loop, dispatches actions through the driver, writes the trace.
 
 **Maestro sidecar (JVM).** A Kotlin process that wraps `maestro-client` and exposes a gRPC surface matching the `driver.Driver` interface. Handles UI input, screenshots, the system accessibility tree, and OS-level alerts.
 

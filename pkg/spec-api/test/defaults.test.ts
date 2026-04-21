@@ -9,11 +9,11 @@ import type {
   Formula,
   Sampler,
   State,
-  UatuRuntime,
+  SanderlingRuntime,
   WeightedEntry,
 } from "../src/types.ts";
 
-interface RecordedRuntime extends UatuRuntime {
+interface RecordedRuntime extends SanderlingRuntime {
   currentState: State;
   extractors: Array<(state: State) => unknown>;
   alwaysArgs: Array<(() => boolean) | Formula>;
@@ -43,17 +43,17 @@ function installRuntime(initialState: State): RecordedRuntime {
       if (typeof predicateOrFormula === "function") {
         lastPredicate = predicateOrFormula;
       }
-      return { __uatuFormula: true } as Formula;
+      return { __sanderlingFormula: true } as Formula;
     },
-    now: () => ({ __uatuFormula: true } as Formula),
-    next: () => ({ __uatuFormula: true } as Formula),
-    eventually: () => ({ __uatuFormula: true } as EventuallyFormula),
+    now: () => ({ __sanderlingFormula: true } as Formula),
+    next: () => ({ __sanderlingFormula: true } as Formula),
+    eventually: () => ({ __sanderlingFormula: true } as EventuallyFormula),
     actions: (generator: () => Action[]): ActionGenerator => ({
-      __uatuActionGenerator: true,
+      __sanderlingActionGenerator: true,
       generate: generator,
     }),
     weighted: (..._entries: WeightedEntry[]): ActionGenerator => ({
-      __uatuActionGenerator: true,
+      __sanderlingActionGenerator: true,
       generate: () => [],
     }),
     from: <T>(_items: readonly T[]): Sampler<T> => ({ generate: () => _items[0] as T }),
@@ -62,11 +62,11 @@ function installRuntime(initialState: State): RecordedRuntime {
     swipe: (p) => ({ kind: "Swipe", from: p.from, to: p.to, durationMillis: p.durationMillis }),
     pressKey: ({ key }) => ({ kind: "PressKey", key }),
     wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
-    taps: { __uatuActionGenerator: true, generate: () => [] } as ActionGenerator,
-    swipes: { __uatuActionGenerator: true, generate: () => [] } as ActionGenerator,
-    waitOnce: { __uatuActionGenerator: true, generate: () => [] } as ActionGenerator,
-    pressKeys: { __uatuActionGenerator: true, generate: () => [] } as ActionGenerator,
-  } satisfies UatuRuntime;
+    taps: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    swipes: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    waitOnce: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    pressKeys: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+  } satisfies SanderlingRuntime;
 
   const state = { currentState: initialState };
   const recorded = Object.assign(runtime, {
@@ -77,7 +77,7 @@ function installRuntime(initialState: State): RecordedRuntime {
       return lastPredicate;
     },
   }) as unknown as RecordedRuntime;
-  globalThis.__uatu__ = recorded;
+  globalThis.__sanderling__ = recorded;
   // Re-bind state ref so subsequent extract() calls read the up-to-date state.
   Object.defineProperty(recorded, "currentState", {
     get() {
@@ -105,6 +105,6 @@ test("defaults bundle exports formulas tagged as LTL properties", async () => {
     logs: [{ unixMillis: 1, level: "W", tag: "X", message: "warn" }],
   });
   const defaults = await import("../src/defaults/properties.ts");
-  assert.equal(defaults.noUncaughtExceptions.__uatuFormula, true);
-  assert.equal(defaults.noLogcatErrors.__uatuFormula, true);
+  assert.equal(defaults.noUncaughtExceptions.__sanderlingFormula, true);
+  assert.equal(defaults.noLogcatErrors.__sanderlingFormula, true);
 });

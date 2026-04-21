@@ -25,7 +25,7 @@ func TestWriteMeta_RoundTrip(t *testing.T) {
 		Platform:     "android",
 		BundleID:     "in.okcredit.merchant",
 		StartedAt:    time.Date(2026, 4, 17, 22, 30, 0, 0, time.UTC),
-		UatuVersion:  "0.0.1",
+		SanderlingVersion:  "0.0.1",
 	}
 	if err := writer.WriteMeta(meta); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestWriteMeta_EndedAtRoundTrip(t *testing.T) {
 		BundleID:    "in.test",
 		StartedAt:   time.Date(2026, 4, 17, 22, 30, 0, 0, time.UTC),
 		EndedAt:     &endedAt,
-		UatuVersion: "0.0.1",
+		SanderlingVersion: "0.0.1",
 	}
 	if err := writer.WriteMeta(meta); err != nil {
 		t.Fatal(err)

@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.browser.localStorage
 
-private const val STORAGE_KEY = "uatu.ledger.v1"
+private const val STORAGE_KEY = "sanderling.ledger.v1"
 
 class WebLedgerStore : LedgerStore {
     private val _accounts = MutableStateFlow<List<Account>>(emptyList())

@@ -4,14 +4,14 @@ title: Runs
 
 # What is a run?
 
-One `uatu test` invocation. Fresh install, spec-driven exploration, then the trace lands in `runs/<timestamp>/`. Typically minutes to hours, not seconds.
+One `sanderling test` invocation. Fresh install, spec-driven exploration, then the trace lands in `runs/<timestamp>/`. Typically minutes to hours, not seconds.
 
 A run is not analogous to a unit test. A closer framing is: boot a fuzzer for an hour and see what breaks. Violations are recorded in the trace and exploration continues, so one run can surface many bugs.
 
 ## Lifecycle
 
 ```
-uatu test --spec spec.ts --bundle-id com.example.app --duration 30m
+sanderling test --spec spec.ts --bundle-id com.example.app --duration 30m
   │
   ├── uninstall and reinstall the app (clean slate, every run)
   ├── boot the sidecar, connect the agent socket
@@ -28,7 +28,7 @@ uatu test --spec spec.ts --bundle-id com.example.app --duration 30m
 
 ## Why runs are long and linear
 
-uatu does not restart the app every N steps. Each restart throws away two things.
+sanderling does not restart the app every N steps. Each restart throws away two things.
 
 **Novelty and coverage signal.** The exploration strategy weights actions by whether they reach previously unseen state. Restarting resets that history.
 
@@ -62,4 +62,4 @@ A run ends when either of these happens.
 
 The trace is written incrementally, so an interrupted run is still fully inspectable.
 
-Additional termination conditions (`--max-steps`, `--exit-on-violation`, hard crash handling) land in [v0.1.0](https://github.com/priyanshujain/uatu/issues/4).
+Additional termination conditions (`--max-steps`, `--exit-on-violation`, hard crash handling) land in [v0.1.0](https://github.com/priyanshujain/sanderling/issues/4).

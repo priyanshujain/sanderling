@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/priyanshujain/uatu/internal/ltl"
+	"github.com/priyanshujain/sanderling/internal/ltl"
 )
 
 func newVerifier(t *testing.T, options ...Option) *Verifier {
@@ -27,18 +27,18 @@ func mustLoad(t *testing.T, verifier *Verifier, source string) {
 }
 
 const helloSpec = `
-const screen = __uatu__.extract(state => state.snapshots.screen ?? "");
-const balance = __uatu__.extract(state => state.snapshots["ledger.balance"] ?? 0);
+const screen = __sanderling__.extract(state => state.snapshots.screen ?? "");
+const balance = __sanderling__.extract(state => state.snapshots["ledger.balance"] ?? 0);
 
 globalThis.screen = screen;
 globalThis.balance = balance;
 
 globalThis.properties = {
-  balanceNonNegative: __uatu__.always(() => balance.current >= 0),
+  balanceNonNegative: __sanderling__.always(() => balance.current >= 0),
 };
 
-globalThis.actions = __uatu__.actions(() => [
-  __uatu__.tap({ on: "id:home_button" }),
+globalThis.actions = __sanderling__.actions(() => [
+  __sanderling__.tap({ on: "id:home_button" }),
 ]);
 `
 
@@ -135,9 +135,9 @@ func TestNextAction_FromActionsGenerator(t *testing.T) {
 func TestNextAction_WeightedSelectsByWeight(t *testing.T) {
 	verifier := newVerifier(t, WithRand(rand.New(rand.NewPCG(42, 0))))
 	mustLoad(t, verifier, `
-		const tapHome = __uatu__.actions(() => [__uatu__.tap({ on: "id:home" })]);
-		const tapAway = __uatu__.actions(() => [__uatu__.tap({ on: "id:away" })]);
-		globalThis.actions = __uatu__.weighted(
+		const tapHome = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:home" })]);
+		const tapAway = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:away" })]);
+		globalThis.actions = __sanderling__.weighted(
 			[1, tapHome],
 			[99, tapAway],
 		);
@@ -166,7 +166,7 @@ func TestNextAction_WeightedSelectsByWeight(t *testing.T) {
 func TestNextAction_EmptyGeneratorReturnsErrNoAction(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, `
-		globalThis.actions = __uatu__.actions(() => []);
+		globalThis.actions = __sanderling__.actions(() => []);
 	`)
 	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
 
@@ -179,8 +179,8 @@ func TestNextAction_EmptyGeneratorReturnsErrNoAction(t *testing.T) {
 func TestInputText_RoundTrip(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, `
-		globalThis.actions = __uatu__.actions(() => [
-			__uatu__.inputText({ into: "id:phone", text: "+919876543210" }),
+		globalThis.actions = __sanderling__.actions(() => [
+			__sanderling__.inputText({ into: "id:phone", text: "+919876543210" }),
 		]);
 	`)
 	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
@@ -200,7 +200,7 @@ func TestInputText_RoundTrip(t *testing.T) {
 func TestPushSnapshot_FeedsSnapshotsToExtractorState(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, `
-		globalThis.captured = __uatu__.extract(state => state.snapshots["k"]);
+		globalThis.captured = __sanderling__.extract(state => state.snapshots["k"]);
 	`)
 	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"k": json.RawMessage(`"hello"`)}}); err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestLoad_PropagatesSyntaxError(t *testing.T) {
 func TestEvaluateProperties_ThrowingPredicateDoesNotPanic(t *testing.T) {
 	const spec = `
 globalThis.properties = {
-  broken: __uatu__.always(() => { throw new Error("bad predicate"); }),
+  broken: __sanderling__.always(() => { throw new Error("bad predicate"); }),
 };
 `
 	verifier := newVerifier(t)

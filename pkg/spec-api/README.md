@@ -1,19 +1,19 @@
-# @uatu/spec
+# @sanderling/spec
 
-TypeScript spec API for [uatu](https://github.com/priyanshujain/uatu), a property-based UI fuzzer for mobile apps.
+TypeScript spec API for [sanderling](https://github.com/priyanshujain/sanderling), a property-based UI fuzzer for mobile apps.
 
-Spec authors write specs in TypeScript that describe what an app should *always* do (safety invariants), generate weighted actions to exercise the app, and extract structured state from the accessibility tree. The `uatu` CLI picks up the spec and drives the app under test.
+Spec authors write specs in TypeScript that describe what an app should *always* do (safety invariants), generate weighted actions to exercise the app, and extract structured state from the accessibility tree. The `sanderling` CLI picks up the spec and drives the app under test.
 
 ## Install
 
 ```sh
-npm install --save-dev @uatu/spec
+npm install --save-dev @sanderling/spec
 ```
 
 ## Usage
 
 ```ts
-import { extract, always, actions, Tap, weighted } from "@uatu/spec";
+import { extract, always, actions, Tap, weighted } from "@sanderling/spec";
 
 export const spec = {
   extract: extract((tree) => ({
@@ -32,7 +32,7 @@ export const spec = {
 
 ## Version compatibility
 
-`@uatu/spec` is released in lockstep with the uatu CLI. Pin the same major/minor version as your installed `uatu` binary.
+`@sanderling/spec` is released in lockstep with the sanderling CLI. Pin the same major/minor version as your installed `sanderling` binary.
 
 ## License
 

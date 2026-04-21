@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/priyanshujain/uatu/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
 // TestStateAxFindWorks verifies that a Parse+PushSnapshot+extract round trip
@@ -24,11 +24,11 @@ func TestStateAxFindWorks(t *testing.T) {
 
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, `
-		globalThis.probe = __uatu__.extract(state => {
+		globalThis.probe = __sanderling__.extract(state => {
 			const element = state.ax.find("id:select_language");
 			return element ? "matched:" + element.text : "miss";
 		});
-		globalThis.count = __uatu__.extract(state => state.ax.findAll("id:select_language").length);
+		globalThis.count = __sanderling__.extract(state => state.ax.findAll("id:select_language").length);
 	`)
 
 	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {

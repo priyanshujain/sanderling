@@ -7,7 +7,7 @@ title: Writing specs
 A spec has three parts: extractors, properties, and actions.
 
 ```ts
-import { extract, always, actions, weighted, Tap, taps, swipes } from "@uatu/spec";
+import { extract, always, actions, weighted, Tap, taps, swipes } from "@sanderling/spec";
 
 // 1. Extractors pull values from each observed state.
 const loggedIn = extract((s) => !!s.ax.find("id:home-tab-bar"));
@@ -18,7 +18,7 @@ export const properties = {
   cartNeverNegative: always(() => cartCount.current >= 0),
 };
 
-// 3. Actions are a weighted tree of what uatu is allowed to do.
+// 3. Actions are a weighted tree of what sanderling is allowed to do.
 export const actions = weighted(
   [10, taps],
   [2, swipes],
@@ -45,11 +45,11 @@ interface State {
 
 `ax.find("text:Click me")`, `ax.find("id:login-form")`, `ax.findAll("role:todo-row")` are the common accessors. Prefer stable testID-style identifiers over positional selectors, for the same reason you would in Espresso or XCUITest.
 
-`snapshots` is populated by the in-app SDK via `Uatu.extract("name") { value }`. Use it when the UI does not expose a value you need, such as business-logic state or hidden fields.
+`snapshots` is populated by the in-app SDK via `Sanderling.extract("name") { value }`. Use it when the UI does not expose a value you need, such as business-logic state or hidden fields.
 
 ## Pattern: preconditions (login, onboarding)
 
-uatu has no setup phase and no fixtures. Preconditions are action generators with two properties:
+sanderling has no setup phase and no fixtures. Preconditions are action generators with two properties:
 
 1. High weight, so they fire whenever applicable.
 2. Gated on a state extractor, so they return an empty tree when not applicable and self-disable once the precondition is met.
@@ -145,7 +145,7 @@ When the UI does not expose a value but the app knows it, use the SDK's extracto
 
 ```kotlin
 // in the app (Android)
-Uatu.extract("cart_count") { store.cart.size }
+Sanderling.extract("cart_count") { store.cart.size }
 ```
 
 ```ts

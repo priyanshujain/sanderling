@@ -1,7 +1,7 @@
 {
-  "name": "@uatu/spec",
+  "name": "@sanderling/spec",
   "version": "0.0.0-dev",
-  "description": "TypeScript spec API for uatu, a property-based UI fuzzer for mobile apps.",
+  "description": "TypeScript spec API for sanderling, a property-based UI fuzzer for mobile apps.",
   "type": "module",
   "types": "./dist/index.d.ts",
   "main": "./dist/index.js",
@@ -21,12 +21,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/priyanshujain/uatu.git",
+    "url": "git+https://github.com/priyanshujain/sanderling.git",
     "directory": "pkg/spec-api"
   },
-  "homepage": "https://github.com/priyanshujain/uatu",
+  "homepage": "https://github.com/priyanshujain/sanderling",
   "bugs": {
-    "url": "https://github.com/priyanshujain/uatu/issues"
+    "url": "https://github.com/priyanshujain/sanderling/issues"
   },
   "license": "Apache-2.0",
   "author": "Priyanshu Jain",
