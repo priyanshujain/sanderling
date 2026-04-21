@@ -35,11 +35,11 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	}
 	aliases := map[string]string{}
 	if specApiPath := resolveSpecAPIPath(options.spec); specApiPath != "" {
-		aliases["@uatu/spec"] = specApiPath
+		aliases["@sanderling/spec"] = specApiPath
 		// Also alias published subpath exports so specs importing from
-		// "@uatu/spec/defaults/properties" resolve to the in-tree source.
+		// "@sanderling/spec/defaults/properties" resolve to the in-tree source.
 		base := filepath.Dir(specApiPath)
-		aliases["@uatu/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
+		aliases["@sanderling/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
 	}
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile: options.spec,
@@ -213,7 +213,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 
 // resolveSpecAPIPath returns the path to pkg/spec-api/src/index.ts inside
 // a uatu source checkout, searched upward from the spec file and the cwd.
-// Returns "" when not found, in which case esbuild resolves @uatu/spec via
+// Returns "" when not found, in which case esbuild resolves @sanderling/spec via
 // node_modules the way a downstream user's project would.
 func resolveSpecAPIPath(specPath string) string {
 	candidates := []string{}

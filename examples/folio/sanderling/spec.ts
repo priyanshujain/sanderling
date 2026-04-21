@@ -13,8 +13,8 @@ import {
   taps,
   waitOnce,
   weighted,
-} from "@uatu/spec";
-import { noUncaughtExceptions } from "@uatu/spec/defaults/properties";
+} from "@sanderling/spec";
+import { noUncaughtExceptions } from "@sanderling/spec/defaults/properties";
 
 interface AccountSnapshot {
   id: string;

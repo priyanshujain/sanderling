@@ -6,8 +6,8 @@ import {
   eventually,
   extract,
   weighted,
-} from "@uatu/spec";
-import { noUncaughtExceptions } from "@uatu/spec/defaults/properties";
+} from "@sanderling/spec";
+import { noUncaughtExceptions } from "@sanderling/spec/defaults/properties";
 
 const route = extract<string>(
   (state) => (state.snapshots.route as string) ?? "",

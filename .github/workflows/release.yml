@@ -58,7 +58,7 @@ jobs:
         run: ./gradlew :sdk-android:publishAndReleaseToMavenCentral -Psanderling.version=${{ steps.ver.outputs.version }}
 
   release-npm:
-    name: Publish @uatu/spec to npm
+    name: Publish @sanderling/spec to npm
     runs-on: ubuntu-latest
     env:
       NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -91,7 +91,7 @@ jobs:
 
       - name: Publish
         working-directory: pkg/spec-api
-        # npm tag pre-releases (e.g. 0.1.0-rc1) as "next" so npm install @uatu/spec
+        # npm tag pre-releases (e.g. 0.1.0-rc1) as "next" so npm install @sanderling/spec
         # keeps resolving the latest stable.
         run: |
           if [[ "${{ steps.ver.outputs.version }}" == *-* ]]; then

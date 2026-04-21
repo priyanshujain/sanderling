@@ -73,6 +73,6 @@ Traces land in `./uatu/runs/<timestamp>/`.
 - `composeApp/src/androidMain/.../FolioApplication.kt` calls `Sanderling.start(this)`
   and registers snapshot extractors (`logged_in`, `account_count`,
   `total_balance`, `route`)
-- `uatu/spec.ts` imports `@uatu/spec`, reads those snapshots, asserts
+- `uatu/spec.ts` imports `@sanderling/spec`, reads those snapshots, asserts
   properties, and weights the actions the fuzzer picks from
 - `just test` invokes `uatu test` against the installed APK

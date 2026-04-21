@@ -37,7 +37,7 @@ Pre-built for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`.
 ### Spec package (npm)
 
 ```sh
-npm install --save-dev @uatu/spec
+npm install --save-dev @sanderling/spec
 ```
 
 ### Android SDK (Maven Central)

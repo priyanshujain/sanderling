@@ -1,5 +1,5 @@
 {
-  "name": "@uatu/spec",
+  "name": "@sanderling/spec",
   "version": "0.0.0-dev",
   "description": "TypeScript spec API for uatu, a property-based UI fuzzer for mobile apps.",
   "type": "module",

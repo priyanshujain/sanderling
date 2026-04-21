@@ -7,7 +7,7 @@ title: Writing specs
 A spec has three parts: extractors, properties, and actions.
 
 ```ts
-import { extract, always, actions, weighted, Tap, taps, swipes } from "@uatu/spec";
+import { extract, always, actions, weighted, Tap, taps, swipes } from "@sanderling/spec";
 
 // 1. Extractors pull values from each observed state.
 const loggedIn = extract((s) => !!s.ax.find("id:home-tab-bar"));

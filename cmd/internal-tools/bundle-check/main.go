@@ -31,8 +31,8 @@ func main() {
 	result, err := bundler.Bundle(bundler.Options{
 		EntryFile: entryFile,
 		Aliases: map[string]string{
-			"@uatu/spec":                    specApiPath,
-			"@uatu/spec/defaults/properties": defaultPropertiesPath,
+			"@sanderling/spec":                    specApiPath,
+			"@sanderling/spec/defaults/properties": defaultPropertiesPath,
 		},
 	})
 	if err != nil {

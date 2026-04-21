@@ -11,7 +11,7 @@ import (
 )
 
 // bundleIntegrationSpec bundles testdata/integration_spec.ts via the real
-// @uatu/spec API so the integration test exercises the same path the CLI
+// @sanderling/spec API so the integration test exercises the same path the CLI
 // uses, with no reference to any specific example app.
 func bundleIntegrationSpec(t *testing.T) string {
 	t.Helper()
@@ -30,8 +30,8 @@ func bundleIntegrationSpec(t *testing.T) string {
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile: specPath,
 		Aliases: map[string]string{
-			"@uatu/spec":                     apiPath,
-			"@uatu/spec/defaults/properties": defaultsPath,
+			"@sanderling/spec":                     apiPath,
+			"@sanderling/spec/defaults/properties": defaultsPath,
 		},
 	})
 	if err != nil {
