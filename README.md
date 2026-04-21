@@ -13,3 +13,9 @@ Autonomous property-based testing for mobile apps. Specs in TypeScript. Core in 
 - [Architecture](https://priyanshujain.github.io/sanderling/development/architecture.html)
 
 After a `sanderling test` run, browse traces locally with `sanderling inspect`. It opens a web UI for stepping through actions, screenshots, snapshots, residual formulas, and exceptions.
+
+---
+
+<img src="docs/_assets/sanderling.jpeg" alt="sanderling" width="420" />
+
+> sanderling, a wading bird that probes the shoreline for bugs that lie beneath.

@@ -6,30 +6,7 @@ title: Architecture
 
 Three processes, two transports.
 
-```mermaid
-flowchart TB
-    subgraph Go["sanderling (Go)"]
-        Bundler[Bundler<br/>esbuild] --> Verifier[Verifier<br/>goja + LTL]
-        Verifier <--> Runner[Runner]
-        Runner --> Trace[Trace writer<br/>JSONL + PNG]
-        Runner <--> Driver[Driver iface]
-    end
-
-    subgraph Sidecar["Maestro Sidecar (JVM)"]
-        Maestro[maestro-client]
-    end
-
-    subgraph Device["Emulator"]
-        subgraph App["Android app (debug)"]
-            SDK[sanderling-sdk<br/>pause / hierarchy<br/>logs / coverage]
-        end
-    end
-
-    Driver -- gRPC --> Maestro
-    Maestro -- UIAutomator --> App
-    Runner -- Unix socket --> SDK
-    Trace --> Runs[(runs/)]
-```
+<img src="../_assets/diagrams/architecture.svg" alt="sanderling architecture" />
 
 ## Processes
 
@@ -47,6 +24,10 @@ flowchart TB
 | Go to in-app SDK | Unix domain socket | Pause / resume, hierarchy, coverage, logs, extractors |
 
 The split exists for one reason: only real UI events need the cost of crossing process and OS-API boundaries. Introspection is cheap, frequent, and lives on a fast local socket directly to the app.
+
+## Inspect UI
+
+`sanderling inspect` is a separate mode of the same Go binary. It serves an embedded React bundle and reads `runs/` from disk, streaming file-watcher events over SSE so the UI updates as new steps land. It has no connection to the sidecar or the SDK; it only consumes the trace artifacts.
 
 ## Per-step cycle
 

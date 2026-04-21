@@ -48,6 +48,10 @@ web/node_modules/
 web/dist/
 web/.vite/
 
+# d2 diagrams render into build/site/_assets/diagrams; keep sources only
+/docs/_diagrams/*.svg
+/docs/_diagrams/*.png
+
 # coding agent files
 .claude/
 .claude/*

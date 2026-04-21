@@ -27,6 +27,9 @@ jobs:
       - name: Install pandoc
         run: sudo apt-get update && sudo apt-get install -y pandoc
 
+      - name: Install d2
+        run: curl -fsSL https://d2lang.com/install.sh | sh -s -- --tag v0.7.1
+
       - name: Build site
         run: make docs
 
