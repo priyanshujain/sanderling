@@ -29,8 +29,7 @@ proto:
 	$(BUF) lint
 	$(BUF) generate
 
-sidecar:
-	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:shadowJar
+sidecar: $(SIDECAR_JAR)
 
 sdk-android:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:assembleRelease
@@ -40,16 +39,13 @@ sdk-android-publish:
 
 uatu: $(UATU_BIN)
 
-$(UATU_BIN): $(SIDECAR_JAR) web-build
-	mkdir -p bin $(dir $(SIDECAR_EMBED))
-	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
+$(UATU_BIN): $(SIDECAR_EMBED) web-build
+	mkdir -p bin
 	$(GO) build -tags withsidecar -o $(UATU_BIN) ./cmd/uatu
 
 # Installs `uatu` into $GOBIN (or $GOPATH/bin) so it's directly on PATH for
 # anyone with a standard Go toolchain setup.
-install: $(SIDECAR_JAR) web-build
-	mkdir -p $(dir $(SIDECAR_EMBED))
-	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
+install: $(SIDECAR_EMBED) web-build
 	$(GO) install -tags withsidecar ./cmd/uatu
 	@dest="$$($(GO) env GOBIN)"; [ -n "$$dest" ] || dest="$$($(GO) env GOPATH)/bin"; echo "installed uatu to $$dest"
 
@@ -62,16 +58,18 @@ web-build:
 web-dev:
 	cd web && bun run dev
 
-inspect-dev: $(SIDECAR_JAR)
-	mkdir -p $(dir $(SIDECAR_EMBED))
-	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
+inspect-dev: $(SIDECAR_EMBED)
 	$(GO) run -tags withsidecar ./cmd/uatu inspect --dev
 
 web-typecheck:
 	cd web && bun install --frozen-lockfile && bun run typecheck
 
 $(SIDECAR_JAR):
-	$(MAKE) sidecar
+	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:shadowJar
+
+$(SIDECAR_EMBED): $(SIDECAR_JAR)
+	mkdir -p $(dir $@)
+	cp $< $@
 
 test: test-go test-kotlin test-spec-api web-typecheck
 
@@ -106,8 +104,7 @@ clean:
 
 # Local release dry-runs. None of these touch remote registries.
 
-release-cli:
-	$(MAKE) sidecar
+release-cli: $(SIDECAR_JAR)
 	goreleaser release --snapshot --clean
 
 release-android-local:
