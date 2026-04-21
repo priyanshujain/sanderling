@@ -14,6 +14,8 @@ SANDERLING_BIN := bin/sanderling
 DOCS_SRC := $(shell find docs -type f -name '*.md' -not -path 'docs/_*')
 DOCS_OUT := $(patsubst docs/%.md,build/site/%.html,$(DOCS_SRC))
 DOCS_TEMPLATE := docs/_template/page.html
+DIAGRAM_SRC := $(shell find docs/_diagrams -type f -name '*.d2' 2>/dev/null)
+DIAGRAM_OUT := $(patsubst docs/_diagrams/%.d2,build/site/_assets/diagrams/%.svg,$(DIAGRAM_SRC))
 
 INSPECT_DIST := internal/inspect/dist
 WEB_DIST := web/dist
@@ -82,13 +84,17 @@ test-kotlin:
 test-spec-api:
 	cd pkg/spec-api && npm test --silent
 
-docs: $(DOCS_OUT) build/site/_assets
-	@echo "built $(words $(DOCS_OUT)) pages to build/site"
+docs: $(DOCS_OUT) build/site/_assets $(DIAGRAM_OUT)
+	@echo "built $(words $(DOCS_OUT)) pages, $(words $(DIAGRAM_OUT)) diagrams to build/site"
 
 build/site/_assets: docs/_assets
 	@mkdir -p build/site
 	@rm -rf $@
 	@cp -R $< $@
+
+build/site/_assets/diagrams/%.svg: docs/_diagrams/%.d2
+	@mkdir -p $(dir $@)
+	@d2 --theme 301 --pad 20 $< $@
 
 build/site/%.html: docs/%.md $(DOCS_TEMPLATE)
 	@mkdir -p $(dir $@)
