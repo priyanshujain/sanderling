@@ -161,6 +161,8 @@ export default function MetricsChart({
   onSelect,
   runStartMillis,
 }: MetricsChartProps) {
+  const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
+
   if (samples.length === 0 || !samples.some((sample) => sample.metrics !== undefined)) {
     return <div className="status-block">no metrics</div>;
   }
@@ -205,7 +207,6 @@ export default function MetricsChart({
   const selectedFraction =
     selectedColumn >= 0 ? fractionFor(selectedColumn, samples.length) : null;
 
-  const [hoveredColumn, setHoveredColumn] = useState<number | null>(null);
   const hoveredSample =
     hoveredColumn !== null && hoveredColumn >= 0 && hoveredColumn < samples.length
       ? samples[hoveredColumn]
