@@ -40,6 +40,25 @@ func (w *Watcher) Subscribe() <-chan struct{} {
 	return channel
 }
 
+// Unsubscribe removes a channel previously returned by Subscribe. The channel
+// is not closed because broadcast snapshots subscribers without holding the
+// mutex and a concurrent close would race with its non-blocking send.
+// Safe to call multiple times; unknown channels are ignored.
+func (w *Watcher) Unsubscribe(subscription <-chan struct{}) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	for index, channel := range w.subscribers {
+		if (<-chan struct{})(channel) != subscription {
+			continue
+		}
+		last := len(w.subscribers) - 1
+		w.subscribers[index] = w.subscribers[last]
+		w.subscribers[last] = nil
+		w.subscribers = w.subscribers[:last]
+		return
+	}
+}
+
 // Run blocks until ctx is canceled, watching directory for create/remove/rename
 // events and emitting one notification per debounce window to all subscribers.
 func (w *Watcher) Run(ctx context.Context) error {

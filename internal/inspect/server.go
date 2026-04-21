@@ -167,6 +167,7 @@ func (s *Server) handleEvents(responseWriter http.ResponseWriter, request *http.
 	flusher.Flush()
 
 	subscription := s.watcher.Subscribe()
+	defer s.watcher.Unsubscribe(subscription)
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 
