@@ -32,7 +32,7 @@ npm install --save-dev @sanderling/spec
 
 ```kotlin
 dependencies {
-    implementation("io.github.priyanshujain:sdk-android:<version>")
+    implementation("io.github.priyanshujain.sanderling:sdk-android:<version>")
 }
 ```
 

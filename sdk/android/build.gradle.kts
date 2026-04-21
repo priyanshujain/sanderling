@@ -11,7 +11,7 @@ plugins {
 }
 
 version = findProperty("sanderling.version") as String? ?: "0.0.0-dev"
-group = "io.github.priyanshujain"
+group = "io.github.priyanshujain.sanderling"
 
 android {
     namespace = "dev.sanderling.sdk"
@@ -55,7 +55,7 @@ mavenPublishing {
     )
 
     coordinates(
-        groupId = "io.github.priyanshujain",
+        groupId = "io.github.priyanshujain.sanderling",
         artifactId = "sdk-android",
         version = version.toString(),
     )
