@@ -1,7 +1,7 @@
 {
   "name": "folio",
   "private": true,
-  "description": "Minimal uatu integration example.",
+  "description": "Minimal sanderling integration example.",
   "devDependencies": {
     "@sanderling/spec": "next"
   }

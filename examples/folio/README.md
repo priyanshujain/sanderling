@@ -3,14 +3,14 @@
 A minimal Kotlin Multiplatform personal-ledger app: login with demo
 credentials, create accounts, add credits and debits. Shared UI across
 Android, iOS, and Web via Compose Multiplatform. Doubles as the example
-uatu runs its property-based specs against.
+sanderling runs its property-based specs against.
 
 ## Stack
 
 - Kotlin Multiplatform + Compose Multiplatform (shared UI)
 - kotlinx.serialization for file-backed persistence
 - kotlinx.coroutines for state flows
-- uatu `sdk-android` for harness integration on Android
+- sanderling `sdk-android` for harness integration on Android
 
 ## Prerequisites
 
@@ -46,13 +46,13 @@ email:    demo@folio.app
 password: ledger123
 ```
 
-## Run a uatu test (Android)
+## Run a sanderling test (Android)
 
 ```sh
 just test
 ```
 
-If no device is connected, uatu boots the single AVD it finds. With multiple
+If no device is connected, sanderling boots the single AVD it finds. With multiple
 AVDs, pick one:
 
 ```sh
@@ -66,13 +66,13 @@ AVD=Pixel_7
 DURATION=5m
 ```
 
-Traces land in `./uatu/runs/<timestamp>/`.
+Traces land in `./sanderling/runs/<timestamp>/`.
 
-## How it connects to uatu
+## How it connects to sanderling
 
 - `composeApp/src/androidMain/.../FolioApplication.kt` calls `Sanderling.start(this)`
   and registers snapshot extractors (`logged_in`, `account_count`,
   `total_balance`, `route`)
-- `uatu/spec.ts` imports `@sanderling/spec`, reads those snapshots, asserts
+- `sanderling/spec.ts` imports `@sanderling/spec`, reads those snapshots, asserts
   properties, and weights the actions the fuzzer picks from
-- `just test` invokes `uatu test` against the installed APK
+- `just test` invokes `sanderling test` against the installed APK

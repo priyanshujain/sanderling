@@ -20,7 +20,7 @@ type ServerOptions struct {
 	DevTarget     string
 }
 
-// Server holds the HTTP handlers for `uatu inspect`.
+// Server holds the HTTP handlers for `sanderling inspect`.
 type Server struct {
 	options ServerOptions
 	cache   *Cache

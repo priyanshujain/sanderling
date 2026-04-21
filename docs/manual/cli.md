@@ -5,10 +5,10 @@ title: CLI reference
 # CLI reference
 
 ```
-uatu <command> [flags]
+sanderling <command> [flags]
 ```
 
-## `uatu test`
+## `sanderling test`
 
 Run a spec against an app for a fixed duration.
 
@@ -23,7 +23,7 @@ Run a spec against an app for a fixed duration.
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
 | `--output` | `./runs` | Output directory for traces. |
 
-## `uatu inspect [run-or-runs-dir]`
+## `sanderling inspect [run-or-runs-dir]`
 
 Serve a local web UI for browsing traces. The positional argument is optional and may point at either a runs directory (the parent of many runs) or a single run directory (auto-detected by the presence of `meta.json`). Defaults to `./runs`.
 
@@ -35,11 +35,11 @@ Serve a local web UI for browsing traces. The positional argument is optional an
 
 See [the inspect UI page](inspect.md) for the panel reference and keyboard shortcuts.
 
-## `uatu doctor`
+## `sanderling doctor`
 
-Check the host environment for a working uatu setup: Go toolchain, JDK, Maestro availability, emulator reachability, SDK linkage hints.
+Check the host environment for a working sanderling setup: Go toolchain, JDK, Maestro availability, emulator reachability, SDK linkage hints.
 
-## `uatu version`
+## `sanderling version`
 
 Print the CLI version.
 
@@ -49,4 +49,4 @@ Print the CLI version.
 - `--max-steps` hard cap on step count.
 - `--exit-on-violation` stop the run on the first property violation.
 
-Tracked in [issue #4](https://github.com/priyanshujain/uatu/issues/4).
+Tracked in [issue #4](https://github.com/priyanshujain/sanderling/issues/4).

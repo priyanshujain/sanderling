@@ -18,7 +18,7 @@ export const properties = {
   cartNeverNegative: always(() => cartCount.current >= 0),
 };
 
-// 3. Actions are a weighted tree of what uatu is allowed to do.
+// 3. Actions are a weighted tree of what sanderling is allowed to do.
 export const actions = weighted(
   [10, taps],
   [2, swipes],
@@ -49,7 +49,7 @@ interface State {
 
 ## Pattern: preconditions (login, onboarding)
 
-uatu has no setup phase and no fixtures. Preconditions are action generators with two properties:
+sanderling has no setup phase and no fixtures. Preconditions are action generators with two properties:
 
 1. High weight, so they fire whenever applicable.
 2. Gated on a state extractor, so they return an empty tree when not applicable and self-disable once the precondition is met.

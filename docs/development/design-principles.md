@@ -33,7 +33,7 @@ A 30-minute run is about 10,000 steps. Every step has at least one hierarchy dum
 
 A seeded PRNG drives action selection. Spec evaluation is pure given state and snapshots. The bundle hash and seed are recorded in `meta.json`.
 
-uatu does not attempt byte-exact replay. Animation timing, keyboard popup timing, and system daemons are non-deterministic on mobile, and the cost of trying to suppress that is not worth the payoff. Same seed produces a similar trajectory, which is usually enough to reproduce the bug.
+sanderling does not attempt byte-exact replay. Animation timing, keyboard popup timing, and system daemons are non-deterministic on mobile, and the cost of trying to suppress that is not worth the payoff. Same seed produces a similar trajectory, which is usually enough to reproduce the bug.
 
 ## 6. Fail honest
 

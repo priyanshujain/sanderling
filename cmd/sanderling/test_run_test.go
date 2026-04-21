@@ -47,6 +47,6 @@ func TestResolveSpecAPIPath_ReturnsEmptyWhenMissing(t *testing.T) {
 
 	got := resolveSpecAPIPath(specPath)
 	if got != "" {
-		t.Fatalf("got %q, want empty (no uatu source tree reachable)", got)
+		t.Fatalf("got %q, want empty (no sanderling source tree reachable)", got)
 	}
 }

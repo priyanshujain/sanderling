@@ -54,7 +54,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	}
 	fmt.Fprintf(stdout, "bundled spec: %d bytes (sha256=%s)\n", len(bundle.JavaScript), bundle.SHA256[:12])
 
-	sidecarDirectory := filepath.Join(os.TempDir(), "uatu-sidecar")
+	sidecarDirectory := filepath.Join(os.TempDir(), "sanderling-sidecar")
 	jarPath, err := sidecar.Extract(sidecarDirectory)
 	if err != nil {
 		return fmt.Errorf("extract sidecar: %w", err)
@@ -212,7 +212,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 }
 
 // resolveSpecAPIPath returns the path to pkg/spec-api/src/index.ts inside
-// a uatu source checkout, searched upward from the spec file and the cwd.
+// a sanderling source checkout, searched upward from the spec file and the cwd.
 // Returns "" when not found, in which case esbuild resolves @sanderling/spec via
 // node_modules the way a downstream user's project would.
 func resolveSpecAPIPath(specPath string) string {

@@ -1,13 +1,13 @@
 ---
-title: uatu inspect
+title: sanderling inspect
 ---
 
-# uatu inspect
+# sanderling inspect
 
-`uatu inspect` is a local web UI for exploring runs produced by `uatu test`. It reads `runs/<id>/meta.json` and `runs/<id>/trace.jsonl` and renders each step with its action, screenshot, snapshots, residual formulas, and exceptions.
+`sanderling inspect` is a local web UI for exploring runs produced by `sanderling test`. It reads `runs/<id>/meta.json` and `runs/<id>/trace.jsonl` and renders each step with its action, screenshot, snapshots, residual formulas, and exceptions.
 
 ```
-uatu inspect [run-or-runs-dir] [--port N] [--no-open] [--dev]
+sanderling inspect [run-or-runs-dir] [--port N] [--no-open] [--dev]
 ```
 
 The positional argument can be either a runs directory or a single run directory (auto-detected by the presence of `meta.json`). When omitted, it defaults to `./runs`.
@@ -51,11 +51,11 @@ Two-process loop:
 
 ```
 make web-dev      # bun + vite, http://127.0.0.1:5173
-make inspect-dev  # uatu inspect --dev, proxies non-API to 5173
+make inspect-dev  # sanderling inspect --dev, proxies non-API to 5173
 ```
 
 For a single binary with embedded assets:
 
 ```
-make uatu         # builds web/dist, copies to internal/inspect/dist, then go build
+make sanderling         # builds web/dist, copies to internal/inspect/dist, then go build
 ```

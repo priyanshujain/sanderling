@@ -6,7 +6,7 @@ title: Development
 
 - [Design principles](./design-principles.html)
 - [Architecture](./architecture.html)
-- v0.1.0 scope: [issue #4](https://github.com/priyanshujain/uatu/issues/4)
+- v0.1.0 scope: [issue #4](https://github.com/priyanshujain/sanderling/issues/4)
 
 ## Building the docs site locally
 
