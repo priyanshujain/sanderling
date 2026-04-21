@@ -14,14 +14,16 @@ The positional argument can be either a runs directory or a single run directory
 
 ## Layout
 
-The detail page uses a phone-dominant grid:
+The detail page is a four-region grid: actions on the left, state-before and state-after side by side in the middle, metrics along the bottom.
 
-- **Actions** (left): vertical step list. Steps with violations are marked with a red dot; steps with exceptions have a dashed-outline marker.
-- **Screenshot** (center): the device screenshot for the current step. The runner's resolved tap target is overlaid as a red rectangle, the tap point as an outlined circle. Swipes show an arrow from start to end.
-- **Snapshots** (top right): the current step's snapshots flattened into dotted-path rows. Values that changed since the previous step are highlighted; hover to see the previous value.
-- **Properties** (middle right): one row per property with status (violated / pending / holds) and an expandable residual formula.
-- **Exceptions** (bottom right): SDK-captured uncaught throwables. Stack traces expand inline.
-- **Timeline** (bottom): per-property swimlane across all steps; click a cell to seek.
+- **Actions** (left): vertical step list with action, target, and elapsed time. Steps with violations get a red dot; steps with exceptions get a dashed-outline marker. Arrow keys move within the list (WAI-ARIA listbox).
+- **State before** (center): the state the runner observed before dispatching this step's action. Four tabs:
+    - *Screenshot*: device screenshot with the resolved tap target overlaid (red rectangle + outlined tap point); swipes show an arrow from start to end.
+    - *Snapshots*: snapshot values flattened into dotted-path rows. Values that changed since the previous step are highlighted; hover for the previous value.
+    - *Properties*: one row per property with status (violated / pending / holds) and an expandable residual formula.
+    - *Violations*: same as Properties but filtered to violated rows only. The tab badge shows the violation count.
+- **State after** (right): the state observed after the action landed. Same four tabs.
+- **Metrics** (bottom): HEAP and CPU lanes with a STEPS lane for step-by-step navigation. Click any point or step to seek. Exceptions for the current step render inline below the chart.
 
 ## Keyboard shortcuts
 
@@ -34,6 +36,8 @@ The detail page uses a phone-dominant grid:
 | `g` | First step |
 | `G` | Last step |
 | `.` | Next step with a violation |
+
+Arrow keys inside a tablist, listbox, or menu yield to those widgets (so arrow-left/right cycles tabs, arrow-up/down moves within a list). Use `j`/`k` for step navigation when the focus is inside one of those.
 
 ## URLs
 
