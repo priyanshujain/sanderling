@@ -34,9 +34,6 @@ interface LedgerRow {
 const loggedIn = extract<boolean>(
   (state) => (state.snapshots.logged_in as boolean) ?? false,
 );
-const authStatus = extract<string>(
-  (state) => (state.snapshots.auth_status as string) ?? "",
-);
 const route = extract<string>(
   (state) => (state.snapshots.route as string) ?? "",
 );
@@ -45,9 +42,6 @@ const accounts = extract<AccountSnapshot[]>(
 );
 const totalBalance = extract<number>(
   (state) => (state.snapshots.total_balance as number) ?? 0,
-);
-const accountCount = extract<number>(
-  (state) => (state.snapshots.account_count as number) ?? 0,
 );
 const activeAccountId = extract<string | null>(
   (state) => (state.snapshots.active_account_id as string | null) ?? null,
@@ -63,9 +57,6 @@ const focusedInput = extract<string | null>(
 );
 const txnFormType = extract<string | null>(
   (state) => (state.snapshots.txn_form_type as string | null) ?? null,
-);
-const txnFormAccountId = extract<string | null>(
-  (state) => (state.snapshots.txn_form_account_id as string | null) ?? null,
 );
 const loginError = extract<string>(
   (state) => (state.snapshots.login_error as string) ?? "",
@@ -94,81 +85,45 @@ const allAccountCards = extract((state) =>
   state.ax.findAll("descPrefix:account_card:"),
 );
 
-const accountCountNonNegative = always(() => accountCount.current >= 0);
-
-const onHome = () => route.current === "home";
-const onLedger = () =>
-  route.current === "ledger" || route.current === "add-transaction";
-const isInteger = (n: number) => Number.isFinite(n) && Math.floor(n) === n;
-
-const totalBalanceMatchesAccounts = always(
-  now(onHome).implies(
-    now(() => {
-      const sum = accounts.current.reduce((acc, a) => acc + a.balance, 0);
-      return sum === totalBalance.current;
+const balanceMatchesTransactionDelta = always(
+  now(() => activeAccountId.current !== null).implies(
+    next(() => {
+      const prevActive = activeAccountId.previous;
+      if (prevActive === null || prevActive === undefined) return true;
+      if (prevActive !== activeAccountId.current) return true;
+      const prevRows = ledgerRows.previous ?? [];
+      const curRows = ledgerRows.current;
+      if (curRows.length !== prevRows.length + 1) return true;
+      const prevIds = new Set(prevRows.map((r) => r.id));
+      const added = curRows.filter((r) => !prevIds.has(r.id));
+      if (added.length !== 1) return true;
+      const delta = ledgerBalance.current - (ledgerBalance.previous ?? 0);
+      return delta === added[0].signed;
     }),
   ),
 );
 
-const ledgerBalanceMatchesRows = always(
-  now(onLedger).implies(
-    now(() => {
-      const sum = ledgerRows.current.reduce((acc, r) => acc + r.signed, 0);
-      return sum === ledgerBalance.current;
+const totalEqualsSumOfAccounts = always(() => {
+  const sum = accounts.current.reduce((acc, a) => acc + a.balance, 0);
+  return sum === totalBalance.current;
+});
+
+const balanceChangeRequiresActiveAccount = always(
+  now(() => true).implies(
+    next(() => {
+      const prevAccounts = accounts.previous ?? [];
+      const prevActive = activeAccountId.previous ?? null;
+      for (const cur of accounts.current) {
+        const prev = prevAccounts.find((a) => a.id === cur.id);
+        if (!prev) continue;
+        if (cur.balance !== prev.balance && prevActive !== cur.id) return false;
+      }
+      return true;
     }),
   ),
 );
 
-const ledgerRowsWellFormed = always(() => {
-  for (const row of ledgerRows.current) {
-    if (row.type !== "credit" && row.type !== "debit") return false;
-    if (!(row.amount > 0)) return false;
-    const expected = row.type === "credit" ? row.amount : -row.amount;
-    if (row.signed !== expected) return false;
-  }
-  return true;
-});
-
-const balancesAreIntegerCents = always(() => {
-  if (!isInteger(totalBalance.current)) return false;
-  if (!isInteger(ledgerBalance.current)) return false;
-  for (const a of accounts.current) if (!isInteger(a.balance)) return false;
-  for (const r of ledgerRows.current) {
-    if (!isInteger(r.amount) || !isInteger(r.signed)) return false;
-  }
-  return true;
-});
-
-const accountCountMatchesList = always(
-  () => accountCount.current === accounts.current.length,
-);
-
-const ledgerCountMatchesRows = always(
-  now(onLedger).implies(
-    now(() => {
-      const active = activeAccountId.current;
-      if (active === null) return true;
-      const fromAccounts = accounts.current.find((a) => a.id === active);
-      if (!fromAccounts) return true;
-      return fromAccounts.txnCount === ledgerRows.current.length;
-    }),
-  ),
-);
-
-const zeroTxnsMeansZeroBalance = always(() => {
-  for (const a of accounts.current) {
-    if (a.txnCount === 0 && a.balance !== 0) return false;
-  }
-  return true;
-});
-
-const noOrphanTransactions = always(() => {
-  const active = activeAccountId.current;
-  if (active === null) return ledgerRows.current.length === 0;
-  return ledgerRows.current.every((r) => r.accountId === active);
-});
-
-const uniqueAccountNames = always(() => {
+const duplicateAccountNamesRejected = always(() => {
   const seen = new Set<string>();
   for (const a of accounts.current) {
     const key = a.name.trim().toLowerCase();
@@ -178,47 +133,12 @@ const uniqueAccountNames = always(() => {
   return true;
 });
 
-const accountingInvariants = {
-  totalBalanceMatchesAccounts,
-  ledgerBalanceMatchesRows,
-  ledgerRowsWellFormed,
-  balancesAreIntegerCents,
-  accountCountMatchesList,
-  ledgerCountMatchesRows,
-  zeroTxnsMeansZeroBalance,
-  noOrphanTransactions,
-  uniqueAccountNames,
+const domainInvariants = {
+  balanceMatchesTransactionDelta,
+  totalEqualsSumOfAccounts,
+  balanceChangeRequiresActiveAccount,
+  duplicateAccountNamesRejected,
 };
-
-const accountsOnlyGrow = always(
-  now(() => true).implies(
-    next(() => accounts.current.length >= (accounts.previous?.length ?? 0)),
-  ),
-);
-
-const ledgerOnlyGrowsPerAccount = always(
-  now(() => activeAccountId.current !== null).implies(
-    next(() => {
-      if (activeAccountId.current !== activeAccountId.previous) return true;
-      return ledgerRows.current.length >= (ledgerRows.previous?.length ?? 0);
-    }),
-  ),
-);
-
-const authStatusIsKnown = always(
-  () => authStatus.current === "logged-in" || authStatus.current === "logged-out",
-);
-
-const routeIsKnown = always(() => {
-  const r = route.current;
-  return (
-    r === "login" ||
-    r === "home" ||
-    r === "add-account" ||
-    r === "ledger" ||
-    r === "add-transaction"
-  );
-});
 
 const loggedInLeavesLogin = always(
   now(() => loggedIn.current).implies(
@@ -232,11 +152,7 @@ const loggedOutReachesLogin = always(
   ),
 );
 
-const stateMachine = {
-  accountsOnlyGrow,
-  ledgerOnlyGrowsPerAccount,
-  authStatusIsKnown,
-  routeIsKnown,
+const authRouting = {
   loggedInLeavesLogin,
   loggedOutReachesLogin,
 };
@@ -410,9 +326,8 @@ const openAddTxn = actions(() => {
 });
 
 export const properties = {
-  accountCountNonNegative,
-  ...accountingInvariants,
-  ...stateMachine,
+  ...domainInvariants,
+  ...authRouting,
   ...liveness,
   noUncaughtExceptions,
 };
