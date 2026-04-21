@@ -12,6 +12,7 @@ Alpha: Android emulator only. Scope of v0.1.0 is tracked in [issue #4](https://g
 - [Getting started](./manual/getting-started.html)
 - [Writing specs](./manual/writing-specs.html)
 - [Runs](./manual/runs.html)
+- [Inspect](./manual/inspect.html)
 - [CLI reference](./manual/cli.html)
 
 ## Development
