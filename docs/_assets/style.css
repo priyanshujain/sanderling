@@ -108,6 +108,14 @@ main article h1 { font-size: 1.9rem; margin: 0 0 1.5rem; line-height: 1.2; }
 main article h2 { margin-top: 2.5rem; font-size: 1.3rem; }
 main article h3 { margin-top: 2rem; font-size: 1.05rem; }
 
+main article img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1.25rem 0;
+  border-radius: 4px;
+}
+
 a { color: var(--accent); }
 
 code {
