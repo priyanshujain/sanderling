@@ -40,5 +40,17 @@ $body$
     </footer>
   </main>
 </div>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: false, theme: 'neutral', fontFamily: 'inherit' });
+for (const pre of document.querySelectorAll('pre.mermaid, pre > code.language-mermaid')) {
+  const node = pre.tagName === 'PRE' ? pre : pre.parentElement;
+  const div = document.createElement('div');
+  div.className = 'mermaid';
+  div.textContent = node.textContent;
+  node.replaceWith(div);
+}
+await mermaid.run();
+</script>
 </body>
 </html>
