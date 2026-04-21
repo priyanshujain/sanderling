@@ -30,6 +30,11 @@ type Driver interface {
 
 	WaitForIdle(ctx context.Context, duration time.Duration) error
 	Health(ctx context.Context) (Health, error)
+	// Metrics samples the app's CPU and memory at the time of the call.
+	// CPUPercent is percent of a single core (multi-core apps can exceed
+	// 100). HeapBytes is resident set size; TotalMemoryBytes includes
+	// native allocations.
+	Metrics(ctx context.Context, bundleID string) (Metrics, error)
 }
 
 type LogEntry struct {
@@ -49,4 +54,10 @@ type Health struct {
 	Ready    bool
 	Version  string
 	Platform string
+}
+
+type Metrics struct {
+	CPUPercent       float64
+	HeapBytes        int64
+	TotalMemoryBytes int64
 }

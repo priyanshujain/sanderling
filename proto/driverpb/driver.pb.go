@@ -741,6 +741,110 @@ func (x *LogEntry) GetMessage() string {
 	return ""
 }
 
+type MetricsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BundleId      string                 `protobuf:"bytes,1,opt,name=bundle_id,json=bundleId,proto3" json:"bundle_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetricsRequest) Reset() {
+	*x = MetricsRequest{}
+	mi := &file_driverpb_driver_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricsRequest) ProtoMessage() {}
+
+func (x *MetricsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_driverpb_driver_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricsRequest.ProtoReflect.Descriptor instead.
+func (*MetricsRequest) Descriptor() ([]byte, []int) {
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *MetricsRequest) GetBundleId() string {
+	if x != nil {
+		return x.BundleId
+	}
+	return ""
+}
+
+type MetricsResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	CpuPercent       float64                `protobuf:"fixed64,1,opt,name=cpu_percent,json=cpuPercent,proto3" json:"cpu_percent,omitempty"`
+	HeapBytes        int64                  `protobuf:"varint,2,opt,name=heap_bytes,json=heapBytes,proto3" json:"heap_bytes,omitempty"`
+	TotalMemoryBytes int64                  `protobuf:"varint,3,opt,name=total_memory_bytes,json=totalMemoryBytes,proto3" json:"total_memory_bytes,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *MetricsResponse) Reset() {
+	*x = MetricsResponse{}
+	mi := &file_driverpb_driver_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricsResponse) ProtoMessage() {}
+
+func (x *MetricsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_driverpb_driver_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricsResponse.ProtoReflect.Descriptor instead.
+func (*MetricsResponse) Descriptor() ([]byte, []int) {
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *MetricsResponse) GetCpuPercent() float64 {
+	if x != nil {
+		return x.CpuPercent
+	}
+	return 0
+}
+
+func (x *MetricsResponse) GetHeapBytes() int64 {
+	if x != nil {
+		return x.HeapBytes
+	}
+	return 0
+}
+
+func (x *MetricsResponse) GetTotalMemoryBytes() int64 {
+	if x != nil {
+		return x.TotalMemoryBytes
+	}
+	return 0
+}
+
 var File_driverpb_driver_proto protoreflect.FileDescriptor
 
 const file_driverpb_driver_proto_rawDesc = "" +
@@ -788,7 +892,15 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"unixMillis\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x10\n" +
 	"\x03tag\x18\x03 \x01(\tR\x03tag\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage2\xff\x05\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"-\n" +
+	"\x0eMetricsRequest\x12\x1b\n" +
+	"\tbundle_id\x18\x01 \x01(\tR\bbundleId\"\x7f\n" +
+	"\x0fMetricsResponse\x12\x1f\n" +
+	"\vcpu_percent\x18\x01 \x01(\x01R\n" +
+	"cpuPercent\x12\x1d\n" +
+	"\n" +
+	"heap_bytes\x18\x02 \x01(\x03R\theapBytes\x12,\n" +
+	"\x12total_memory_bytes\x18\x03 \x01(\x03R\x10totalMemoryBytes2\xcb\x06\n" +
 	"\x06Driver\x12>\n" +
 	"\x06Launch\x12\x1d.uatu.driver.v1.LaunchRequest\x1a\x15.uatu.driver.v1.Empty\x129\n" +
 	"\tTerminate\x12\x15.uatu.driver.v1.Empty\x1a\x15.uatu.driver.v1.Empty\x123\n" +
@@ -803,7 +915,8 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"\n" +
 	"RecentLogs\x12!.uatu.driver.v1.RecentLogsRequest\x1a\x1a.uatu.driver.v1.LogEntries\x12>\n" +
 	"\vWaitForIdle\x12\x18.uatu.driver.v1.Duration\x1a\x15.uatu.driver.v1.Empty\x12=\n" +
-	"\x06Health\x12\x15.uatu.driver.v1.Empty\x1a\x1c.uatu.driver.v1.HealthStatusBM\n" +
+	"\x06Health\x12\x15.uatu.driver.v1.Empty\x1a\x1c.uatu.driver.v1.HealthStatus\x12J\n" +
+	"\aMetrics\x12\x1e.uatu.driver.v1.MetricsRequest\x1a\x1f.uatu.driver.v1.MetricsResponseBM\n" +
 	"\x12dev.uatu.driver.v1P\x01Z5github.com/priyanshujain/uatu/proto/driverpb;driverpbb\x06proto3"
 
 var (
@@ -818,7 +931,7 @@ func file_driverpb_driver_proto_rawDescGZIP() []byte {
 	return file_driverpb_driver_proto_rawDescData
 }
 
-var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_driverpb_driver_proto_goTypes = []any{
 	(*Empty)(nil),             // 0: uatu.driver.v1.Empty
 	(*LaunchRequest)(nil),     // 1: uatu.driver.v1.LaunchRequest
@@ -834,6 +947,8 @@ var file_driverpb_driver_proto_goTypes = []any{
 	(*RecentLogsRequest)(nil), // 11: uatu.driver.v1.RecentLogsRequest
 	(*LogEntries)(nil),        // 12: uatu.driver.v1.LogEntries
 	(*LogEntry)(nil),          // 13: uatu.driver.v1.LogEntry
+	(*MetricsRequest)(nil),    // 14: uatu.driver.v1.MetricsRequest
+	(*MetricsResponse)(nil),   // 15: uatu.driver.v1.MetricsResponse
 }
 var file_driverpb_driver_proto_depIdxs = []int32{
 	2,  // 0: uatu.driver.v1.SwipeRequest.from:type_name -> uatu.driver.v1.Point
@@ -851,20 +966,22 @@ var file_driverpb_driver_proto_depIdxs = []int32{
 	11, // 12: uatu.driver.v1.Driver.RecentLogs:input_type -> uatu.driver.v1.RecentLogsRequest
 	7,  // 13: uatu.driver.v1.Driver.WaitForIdle:input_type -> uatu.driver.v1.Duration
 	0,  // 14: uatu.driver.v1.Driver.Health:input_type -> uatu.driver.v1.Empty
-	0,  // 15: uatu.driver.v1.Driver.Launch:output_type -> uatu.driver.v1.Empty
-	0,  // 16: uatu.driver.v1.Driver.Terminate:output_type -> uatu.driver.v1.Empty
-	0,  // 17: uatu.driver.v1.Driver.Tap:output_type -> uatu.driver.v1.Empty
-	0,  // 18: uatu.driver.v1.Driver.TapSelector:output_type -> uatu.driver.v1.Empty
-	0,  // 19: uatu.driver.v1.Driver.InputText:output_type -> uatu.driver.v1.Empty
-	0,  // 20: uatu.driver.v1.Driver.Swipe:output_type -> uatu.driver.v1.Empty
-	0,  // 21: uatu.driver.v1.Driver.PressKey:output_type -> uatu.driver.v1.Empty
-	5,  // 22: uatu.driver.v1.Driver.Screenshot:output_type -> uatu.driver.v1.Image
-	6,  // 23: uatu.driver.v1.Driver.Hierarchy:output_type -> uatu.driver.v1.HierarchyJSON
-	12, // 24: uatu.driver.v1.Driver.RecentLogs:output_type -> uatu.driver.v1.LogEntries
-	0,  // 25: uatu.driver.v1.Driver.WaitForIdle:output_type -> uatu.driver.v1.Empty
-	8,  // 26: uatu.driver.v1.Driver.Health:output_type -> uatu.driver.v1.HealthStatus
-	15, // [15:27] is the sub-list for method output_type
-	3,  // [3:15] is the sub-list for method input_type
+	14, // 15: uatu.driver.v1.Driver.Metrics:input_type -> uatu.driver.v1.MetricsRequest
+	0,  // 16: uatu.driver.v1.Driver.Launch:output_type -> uatu.driver.v1.Empty
+	0,  // 17: uatu.driver.v1.Driver.Terminate:output_type -> uatu.driver.v1.Empty
+	0,  // 18: uatu.driver.v1.Driver.Tap:output_type -> uatu.driver.v1.Empty
+	0,  // 19: uatu.driver.v1.Driver.TapSelector:output_type -> uatu.driver.v1.Empty
+	0,  // 20: uatu.driver.v1.Driver.InputText:output_type -> uatu.driver.v1.Empty
+	0,  // 21: uatu.driver.v1.Driver.Swipe:output_type -> uatu.driver.v1.Empty
+	0,  // 22: uatu.driver.v1.Driver.PressKey:output_type -> uatu.driver.v1.Empty
+	5,  // 23: uatu.driver.v1.Driver.Screenshot:output_type -> uatu.driver.v1.Image
+	6,  // 24: uatu.driver.v1.Driver.Hierarchy:output_type -> uatu.driver.v1.HierarchyJSON
+	12, // 25: uatu.driver.v1.Driver.RecentLogs:output_type -> uatu.driver.v1.LogEntries
+	0,  // 26: uatu.driver.v1.Driver.WaitForIdle:output_type -> uatu.driver.v1.Empty
+	8,  // 27: uatu.driver.v1.Driver.Health:output_type -> uatu.driver.v1.HealthStatus
+	15, // 28: uatu.driver.v1.Driver.Metrics:output_type -> uatu.driver.v1.MetricsResponse
+	16, // [16:29] is the sub-list for method output_type
+	3,  // [3:16] is the sub-list for method input_type
 	3,  // [3:3] is the sub-list for extension type_name
 	3,  // [3:3] is the sub-list for extension extendee
 	0,  // [0:3] is the sub-list for field type_name
@@ -881,7 +998,7 @@ func file_driverpb_driver_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_driverpb_driver_proto_rawDesc), len(file_driverpb_driver_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

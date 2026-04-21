@@ -1,0 +1,166 @@
+.metrics-chart {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+.metrics-lanes {
+  flex: 1 1 auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.metrics-lane {
+  flex: 1 1 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 32px;
+  align-items: stretch;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.metrics-lane:last-of-type {
+  border-bottom: none;
+}
+
+.metrics-lane-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  border-right: 1px solid var(--border);
+}
+
+.metrics-lane-plot {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.metrics-lane-canvas {
+  position: absolute;
+  inset: 4px 0;
+}
+
+.metrics-lane-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.metrics-lane-path {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.metrics-lane-dot {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.metrics-lane-dot[data-active="true"] {
+  width: 7px;
+  height: 7px;
+}
+
+.metrics-lane-tooltip {
+  position: absolute;
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.metrics-lane-tooltip[data-placement="above"] {
+  transform: translate(-50%, calc(-100% - 6px));
+}
+
+.metrics-lane-tooltip[data-placement="below"] {
+  transform: translate(-50%, 6px);
+}
+
+.metrics-lane-highlight {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-primary);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.metrics-lane-ticks {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 2px 6px;
+  border-left: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  font-size: 9px;
+}
+
+.metrics-hits {
+  position: absolute;
+  inset: 0 32px 0 18px;
+  display: block;
+  pointer-events: none;
+}
+
+.metrics-hit {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.metrics-hit:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.metrics-axis {
+  flex: 0 0 auto;
+  position: relative;
+  height: 20px;
+  margin: 0 32px 0 18px;
+  border-top: 1px solid var(--border);
+}
+
+.metrics-axis-label {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  font-variant-numeric: tabular-nums;
+  font-size: 9px;
+  white-space: nowrap;
+}

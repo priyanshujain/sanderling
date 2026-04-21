@@ -13,7 +13,14 @@ interface DriverBackend {
     fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine>
     fun waitForIdle(durationMillis: Long)
     fun healthy(): Boolean
+    fun metrics(bundleId: String): MetricsSample
 }
+
+data class MetricsSample(
+    val cpuPercent: Double,
+    val heapBytes: Long,
+    val totalMemoryBytes: Long,
+)
 
 data class LogLine(
     val unixMillis: Long,
@@ -291,7 +298,19 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         }
     }
 
-    override fun screenshot(): Triple<ByteArray, Int, Int> = Triple(ByteArray(0), 0, 0)
+    override fun screenshot(): Triple<ByteArray, Int, Int> {
+        return try {
+            val process = ProcessBuilder(listOf("adb", "exec-out", "screencap", "-p"))
+                .redirectErrorStream(false)
+                .start()
+            val png = process.inputStream.readAllBytes()
+            process.waitFor()
+            if (png.isEmpty()) Triple(ByteArray(0), 0, 0) else Triple(png, 0, 0)
+        } catch (cause: Exception) {
+            println("adb screencap failed: $cause")
+            Triple(ByteArray(0), 0, 0)
+        }
+    }
 
     override fun hierarchy(): String {
         return try {
@@ -315,4 +334,118 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     }
 
     override fun healthy(): Boolean = true
+
+    // Stateful CPU delta tracker. Reading /proc/<pid>/stat gives cumulative
+    // utime+stime in jiffies; CPU % over a step is (delta_ticks / delta_wall)
+    // * 100. First call blocks briefly for a real reading instead of 0.
+    private data class CpuSample(val pid: Int, val ticks: Long, val wallNanos: Long)
+    @Volatile private var lastCpuSample: CpuSample? = null
+    private val clockTicksPerSecond: Long by lazy { resolveClockTicksPerSecond() }
+    private val cpuFirstSampleSleepMillis: Long = 50L
+
+    override fun metrics(bundleId: String): MetricsSample {
+        if (bundleId.isEmpty()) return MetricsSample(0.0, 0L, 0L)
+        return try {
+            val pid = runAdbOutput(listOf("shell", "pidof", bundleId)).trim().split(Regex("\\s+")).firstOrNull()?.toIntOrNull()
+                ?: run {
+                    lastCpuSample = null
+                    return MetricsSample(0.0, 0L, 0L)
+                }
+            val cpu = sampleCpuPercent(pid)
+            val (rssBytes, vmSizeBytes) = sampleProcessMemory(pid)
+            MetricsSample(cpu, rssBytes, vmSizeBytes)
+        } catch (cause: Exception) {
+            println("metrics capture failed: $cause")
+            MetricsSample(0.0, 0L, 0L)
+        }
+    }
+
+    private fun sampleCpuPercent(pid: Int): Double {
+        val previous = lastCpuSample
+        if (previous != null && previous.pid == pid) {
+            val ticks = readCpuTicks(pid) ?: return 0.0
+            val now = System.nanoTime()
+            lastCpuSample = CpuSample(pid, ticks, now)
+            return cpuPercentFromDelta(ticks - previous.ticks, now - previous.wallNanos)
+        }
+        // No baseline for this PID: one adb round-trip with a device-side sleep
+        // so the first step gets a real reading instead of 0.
+        val pair = readCpuTicksPair(pid, cpuFirstSampleSleepMillis) ?: return 0.0
+        lastCpuSample = CpuSample(pid, pair.second, System.nanoTime())
+        return cpuPercentFromDelta(pair.second - pair.first, cpuFirstSampleSleepMillis * 1_000_000L)
+    }
+
+    private fun readCpuTicks(pid: Int): Long? {
+        val stat = runAdbOutput(listOf("shell", "cat", "/proc/$pid/stat")).trim()
+        if (stat.isEmpty()) return null
+        return parseCpuTicks(stat)
+    }
+
+    private fun readCpuTicksPair(pid: Int, sleepMillis: Long): Pair<Long, Long>? {
+        // "sleep 0.050" — toybox sleep accepts fractional seconds on modern Android.
+        val sleepArg = "0.${"%03d".format(sleepMillis)}"
+        val command = "cat /proc/$pid/stat; sleep $sleepArg; cat /proc/$pid/stat"
+        val output = runAdbOutput(listOf("shell", command))
+        val lines = output.lines().filter { it.isNotBlank() }
+        if (lines.size < 2) return null
+        val first = parseCpuTicks(lines[0]) ?: return null
+        val second = parseCpuTicks(lines[1]) ?: return null
+        return Pair(first, second)
+    }
+
+    private fun parseCpuTicks(statLine: String): Long? {
+        // /proc/<pid>/stat format: pid (comm) state ppid ... utime stime ...
+        // comm is parenthesized and may contain spaces; rsplit on ')' to skip it.
+        val afterComm = statLine.substringAfterLast(')').trim()
+        val fields = afterComm.split(Regex("\\s+"))
+        // After the ')' we are at the "state" field (index 0 in afterComm).
+        // utime is proc(14) = afterComm[11], stime is proc(15) = afterComm[12].
+        if (fields.size < 13) return null
+        val utime = fields[11].toLongOrNull() ?: return null
+        val stime = fields[12].toLongOrNull() ?: return null
+        return utime + stime
+    }
+
+    private fun cpuPercentFromDelta(deltaTicks: Long, deltaWallNanos: Long): Double {
+        if (deltaTicks < 0 || deltaWallNanos <= 0) return 0.0
+        val tickHz = clockTicksPerSecond.coerceAtLeast(1L)
+        val deltaCpuNanos = deltaTicks * 1_000_000_000.0 / tickHz
+        return (deltaCpuNanos / deltaWallNanos) * 100.0
+    }
+
+    private fun resolveClockTicksPerSecond(): Long {
+        val output = runAdbOutput(listOf("shell", "getconf", "CLK_TCK")).trim()
+        return output.toLongOrNull() ?: 100L
+    }
+
+    private fun sampleProcessMemory(pid: Int): Pair<Long, Long> {
+        val status = runAdbOutput(listOf("shell", "cat", "/proc/$pid/status"))
+        var rssKb = 0L
+        var vmSizeKb = 0L
+        for (raw in status.lineSequence()) {
+            val line = raw.trim()
+            when {
+                line.startsWith("VmRSS:") -> rssKb = parseKb(line) ?: rssKb
+                line.startsWith("VmSize:") -> vmSizeKb = parseKb(line) ?: vmSizeKb
+            }
+        }
+        return Pair(rssKb * 1024L, vmSizeKb * 1024L)
+    }
+
+    private fun parseKb(line: String): Long? {
+        val parts = line.split(Regex("\\s+"))
+        if (parts.size < 2) return null
+        return parts[1].toLongOrNull()
+    }
+
+    private fun runAdbOutput(arguments: List<String>): String {
+        return try {
+            val process = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(false).start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            output
+        } catch (cause: Exception) {
+            ""
+        }
+    }
 }

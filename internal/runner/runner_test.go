@@ -310,6 +310,55 @@ func TestScreenFromSnapshot(t *testing.T) {
 	})
 }
 
+func TestRunner_StampsHierarchyResolvedBoundsAndResiduals(t *testing.T) {
+	snapshots := []map[string]json.RawMessage{
+		{"balance": json.RawMessage(`100`)},
+		{"balance": json.RawMessage(`200`)},
+	}
+	state := newHarness(t, snapshots)
+	state.startSDK(t)
+	state.acceptConnection(t)
+
+	state.mock.HierarchyJSON = `<?xml version="1.0"?>
+<hierarchy>
+  <node resource-id="com.fixture:id/next" clickable="true" enabled="true" bounds="[40,80][240,160]"/>
+</hierarchy>`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:        100 * time.Millisecond,
+		SnapshotTimeout: 2 * time.Second,
+		IdleTimeout:     50 * time.Millisecond,
+		Connection:      state.conn,
+		Driver:          state.mock,
+		Verifier:        state.verifier,
+		TraceWriter:     state.writer,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, `"selector":"id:next"`) {
+		t.Errorf("expected selector in trace: %s", text)
+	}
+	if !strings.Contains(text, `"resolved_bounds":{"x":40,"y":80,"width":200,"height":80}`) {
+		t.Errorf("expected resolved_bounds in trace: %s", text)
+	}
+	if !strings.Contains(text, `"tap_point":{"x":140,"y":120}`) {
+		t.Errorf("expected tap_point in trace: %s", text)
+	}
+	if !strings.Contains(text, `"hierarchy":{"elements":`) {
+		t.Errorf("expected hierarchy in trace: %s", text)
+	}
+	if !strings.Contains(text, `"residuals":{`) {
+		t.Errorf("expected residuals in trace: %s", text)
+	}
+}
+
 func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 	snapshots := []map[string]json.RawMessage{
 		{"balance": json.RawMessage(`100`)},

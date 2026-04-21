@@ -1,0 +1,98 @@
+.exceptions-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.exceptions-panel-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.exceptions-panel-jump {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.exceptions-panel-jump:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.exceptions-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.exceptions-row details {
+  border: 1px dashed var(--border-strong);
+  background: var(--surface);
+  padding: 6px 8px;
+}
+
+.exceptions-row details[open] {
+  border-color: var(--text-primary);
+}
+
+.exceptions-summary {
+  display: grid;
+  grid-template-columns: 8px auto auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  outline: none;
+}
+
+.exceptions-summary::-webkit-details-marker {
+  display: none;
+}
+
+.exceptions-marker {
+  width: 8px;
+  height: 8px;
+  border: 1px dashed var(--text-primary);
+  background: transparent;
+  align-self: center;
+}
+
+.exceptions-class {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.exceptions-colon {
+  color: var(--text-muted);
+}
+
+.exceptions-message {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exceptions-time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.exceptions-stack {
+  margin: 8px 0 0;
+  padding: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre;
+}

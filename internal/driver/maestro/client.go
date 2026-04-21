@@ -153,4 +153,16 @@ func (c *Client) Health(ctx context.Context) (driver.Health, error) {
 	}, nil
 }
 
+func (c *Client) Metrics(ctx context.Context, bundleID string) (driver.Metrics, error) {
+	response, err := c.stub.Metrics(ctx, &driverpb.MetricsRequest{BundleId: bundleID})
+	if err != nil {
+		return driver.Metrics{}, err
+	}
+	return driver.Metrics{
+		CPUPercent:       response.GetCpuPercent(),
+		HeapBytes:        response.GetHeapBytes(),
+		TotalMemoryBytes: response.GetTotalMemoryBytes(),
+	}, nil
+}
+
 var _ driver.Driver = (*Client)(nil)

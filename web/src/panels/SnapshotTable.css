@@ -1,0 +1,44 @@
+.snapshot-table {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.snapshot-row {
+  display: grid;
+  grid-template-columns: minmax(0, 160px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-left: 2px solid transparent;
+}
+
+.snapshot-row[data-changed="true"] {
+  border-left-color: var(--border-strong);
+}
+
+.snapshot-path {
+  margin: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-value {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.snapshot-row[data-long-value="true"] .snapshot-value {
+  white-space: pre-wrap;
+  max-height: 6em;
+  overflow-y: auto;
+  text-align: left;
+}

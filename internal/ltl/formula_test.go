@@ -1,6 +1,7 @@
 package ltl
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -189,5 +190,77 @@ func TestNot_InvertsPure(t *testing.T) {
 func TestVerdict_StringPending(t *testing.T) {
 	if got := VerdictPending.String(); got != "pending" {
 		t.Errorf("VerdictPending.String() = %q", got)
+	}
+}
+
+func TestMarshalJSON_AlwaysImpliesEventually(t *testing.T) {
+	formula := Always(Implies(Now(Pure(true)), EventuallyWithinSteps(Pure(false), 3)))
+	body, err := json.Marshal(formula)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"op":"always","arg":{"op":"implies","left":{"op":"now","arg":{"op":"true"}},"right":{"op":"eventually","arg":{"op":"false"},"within":{"amount":3,"unit":"steps"}}}}`
+	if string(body) != want {
+		t.Errorf("marshal mismatch:\n got: %s\nwant: %s", body, want)
+	}
+}
+
+func TestMarshalJSON_AndOrNot(t *testing.T) {
+	formula := And(Or(Pure(true), Pure(false)), Not(Pure(true)))
+	body, _ := json.Marshal(formula)
+	want := `{"op":"and","left":{"op":"or","left":{"op":"true"},"right":{"op":"false"}},"right":{"op":"not","arg":{"op":"true"}}}`
+	if string(body) != want {
+		t.Errorf("and/or/not marshal mismatch:\n got: %s\nwant: %s", body, want)
+	}
+}
+
+func TestMarshalJSON_EventuallyMillisecondsAndDeadline(t *testing.T) {
+	body, _ := json.Marshal(EventuallyWithin(Pure(true), 250*time.Millisecond))
+	if !strings.Contains(string(body), `"unit":"milliseconds"`) || !strings.Contains(string(body), `"amount":250`) {
+		t.Errorf("milliseconds within wrong: %s", body)
+	}
+	deadline := time.UnixMilli(1700000000000)
+	body, _ = json.Marshal(EventuallyBefore(Pure(true), deadline))
+	if !strings.Contains(string(body), `"unit":"deadline"`) || !strings.Contains(string(body), `"amount":1700000000000`) {
+		t.Errorf("deadline within wrong: %s", body)
+	}
+}
+
+func TestMarshalJSON_NextAndThunkAndError(t *testing.T) {
+	body, _ := json.Marshal(Next(Pure(true)))
+	if string(body) != `{"op":"next","arg":{"op":"true"}}` {
+		t.Errorf("next marshal wrong: %s", body)
+	}
+	body, _ = json.Marshal(Thunk(func() bool { return true }))
+	if string(body) != `{"op":"predicate"}` {
+		t.Errorf("thunk marshal wrong: %s", body)
+	}
+	body, _ = json.Marshal(ErrorFormula{Message: "bad"})
+	if string(body) != `{"op":"error","message":"bad"}` {
+		t.Errorf("error marshal wrong: %s", body)
+	}
+}
+
+func TestResidual_HoldsViolatedPending(t *testing.T) {
+	holdsEval := NewEvaluator(Always(Pure(true)))
+	holdsEval.Observe()
+	if got := holdsEval.Residual(); got != (PureFormula{Value: true}) {
+		t.Errorf("holds residual = %v, want true", got)
+	}
+
+	violEval := NewEvaluator(Always(Now(Pure(false))))
+	violEval.Observe()
+	if got := violEval.Residual(); got != (PureFormula{Value: false}) {
+		t.Errorf("violated residual = %v, want false", got)
+	}
+
+	pendingEval := NewEvaluator(Always(Next(Pure(true))))
+	pendingEval.Observe()
+	body, err := json.Marshal(pendingEval.Residual())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"op":"and"`) && !strings.Contains(string(body), `"op":"true"`) {
+		t.Errorf("pending residual unexpected: %s", body)
 	}
 }

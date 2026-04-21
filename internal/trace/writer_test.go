@@ -44,6 +44,109 @@ func TestWriteMeta_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteMeta_EndedAtRoundTrip(t *testing.T) {
+	directory := t.TempDir()
+	writer, err := NewWriter(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	endedAt := time.Date(2026, 4, 17, 22, 31, 0, 0, time.UTC)
+	meta := Meta{
+		Seed:        7,
+		SpecPath:    "spec.ts",
+		Platform:    "android",
+		BundleID:    "in.test",
+		StartedAt:   time.Date(2026, 4, 17, 22, 30, 0, 0, time.UTC),
+		EndedAt:     &endedAt,
+		UatuVersion: "0.0.1",
+	}
+	if err := writer.WriteMeta(meta); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(directory, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"ended_at": "2026-04-17T22:31:00Z"`) {
+		t.Errorf("ended_at not in meta.json: %s", body)
+	}
+	var got Meta
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.EndedAt == nil || !got.EndedAt.Equal(endedAt) {
+		t.Errorf("EndedAt round-trip wrong: %v", got.EndedAt)
+	}
+}
+
+func TestWriteMeta_OmitsEndedAtWhenNil(t *testing.T) {
+	directory := t.TempDir()
+	writer, _ := NewWriter(directory)
+	defer writer.Close()
+	if err := writer.WriteMeta(Meta{StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(directory, "meta.json"))
+	if strings.Contains(string(body), "ended_at") {
+		t.Errorf("ended_at should be omitted when nil: %s", body)
+	}
+}
+
+func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
+	directory := t.TempDir()
+	writer, _ := NewWriter(directory)
+	defer writer.Close()
+
+	step := Step{
+		Index:     1,
+		Timestamp: time.Now().UTC(),
+		Action: &Action{
+			Kind:           "tap",
+			Selector:       "id:next",
+			ResolvedBounds: &BoundsRecord{X: 10, Y: 20, Width: 100, Height: 50},
+			TapPoint:       &PointRecord{X: 60, Y: 45},
+		},
+		Residuals: map[string]json.RawMessage{
+			"prop1": json.RawMessage(`{"op":"true"}`),
+		},
+	}
+	if err := writer.WriteStep(step); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(directory, "trace.jsonl"))
+	var got Step
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("bad jsonl: %v\n%s", err, body)
+	}
+	if got.Action.Selector != "id:next" {
+		t.Errorf("selector = %q", got.Action.Selector)
+	}
+	if got.Action.ResolvedBounds == nil || got.Action.ResolvedBounds.Width != 100 {
+		t.Errorf("resolved_bounds round-trip wrong: %+v", got.Action.ResolvedBounds)
+	}
+	if got.Action.TapPoint == nil || got.Action.TapPoint.X != 60 {
+		t.Errorf("tap_point round-trip wrong: %+v", got.Action.TapPoint)
+	}
+	if string(got.Residuals["prop1"]) != `{"op":"true"}` {
+		t.Errorf("residuals round-trip wrong: %s", got.Residuals["prop1"])
+	}
+}
+
+func TestWriteStep_OmitsEmptyHierarchyAndResiduals(t *testing.T) {
+	directory := t.TempDir()
+	writer, _ := NewWriter(directory)
+	defer writer.Close()
+	if err := writer.WriteStep(Step{Index: 1}); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(directory, "trace.jsonl"))
+	if strings.Contains(string(body), "hierarchy") || strings.Contains(string(body), "residuals") {
+		t.Errorf("empty hierarchy/residuals must omit: %s", body)
+	}
+}
+
 func TestWriteStep_AppendsOneJsonLine(t *testing.T) {
 	directory := t.TempDir()
 	writer, err := NewWriter(directory)

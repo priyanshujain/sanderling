@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/priyanshujain/uatu/internal/hierarchy"
 )
 
 type Step struct {
@@ -18,19 +20,43 @@ type Step struct {
 	Action     *Action                    `json:"action,omitempty"`
 	Exceptions []Exception                `json:"exceptions,omitempty"`
 	Violations []string                   `json:"violations,omitempty"`
+	Hierarchy  *hierarchy.Tree            `json:"hierarchy,omitempty"`
+	Residuals  map[string]json.RawMessage `json:"residuals,omitempty"`
+	Metrics    *Metrics                   `json:"metrics,omitempty"`
+}
+
+type Metrics struct {
+	CPUPercent       float64 `json:"cpu_percent"`
+	HeapBytes        int64   `json:"heap_bytes,omitempty"`
+	TotalMemoryBytes int64   `json:"total_memory_bytes,omitempty"`
 }
 
 type Action struct {
-	Kind  string `json:"kind"`
-	X     int    `json:"x,omitempty"`
-	Y     int    `json:"y,omitempty"`
-	FromX int    `json:"from_x,omitempty"`
-	FromY int    `json:"from_y,omitempty"`
-	ToX   int    `json:"to_x,omitempty"`
-	ToY   int    `json:"to_y,omitempty"`
-	Key   string `json:"key,omitempty"`
-	Text  string `json:"text,omitempty"`
-	DurationMillis int `json:"duration_millis,omitempty"`
+	Kind           string        `json:"kind"`
+	X              int           `json:"x,omitempty"`
+	Y              int           `json:"y,omitempty"`
+	FromX          int           `json:"from_x,omitempty"`
+	FromY          int           `json:"from_y,omitempty"`
+	ToX            int           `json:"to_x,omitempty"`
+	ToY            int           `json:"to_y,omitempty"`
+	Key            string        `json:"key,omitempty"`
+	Text           string        `json:"text,omitempty"`
+	DurationMillis int           `json:"duration_millis,omitempty"`
+	Selector       string        `json:"selector,omitempty"`
+	ResolvedBounds *BoundsRecord `json:"resolved_bounds,omitempty"`
+	TapPoint       *PointRecord  `json:"tap_point,omitempty"`
+}
+
+type BoundsRecord struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+type PointRecord struct {
+	X int `json:"x"`
+	Y int `json:"y"`
 }
 
 type Exception struct {
@@ -41,13 +67,14 @@ type Exception struct {
 }
 
 type Meta struct {
-	Seed         int64     `json:"seed"`
-	SpecPath     string    `json:"spec_path"`
-	BundleSHA256 string    `json:"bundle_sha256"`
-	Platform     string    `json:"platform"`
-	BundleID     string    `json:"bundle_id"`
-	StartedAt    time.Time `json:"started_at"`
-	UatuVersion  string    `json:"uatu_version"`
+	Seed         int64      `json:"seed"`
+	SpecPath     string     `json:"spec_path"`
+	BundleSHA256 string     `json:"bundle_sha256"`
+	Platform     string     `json:"platform"`
+	BundleID     string     `json:"bundle_id"`
+	StartedAt    time.Time  `json:"started_at"`
+	EndedAt      *time.Time `json:"ended_at,omitempty"`
+	UatuVersion  string     `json:"uatu_version"`
 }
 
 type Writer struct {
@@ -95,6 +122,17 @@ func (w *Writer) WriteStep(step Step) error {
 }
 
 func (w *Writer) WriteScreenshot(stepIndex int, png []byte) error {
+	return w.writePNG(fmt.Sprintf("step-%05d.png", stepIndex), png)
+}
+
+// WriteScreenshotAfter writes the post-action screenshot for a step.
+// Callers use this after applyAction + waitForIdle so the UI can show a
+// before/after pair.
+func (w *Writer) WriteScreenshotAfter(stepIndex int, png []byte) error {
+	return w.writePNG(fmt.Sprintf("step-%05d-after.png", stepIndex), png)
+}
+
+func (w *Writer) writePNG(name string, png []byte) error {
 	if len(png) == 0 {
 		return nil
 	}
@@ -102,8 +140,7 @@ func (w *Writer) WriteScreenshot(stepIndex int, png []byte) error {
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return fmt.Errorf("mkdir screenshots: %w", err)
 	}
-	path := filepath.Join(directory, fmt.Sprintf("step-%05d.png", stepIndex))
-	return os.WriteFile(path, png, 0o644)
+	return os.WriteFile(filepath.Join(directory, name), png, 0o644)
 }
 
 func (w *Writer) Close() error {

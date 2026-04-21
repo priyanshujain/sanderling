@@ -25,6 +25,7 @@ func TestDriverServiceDescriptor(t *testing.T) {
 		"RecentLogs":  true,
 		"WaitForIdle": true,
 		"Health":      true,
+		"Metrics":     true,
 	}
 	got := map[string]bool{}
 	for _, m := range sd.Methods {

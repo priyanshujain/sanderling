@@ -1,0 +1,59 @@
+.residual {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.residual-leaf,
+.residual-unary,
+.residual-binary,
+.residual-group {
+  display: inline;
+}
+
+.residual-unary,
+.residual-binary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.op-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+}
+
+.residual-bound {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.residual-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent-violation);
+  border-radius: 3px;
+  color: var(--accent-violation);
+}
+
+.residual-error .op-label {
+  color: var(--accent-violation);
+  border-color: var(--accent-violation);
+  background: transparent;
+}
+
+.residual-error-message {
+  font-size: 12px;
+}
