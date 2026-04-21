@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "uatu"
+rootProject.name = "sanderling"
 
 include(":sidecar")
 include(":sdk-android")

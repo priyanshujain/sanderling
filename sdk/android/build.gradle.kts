@@ -10,7 +10,7 @@ plugins {
     id("org.jetbrains.dokka-javadoc") version "2.2.0"
 }
 
-version = findProperty("uatu.version") as String? ?: "0.0.0-dev"
+version = findProperty("sanderling.version") as String? ?: "0.0.0-dev"
 group = "io.github.priyanshujain"
 
 android {

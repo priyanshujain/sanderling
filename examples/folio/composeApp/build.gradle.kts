@@ -10,7 +10,7 @@ plugins {
     id("app.cash.sqldelight")
 }
 
-val uatuVersion = findProperty("uatu.version") as String? ?: "0.0.0-dev"
+val sanderlingVersion = findProperty("sanderling.version") as String? ?: "0.0.0-dev"
 val sqldelightVersion = "2.3.2"
 
 kotlin {
@@ -83,7 +83,7 @@ kotlin {
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:1.13.0")
             implementation("app.cash.sqldelight:android-driver:$sqldelightVersion")
-            implementation("io.github.priyanshujain:sdk-android:$uatuVersion")
+            implementation("io.github.priyanshujain:sdk-android:$sanderlingVersion")
         }
 
         iosMain.dependencies {
@@ -101,7 +101,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 1
-        versionName = uatuVersion
+        versionName = sanderlingVersion
     }
 
     compileOptions {

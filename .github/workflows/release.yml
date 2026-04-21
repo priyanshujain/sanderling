@@ -55,7 +55,7 @@ jobs:
             gradle-${{ runner.os }}-
 
       - name: Publish to Maven Central
-        run: ./gradlew :sdk-android:publishAndReleaseToMavenCentral -Puatu.version=${{ steps.ver.outputs.version }}
+        run: ./gradlew :sdk-android:publishAndReleaseToMavenCentral -Psanderling.version=${{ steps.ver.outputs.version }}
 
   release-npm:
     name: Publish @uatu/spec to npm
@@ -101,7 +101,7 @@ jobs:
           fi
 
   release-cli:
-    name: Publish uatu CLI to GitHub Releases
+    name: Publish sanderling CLI to GitHub Releases
     runs-on: ubuntu-latest
     permissions:
       contents: write

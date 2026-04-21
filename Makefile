@@ -109,7 +109,7 @@ release-cli: $(SIDECAR_JAR)
 
 release-android-local:
 	@if [ -f .env.local ]; then set -a; . ./.env.local; set +a; fi; \
-	  ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:publishToMavenLocal -Puatu.version=0.0.0-local
+	  ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:publishToMavenLocal -Psanderling.version=0.0.0-local
 
 release-npm-dry:
 	cd pkg/spec-api && npm ci && npm run build && npm pack --dry-run
