@@ -1,10 +1,10 @@
 grid-rows: 2
-grid-gap: 60
+grid-gap: 40
 
 test_run: {
   label: "Test run"
   grid-rows: 2
-  grid-gap: 90
+  grid-gap: 100
 
   go_binary: sanderling (Go) {
     direction: right
@@ -27,12 +27,12 @@ test_run: {
     style.stroke-width: 0
     style.fill: transparent
 
-    sidecar: Maestro sidecar (JVM) {
-      maestro: maestro-client
-    }
-
     device: Emulator / device {
       sdk: sanderling-sdk\npause / state\ncoverage / logs
+    }
+
+    sidecar: Maestro sidecar (JVM) {
+      maestro: maestro-client
     }
 
     sidecar.maestro -> device.sdk: UIAutomator
@@ -44,14 +44,19 @@ test_run: {
 
 viewer: {
   label: "Inspect"
-  grid-columns: 3
+  grid-columns: 4
   grid-gap: 40
 
+  left_pad: "" {
+    style.stroke-width: 0
+    style.fill: transparent
+    style.opacity: 0
+  }
+  web: Web UI (React)
+  inspect: sanderling inspect\nHTTP + SSE
   runs: runs/ {
     shape: cylinder
   }
-  inspect: sanderling inspect\nHTTP + SSE
-  web: Web UI (React)
 
   runs -> inspect
   inspect -> web
