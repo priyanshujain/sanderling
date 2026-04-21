@@ -12,17 +12,17 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class UatuRuntimeTest {
+class SanderlingRuntimeTest {
 
     private lateinit var transport: SocketClientTest.FakeTransport
     private lateinit var frameThread: PauserTest.FakeFrameThread
-    private lateinit var runtime: UatuRuntime
+    private lateinit var runtime: SanderlingRuntime
 
-    private fun newRuntime(): UatuRuntime {
+    private fun newRuntime(): SanderlingRuntime {
         transport = SocketClientTest.FakeTransport()
         frameThread = PauserTest.FakeFrameThread()
         val pauser = Pauser(frameThread, pauseTimeoutMillis = 2_000L)
-        return UatuRuntime(
+        return SanderlingRuntime(
             transport = transport,
             pauser = pauser,
             version = "0.0.1",

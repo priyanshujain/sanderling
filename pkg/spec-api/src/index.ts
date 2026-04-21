@@ -17,7 +17,7 @@ export type {
   State,
   SwipeAction,
   TapAction,
-  UatuRuntime,
+  SanderlingRuntime,
   WaitAction,
   WeightedEntry,
 } from "./types.ts";

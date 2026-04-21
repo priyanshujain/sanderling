@@ -74,7 +74,7 @@ type Meta struct {
 	BundleID     string     `json:"bundle_id"`
 	StartedAt    time.Time  `json:"started_at"`
 	EndedAt      *time.Time `json:"ended_at,omitempty"`
-	UatuVersion  string     `json:"uatu_version"`
+	SanderlingVersion  string     `json:"sanderling_version"`
 }
 
 type Writer struct {

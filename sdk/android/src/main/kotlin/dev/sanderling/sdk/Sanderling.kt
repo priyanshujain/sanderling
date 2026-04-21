@@ -4,21 +4,21 @@ import android.app.Application
 import android.util.Log
 
 data class Configuration(
-    val socketName: String = "uatu-agent",
+    val socketName: String = "sanderling-agent",
     val pauseTimeoutMillis: Long = 5_000L,
 )
 
-object Uatu {
+object Sanderling {
     const val VERSION: String = "0.0.1"
-    private const val LOG_TAG = "Uatu"
+    private const val LOG_TAG = "Sanderling"
 
-    @Volatile private var runtime: UatuRuntime? = null
+    @Volatile private var runtime: SanderlingRuntime? = null
 
     @JvmOverloads
     @Synchronized
     fun start(application: Application, configuration: Configuration = Configuration()) {
         if (runtime != null) return
-        val newRuntime = UatuRuntime(
+        val newRuntime = SanderlingRuntime(
             transport = LocalAbstractTransport(configuration.socketName),
             pauser = Pauser(ChoreographerPoster(), configuration.pauseTimeoutMillis),
             version = VERSION,
@@ -32,7 +32,7 @@ object Uatu {
 
     fun extract(name: String, function: () -> Any?) {
         val activeRuntime = runtime
-            ?: throw IllegalStateException("Uatu.start must be called before registering extractors")
+            ?: throw IllegalStateException("Sanderling.start must be called before registering extractors")
         activeRuntime.register(name, function)
     }
 

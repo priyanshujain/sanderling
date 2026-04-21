@@ -45,7 +45,7 @@ interface State {
 
 `ax.find("text:Click me")`, `ax.find("id:login-form")`, `ax.findAll("role:todo-row")` are the common accessors. Prefer stable testID-style identifiers over positional selectors, for the same reason you would in Espresso or XCUITest.
 
-`snapshots` is populated by the in-app SDK via `Uatu.extract("name") { value }`. Use it when the UI does not expose a value you need, such as business-logic state or hidden fields.
+`snapshots` is populated by the in-app SDK via `Sanderling.extract("name") { value }`. Use it when the UI does not expose a value you need, such as business-logic state or hidden fields.
 
 ## Pattern: preconditions (login, onboarding)
 
@@ -145,7 +145,7 @@ When the UI does not expose a value but the app knows it, use the SDK's extracto
 
 ```kotlin
 // in the app (Android)
-Uatu.extract("cart_count") { store.cart.size }
+Sanderling.extract("cart_count") { store.cart.size }
 ```
 
 ```ts

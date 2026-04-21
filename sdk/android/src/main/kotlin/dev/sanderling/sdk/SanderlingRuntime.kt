@@ -2,7 +2,7 @@ package dev.sanderling.sdk
 
 import android.util.Log
 
-internal class UatuRuntime(
+internal class SanderlingRuntime(
     transport: AgentTransport,
     private val pauser: Pauser,
     private val version: String,
@@ -45,7 +45,7 @@ internal class UatuRuntime(
 
     private inner class AgentHandler : SocketClient.Handler {
         override fun onConnected(sender: SocketClient.MessageSender) {
-            this@UatuRuntime.sender = sender
+            this@SanderlingRuntime.sender = sender
             try {
                 sender.send(Message.hello(version, platform, appPackage))
             } catch (cause: Exception) {
@@ -92,6 +92,6 @@ internal class UatuRuntime(
     }
 
     companion object {
-        private const val LOG_TAG = "Uatu"
+        private const val LOG_TAG = "Sanderling"
     }
 }

@@ -29,11 +29,11 @@ import type {
   Formula,
   Sampler,
   State,
-  UatuRuntime,
+  SanderlingRuntime,
   WeightedEntry,
 } from "../src/types.ts";
 
-interface RecordedRuntime extends UatuRuntime {
+interface RecordedRuntime extends SanderlingRuntime {
   extracts: Array<(state: State) => unknown>;
   alwaysArgs: Array<(() => boolean) | Formula>;
   nowPredicates: Array<() => boolean>;
@@ -51,7 +51,7 @@ interface RecordedRuntime extends UatuRuntime {
 
 function makeChainableFormula(record: RecordedRuntime): Formula {
   const formula: Formula = {
-    __uatuFormula: true,
+    __sanderlingFormula: true,
     implies(other: Formula): Formula {
       record.impliesCalls++;
       void other;
@@ -125,11 +125,11 @@ function installFakeRuntime(): RecordedRuntime {
     },
     actions: (generator: () => Action[]): ActionGenerator => {
       calls.actionGenerators.push(generator);
-      return { __uatuActionGenerator: true, generate: generator };
+      return { __sanderlingActionGenerator: true, generate: generator };
     },
     weighted: (...entries: WeightedEntry[]): ActionGenerator => {
       calls.weightedCalls.push(entries);
-      return { __uatuActionGenerator: true, generate: () => [] };
+      return { __sanderlingActionGenerator: true, generate: () => [] };
     },
     from: <T>(items: readonly T[]): Sampler<T> => {
       calls.fromCalls.push(items as unknown[]);
@@ -145,13 +145,13 @@ function installFakeRuntime(): RecordedRuntime {
     }),
     pressKey: ({ key }) => ({ kind: "PressKey", key }),
     wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
-    taps: { __uatuActionGenerator: true, generate: () => [] },
-    swipes: { __uatuActionGenerator: true, generate: () => [] },
-    waitOnce: { __uatuActionGenerator: true, generate: () => [] },
-    pressKeys: { __uatuActionGenerator: true, generate: () => [] },
-  } satisfies UatuRuntime;
+    taps: { __sanderlingActionGenerator: true, generate: () => [] },
+    swipes: { __sanderlingActionGenerator: true, generate: () => [] },
+    waitOnce: { __sanderlingActionGenerator: true, generate: () => [] },
+    pressKeys: { __sanderlingActionGenerator: true, generate: () => [] },
+  } satisfies SanderlingRuntime;
   const recorded = Object.assign(runtime, calls) as RecordedRuntime;
-  globalThis.__uatu__ = recorded;
+  globalThis.__sanderling__ = recorded;
   return recorded;
 }
 
@@ -168,7 +168,7 @@ test("always wraps a predicate into a formula via the runtime", () => {
   const predicate = () => true;
   const formula = always(predicate);
   assert.equal(runtime.alwaysArgs[0], predicate);
-  assert.equal(formula.__uatuFormula, true);
+  assert.equal(formula.__sanderlingFormula, true);
 });
 
 test("always accepts a formula handle", () => {
@@ -176,7 +176,7 @@ test("always accepts a formula handle", () => {
   const inner = now(() => true);
   const wrapped = always(inner);
   assert.equal(runtime.alwaysArgs.at(-1), inner);
-  assert.equal(wrapped.__uatuFormula, true);
+  assert.equal(wrapped.__sanderlingFormula, true);
 });
 
 test("now/next/eventually forward predicates", () => {
@@ -257,7 +257,7 @@ test("actions wraps a generator into the runtime's ActionGenerator", () => {
   const generator = () => [Tap({ on: "id:x" })];
   const wrapped = actions(generator);
   assert.equal(runtime.actionGenerators[0], generator);
-  assert.equal(wrapped.__uatuActionGenerator, true);
+  assert.equal(wrapped.__sanderlingActionGenerator, true);
 });
 
 test("weighted forwards weighted entries to the runtime", () => {
@@ -279,8 +279,8 @@ test("from forwards items to the runtime", () => {
 
 test("default generators proxy through to the runtime", () => {
   installFakeRuntime();
-  assert.equal(taps.__uatuActionGenerator, true);
-  assert.equal(swipes.__uatuActionGenerator, true);
-  assert.equal(waitOnce.__uatuActionGenerator, true);
-  assert.equal(pressKey.__uatuActionGenerator, true);
+  assert.equal(taps.__sanderlingActionGenerator, true);
+  assert.equal(swipes.__sanderlingActionGenerator, true);
+  assert.equal(waitOnce.__sanderlingActionGenerator, true);
+  assert.equal(pressKey.__sanderlingActionGenerator, true);
 });

@@ -70,7 +70,7 @@ Traces land in `./uatu/runs/<timestamp>/`.
 
 ## How it connects to uatu
 
-- `composeApp/src/androidMain/.../FolioApplication.kt` calls `Uatu.start(this)`
+- `composeApp/src/androidMain/.../FolioApplication.kt` calls `Sanderling.start(this)`
   and registers snapshot extractors (`logged_in`, `account_count`,
   `total_balance`, `route`)
 - `uatu/spec.ts` imports `@uatu/spec`, reads those snapshots, asserts

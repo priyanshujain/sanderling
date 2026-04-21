@@ -78,12 +78,12 @@ export type Key =
   | "right";
 
 export interface ActionGenerator {
-  readonly __uatuActionGenerator: true;
+  readonly __sanderlingActionGenerator: true;
   generate(): Action[];
 }
 
 export interface Formula {
-  readonly __uatuFormula: true;
+  readonly __sanderlingFormula: true;
   implies(other: Formula): Formula;
   or(other: Formula): Formula;
   and(other: Formula): Formula;
@@ -98,7 +98,7 @@ export interface Sampler<T> {
   generate(): T;
 }
 
-export interface UatuRuntime {
+export interface SanderlingRuntime {
   extract: <T>(getter: (state: State) => T) => Extracted<T>;
   always: (predicateOrFormula: (() => boolean) | Formula) => Formula;
   now: (predicate: () => boolean) => Formula;
@@ -129,5 +129,5 @@ export type WeightedEntry = readonly [number, ActionGenerator];
 
 declare global {
   // eslint-disable-next-line no-var
-  var __uatu__: UatuRuntime;
+  var __sanderling__: SanderlingRuntime;
 }

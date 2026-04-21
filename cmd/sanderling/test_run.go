@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	socketName            = "uatu-agent"
+	socketName            = "sanderling-agent"
 	sidecarStartupTimeout = 30 * time.Second
 	sdkAcceptTimeout      = 60 * time.Second
 )
@@ -166,7 +166,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		Platform:     options.platform,
 		BundleID:     options.bundleID,
 		StartedAt:    time.Now().UTC(),
-		UatuVersion:  "0.0.1",
+		SanderlingVersion:  "0.0.1",
 	}
 	if err := traceWriter.WriteMeta(meta); err != nil {
 		return fmt.Errorf("trace meta: %w", err)

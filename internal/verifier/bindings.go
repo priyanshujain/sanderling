@@ -80,11 +80,11 @@ type formulaSpec struct {
 }
 
 const (
-	tagFormula          = "__uatuFormula"
-	tagFormulaSpecIndex = "__uatuFormulaSpec"
-	tagActionGenerator  = "__uatuActionGenerator"
-	tagInternalKind     = "__uatuKind"
-	tagSelector         = "__uatuSelector"
+	tagFormula          = "__sanderlingFormula"
+	tagFormulaSpecIndex = "__sanderlingFormulaSpec"
+	tagActionGenerator  = "__sanderlingActionGenerator"
+	tagInternalKind     = "__sanderlingKind"
+	tagSelector         = "__sanderlingSelector"
 
 	internalKindActions         = "actions"
 	internalKindWeighted        = "weighted"
@@ -94,63 +94,63 @@ const (
 	internalKindBuiltinPressKey = "pressKey"
 )
 
-// installRuntimeBindings exposes globalThis.__uatu__ to the loaded spec.
+// installRuntimeBindings exposes globalThis.__sanderling__ to the loaded spec.
 func (v *Verifier) installRuntimeBindings() error {
-	uatu := v.runtime.NewObject()
+	sanderling := v.runtime.NewObject()
 
-	if err := uatu.Set("extract", v.bindExtract); err != nil {
+	if err := sanderling.Set("extract", v.bindExtract); err != nil {
 		return err
 	}
-	if err := uatu.Set("always", v.bindAlways); err != nil {
+	if err := sanderling.Set("always", v.bindAlways); err != nil {
 		return err
 	}
-	if err := uatu.Set("now", v.bindNow); err != nil {
+	if err := sanderling.Set("now", v.bindNow); err != nil {
 		return err
 	}
-	if err := uatu.Set("next", v.bindNext); err != nil {
+	if err := sanderling.Set("next", v.bindNext); err != nil {
 		return err
 	}
-	if err := uatu.Set("eventually", v.bindEventually); err != nil {
+	if err := sanderling.Set("eventually", v.bindEventually); err != nil {
 		return err
 	}
-	if err := uatu.Set("actions", v.bindActions); err != nil {
+	if err := sanderling.Set("actions", v.bindActions); err != nil {
 		return err
 	}
-	if err := uatu.Set("weighted", v.bindWeighted); err != nil {
+	if err := sanderling.Set("weighted", v.bindWeighted); err != nil {
 		return err
 	}
-	if err := uatu.Set("from", v.bindFrom); err != nil {
+	if err := sanderling.Set("from", v.bindFrom); err != nil {
 		return err
 	}
-	if err := uatu.Set("tap", v.bindTap); err != nil {
+	if err := sanderling.Set("tap", v.bindTap); err != nil {
 		return err
 	}
-	if err := uatu.Set("inputText", v.bindInputText); err != nil {
+	if err := sanderling.Set("inputText", v.bindInputText); err != nil {
 		return err
 	}
-	if err := uatu.Set("swipe", v.bindSwipe); err != nil {
+	if err := sanderling.Set("swipe", v.bindSwipe); err != nil {
 		return err
 	}
-	if err := uatu.Set("pressKey", v.bindPressKey); err != nil {
+	if err := sanderling.Set("pressKey", v.bindPressKey); err != nil {
 		return err
 	}
-	if err := uatu.Set("wait", v.bindWait); err != nil {
+	if err := sanderling.Set("wait", v.bindWait); err != nil {
 		return err
 	}
-	if err := uatu.Set("taps", v.builtinGenerator(internalKindBuiltinTaps)); err != nil {
+	if err := sanderling.Set("taps", v.builtinGenerator(internalKindBuiltinTaps)); err != nil {
 		return err
 	}
-	if err := uatu.Set("swipes", v.builtinGenerator(internalKindBuiltinSwipes)); err != nil {
+	if err := sanderling.Set("swipes", v.builtinGenerator(internalKindBuiltinSwipes)); err != nil {
 		return err
 	}
-	if err := uatu.Set("waitOnce", v.builtinGenerator(internalKindBuiltinWaitOnce)); err != nil {
+	if err := sanderling.Set("waitOnce", v.builtinGenerator(internalKindBuiltinWaitOnce)); err != nil {
 		return err
 	}
-	if err := uatu.Set("pressKeys", v.builtinGenerator(internalKindBuiltinPressKey)); err != nil {
+	if err := sanderling.Set("pressKeys", v.builtinGenerator(internalKindBuiltinPressKey)); err != nil {
 		return err
 	}
 
-	return v.runtime.GlobalObject().Set("__uatu__", uatu)
+	return v.runtime.GlobalObject().Set("__sanderling__", sanderling)
 }
 
 func (v *Verifier) bindExtract(call goja.FunctionCall) goja.Value {
@@ -172,7 +172,7 @@ func (v *Verifier) bindExtract(call goja.FunctionCall) goja.Value {
 
 // bindAlways accepts either a predicate function (legacy shape) or a formula
 // handle (new shape). Both produce a formula handle tagged with
-// __uatuFormulaSpec.
+// __sanderlingFormulaSpec.
 func (v *Verifier) bindAlways(call goja.FunctionCall) goja.Value {
 	if len(call.Arguments) != 1 {
 		panic(v.runtime.NewTypeError("always requires exactly one argument"))
@@ -258,9 +258,9 @@ func (v *Verifier) formulaHandle(kind specKind, index int) *goja.Object {
 	handle := v.runtime.NewObject()
 	_ = handle.Set(tagFormula, true)
 	_ = handle.Set(tagFormulaSpecIndex, index)
-	// Keep __uatuIndex as an alias so older property shapes that read it keep
+	// Keep __sanderlingIndex as an alias so older property shapes that read it keep
 	// working during backward-compat transitions.
-	_ = handle.Set("__uatuIndex", index)
+	_ = handle.Set("__sanderlingIndex", index)
 
 	_ = handle.Set("implies", v.binaryChain(index, specKindImplies))
 	_ = handle.Set("or", v.binaryChain(index, specKindOr))
@@ -326,7 +326,7 @@ func (v *Verifier) eventuallyWithin(selfIndex int) func(call goja.FunctionCall) 
 	}
 }
 
-// extractSpecIndex reads __uatuFormulaSpec from a JS formula handle.
+// extractSpecIndex reads __sanderlingFormulaSpec from a JS formula handle.
 func (v *Verifier) extractSpecIndex(value goja.Value) (int, bool) {
 	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
 		return 0, false

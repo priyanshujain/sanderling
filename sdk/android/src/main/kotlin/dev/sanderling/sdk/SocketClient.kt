@@ -30,7 +30,7 @@ class SocketClient(
     private val transport: AgentTransport,
     private val handler: Handler,
     private val backoff: Backoff = Backoff(),
-    private val threadFactory: (Runnable) -> Thread = { runnable -> Thread(runnable, "uatu-agent-reader") },
+    private val threadFactory: (Runnable) -> Thread = { runnable -> Thread(runnable, "sanderling-agent-reader") },
     private val sleeper: (Long) -> Unit = { millis -> if (millis > 0L) Thread.sleep(millis) },
 ) {
     interface Handler {

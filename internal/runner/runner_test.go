@@ -22,12 +22,12 @@ import (
 )
 
 const fixtureSpec = `
-const screen = __uatu__.extract(state => state.snapshots.screen ?? "");
-const balance = __uatu__.extract(state => state.snapshots.balance ?? 0);
+const screen = __sanderling__.extract(state => state.snapshots.screen ?? "");
+const balance = __sanderling__.extract(state => state.snapshots.balance ?? 0);
 globalThis.properties = {
-  balanceNonNegative: __uatu__.always(() => balance.current >= 0),
+  balanceNonNegative: __sanderling__.always(() => balance.current >= 0),
 };
-globalThis.actions = __uatu__.actions(() => [__uatu__.tap({ on: "id:next" })]);
+globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:next" })]);
 `
 
 type harness struct {
@@ -195,9 +195,9 @@ func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
 func TestRunner_ThrowingPredicateIsLoggedNotPanic(t *testing.T) {
 	const throwingSpec = `
 globalThis.properties = {
-  broken: __uatu__.always(() => { throw new Error("bad predicate"); }),
+  broken: __sanderling__.always(() => { throw new Error("bad predicate"); }),
 };
-globalThis.actions = __uatu__.actions(() => [__uatu__.tap({ on: "id:next" })]);
+globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:next" })]);
 `
 	state := newHarnessWithSpec(t, []map[string]json.RawMessage{{}, {}}, throwingSpec)
 	state.startSDK(t)
