@@ -1,4 +1,4 @@
-package dev.uatu.sidecar
+package dev.sanderling.sidecar
 
 interface DriverBackend {
     fun launch(bundleId: String, launcherActivity: String, clearState: Boolean)

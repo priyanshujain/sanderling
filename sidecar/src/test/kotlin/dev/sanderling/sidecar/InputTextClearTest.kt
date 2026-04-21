@@ -1,4 +1,4 @@
-package dev.uatu.sidecar
+package dev.sanderling.sidecar
 
 import org.junit.Test
 import kotlin.test.assertEquals

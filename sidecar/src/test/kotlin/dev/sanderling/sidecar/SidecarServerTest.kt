@@ -1,4 +1,4 @@
-package dev.uatu.sidecar
+package dev.sanderling.sidecar
 
 import kotlin.test.Test
 import kotlin.test.assertTrue

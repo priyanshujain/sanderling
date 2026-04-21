@@ -70,7 +70,7 @@ sourceSets {
 }
 
 application {
-    mainClass.set("dev.uatu.sidecar.MainKt")
+    mainClass.set("dev.sanderling.sidecar.MainKt")
 }
 
 // The Go binary embeds this fat JAR by fixed path (internal/sidecar/assets/

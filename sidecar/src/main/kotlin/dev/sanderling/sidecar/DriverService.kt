@@ -1,4 +1,4 @@
-package dev.uatu.sidecar
+package dev.sanderling.sidecar
 
 import com.google.protobuf.ByteString
 import dev.uatu.driver.v1.DriverGrpc

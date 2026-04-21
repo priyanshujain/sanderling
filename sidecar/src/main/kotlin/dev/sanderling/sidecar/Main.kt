@@ -1,4 +1,4 @@
-package dev.uatu.sidecar
+package dev.sanderling.sidecar
 
 import io.grpc.Server
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder

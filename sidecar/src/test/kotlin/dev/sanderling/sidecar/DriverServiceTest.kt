@@ -1,4 +1,4 @@
-package dev.uatu.sidecar
+package dev.sanderling.sidecar
 
 import dev.uatu.driver.v1.DriverGrpc
 import dev.uatu.driver.v1.Duration
