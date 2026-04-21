@@ -48,7 +48,7 @@ fun main(arguments: Array<String>) {
     val service = DriverService(platform = platform, serial = serial)
     val server = SidecarServer(port, service)
     val boundPort = server.start()
-    println("uatu-sidecar listening on 127.0.0.1:$boundPort platform=$platform")
+    println("sanderling-sidecar listening on 127.0.0.1:$boundPort platform=$platform")
     System.out.flush()
     server.awaitTermination()
 }

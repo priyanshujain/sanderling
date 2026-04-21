@@ -44,8 +44,8 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile: options.spec,
 		Defines: map[string]string{
-			"UATU_TEST_PHONE": os.Getenv("UATU_TEST_PHONE"),
-			"UATU_TEST_OTP":   os.Getenv("UATU_TEST_OTP"),
+			"SANDERLING_TEST_PHONE": os.Getenv("SANDERLING_TEST_PHONE"),
+			"SANDERLING_TEST_OTP":   os.Getenv("SANDERLING_TEST_OTP"),
 		},
 		Aliases: aliases,
 	})

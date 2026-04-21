@@ -27,7 +27,7 @@ class SanderlingRuntimeTest {
             pauser = pauser,
             version = "0.0.1",
             platform = "android",
-            appPackage = "com.example.uatu_test",
+            appPackage = "com.example.sanderling_test",
         ).also { runtime = it }
     }
 
@@ -43,7 +43,7 @@ class SanderlingRuntimeTest {
         assertEquals(MessageType.HELLO, hello.type)
         assertEquals("0.0.1", hello.version)
         assertEquals("android", hello.platform)
-        assertEquals("com.example.uatu_test", hello.appPackage)
+        assertEquals("com.example.sanderling_test", hello.appPackage)
     }
 
     @Test fun pauseTriggersExtractorsAndReturnsState() {

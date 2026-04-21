@@ -6,7 +6,7 @@ export interface Meta {
   bundle_id: string;
   started_at: string;
   ended_at?: string;
-  uatu_version: string;
+  sanderling_version: string;
 }
 
 export interface RunSummary {

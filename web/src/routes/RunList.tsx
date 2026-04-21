@@ -53,7 +53,7 @@ export default function RunList() {
     return <div className="status-block">loading runs...</div>;
   }
   if (runs.length === 0) {
-    return <div className="status-block">no runs yet. run `uatu pbt` to produce some.</div>;
+    return <div className="status-block">no runs yet. run `sanderling test` to produce some.</div>;
   }
 
   return (

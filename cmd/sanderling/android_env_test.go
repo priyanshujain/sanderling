@@ -31,18 +31,18 @@ func TestParseAdbDevices_Empty(t *testing.T) {
 func TestParseAVDList_DropsInfoLines(t *testing.T) {
 	output := `INFO    | Storing crashdata in: /tmp/x
 Medium_Phone_API_36.0
-uatu_test
+sanderling_test
 `
 
 	got := parseAVDList(output)
-	want := []string{"Medium_Phone_API_36.0", "uatu_test"}
+	want := []string{"Medium_Phone_API_36.0", "sanderling_test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
 
 func TestPickAVD_ExplicitName(t *testing.T) {
-	got, err := pickAVD("Pixel_7", []string{"Pixel_7", "uatu_test"})
+	got, err := pickAVD("Pixel_7", []string{"Pixel_7", "sanderling_test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,12 +59,12 @@ func TestPickAVD_ExplicitMissing(t *testing.T) {
 }
 
 func TestPickAVD_SingleAvailable(t *testing.T) {
-	got, err := pickAVD("", []string{"uatu_test"})
+	got, err := pickAVD("", []string{"sanderling_test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "uatu_test" {
-		t.Fatalf("got %q, want uatu_test", got)
+	if got != "sanderling_test" {
+		t.Fatalf("got %q, want sanderling_test", got)
 	}
 }
 

@@ -21,14 +21,14 @@ Run `sanderling doctor` to check the host environment.
 macOS arm64:
 
 ```sh
-curl -L https://github.com/priyanshujain/sanderling/releases/latest/download/uatu_<version>_darwin_arm64.tar.gz | tar xz
+curl -L https://github.com/priyanshujain/sanderling/releases/latest/download/sanderling_<version>_darwin_arm64.tar.gz | tar xz
 ./sanderling version
 ```
 
 Linux amd64:
 
 ```sh
-curl -L https://github.com/priyanshujain/sanderling/releases/latest/download/uatu_<version>_linux_amd64.tar.gz | tar xz
+curl -L https://github.com/priyanshujain/sanderling/releases/latest/download/sanderling_<version>_linux_amd64.tar.gz | tar xz
 ./sanderling version
 ```
 

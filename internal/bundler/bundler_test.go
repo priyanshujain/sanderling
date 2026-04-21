@@ -47,15 +47,15 @@ func TestBundle_ProducesIIFE(t *testing.T) {
 
 func TestBundle_InlinesDefines(t *testing.T) {
 	entry := writeFixture(t, "spec.ts", `
-		const phone = process.env.UATU_TEST_PHONE;
-		const otp = process.env.UATU_TEST_OTP;
+		const phone = process.env.SANDERLING_TEST_PHONE;
+		const otp = process.env.SANDERLING_TEST_OTP;
 		export const credentials = { phone, otp };
 	`)
 	result, err := Bundle(Options{
 		EntryFile: entry,
 		Defines: map[string]string{
-			"UATU_TEST_PHONE": "+919876543210",
-			"UATU_TEST_OTP":   "123456",
+			"SANDERLING_TEST_PHONE": "+919876543210",
+			"SANDERLING_TEST_OTP":   "123456",
 		},
 	})
 	if err != nil {
@@ -87,13 +87,13 @@ func TestBundle_DeterministicHash(t *testing.T) {
 
 func TestBundle_HashChangesWithDefines(t *testing.T) {
 	entry := writeFixture(t, "spec.ts", `
-		export const phone = process.env.UATU_TEST_PHONE;
+		export const phone = process.env.SANDERLING_TEST_PHONE;
 	`)
-	first, err := Bundle(Options{EntryFile: entry, Defines: map[string]string{"UATU_TEST_PHONE": "1111"}})
+	first, err := Bundle(Options{EntryFile: entry, Defines: map[string]string{"SANDERLING_TEST_PHONE": "1111"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Bundle(Options{EntryFile: entry, Defines: map[string]string{"UATU_TEST_PHONE": "2222"}})
+	second, err := Bundle(Options{EntryFile: entry, Defines: map[string]string{"SANDERLING_TEST_PHONE": "2222"}})
 	if err != nil {
 		t.Fatal(err)
 	}
