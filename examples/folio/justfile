@@ -1,11 +1,11 @@
 set shell := ["bash", "-cu"]
 set dotenv-load := true
 
-uatu     := env_var_or_default("UATU", "uatu")
-avd      := env_var_or_default("AVD", "")
-duration := env_var_or_default("DURATION", "1m")
-seed     := env_var_or_default("SEED", "0")
-output   := env_var_or_default("OUTPUT", justfile_directory() / "uatu" / "runs")
+sanderling := env_var_or_default("SANDERLING", "sanderling")
+avd        := env_var_or_default("AVD", "")
+duration   := env_var_or_default("DURATION", "1m")
+seed       := env_var_or_default("SEED", "0")
+output     := env_var_or_default("OUTPUT", justfile_directory() / "sanderling" / "runs")
 ios_device := env_var_or_default("IOS_DEVICE", "iPhone 17 Pro")
 
 default:
@@ -81,7 +81,7 @@ ios:
     xcrun simctl install booted iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app
     xcrun simctl launch booted app.folio
 
-# Run 'uatu test' against the folio app. Uses a connected device if one is
+# Run 'sanderling test' against the folio app. Uses a connected device if one is
 # online, otherwise boots AVD=<name> if provided.
 test:
     #!/usr/bin/env bash
@@ -90,8 +90,8 @@ test:
     if [[ -n "{{avd}}" ]]; then
       avd_flag=(--avd "{{avd}}")
     fi
-    "{{uatu}}" test \
-      --spec "{{justfile_directory()}}/uatu/spec.ts" \
+    "{{sanderling}}" test \
+      --spec "{{justfile_directory()}}/sanderling/spec.ts" \
       --bundle-id app.folio \
       "${avd_flag[@]}" \
       --duration "{{duration}}" \
