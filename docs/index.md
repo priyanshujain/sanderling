@@ -19,3 +19,9 @@ Alpha: Android emulator only. Scope of v0.1.0 is tracked in [issue #4](https://g
 
 - [Design principles](./development/design-principles.html)
 - [Architecture](./development/architecture.html)
+
+---
+
+<img src="./_assets/sanderling.jpeg" alt="sanderling" width="420" />
+
+> sanderling, a wading bird that probes the shoreline for bugs that lie beneath.
