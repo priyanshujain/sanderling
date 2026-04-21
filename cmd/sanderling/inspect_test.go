@@ -36,7 +36,7 @@ func TestParseInspectArgs_RejectsTooManyPositional(t *testing.T) {
 
 func TestRun_HelpListsInspectCommand(t *testing.T) {
 	var stdout bytes.Buffer
-	if err := run([]string{"uatu"}, &stdout, io.Discard); err != nil {
+	if err := run([]string{"sanderling"}, &stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(stdout.String(), "inspect") {

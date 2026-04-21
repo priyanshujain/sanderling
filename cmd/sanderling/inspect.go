@@ -67,7 +67,7 @@ func runInspect(options inspectOptions, stdout io.Writer) error {
 	}
 	address := listener.Addr().(*net.TCPAddr)
 	browseURL := buildBrowseURL(address, deepLinkID)
-	fmt.Fprintf(stdout, "uatu inspect listening on %s (runs=%s)\n", browseURL, runsDirectory)
+	fmt.Fprintf(stdout, "sanderling inspect listening on %s (runs=%s)\n", browseURL, runsDirectory)
 
 	context, cancel := context.WithCancel(context.Background())
 	defer cancel()

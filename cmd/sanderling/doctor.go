@@ -30,7 +30,7 @@ func defaultDoctorChecks() []doctorCheck {
 
 func checkSidecarJAR(_ context.Context) error {
 	if sidecar.IsPlaceholder() {
-		return fmt.Errorf("placeholder JAR embedded; run `make sidecar && make uatu` to embed the real fat JAR")
+		return fmt.Errorf("placeholder JAR embedded; run `make sidecar && make sanderling` to embed the real fat JAR")
 	}
 	if sidecar.EmbeddedSize() == 0 {
 		return fmt.Errorf("embedded JAR is empty")

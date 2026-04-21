@@ -90,10 +90,10 @@ func TestParseTestArgs_RejectsNonAndroidPlatform(t *testing.T) {
 
 func TestRun_HelpPrintsUsage(t *testing.T) {
 	var stdout bytes.Buffer
-	if err := run([]string{"uatu"}, &stdout, io.Discard); err != nil {
+	if err := run([]string{"sanderling"}, &stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "uatu <command>") {
+	if !strings.Contains(stdout.String(), "sanderling <command>") {
 		t.Errorf("usage missing, got: %q", stdout.String())
 	}
 }
@@ -105,7 +105,7 @@ func TestRun_VersionPrintsVersion(t *testing.T) {
 
 	for _, arg := range []string{"version", "--version", "-v"} {
 		var stdout bytes.Buffer
-		if err := run([]string{"uatu", arg}, &stdout, io.Discard); err != nil {
+		if err := run([]string{"sanderling", arg}, &stdout, io.Discard); err != nil {
 			t.Fatalf("%s: %v", arg, err)
 		}
 		if strings.TrimSpace(stdout.String()) != "1.2.3-test" {
@@ -115,7 +115,7 @@ func TestRun_VersionPrintsVersion(t *testing.T) {
 }
 
 func TestRun_UnknownCommand(t *testing.T) {
-	err := run([]string{"uatu", "wat"}, io.Discard, io.Discard)
+	err := run([]string{"sanderling", "wat"}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unknown command") {
 		t.Fatalf("expected unknown-command error, got %v", err)
 	}
@@ -125,7 +125,7 @@ func TestRun_Doctor(t *testing.T) {
 	var stdout bytes.Buffer
 	// Doctor may pass or fail depending on host environment; we just want to
 	// confirm it runs and emits per-check lines.
-	_ = run([]string{"uatu", "doctor"}, &stdout, io.Discard)
+	_ = run([]string{"sanderling", "doctor"}, &stdout, io.Discard)
 	output := stdout.String()
 	if !strings.Contains(output, "OK") && !strings.Contains(output, "FAIL") {
 		t.Errorf("doctor output missing OK/FAIL lines: %q", output)
@@ -137,7 +137,7 @@ func TestRun_TestSubcommand_PipelineErrors(t *testing.T) {
 	// must surface a specific error rather than panicking — proves the flag
 	// wiring reaches the runner.
 	err := run([]string{
-		"uatu", "test",
+		"sanderling", "test",
 		"--spec", "definitely-missing-spec.ts",
 		"--bundle-id", "com.example",
 		"--avd", "definitely-missing-avd",

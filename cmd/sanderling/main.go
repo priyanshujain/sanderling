@@ -25,18 +25,18 @@ type testOptions struct {
 	output           string
 }
 
-const topUsage = `uatu is a property-based UI fuzzer for mobile apps.
+const topUsage = `sanderling is a property-based UI fuzzer for mobile apps.
 
 Usage:
-  uatu <command> [flags]
+  sanderling <command> [flags]
 
 Commands:
   test     Run a spec against an app for a fixed duration.
   inspect  Serve a local web UI for browsing runs/.
-  doctor   Check that the host environment is ready to run uatu.
-  version  Print the uatu version.
+  doctor   Check that the host environment is ready to run sanderling.
+  version  Print the sanderling version.
 
-Run "uatu <command> -h" for command-specific flags.
+Run "sanderling <command> -h" for command-specific flags.
 `
 
 func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
@@ -100,7 +100,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, Version)
 		return nil
 	default:
-		return fmt.Errorf("unknown command: %q (try 'uatu help')", args[1])
+		return fmt.Errorf("unknown command: %q (try 'sanderling help')", args[1])
 	}
 }
 
