@@ -6,19 +6,12 @@ export function useSse(eventName: string, onEvent: () => void) {
       return;
     }
     const source = new EventSource("/api/events");
-    const messageHandler = (event: MessageEvent) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload && typeof payload === "object" && payload.type === eventName) {
-          onEvent();
-        }
-      } catch {
-        onEvent();
-      }
+    const messageHandler = () => {
+      onEvent();
     };
-    source.addEventListener("message", messageHandler);
+    source.addEventListener(eventName, messageHandler);
     return () => {
-      source.removeEventListener("message", messageHandler);
+      source.removeEventListener(eventName, messageHandler);
       source.close();
     };
   }, [eventName, onEvent]);
