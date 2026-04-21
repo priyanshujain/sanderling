@@ -22,8 +22,6 @@ Run `sanderling doctor` to check the host environment.
 curl -fsSL https://raw.githubusercontent.com/priyanshujain/sanderling/master/install.sh | bash
 ```
 
-Installs into `$HOME/.sanderling/bin`. Override the location with `SANDERLING_INSTALL`, or pin a tag with `SANDERLING_VERSION=v0.0.1-rc3`. Pre-built for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`.
-
 ### Spec package (npm)
 
 ```sh
