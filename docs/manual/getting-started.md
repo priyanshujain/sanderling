@@ -38,21 +38,22 @@ dependencies {
 
 ## Your first run
 
-The repo ships a working sample at `examples/folio`. From that directory:
+The repo ships a working sample at `examples/folio`, a Kotlin Multiplatform app with a TypeScript spec under `sanderling/spec.ts`. Install `just`, then from `examples/folio`:
 
 ```sh
-npm install
-(cd android && ./gradlew installDebug)
-sanderling test \
-  --spec spec.ts \
-  --bundle-id app.folio \
-  --platform android \
-  --duration 2m
+just install   # build and install the folio APK on a booted emulator or device
+just test      # run the spec
 ```
 
-Pass `--avd <name>` only when no device is connected and you have multiple AVDs; otherwise sanderling uses the connected device or boots the single AVD it finds.
+With no device connected and multiple AVDs, pick one:
 
-When the run ends, the trace lands in `runs/<timestamp>/`:
+```sh
+AVD=Pixel_7 just test
+```
+
+Persistent settings can live in a `.env` alongside the justfile (`AVD=Pixel_7`, `DURATION=5m`, and so on).
+
+When the run ends, the trace lands in `sanderling/runs/<timestamp>/`:
 
 ```
 runs/2026-04-18T12-34-56/
@@ -61,6 +62,6 @@ runs/2026-04-18T12-34-56/
 └── meta.json
 ```
 
-Open the screenshots directory to scrub visually, or read `trace.jsonl` step by step.
+Browse it with `sanderling inspect` (see [inspect](./inspect.html)), or read `trace.jsonl` step by step.
 
 Next: [writing specs](./writing-specs.html).
