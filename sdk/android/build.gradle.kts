@@ -14,7 +14,7 @@ version = findProperty("uatu.version") as String? ?: "0.0.0-dev"
 group = "io.github.priyanshujain"
 
 android {
-    namespace = "dev.uatu.sdk"
+    namespace = "dev.sanderling.sdk"
     compileSdk = 35
 
     defaultConfig {

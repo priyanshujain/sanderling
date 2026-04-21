@@ -1,4 +1,4 @@
-package dev.uatu.sdk
+package dev.sanderling.sdk
 
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Semaphore

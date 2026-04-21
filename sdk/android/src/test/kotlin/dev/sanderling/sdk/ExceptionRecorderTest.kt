@@ -1,4 +1,4 @@
-package dev.uatu.sdk
+package dev.sanderling.sdk
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

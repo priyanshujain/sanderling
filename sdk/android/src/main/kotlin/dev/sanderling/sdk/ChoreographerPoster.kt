@@ -1,4 +1,4 @@
-package dev.uatu.sdk
+package dev.sanderling.sdk
 
 import android.os.Handler
 import android.os.Looper
