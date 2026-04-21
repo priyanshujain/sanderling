@@ -83,7 +83,7 @@ kotlin {
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:1.13.0")
             implementation("app.cash.sqldelight:android-driver:$sqldelightVersion")
-            implementation("io.github.priyanshujain:sdk-android:$sanderlingVersion")
+            implementation("io.github.priyanshujain.sanderling:sdk-android:$sanderlingVersion")
         }
 
         iosMain.dependencies {
