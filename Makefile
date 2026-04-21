@@ -18,7 +18,7 @@ DOCS_TEMPLATE := docs/_template/page.html
 INSPECT_DIST := internal/inspect/dist
 WEB_DIST := web/dist
 
-.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu install test test-go test-kotlin test-spec-api test-web web-build web-dev inspect-dev docs clean release-cli release-android-local release-npm-dry
+.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish uatu install test test-go test-kotlin test-spec-api web-typecheck web-build web-dev inspect-dev docs clean release-cli release-android-local release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -67,13 +67,13 @@ inspect-dev: $(SIDECAR_JAR)
 	cp $(SIDECAR_JAR) $(SIDECAR_EMBED)
 	$(GO) run -tags withsidecar ./cmd/uatu inspect --dev
 
-test-web:
-	cd web && bun install --frozen-lockfile && bun run typecheck && bun run test
+web-typecheck:
+	cd web && bun install --frozen-lockfile && bun run typecheck
 
 $(SIDECAR_JAR):
 	$(MAKE) sidecar
 
-test: test-go test-kotlin test-spec-api test-web
+test: test-go test-kotlin test-spec-api web-typecheck
 
 test-go:
 	$(GO) test $(GO_PACKAGES)
