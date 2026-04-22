@@ -5,29 +5,28 @@ title: Architecture
 # Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph go["sanderling (Go)"]
+        direction LR
         B["Bundler / esbuild"] --> V["Verifier / goja + LTL"]
         V <--> R["Runner"]
         R --> D["DeviceDriver"]
         R --> T["Trace writer\nJSONL + PNG"]
     end
 
-    subgraph native["Native platform"]
-        SC["Maestro sidecar (JVM)"]
-        SDK["in-app SDK"]
-        SC -->|UIAutomator / XCTest| SDK
-    end
-
+    SC["Maestro sidecar (JVM)"]
+    SDK["in-app SDK\n(Device / Emulator)"]
     CH["Chrome (CDP)"]
+    RD[("runs/")]
+    IN["sanderling inspect\nHTTP + SSE"]
+    UI["Web UI (React)"]
 
     D -->|gRPC| SC
-    R -->|Unix socket| SDK
+    SC -->|UIAutomator / XCTest| SDK
+    R -->|"Unix socket<br/>(pause / state / logs)"| SDK
     D -->|CDP| CH
 
-    T --> RD[("runs/")]
-    RD --> IN["sanderling inspect\nHTTP + SSE"]
-    IN --> UI["Web UI (React)"]
+    T --> RD --> IN --> UI
 ```
 
 ## Processes
