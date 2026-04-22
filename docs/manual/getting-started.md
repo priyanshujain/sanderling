@@ -29,13 +29,13 @@ Run `sanderling doctor` to check the host environment.
 curl -fsSL https://raw.githubusercontent.com/priyanshujain/sanderling/master/install.sh | bash
 ```
 
-### Spec package (npm)
+### Spec package ([npm](https://www.npmjs.com/package/@sanderling/spec))
 
 ```sh
 npm install --save-dev @sanderling/spec
 ```
 
-### Android SDK (Maven Central)
+### Android SDK ([Maven Central](https://central.sonatype.com/artifact/io.github.priyanshujain.sanderling/sdk-android))
 
 ```kotlin
 dependencies {
