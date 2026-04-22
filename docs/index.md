@@ -4,9 +4,9 @@ title: Sanderling Manual
 
 # Sanderling Manual
 
-Autonomous property-based testing for mobile apps. Specs in TypeScript. Core in Go. Drives the app under test through Maestro and an in-app SDK.
+Autonomous property-based testing for mobile/web apps. Specs in TypeScript. Core in Go. Drives the app under test through UIAutomation/XCTest and an in-app SDK on Android/iOS and CDP on web.
 
-Alpha: Android emulator only. Scope of v0.1.0 is tracked in [issue #4](https://github.com/priyanshujain/sanderling/issues/4).
+Alpha: Scope of v0.1.0 is tracked in [issue #4](https://github.com/priyanshujain/sanderling/issues/4).
 
 
 - [Getting started](./manual/getting-started.html)
@@ -14,11 +14,6 @@ Alpha: Android emulator only. Scope of v0.1.0 is tracked in [issue #4](https://g
 - [Runs](./manual/runs.html)
 - [Inspect](./manual/inspect.html)
 - [CLI reference](./manual/cli.html)
-
-## Development
-
-- [Design principles](./development/design-principles.html)
-- [Architecture](./development/architecture.html)
 
 ---
 
