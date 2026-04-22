@@ -8,9 +8,16 @@ Install the CLI, link the SDK into your debug build, run a spec.
 
 ## Prerequisites
 
-- An Android emulator with API level 30 or newer.
+**Android / iOS:**
+
+- An Android emulator with API level 30 or newer (or a connected device).
 - The app under test built as a debug variant with the sanderling Android SDK linked in.
 - `adb` on your PATH.
+
+**Web:**
+
+- Chrome installed. sanderling drives it via CDP; no other setup required.
+- No in-app SDK needed.
 
 Run `sanderling doctor` to check the host environment.
 
@@ -38,6 +45,8 @@ dependencies {
 
 ## Your first run
 
+### Android
+
 The repo ships a working sample at `examples/folio`, a Kotlin Multiplatform app with a TypeScript spec under `sanderling/spec.ts`. Install `just`, then from `examples/folio`:
 
 ```sh
@@ -52,6 +61,18 @@ AVD=Pixel_7 just test
 ```
 
 Persistent settings can live in a `.env` alongside the justfile (`AVD=Pixel_7`, `DURATION=5m`, and so on).
+
+### Web
+
+The repo also ships a web sample at `examples/folio-web`, a React/Vite app with the same domain logic. From `examples/folio-web`:
+
+```sh
+just test      # starts Chrome, runs the spec
+```
+
+No emulator or SDK setup needed.
+
+### Trace output
 
 When the run ends, the trace lands in `sanderling/runs/<timestamp>/`:
 

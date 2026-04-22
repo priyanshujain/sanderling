@@ -17,7 +17,7 @@ Run a spec against an app for a fixed duration.
 | `--spec` | required | Path to the TypeScript spec. |
 | `--bundle-id` | required | Target app bundle ID (Android: applicationId). |
 | `--launcher-activity` | resolved | Optional `<pkg>/<activity>` to launch. Overrides default resolution. |
-| `--platform` | `android` | Target platform. Only `android` in the current alpha. |
+| `--platform` | `android` | Target platform: `android`, `ios`, or `web`. |
 | `--avd` | optional (android) | Android AVD name to boot if no device is connected. Required only when no device is connected and multiple AVDs exist. |
 | `--duration` | `5m` | Total test duration (`30s`, `5m`, `2h`, `1d`). |
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
