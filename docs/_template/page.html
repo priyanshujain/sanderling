@@ -51,6 +51,23 @@ for (const pre of document.querySelectorAll('pre.mermaid, pre > code.language-me
   node.replaceWith(div);
 }
 await mermaid.run();
+
+const overlay = document.createElement('div');
+overlay.className = 'diagram-overlay';
+document.body.appendChild(overlay);
+overlay.addEventListener('click', () => overlay.classList.remove('open'));
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') overlay.classList.remove('open');
+});
+for (const diagram of document.querySelectorAll('.mermaid')) {
+  diagram.addEventListener('click', () => {
+    const svg = diagram.querySelector('svg');
+    if (!svg) return;
+    overlay.innerHTML = '';
+    overlay.appendChild(svg.cloneNode(true));
+    overlay.classList.add('open');
+  });
+}
 </script>
 </body>
 </html>
