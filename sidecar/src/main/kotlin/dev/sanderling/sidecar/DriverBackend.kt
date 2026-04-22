@@ -82,6 +82,11 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     }
 
     companion object {
+        private const val IDLE_POLL_INTERVAL_MILLIS = 50L
+
+        internal fun isAnimationCountIdle(grepOutput: String): Boolean =
+            (grepOutput.trim().toIntOrNull() ?: 0) == 0
+
         // parseResolvedActivity extracts the activity name from the output of
         // `cmd package resolve-activity --brief`. The brief output is two
         // lines: metadata, then `<pkg>/<activity>`.
@@ -316,8 +321,8 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         return try {
             val process = ProcessBuilder(
                 listOf(
-                    "adb", "shell",
-                    "uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1 && cat /sdcard/window_dump.xml",
+                    "adb", "exec-out",
+                    "uiautomator dump /data/local/tmp/window_dump.xml >/dev/null 2>&1 && cat /data/local/tmp/window_dump.xml",
                 ),
             ).redirectErrorStream(false).start()
             val output = process.inputStream.bufferedReader().readText()
@@ -330,8 +335,25 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     }
 
     override fun waitForIdle(durationMillis: Long) {
-        if (durationMillis > 0) Thread.sleep(durationMillis)
+        if (durationMillis <= 0) return
+        val deadline = System.currentTimeMillis() + durationMillis
+        while (System.currentTimeMillis() < deadline) {
+            if (isDeviceIdle()) return
+            Thread.sleep(IDLE_POLL_INTERVAL_MILLIS)
+        }
     }
+
+    private fun isDeviceIdle(): Boolean {
+        return try {
+            val output = captureAdb(
+                listOf("shell", "dumpsys window -a | grep -c mAnimating=true"),
+            )
+            isAnimationCountIdle(output)
+        } catch (cause: Exception) {
+            false
+        }
+    }
+
 
     override fun healthy(): Boolean = true
 

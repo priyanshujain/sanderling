@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/agent"
+	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
@@ -421,6 +423,106 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 			t.Errorf("InputText must not run after focus tap failed: %v", driverMock.Actions())
 		}
 	})
+}
+
+func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
+	snapshots := []map[string]json.RawMessage{
+		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`100`)},
+	}
+	state := newHarness(t, snapshots)
+	state.mock.MetricsData = driver.Metrics{CPUPercent: 5.0, HeapBytes: 1024, TotalMemoryBytes: 4096}
+	state.mock.LogEntries = []driver.LogEntry{
+		{UnixMillis: 1000, Level: "E", Tag: "test", Message: "boom"},
+	}
+	state.startSDK(t)
+	state.acceptConnection(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Run(ctx, Options{
+		Duration:        100 * time.Millisecond,
+		SnapshotTimeout: 2 * time.Second,
+		IdleTimeout:     50 * time.Millisecond,
+		BundleID:        "com.fixture",
+		Connection:      state.conn,
+		Driver:          state.mock,
+		Verifier:        state.verifier,
+		TraceWriter:     state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	actions := state.mock.Actions()
+	var hasHierarchy, hasMetrics, hasLogs bool
+	for _, a := range actions {
+		switch a.Kind {
+		case mockdriver.ActionHierarchy:
+			hasHierarchy = true
+		case mockdriver.ActionMetrics:
+			hasMetrics = true
+		case mockdriver.ActionRecentLogs:
+			hasLogs = true
+		}
+	}
+	if !hasHierarchy {
+		t.Error("expected Hierarchy call in mock actions")
+	}
+	if !hasMetrics {
+		t.Error("expected Metrics call in mock actions")
+	}
+	if !hasLogs {
+		t.Error("expected RecentLogs call in mock actions")
+	}
+}
+
+func TestRunner_PipelinedPostScreenshotWritten(t *testing.T) {
+	snapshots := []map[string]json.RawMessage{
+		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`100`)},
+		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`200`)},
+		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`300`)},
+	}
+	state := newHarness(t, snapshots)
+	state.mock.ImageData = driver.Image{PNG: []byte("fakepng"), Width: 100, Height: 200}
+	state.startSDK(t)
+	state.acceptConnection(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:        200 * time.Millisecond,
+		SnapshotTimeout: 2 * time.Second,
+		IdleTimeout:     50 * time.Millisecond,
+		Connection:      state.conn,
+		Driver:          state.mock,
+		Verifier:        state.verifier,
+		TraceWriter:     state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps < 2 {
+		t.Fatalf("need at least 2 steps for pipelining test, got %d", summary.Steps)
+	}
+
+	screenshotDir := filepath.Join(state.writer.Directory(), "screenshots")
+
+	preFile := filepath.Join(screenshotDir, "step-00001.png")
+	if _, err := os.Stat(preFile); os.IsNotExist(err) {
+		t.Errorf("expected pre-screenshot for step 1: %s", preFile)
+	}
+
+	// Step 1's post-screenshot is pipelined into step 2's errgroup
+	postFile := filepath.Join(screenshotDir, "step-00001-after.png")
+	if _, err := os.Stat(postFile); os.IsNotExist(err) {
+		t.Errorf("expected pipelined post-screenshot for step 1: %s", postFile)
+	}
+
+	// Last step's post-screenshot is flushed after the loop
+	lastAfter := filepath.Join(screenshotDir, fmt.Sprintf("step-%05d-after.png", summary.Steps))
+	if _, err := os.Stat(lastAfter); os.IsNotExist(err) {
+		t.Errorf("expected flushed post-screenshot for last step %d: %s", summary.Steps, lastAfter)
+	}
 }
 
 func mustNewVerifier(t *testing.T) *verifier.Verifier {

@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/priyanshujain/sanderling/internal/agent"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -59,6 +61,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	stepIndex := 0
 	var lastAction *verifier.Action
 	var lastLogTime time.Time
+	var pendingPostScreenshotStep int
+	pendingPostScreenshot := false
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			break
@@ -66,12 +70,40 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		stepIndex++
 		stepStart := time.Now()
 
-		// Fetch hierarchy BEFORE pausing the SDK: uiautomator dump calls
-		// waitForIdle internally, and the SDK's Choreographer-held pause
-		// stalls the main thread, so dumping during the pause yields the
-		// pre-pause (stale) tree. Doing this first also means the spec sees
-		// a hierarchy that matches the snapshots captured a moment later.
-		tree, hierarchyErr := fetchHierarchy(ctx, options.Driver)
+		// Hierarchy, metrics, and logs are independent device reads. Run
+		// them concurrently so metrics+logs hide behind the hierarchy
+		// fetch (~2s). All three must finish before snapshotStep pauses
+		// the SDK.
+		var tree *hierarchy.Tree
+		var hierarchyErr error
+		var metrics *trace.Metrics
+		var logs []verifier.LogEntry
+
+		g, _ := errgroup.WithContext(ctx)
+		g.Go(func() error {
+			tree, hierarchyErr = fetchHierarchy(ctx, options.Driver)
+			return nil
+		})
+		si := stepIndex
+		g.Go(func() error {
+			metrics = captureMetrics(ctx, options, logger, si)
+			return nil
+		})
+		logSince := lastLogTime
+		g.Go(func() error {
+			logs = collectLogs(ctx, options.Driver, logSince)
+			return nil
+		})
+		if pendingPostScreenshot {
+			postStep := pendingPostScreenshotStep
+			g.Go(func() error {
+				captureScreenshot(ctx, options, logger, postStep, true)
+				return nil
+			})
+			pendingPostScreenshot = false
+		}
+		g.Wait()
+
 		if hierarchyErr != nil {
 			logger.Warn("hierarchy fetch failed", "step", stepIndex, "err", hierarchyErr)
 		}
@@ -80,17 +112,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			treeSize = len(tree.Elements)
 		}
 
-		// Sample metrics now, while the app is still running freely.
-		// Measuring after snapshotStep would see the SDK-paused app and
-		// report CPU=0 for every step.
-		metrics := captureMetrics(ctx, options, logger, stepIndex)
-
 		snapshot, err := snapshotStep(ctx, options)
 		if err != nil {
 			return summary, fmt.Errorf("step %d snapshot: %w", stepIndex, err)
 		}
-
-		logs := collectLogs(ctx, options.Driver, lastLogTime)
 		lastLogTime = stepStart
 
 		exceptions := decodeExceptions(snapshot)
@@ -173,12 +198,17 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
 		idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
 		if nextErr == nil {
-			captureScreenshot(ctx, options, logger, stepIndex, true)
+			pendingPostScreenshot = true
+			pendingPostScreenshotStep = stepIndex
 		}
 		if idleErr != nil && idleCtx.Err() == nil {
 			logger.Warn("wait_for_idle failed", "step", stepIndex, "err", idleErr)
 		}
 		idleCancel()
+	}
+
+	if pendingPostScreenshot {
+		captureScreenshot(ctx, options, logger, pendingPostScreenshotStep, true)
 	}
 
 	summary.EndTime = time.Now()
