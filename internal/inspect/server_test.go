@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,10 +12,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/trace"
 )
+
+var testAssetsFS fs.FS = fstest.MapFS{
+	"index.html": &fstest.MapFile{
+		Data: []byte(`<!doctype html><html><body><div id="root"></div></body></html>`),
+	},
+}
 
 func newFixtureServer(t *testing.T) (*Server, string) {
 	t.Helper()
@@ -48,7 +56,7 @@ func newFixtureServer(t *testing.T) (*Server, string) {
 		t.Fatal(err)
 	}
 
-	server, err := NewServer(ServerOptions{RunsDirectory: root})
+	server, err := NewServer(ServerOptions{RunsDirectory: root, AssetsFS: testAssetsFS})
 	if err != nil {
 		t.Fatal(err)
 	}
