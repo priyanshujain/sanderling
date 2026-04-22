@@ -22,8 +22,18 @@ const onAddAccountPage = extract((s) => !!s.ax.find("id:account-name"));
 const onLedgerPage = extract((s) => !!s.ax.find("id:ledger"));
 const onAddTxnPage = extract((s) => !!s.ax.find("id:txn-amount"));
 
-// Auth state: logout button is only visible when logged in
-const loggedIn = extract((s) => !!s.ax.find("id:logout"));
+// Auth state: true on any authenticated page, false only on login page
+const loggedIn = extract((s) => {
+  if (s.ax.find("id:email")) return false;
+  return !!(
+    s.ax.find("id:logout") ||
+    s.ax.find("id:add-account") ||
+    s.ax.find("id:ledger") ||
+    s.ax.find("id:account-name") ||
+    s.ax.find("id:txn-amount") ||
+    s.ax.find("id:add-txn")
+  );
+});
 
 // Total balance from title attribute on id:total-balance (set to raw cents integer)
 const totalBalance = extract((s) => {
