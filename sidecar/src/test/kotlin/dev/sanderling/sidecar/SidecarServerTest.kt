@@ -6,7 +6,7 @@ import kotlin.test.assertTrue
 class SidecarServerTest {
     @Test
     fun startBindsEphemeralPortAndStopReleasesIt() {
-        val server = SidecarServer(port = 0, service = DriverService())
+        val server = SidecarServer(port = 0, service = DriverService(backend = StubDriverBackend("android")))
         val boundPort = server.start()
         try {
             assertTrue(boundPort > 0, "expected ephemeral port, got $boundPort")

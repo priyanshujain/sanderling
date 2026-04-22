@@ -26,7 +26,7 @@ class DriverServiceTest {
 
     private fun newClient(backend: DriverBackend): DriverGrpc.DriverBlockingStub {
         val serverName = InProcessServerBuilder.generateName()
-        val service = DriverService(platform = "android", serial = null, backend = backend)
+        val service = DriverService(platform = "android", backend = backend)
         grpcCleanup.register(
             InProcessServerBuilder.forName(serverName).directExecutor().addService(service).build().start()
         )
@@ -43,7 +43,6 @@ class DriverServiceTest {
         client.launch(
             LaunchRequest.newBuilder()
                 .setBundleId("com.example")
-                .setLauncherActivity(".MainActivity")
                 .setClearState(true)
                 .build(),
         )
