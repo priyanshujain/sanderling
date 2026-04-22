@@ -9,12 +9,13 @@ import (
 
 // TestStateAxFindWorks verifies that a Parse+PushSnapshot+extract round trip
 // actually lets the spec resolve selectors through state.ax.find.
+// Reads /tmp/live-dump.json (Maestro TreeNode JSON format); skipped if absent.
 func TestStateAxFindWorks(t *testing.T) {
-	xmlText, err := os.ReadFile("/tmp/live-dump.xml")
+	jsonText, err := os.ReadFile("/tmp/live-dump.json")
 	if err != nil {
-		t.Skip("live-dump.xml not present")
+		t.Skip("live-dump.json not present")
 	}
-	tree, err := hierarchy.Parse(string(xmlText))
+	tree, err := hierarchy.Parse(string(jsonText))
 	if err != nil {
 		t.Fatal(err)
 	}
