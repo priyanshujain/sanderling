@@ -5,15 +5,12 @@ import (
 	"time"
 )
 
-// Driver abstracts the platform-specific UI automation backend. v0.1 surface
-// matches proto/driverpb/driver.proto. The Maestro sidecar implementation
-// lives under driver/maestro; tests use driver/mock.
-type Driver interface {
-	// Launch asks the backend to bring the target app to the foreground.
-	// launcherActivity is an optional "<pkg>/<activity>" component that
-	// overrides the backend's default launcher resolution — needed for
-	// apps that declare multiple MAIN+LAUNCHER activities.
-	Launch(ctx context.Context, bundleID, launcherActivity string, clearState bool) error
+// DeviceDriver abstracts the platform-specific UI automation backend. v0.1
+// surface matches proto/driverpb/driver.proto. The sidecar implementation
+// lives under driver/sidecar; the web implementation under driver/chrome;
+// tests use driver/mock.
+type DeviceDriver interface {
+	Launch(ctx context.Context, bundleID string, clearState bool) error
 	Terminate(ctx context.Context) error
 
 	Tap(ctx context.Context, x, y int) error
@@ -24,7 +21,7 @@ type Driver interface {
 
 	Hierarchy(ctx context.Context) (string, error)
 	Screenshot(ctx context.Context) (Image, error)
-	// RecentLogs returns logcat entries at or after `since`, filtered to
+	// RecentLogs returns log entries at or after `since`, filtered to
 	// `minLevel` or above. An empty minLevel defaults to "E".
 	RecentLogs(ctx context.Context, since time.Time, minLevel string) ([]LogEntry, error)
 
