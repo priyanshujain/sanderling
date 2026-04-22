@@ -43,12 +43,15 @@ type Element struct {
 	Description string `json:"description,omitempty"`
 	Class       string `json:"class,omitempty"`
 	Package     string `json:"package,omitempty"`
-	Clickable   bool   `json:"clickable,omitempty"`
-	Enabled     bool   `json:"enabled,omitempty"`
-	Checked     bool   `json:"checked,omitempty"`
-	Focused     bool   `json:"focused,omitempty"`
-	Selected    bool   `json:"selected,omitempty"`
-	Bounds      Bounds `json:"bounds"`
+	// Screen holds the current route/screen name when set by the driver on the
+	// root element (web platform only; empty for native platforms).
+	Screen    string `json:"screen,omitempty"`
+	Clickable bool   `json:"clickable,omitempty"`
+	Enabled   bool   `json:"enabled,omitempty"`
+	Checked   bool   `json:"checked,omitempty"`
+	Focused   bool   `json:"focused,omitempty"`
+	Selected  bool   `json:"selected,omitempty"`
+	Bounds    Bounds `json:"bounds"`
 }
 
 // Tree is a flat collection of every node in a hierarchy dump, in pre-order.
@@ -105,6 +108,7 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	}
 	element.Class = attrs["class"]
 	element.Package = attrs["package"]
+	element.Screen = attrs["sanderling-screen"]
 
 	if node.Clickable != nil {
 		element.Clickable = *node.Clickable

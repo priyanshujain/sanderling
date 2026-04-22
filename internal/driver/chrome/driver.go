@@ -92,7 +92,25 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool) e
 			return fmt.Errorf("clear storage: %w", err)
 		}
 	}
-	return chromedp.Run(d.tabCtx, chromedp.Navigate(bundleID))
+	if err := chromedp.Run(d.tabCtx, chromedp.Navigate(bundleID)); err != nil {
+		return err
+	}
+	// After navigation, read CSS custom properties --frame-w / --frame-h (common
+	// mobile-frame convention) so screenshots fit the app without grey borders.
+	// Falls back to the body scroll dimensions if the properties are absent.
+	var dims [2]int64
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(`
+		(function() {
+			const s = getComputedStyle(document.documentElement);
+			const pw = parseInt(s.getPropertyValue('--frame-w'), 10);
+			const ph = parseInt(s.getPropertyValue('--frame-h'), 10);
+			const w = isNaN(pw) ? document.body.scrollWidth : pw;
+			const h = isNaN(ph) ? document.body.scrollHeight : ph;
+			return [w, h];
+		})()`, &dims)); err == nil && dims[0] > 0 && dims[1] > 0 {
+		_ = chromedp.Run(d.tabCtx, chromedp.EmulateViewport(dims[0], dims[1]))
+	}
+	return nil
 }
 
 func (d *Driver) Terminate(_ context.Context) error {
@@ -116,7 +134,15 @@ func (d *Driver) TapSelector(_ context.Context, selector string) error {
 func (d *Driver) InputText(_ context.Context, text string) error {
 	return chromedp.Run(d.tabCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			return input.DispatchKeyEvent(input.KeyChar).WithText(text).Do(ctx)
+			// Select any existing content so InsertText replaces rather than appends.
+			if err := chromedp.Evaluate(`
+				(function() {
+					const el = document.activeElement;
+					if (el && typeof el.select === 'function') el.select();
+				})()`, nil).Do(ctx); err != nil {
+				return err
+			}
+			return input.InsertText(text).Do(ctx)
 		}),
 	)
 }
@@ -167,35 +193,40 @@ var keyMap = map[string]string{
 
 func (d *Driver) Hierarchy(_ context.Context) (string, error) {
 	script := `
-(function buildTree(el) {
-  const rect = el.getBoundingClientRect();
-  const attrs = {};
-  const bounds = '[' + Math.round(rect.left) + ',' + Math.round(rect.top) + ',' +
-    Math.round(rect.right) + ',' + Math.round(rect.bottom) + ']';
-  if (rect.width > 0 || rect.height > 0) attrs.bounds = bounds;
-  const text = (el.textContent || '').trim().slice(0, 200);
-  if (text) attrs.text = text;
-  if (el.id) attrs['resource-id'] = el.id;
-  const label = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '';
-  if (label) attrs['content-desc'] = label;
-  if (el.tagName) attrs['class'] = el.tagName.toLowerCase();
-  const isClickable = !!(el.onclick || el.tagName === 'A' || el.tagName === 'BUTTON' ||
-    el.tagName === 'INPUT' || el.tagName === 'SELECT' ||
-    el.getAttribute('role') === 'button' || el.getAttribute('onclick'));
-  const children = [];
-  for (const child of el.children) {
-    children.push(buildTree(child));
+(function() {
+  const route = window.location.hash.replace(/^#/, '').split('?')[0] || '/';
+  function buildTree(el, isRoot) {
+    const rect = el.getBoundingClientRect();
+    const attrs = {};
+    const bounds = '[' + Math.round(rect.left) + ',' + Math.round(rect.top) + ',' +
+      Math.round(rect.right) + ',' + Math.round(rect.bottom) + ']';
+    if (rect.width > 0 || rect.height > 0) attrs.bounds = bounds;
+    const text = (el.textContent || '').trim().slice(0, 200);
+    if (text) attrs.text = text;
+    if (el.id) attrs['resource-id'] = el.id;
+    const label = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '';
+    if (label) attrs['content-desc'] = label;
+    if (el.tagName) attrs['class'] = el.tagName.toLowerCase();
+    if (isRoot) attrs['sanderling-screen'] = route;
+    const isClickable = !!(el.onclick || el.tagName === 'A' || el.tagName === 'BUTTON' ||
+      el.tagName === 'INPUT' || el.tagName === 'SELECT' ||
+      el.getAttribute('role') === 'button' || el.getAttribute('onclick'));
+    const children = [];
+    for (const child of el.children) {
+      children.push(buildTree(child, false));
+    }
+    return {
+      attributes: attrs,
+      children: children,
+      clickable: isClickable || null,
+      enabled: (!el.disabled) || null,
+      focused: document.activeElement === el || null,
+      checked: el.checked || null,
+      selected: el.selected || null,
+    };
   }
-  return {
-    attributes: attrs,
-    children: children,
-    clickable: isClickable || null,
-    enabled: (!el.disabled) || null,
-    focused: document.activeElement === el || null,
-    checked: el.checked || null,
-    selected: el.selected || null,
-  };
-})(document.body);`
+  return buildTree(document.body, true);
+})()`
 
 	var result any
 	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &result)); err != nil {

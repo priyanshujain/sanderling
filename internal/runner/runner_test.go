@@ -233,8 +233,8 @@ globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:
 
 func TestRunner_RejectsMissingFields(t *testing.T) {
 	_, err := Run(context.Background(), Options{Duration: time.Second})
-	if err == nil || !strings.Contains(err.Error(), "Connection") {
-		t.Errorf("expected Connection-required error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "Driver") {
+		t.Errorf("expected Driver-required error, got %v", err)
 	}
 }
 

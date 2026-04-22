@@ -48,6 +48,11 @@ inspect-ui/node_modules/
 inspect-ui/dist/
 inspect-ui/.vite/
 
+# folio-web frontend
+examples/folio-web/node_modules/
+examples/folio-web/dist/
+examples/folio-web/.vite/
+
 # d2 diagrams render into build/site/_assets/diagrams; keep sources only
 /docs/_diagrams/*.svg
 /docs/_diagrams/*.png
@@ -58,3 +63,5 @@ inspect-ui/.vite/
 
 # Personal research notes
 /research/
+
+internal/inspect/dist/*

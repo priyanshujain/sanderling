@@ -135,6 +135,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if screenErr != nil {
 			logger.Warn("screen snapshot decode failed", "step", stepIndex, "err", screenErr)
 		}
+		if screen == "" && tree != nil && len(tree.Elements) > 0 {
+			screen = tree.Elements[0].Screen
+		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
 		verdicts := options.Verifier.EvaluateProperties()
 		violations := violationNames(verdicts)
@@ -181,8 +184,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			})
 		}
 
-		if err := options.Connection.Release(ctx); err != nil {
-			return summary, fmt.Errorf("step %d release: %w", stepIndex, err)
+		if options.Connection != nil {
+			if err := options.Connection.Release(ctx); err != nil {
+				return summary, fmt.Errorf("step %d release: %w", stepIndex, err)
+			}
 		}
 
 		if nextErr == nil {
@@ -216,9 +221,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 }
 
 func validate(options Options) error {
-	if options.Connection == nil {
-		return errors.New("runner: Connection is required")
-	}
 	if options.Driver == nil {
 		return errors.New("runner: Driver is required")
 	}
@@ -241,6 +243,9 @@ func validate(options Options) error {
 }
 
 func snapshotStep(ctx context.Context, options Options) (agent.Message, error) {
+	if options.Connection == nil {
+		return agent.Message{}, nil
+	}
 	snapshotTimeout := options.SnapshotTimeout
 	if snapshotTimeout <= 0 {
 		snapshotTimeout = 5 * time.Second

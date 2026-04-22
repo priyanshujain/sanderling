@@ -67,14 +67,16 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	}
 	defer cleanup()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return fmt.Errorf("agent listener: %w", err)
-	}
-	defer listener.Close()
-	agentPort := listener.Addr().(*net.TCPAddr).Port
+	var connection *agent.Conn
 
 	if options.Platform != "web" {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fmt.Errorf("agent listener: %w", err)
+		}
+		defer listener.Close()
+		agentPort := listener.Addr().(*net.TCPAddr).Port
+
 		if err := android.AdbReverse(socketName, agentPort); err != nil {
 			return fmt.Errorf("adb reverse: %w", err)
 		}
@@ -84,35 +86,40 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 			}
 		}()
 		fmt.Fprintf(stdout, "forwarded localabstract:%s -> tcp:%d\n", socketName, agentPort)
-	}
 
-	agentServer := agent.NewServer(listener)
+		agentServer := agent.NewServer(listener)
 
-	type acceptResult struct {
-		connection *agent.Conn
-		err        error
-	}
-	acceptChannel := make(chan acceptResult, 1)
-	go func() {
-		acceptCtx, cancel := context.WithTimeout(ctx, sdkAcceptTimeout)
-		defer cancel()
-		connection, acceptErr := agentServer.Accept(acceptCtx)
-		acceptChannel <- acceptResult{connection: connection, err: acceptErr}
-	}()
+		type acceptResult struct {
+			conn *agent.Conn
+			err  error
+		}
+		acceptChannel := make(chan acceptResult, 1)
+		go func() {
+			acceptCtx, cancel := context.WithTimeout(ctx, sdkAcceptTimeout)
+			defer cancel()
+			conn, acceptErr := agentServer.Accept(acceptCtx)
+			acceptChannel <- acceptResult{conn: conn, err: acceptErr}
+		}()
 
-	if err := activeDriver.Launch(ctx, options.BundleID, false); err != nil {
-		return fmt.Errorf("launch app: %w", err)
-	}
-	fmt.Fprintf(stdout, "launched %s; waiting for SDK to connect (%.0fs timeout)\n", options.BundleID, sdkAcceptTimeout.Seconds())
+		if err := activeDriver.Launch(ctx, options.BundleID, false); err != nil {
+			return fmt.Errorf("launch app: %w", err)
+		}
+		fmt.Fprintf(stdout, "launched %s; waiting for SDK to connect (%.0fs timeout)\n", options.BundleID, sdkAcceptTimeout.Seconds())
 
-	result := <-acceptChannel
-	if result.err != nil {
-		return fmt.Errorf("accept SDK: %w", result.err)
+		result := <-acceptChannel
+		if result.err != nil {
+			return fmt.Errorf("accept SDK: %w", result.err)
+		}
+		connection = result.conn
+		defer connection.Close()
+		hello := connection.Hello()
+		fmt.Fprintf(stdout, "SDK connected: platform=%s app=%s sdk=%s\n", hello.Platform, hello.AppPackage, hello.Version)
+	} else {
+		fmt.Fprintln(stdout, "web mode: skipping SDK")
+		if err := activeDriver.Launch(ctx, options.BundleID, false); err != nil {
+			return fmt.Errorf("launch app: %w", err)
+		}
 	}
-	connection := result.connection
-	defer connection.Close()
-	hello := connection.Hello()
-	fmt.Fprintf(stdout, "SDK connected: platform=%s app=%s sdk=%s\n", hello.Platform, hello.AppPackage, hello.Version)
 
 	seed := options.Seed
 	if seed == 0 {
