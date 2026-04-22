@@ -241,22 +241,6 @@ type SnapshotInput struct {
 	Exceptions []Exception
 }
 
-// LogEntry mirrors a logcat line captured between steps.
-type LogEntry struct {
-	UnixMillis int64
-	Level      string
-	Tag        string
-	Message    string
-}
-
-// Exception mirrors an SDK-captured uncaught throwable.
-type Exception struct {
-	Class      string
-	Message    string
-	StackTrace string
-	UnixMillis int64
-}
-
 // EvaluateProperties returns each registered property's running verdict
 // after the most recent PushSnapshot. The step time passed in PushSnapshot is
 // forwarded to each evaluator so deadline-bound operators see the snapshot's

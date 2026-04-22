@@ -1,4 +1,4 @@
-package main
+package testrun
 
 import (
 	"context"
@@ -8,11 +8,6 @@ import (
 	"strings"
 )
 
-// newProgressLogger wires a slog.Logger that prints user-facing progress
-// lines to the CLI's stdout stream. Info messages render as
-// "msg key=value ..." to match the prose style of other CLI prints;
-// warnings and errors get a "warn:" / "error:" prefix so they stand
-// out in the same stream.
 func newProgressLogger(writer io.Writer) *slog.Logger {
 	return slog.New(&progressHandler{writer: writer, level: slog.LevelInfo})
 }

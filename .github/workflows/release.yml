@@ -79,18 +79,18 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
           cache: npm
-          cache-dependency-path: pkg/spec-api/package-lock.json
+          cache-dependency-path: pkg/spec/package-lock.json
 
       - name: Install dependencies
-        working-directory: pkg/spec-api
+        working-directory: pkg/spec
         run: npm ci
 
       - name: Stamp version
-        working-directory: pkg/spec-api
+        working-directory: pkg/spec
         run: npm version ${{ steps.ver.outputs.version }} --no-git-tag-version --allow-same-version
 
       - name: Publish
-        working-directory: pkg/spec-api
+        working-directory: pkg/spec
         # npm tag pre-releases (e.g. 0.1.0-rc1) as "next" so npm install @sanderling/spec
         # keeps resolving the latest stable.
         run: |

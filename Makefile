@@ -25,7 +25,7 @@ WEB_DIST := inspect-ui/dist
 bootstrap:
 	$(GO) mod download
 	$(BUF) generate
-	cd pkg/spec-api && npm install --silent
+	cd pkg/spec && npm install --silent
 
 proto:
 	$(BUF) lint
@@ -82,7 +82,7 @@ test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test :sdk-android:testDebugUnitTest
 
 test-spec-api:
-	cd pkg/spec-api && npm test --silent
+	cd pkg/spec && npm test --silent
 
 docs: $(DOCS_OUT) build/site/_assets $(DIAGRAM_OUT)
 	@echo "built $(words $(DOCS_OUT)) pages, $(words $(DIAGRAM_OUT)) diagrams to build/site"
@@ -118,4 +118,4 @@ release-android-local:
 	  ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:publishToMavenLocal -Psanderling.version=0.0.0-local
 
 release-npm-dry:
-	cd pkg/spec-api && npm ci && npm run build && npm pack --dry-run
+	cd pkg/spec && npm ci && npm run build && npm pack --dry-run

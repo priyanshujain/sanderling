@@ -32,7 +32,7 @@ node_modules/
 internal/sidecar/assets/sidecar-all.jar
 
 # spec-api compiled output
-pkg/spec-api/dist/
+pkg/spec/dist/
 
 # goreleaser local output
 /dist/
@@ -44,9 +44,9 @@ pkg/spec-api/dist/
 !/internal/inspect/dist/index.html
 
 # inspect web frontend
-web/node_modules/
-web/dist/
-web/.vite/
+inspect-ui/node_modules/
+inspect-ui/dist/
+inspect-ui/.vite/
 
 # d2 diagrams render into build/site/_assets/diagrams; keep sources only
 /docs/_diagrams/*.svg

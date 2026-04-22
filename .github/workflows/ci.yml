@@ -38,7 +38,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: pkg/spec-api/package-lock.json
+          cache-dependency-path: pkg/spec/package-lock.json
 
       - name: Set up bun
         uses: oven-sh/setup-bun@v2
