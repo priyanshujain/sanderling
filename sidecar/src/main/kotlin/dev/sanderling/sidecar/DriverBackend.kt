@@ -1,7 +1,7 @@
 package dev.sanderling.sidecar
 
 interface DriverBackend {
-    fun launch(bundleId: String, launcherActivity: String, clearState: Boolean)
+    fun launch(bundleId: String, clearState: Boolean)
     fun terminate(bundleId: String)
     fun tap(x: Int, y: Int)
     fun tapSelector(selector: String)
@@ -29,12 +29,96 @@ data class LogLine(
     val message: String,
 )
 
-/**
- * StubDriverBackend records calls but takes no real device action. Real
- * Maestro integration arrives in a follow-up; v0.1 wires the gRPC plumbing
- * end-to-end so the Go side can be exercised against a running sidecar
- * even before Maestro is plugged in.
- */
+internal fun readLogcat(serial: String?, sinceUnixMillis: Long, minLevel: String): List<LogLine> {
+    val level = if (minLevel.isEmpty()) "E" else minLevel
+    val since = if (sinceUnixMillis > 0) StubDriverBackend.formatAdbLogcatTimestamp(sinceUnixMillis) else null
+    val arguments = mutableListOf("logcat", "-d", "*:$level")
+    if (since != null) {
+        arguments.add("-T")
+        arguments.add(since)
+    }
+    return try {
+        val process = ProcessBuilder(adbCmd(serial) + arguments).redirectErrorStream(false).start()
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor()
+        StubDriverBackend.parseLogcatOutput(output)
+    } catch (cause: Exception) {
+        println("adb logcat failed: $cause")
+        emptyList()
+    }
+}
+
+internal fun readProcMetrics(serial: String?, bundleId: String): MetricsSample {
+    if (bundleId.isEmpty()) return MetricsSample(0.0, 0L, 0L)
+    return try {
+        val pid = adbOutput(serial, listOf("shell", "pidof", bundleId))
+            .trim().split(Regex("\\s+")).firstOrNull()?.toIntOrNull()
+            ?: return MetricsSample(0.0, 0L, 0L)
+        val cpu = sampleCpuTwice(serial, pid)
+        val (rssBytes, vmSizeBytes) = sampleProcessMemory(serial, pid)
+        MetricsSample(cpu, rssBytes, vmSizeBytes)
+    } catch (cause: Exception) {
+        println("metrics capture failed: $cause")
+        MetricsSample(0.0, 0L, 0L)
+    }
+}
+
+private fun adbCmd(serial: String?): List<String> =
+    if (serial == null) listOf("adb") else listOf("adb", "-s", serial)
+
+private fun adbOutput(serial: String?, arguments: List<String>): String {
+    return try {
+        val process = ProcessBuilder(adbCmd(serial) + arguments).redirectErrorStream(false).start()
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor()
+        output
+    } catch (cause: Exception) {
+        ""
+    }
+}
+
+private fun sampleCpuTwice(serial: String?, pid: Int): Double {
+    val sleepArg = "0.050"
+    val command = "cat /proc/$pid/stat; sleep $sleepArg; cat /proc/$pid/stat"
+    val output = adbOutput(serial, listOf("shell", command))
+    val lines = output.lines().filter { it.isNotBlank() }
+    if (lines.size < 2) return 0.0
+    val first = parseCpuTicks(lines[0]) ?: return 0.0
+    val second = parseCpuTicks(lines[1]) ?: return 0.0
+    val clockHz = adbOutput(serial, listOf("shell", "getconf", "CLK_TCK")).trim().toLongOrNull() ?: 100L
+    val deltaCpuNanos = (second - first) * 1_000_000_000.0 / clockHz.coerceAtLeast(1L)
+    return (deltaCpuNanos / 50_000_000.0) * 100.0
+}
+
+private fun parseCpuTicks(statLine: String): Long? {
+    val afterComm = statLine.substringAfterLast(')').trim()
+    val fields = afterComm.split(Regex("\\s+"))
+    if (fields.size < 13) return null
+    val utime = fields[11].toLongOrNull() ?: return null
+    val stime = fields[12].toLongOrNull() ?: return null
+    return utime + stime
+}
+
+private fun sampleProcessMemory(serial: String?, pid: Int): Pair<Long, Long> {
+    val status = adbOutput(serial, listOf("shell", "cat", "/proc/$pid/status"))
+    var rssKb = 0L
+    var vmSizeKb = 0L
+    for (raw in status.lineSequence()) {
+        val line = raw.trim()
+        when {
+            line.startsWith("VmRSS:") -> rssKb = parseKb(line) ?: rssKb
+            line.startsWith("VmSize:") -> vmSizeKb = parseKb(line) ?: vmSizeKb
+        }
+    }
+    return Pair(rssKb * 1024L, vmSizeKb * 1024L)
+}
+
+private fun parseKb(line: String): Long? {
+    val parts = line.split(Regex("\\s+"))
+    if (parts.size < 2) return null
+    return parts[1].toLongOrNull()
+}
+
 class StubDriverBackend(private val platform: String) : DriverBackend {
     @Volatile var launchCount: Int = 0
         private set
@@ -47,38 +131,13 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     @Volatile var lastInputText: String? = null
         private set
 
-    override fun launch(bundleId: String, launcherActivity: String, clearState: Boolean) {
+    override fun launch(bundleId: String, clearState: Boolean) {
         launchCount++
         lastBundleId = bundleId
         if (clearState) {
             runAdb(listOf("shell", "pm", "clear", bundleId))
         }
-        val component = when {
-            launcherActivity.isEmpty() -> "$bundleId/${resolveLauncherActivity(bundleId)}"
-            launcherActivity.contains('/') -> launcherActivity
-            else -> "$bundleId/$launcherActivity"
-        }
-        runAdb(listOf("shell", "am", "start", "-W", "-n", component))
-    }
-
-    private fun resolveLauncherActivity(bundleId: String): String {
-        val output = captureAdb(
-            listOf(
-                "shell", "cmd", "package", "resolve-activity", "--brief",
-                "-a", "android.intent.action.MAIN",
-                "-c", "android.intent.category.LAUNCHER",
-                bundleId,
-            ),
-        )
-        return parseResolvedActivity(bundleId, output)
-            ?: throw IllegalStateException("could not resolve launcher activity for $bundleId: $output")
-    }
-
-    private fun captureAdb(arguments: List<String>): String {
-        val process = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor()
-        return output
+        runAdb(listOf("shell", "am", "start", "-W", "-n", "$bundleId/.MainActivity"))
     }
 
     companion object {
@@ -87,9 +146,6 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         internal fun isAnimationCountIdle(grepOutput: String): Boolean =
             (grepOutput.trim().toIntOrNull() ?: 0) == 0
 
-        // parseResolvedActivity extracts the activity name from the output of
-        // `cmd package resolve-activity --brief`. The brief output is two
-        // lines: metadata, then `<pkg>/<activity>`.
         internal fun parseResolvedActivity(bundleId: String, output: String): String? {
             val prefix = "$bundleId/"
             for (line in output.lines()) {
@@ -101,8 +157,6 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
             return null
         }
 
-        // Hard cap on KEYCODE_DEL events per clear. Guards against a pathological
-        // hierarchy that reports an enormous text length for the focused field.
         internal const val MAX_CLEAR_DELETES: Int = 1024
 
         internal fun buildClearKeyevents(textLength: Int): List<String> {
@@ -113,11 +167,6 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
             return args
         }
 
-        // `adb shell input text` runs through a remote sh, so shell metacharacters
-        // in the payload would be interpreted by the device shell. Substitute
-        // spaces with %s (input's escape) and backslash-escape characters sh
-        // would otherwise expand. Keep this list conservative; anything not
-        // listed passes through literally.
         internal fun escapeForAdbInputText(text: String): String {
             val sb = StringBuilder(text.length)
             for (ch in text) {
@@ -131,9 +180,6 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
             return sb.toString()
         }
 
-        // Matches a uiautomator-dump <node ...> tag where `focused="true"` is
-        // present. Captures only the tag's attribute string so we can pull
-        // `text="..."` out of it without building a full XML tree.
         private val FOCUSED_NODE = Regex(
             "<node\\b([^>]*\\bfocused=\"true\"[^>]*)/?>",
         )
@@ -169,10 +215,6 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
             return "$seconds.${millis.toString().padStart(3, '0')}"
         }
 
-        // Logcat default threadtime format:
-        //   MM-dd HH:mm:ss.SSS  PID  TID L TAG: message
-        // The leading date is the local year-inferred date; we convert to a
-        // unix-millis best-effort using the current year.
         private val LOGCAT_LINE = Regex(
             "^(\\d{2})-(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2})\\.(\\d{3})" +
                 "\\s+\\d+\\s+\\d+\\s+([VDIWEFS])\\s+([^:]+?):\\s?(.*)$",
@@ -215,16 +257,10 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
 
     override fun tapSelector(selector: String) {
         lastTapSelector = selector
-        // v0.1: selector resolution lives in Maestro proper; the stub
-        // records the selector so logs/traces show what was requested.
     }
 
     override fun inputText(text: String) {
         lastInputText = text
-        // `adb shell input text` types keystrokes at the caret, so repeated
-        // calls append. Clear the focused field first so the caller sees a
-        // pure replace: read the current value's length from the hierarchy,
-        // then move-end + N backspaces before typing.
         clearFocusedField()
         runAdb(listOf("shell", "input", "text", escapeForAdbInputText(text)))
     }
@@ -271,31 +307,14 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         runAdb(listOf("shell", "input", "keyevent", keyCode))
     }
 
-    override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> {
-        val level = if (minLevel.isEmpty()) "E" else minLevel
-        val since = if (sinceUnixMillis > 0) formatAdbLogcatTimestamp(sinceUnixMillis) else null
-        val arguments = mutableListOf("logcat", "-d", "*:$level")
-        if (since != null) {
-            arguments.add("-T")
-            arguments.add(since)
-        }
-        return try {
-            val process = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(false).start()
-            val output = process.inputStream.bufferedReader().readText()
-            process.waitFor()
-            parseLogcatOutput(output)
-        } catch (cause: Exception) {
-            println("adb logcat failed: $cause")
-            emptyList()
-        }
-    }
+    override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> =
+        readLogcat(null, sinceUnixMillis, minLevel)
 
     data class SwipeRecord(val fromX: Int, val fromY: Int, val toX: Int, val toY: Int, val durationMillis: Long)
 
     private fun runAdb(arguments: List<String>) {
         try {
             val command = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(true).start()
-            // Drain output before waiting so a large write doesn't block the child.
             command.inputStream.bufferedReader().readText()
             command.waitFor()
         } catch (cause: Exception) {
@@ -345,129 +364,138 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
 
     private fun isDeviceIdle(): Boolean {
         return try {
-            val output = captureAdb(
-                listOf("shell", "dumpsys window -a | grep -c mAnimating=true"),
-            )
+            val output = adbOutput(null, listOf("shell", "dumpsys window -a | grep -c mAnimating=true"))
             isAnimationCountIdle(output)
         } catch (cause: Exception) {
             false
         }
     }
 
-
     override fun healthy(): Boolean = true
 
-    // Stateful CPU delta tracker. Reading /proc/<pid>/stat gives cumulative
-    // utime+stime in jiffies; CPU % over a step is (delta_ticks / delta_wall)
-    // * 100. First call blocks briefly for a real reading instead of 0.
-    private data class CpuSample(val pid: Int, val ticks: Long, val wallNanos: Long)
-    @Volatile private var lastCpuSample: CpuSample? = null
-    private val clockTicksPerSecond: Long by lazy { resolveClockTicksPerSecond() }
-    private val cpuFirstSampleSleepMillis: Long = 50L
+    override fun metrics(bundleId: String): MetricsSample = readProcMetrics(null, bundleId)
+}
 
-    override fun metrics(bundleId: String): MetricsSample {
-        if (bundleId.isEmpty()) return MetricsSample(0.0, 0L, 0L)
-        return try {
-            val pid = runAdbOutput(listOf("shell", "pidof", bundleId)).trim().split(Regex("\\s+")).firstOrNull()?.toIntOrNull()
-                ?: run {
-                    lastCpuSample = null
-                    return MetricsSample(0.0, 0L, 0L)
-                }
-            val cpu = sampleCpuPercent(pid)
-            val (rssBytes, vmSizeBytes) = sampleProcessMemory(pid)
-            MetricsSample(cpu, rssBytes, vmSizeBytes)
-        } catch (cause: Exception) {
-            println("metrics capture failed: $cause")
-            MetricsSample(0.0, 0L, 0L)
+class MaestroDriverBackend(private val serial: String?) : DriverBackend {
+    private val dadb: dadb.Dadb
+    private val driver: maestro.drivers.AndroidDriver
+
+    init {
+        dadb = buildDadb(serial)
+        driver = maestro.drivers.AndroidDriver(dadb, 7001, "localhost")
+        driver.open()
+    }
+
+    override fun launch(bundleId: String, clearState: Boolean) {
+        if (clearState) driver.clearAppState(bundleId)
+        driver.launchApp(bundleId, emptyMap(), java.util.UUID.randomUUID())
+    }
+
+    override fun terminate(bundleId: String) = driver.stopApp(bundleId)
+
+    override fun tap(x: Int, y: Int) = driver.tap(maestro.Point(x, y))
+
+    override fun tapSelector(selector: String) {
+        val root = driver.contentDescriptor(false)
+        val bounds = findBoundsBySelector(root, selector) ?: return
+        driver.tap(maestro.Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2))
+    }
+
+    override fun inputText(text: String) = driver.inputText(text)
+
+    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) =
+        driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))
+
+    override fun pressKey(key: String) {
+        StubDriverBackend.KEY_MAP[key]?.let { keyCode ->
+            keyCodeToMaestro(keyCode)?.let { driver.pressKey(it) }
         }
     }
 
-    private fun sampleCpuPercent(pid: Int): Double {
-        val previous = lastCpuSample
-        if (previous != null && previous.pid == pid) {
-            val ticks = readCpuTicks(pid) ?: return 0.0
-            val now = System.nanoTime()
-            lastCpuSample = CpuSample(pid, ticks, now)
-            return cpuPercentFromDelta(ticks - previous.ticks, now - previous.wallNanos)
-        }
-        // No baseline for this PID: one adb round-trip with a device-side sleep
-        // so the first step gets a real reading instead of 0.
-        val pair = readCpuTicksPair(pid, cpuFirstSampleSleepMillis) ?: return 0.0
-        lastCpuSample = CpuSample(pid, pair.second, System.nanoTime())
-        return cpuPercentFromDelta(pair.second - pair.first, cpuFirstSampleSleepMillis * 1_000_000L)
+    override fun screenshot(): Triple<ByteArray, Int, Int> {
+        val buf = okio.Buffer()
+        driver.takeScreenshot(buf, false)
+        val bytes = buf.readByteArray()
+        return Triple(bytes, pngWidth(bytes), pngHeight(bytes))
     }
 
-    private fun readCpuTicks(pid: Int): Long? {
-        val stat = runAdbOutput(listOf("shell", "cat", "/proc/$pid/stat")).trim()
-        if (stat.isEmpty()) return null
-        return parseCpuTicks(stat)
+    override fun hierarchy(): String =
+        com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().writeValueAsString(driver.contentDescriptor(false))
+
+    override fun recentLogs(sinceUnixMillis: Long, minLevel: String) =
+        readLogcat(serial, sinceUnixMillis, minLevel)
+
+    override fun waitForIdle(durationMillis: Long) {
+        driver.waitForAppToSettle(null, null, durationMillis.toInt())
     }
 
-    private fun readCpuTicksPair(pid: Int, sleepMillis: Long): Pair<Long, Long>? {
-        // "sleep 0.050" — toybox sleep accepts fractional seconds on modern Android.
-        val sleepArg = "0.${"%03d".format(sleepMillis)}"
-        val command = "cat /proc/$pid/stat; sleep $sleepArg; cat /proc/$pid/stat"
-        val output = runAdbOutput(listOf("shell", command))
-        val lines = output.lines().filter { it.isNotBlank() }
-        if (lines.size < 2) return null
-        val first = parseCpuTicks(lines[0]) ?: return null
-        val second = parseCpuTicks(lines[1]) ?: return null
-        return Pair(first, second)
-    }
+    override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
 
-    private fun parseCpuTicks(statLine: String): Long? {
-        // /proc/<pid>/stat format: pid (comm) state ppid ... utime stime ...
-        // comm is parenthesized and may contain spaces; rsplit on ')' to skip it.
-        val afterComm = statLine.substringAfterLast(')').trim()
-        val fields = afterComm.split(Regex("\\s+"))
-        // After the ')' we are at the "state" field (index 0 in afterComm).
-        // utime is proc(14) = afterComm[11], stime is proc(15) = afterComm[12].
-        if (fields.size < 13) return null
-        val utime = fields[11].toLongOrNull() ?: return null
-        val stime = fields[12].toLongOrNull() ?: return null
-        return utime + stime
-    }
+    override fun metrics(bundleId: String) = readProcMetrics(serial, bundleId)
+}
 
-    private fun cpuPercentFromDelta(deltaTicks: Long, deltaWallNanos: Long): Double {
-        if (deltaTicks < 0 || deltaWallNanos <= 0) return 0.0
-        val tickHz = clockTicksPerSecond.coerceAtLeast(1L)
-        val deltaCpuNanos = deltaTicks * 1_000_000_000.0 / tickHz
-        return (deltaCpuNanos / deltaWallNanos) * 100.0
+private fun buildDadb(serial: String?): dadb.Dadb {
+    return if (serial == null) {
+        dadb.Dadb.create("localhost", 5555)
+    } else {
+        dadb.Dadb.create(serial.substringBefore(":"), serial.substringAfter(":").toIntOrNull() ?: 5555)
     }
+}
 
-    private fun resolveClockTicksPerSecond(): Long {
-        val output = runAdbOutput(listOf("shell", "getconf", "CLK_TCK")).trim()
-        return output.toLongOrNull() ?: 100L
+private fun findBoundsBySelector(root: maestro.TreeNode, selector: String): IntArray? {
+    val colon = selector.indexOf(':')
+    if (colon < 0) return null
+    val kind = selector.substring(0, colon)
+    val value = selector.substring(colon + 1)
+    return findBoundsInTree(root, kind, value)
+}
+
+private fun findBoundsInTree(node: maestro.TreeNode, kind: String, value: String): IntArray? {
+    val attrs = node.attributes
+    val matches = when (kind) {
+        "id" -> attrs["resource-id"]?.let { it == value || it.endsWith(":id/$value") } == true
+        "text" -> attrs["text"] == value
+        "desc" -> attrs["content-desc"] == value
+        "descPrefix" -> attrs["content-desc"]?.startsWith(value) == true
+        else -> false
     }
-
-    private fun sampleProcessMemory(pid: Int): Pair<Long, Long> {
-        val status = runAdbOutput(listOf("shell", "cat", "/proc/$pid/status"))
-        var rssKb = 0L
-        var vmSizeKb = 0L
-        for (raw in status.lineSequence()) {
-            val line = raw.trim()
-            when {
-                line.startsWith("VmRSS:") -> rssKb = parseKb(line) ?: rssKb
-                line.startsWith("VmSize:") -> vmSizeKb = parseKb(line) ?: vmSizeKb
-            }
-        }
-        return Pair(rssKb * 1024L, vmSizeKb * 1024L)
+    if (matches) {
+        attrs["bounds"]?.let { b -> parseBounds(b)?.let { return it } }
     }
-
-    private fun parseKb(line: String): Long? {
-        val parts = line.split(Regex("\\s+"))
-        if (parts.size < 2) return null
-        return parts[1].toLongOrNull()
+    for (child in node.children) {
+        findBoundsInTree(child, kind, value)?.let { return it }
     }
+    return null
+}
 
-    private fun runAdbOutput(arguments: List<String>): String {
-        return try {
-            val process = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(false).start()
-            val output = process.inputStream.bufferedReader().readText()
-            process.waitFor()
-            output
-        } catch (cause: Exception) {
-            ""
-        }
+private fun parseBounds(s: String): IntArray? {
+    val pattern = Regex("^\\[(-?\\d+),(-?\\d+),(-?\\d+),(-?\\d+)\\]$")
+    val m = pattern.matchEntire(s) ?: return null
+    return IntArray(4) { m.groupValues[it + 1].toInt() }
+}
+
+private fun pngWidth(bytes: ByteArray): Int {
+    if (bytes.size < 24) return 0
+    return (bytes[16].toInt() and 0xFF shl 24) or (bytes[17].toInt() and 0xFF shl 16) or
+        (bytes[18].toInt() and 0xFF shl 8) or (bytes[19].toInt() and 0xFF)
+}
+
+private fun pngHeight(bytes: ByteArray): Int {
+    if (bytes.size < 24) return 0
+    return (bytes[20].toInt() and 0xFF shl 24) or (bytes[21].toInt() and 0xFF shl 16) or
+        (bytes[22].toInt() and 0xFF shl 8) or (bytes[23].toInt() and 0xFF)
+}
+
+private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? {
+    return when (adbKeyCode) {
+        "KEYCODE_BACK" -> maestro.KeyCode.BACK
+        "KEYCODE_HOME" -> maestro.KeyCode.HOME
+        "KEYCODE_ENTER" -> maestro.KeyCode.ENTER
+        "KEYCODE_TAB" -> maestro.KeyCode.TAB
+        "KEYCODE_DPAD_UP" -> maestro.KeyCode.REMOTE_UP
+        "KEYCODE_DPAD_DOWN" -> maestro.KeyCode.REMOTE_DOWN
+        "KEYCODE_DPAD_LEFT" -> maestro.KeyCode.REMOTE_LEFT
+        "KEYCODE_DPAD_RIGHT" -> maestro.KeyCode.REMOTE_RIGHT
+        else -> null
     }
 }
