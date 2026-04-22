@@ -7,33 +7,6 @@ import (
 	"github.com/dop251/goja"
 )
 
-type ActionKind string
-
-const (
-	ActionKindTap       ActionKind = "Tap"
-	ActionKindInputText ActionKind = "InputText"
-	ActionKindSwipe     ActionKind = "Swipe"
-	ActionKindPressKey  ActionKind = "PressKey"
-	ActionKindWait      ActionKind = "Wait"
-)
-
-type Action struct {
-	Kind ActionKind
-	On   string
-	Text string
-	// X, Y hold the element center when the spec passed an ax element to
-	// Tap/InputText. Zero means the runner must resolve On against the
-	// current hierarchy.
-	X, Y int
-	// Swipe coordinates (raw px). Used only for ActionKindSwipe.
-	FromX, FromY int
-	ToX, ToY     int
-	// DurationMillis is the Swipe gesture duration or the Wait duration.
-	DurationMillis int
-	// Key is the logical key name for ActionKindPressKey.
-	Key string
-}
-
 type extractorState struct {
 	getter goja.Callable
 	handle *goja.Object
