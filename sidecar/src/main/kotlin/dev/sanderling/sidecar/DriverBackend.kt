@@ -84,8 +84,8 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     companion object {
         private const val IDLE_POLL_INTERVAL_MILLIS = 50L
 
-        internal fun isWindowDumpIdle(dumpsysOutput: String): Boolean =
-            !dumpsysOutput.contains("mAnimating=true")
+        internal fun isAnimationCountIdle(grepOutput: String): Boolean =
+            (grepOutput.trim().toIntOrNull() ?: 0) == 0
 
         // parseResolvedActivity extracts the activity name from the output of
         // `cmd package resolve-activity --brief`. The brief output is two
@@ -346,9 +346,9 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     private fun isDeviceIdle(): Boolean {
         return try {
             val output = captureAdb(
-                listOf("shell", "dumpsys", "window", "-a"),
+                listOf("shell", "dumpsys window -a | grep -c mAnimating=true"),
             )
-            isWindowDumpIdle(output)
+            isAnimationCountIdle(output)
         } catch (cause: Exception) {
             false
         }
