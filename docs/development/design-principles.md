@@ -6,28 +6,32 @@ title: Design principles
 
 ## 1. The app owns introspection; the driver owns input
 
-The in-app SDK knows the state: view hierarchy, coverage, logs, exceptions, custom extractors. Maestro causes the state to change through taps, swipes, typed text, and deep links. The Go runner decides what to do.
+On native platforms, the in-app SDK knows the state: view hierarchy, coverage, logs, exceptions, custom extractors. Maestro causes the state to change through taps, swipes, typed text, and deep links. The Go runner decides what to do.
 
 Splitting these responsibilities is what makes the system work across iOS and Android with one spec surface. Neither Maestro nor the SDK alone is sufficient.
 
 - Maestro can read a coarse accessibility tree, but not the real `UIView` or `View` hierarchy, not coverage, not in-process logs.
 - The SDK can see everything inside the app, but cannot dispatch UI events the way the OS would. Touch injection through Maestro goes through XCTest or UIAutomator, which the OS treats as real input.
 
+On web, Chrome DevTools Protocol handles both input and introspection. No in-app SDK is needed.
+
 ## 2. One TypeScript surface across platforms
 
-Spec authors write against `state.ax`, `state.logs`, `state.snapshots`, and so on, regardless of iOS or Android. Platform differences (back button semantics, system alerts, coverage format) are absorbed in the Go runner and the SDKs.
+Spec authors write against `state.ax`, `state.logs`, `state.snapshots`, and so on, regardless of iOS, Android, or web. Platform differences (back button semantics, system alerts, coverage format) are absorbed in the Go runner and the drivers.
 
 Corollary: if a concept only exists on one platform, it does not belong in the spec API. It belongs behind a feature flag or an extractor.
 
 ## 3. The driver is an interface
 
-Today `driver.Driver` has one production implementation (`maestro`) and a `mock` for tests. Tomorrow it might be Appium, direct XCTest, or UIAutomator. The runner never knows. This keeps the Maestro dependency contained. If we ever outgrow it, the blast radius is one package.
+`DeviceDriver` has two production implementations: `sidecar` (Maestro gRPC, for native) and `chrome` (CDP, for web), plus a `mock` for tests. The runner never knows which is wired in. Adding a new platform means adding a new implementation; nothing else changes.
 
-## 4. Hot loops bypass Maestro
+## 4. Hot loops bypass Maestro (native)
 
-Per-step introspection (hierarchy dump, coverage read, pause and resume) goes over a local Unix socket directly to the SDK. Only physical UI events go through Maestro's gRPC.
+On native, per-step introspection (hierarchy dump, coverage read, pause and resume) goes over a local Unix socket directly to the SDK. Only physical UI events go through Maestro's gRPC.
 
 A 30-minute run is about 10,000 steps. Every step has at least one hierarchy dump and one coverage read. If those went through Maestro, the JVM sidecar would be the bottleneck. Instead the hot path is a 2 ms round-trip to an in-process Swift or Kotlin SDK.
+
+On web, CDP is fast enough that a separate introspection channel is not needed.
 
 ## 5. Deterministic where it can be
 

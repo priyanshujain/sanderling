@@ -8,9 +8,16 @@ Install the CLI, link the SDK into your debug build, run a spec.
 
 ## Prerequisites
 
-- An Android emulator with API level 30 or newer.
+**Android / iOS:**
+
+- An Android emulator with API level 30 or newer (or a connected device).
 - The app under test built as a debug variant with the sanderling Android SDK linked in.
 - `adb` on your PATH.
+
+**Web:**
+
+- Chrome installed. sanderling drives it via CDP; no other setup required.
+- No in-app SDK needed.
 
 Run `sanderling doctor` to check the host environment.
 
@@ -22,13 +29,13 @@ Run `sanderling doctor` to check the host environment.
 curl -fsSL https://raw.githubusercontent.com/priyanshujain/sanderling/master/install.sh | bash
 ```
 
-### Spec package (npm)
+### Spec package ([npm](https://www.npmjs.com/package/@sanderling/spec))
 
 ```sh
 npm install --save-dev @sanderling/spec
 ```
 
-### Android SDK (Maven Central)
+### Android SDK ([Maven Central](https://central.sonatype.com/artifact/io.github.priyanshujain.sanderling/sdk-android))
 
 ```kotlin
 dependencies {
@@ -37,6 +44,8 @@ dependencies {
 ```
 
 ## Your first run
+
+### Android
 
 The repo ships a working sample at `examples/folio`, a Kotlin Multiplatform app with a TypeScript spec under `sanderling/spec.ts`. Install `just`, then from `examples/folio`:
 
@@ -53,6 +62,18 @@ AVD=Pixel_7 just test
 
 Persistent settings can live in a `.env` alongside the justfile (`AVD=Pixel_7`, `DURATION=5m`, and so on).
 
+### Web
+
+The repo also ships a web sample at `examples/folio-web`, a React/Vite app with the same domain logic. From `examples/folio-web`:
+
+```sh
+just test      # starts Chrome, runs the spec
+```
+
+No emulator or SDK setup needed.
+
+### Trace output
+
 When the run ends, the trace lands in `sanderling/runs/<timestamp>/`:
 
 ```
@@ -62,6 +83,6 @@ runs/2026-04-18T12-34-56/
 └── meta.json
 ```
 
-Browse it with `sanderling inspect` (see [inspect](./inspect.html)), or read `trace.jsonl` step by step.
+Browse it with `sanderling inspect` (see [inspect](./inspect/)), or read `trace.jsonl` step by step.
 
-Next: [writing specs](./writing-specs.html).
+Next: [writing specs](./writing-specs/).

@@ -11,11 +11,13 @@ SIDECAR_EMBED := internal/sidecar/assets/sidecar-all.jar
 SDK_AAR := sdk/android/build/outputs/aar/sdk-android-release.aar
 SANDERLING_BIN := bin/sanderling
 
-DOCS_SRC := $(shell find docs -type f -name '*.md' -not -path 'docs/_*')
-DOCS_OUT := $(patsubst docs/%.md,build/site/%.html,$(DOCS_SRC))
+DOCS_SRC      := $(shell find docs -type f -name '*.md' -not -path 'docs/_*')
+INDEX_SRC     := $(filter %index.md,$(DOCS_SRC))
+PAGE_SRC      := $(filter-out %index.md,$(DOCS_SRC))
+INDEX_OUT     := $(patsubst docs/%.md,build/site/%.html,$(INDEX_SRC))
+PAGE_OUT      := $(patsubst docs/%.md,build/site/%/index.html,$(PAGE_SRC))
+DOCS_OUT      := $(INDEX_OUT) $(PAGE_OUT)
 DOCS_TEMPLATE := docs/_template/page.html
-DIAGRAM_SRC := $(shell find docs/_diagrams -type f -name '*.d2' 2>/dev/null)
-DIAGRAM_OUT := $(patsubst docs/_diagrams/%.d2,build/site/_assets/diagrams/%.svg,$(DIAGRAM_SRC))
 
 INSPECT_DIST := internal/inspect/dist
 WEB_DIST := inspect-ui/dist
@@ -84,24 +86,27 @@ test-kotlin:
 test-spec-api:
 	cd pkg/spec && npm test --silent
 
-docs: $(DOCS_OUT) build/site/_assets $(DIAGRAM_OUT)
-	@echo "built $(words $(DOCS_OUT)) pages, $(words $(DIAGRAM_OUT)) diagrams to build/site"
+docs: $(DOCS_OUT) build/site/_assets
+	@echo "built $(words $(DOCS_OUT)) pages to build/site"
 
 build/site/_assets: docs/_assets
 	@mkdir -p build/site
 	@rm -rf $@
 	@cp -R $< $@
 
-build/site/_assets/diagrams/%.svg: docs/_diagrams/%.d2
-	@mkdir -p $(dir $@)
-	@d2 --theme 301 --pad 20 $< $@
-
-build/site/%.html: docs/%.md $(DOCS_TEMPLATE)
+define build_page
 	@mkdir -p $(dir $@)
 	@pandoc $< --from=gfm --to=html5 --standalone \
 	  --highlight-style=tango --template=$(DOCS_TEMPLATE) -o $@
 	@rel=$$(echo $(patsubst build/site/%,%,$@) | awk -F/ '{for(i=1;i<NF;i++)printf "../"}'); \
 	  sed -i.bak "s|__ROOT__|$$rel|g" $@ && rm $@.bak
+endef
+
+$(INDEX_OUT): build/site/%.html: docs/%.md $(DOCS_TEMPLATE)
+	$(build_page)
+
+$(PAGE_OUT): build/site/%/index.html: docs/%.md $(DOCS_TEMPLATE)
+	$(build_page)
 
 clean:
 	$(GO) clean

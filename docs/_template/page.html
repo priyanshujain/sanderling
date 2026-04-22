@@ -9,24 +9,39 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="__ROOT___assets/style.css">
 <style>$highlighting-css$</style>
+<script>
+  const t = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.dataset.theme = t;
+</script>
 </head>
 <body>
+<button id="theme-toggle" class="theme-toggle" title="Toggle theme">
+  <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+    <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+  </svg>
+  <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+  </svg>
+</button>
 <div class="layout">
   <aside class="sidebar">
-    <a class="brand" href="__ROOT__index.html">sanderling</a>
+    <a class="brand" href="__ROOT__">sanderling</a>
     <nav>
       <h3>Manual</h3>
       <ul>
-        <li><a href="__ROOT__manual/getting-started.html">Getting started</a></li>
-        <li><a href="__ROOT__manual/writing-specs.html">Writing specs</a></li>
-        <li><a href="__ROOT__manual/runs.html">Runs</a></li>
-        <li><a href="__ROOT__manual/inspect.html">Inspect</a></li>
-        <li><a href="__ROOT__manual/cli.html">CLI reference</a></li>
+        <li><a href="__ROOT__manual/getting-started/">Getting started</a></li>
+        <li><a href="__ROOT__manual/writing-specs/">Writing specs</a></li>
+        <li><a href="__ROOT__manual/runs/">Runs</a></li>
+        <li><a href="__ROOT__manual/inspect/">Inspect</a></li>
+        <li><a href="__ROOT__manual/cli/">CLI reference</a></li>
       </ul>
       <h3>Development</h3>
       <ul>
-        <li><a href="__ROOT__development/design-principles.html">Design principles</a></li>
-        <li><a href="__ROOT__development/architecture.html">Architecture</a></li>
+        <li><a href="__ROOT__development/design-principles/">Design principles</a></li>
+        <li><a href="__ROOT__development/architecture/">Architecture</a></li>
       </ul>
     </nav>
   </aside>
@@ -51,6 +66,39 @@ for (const pre of document.querySelectorAll('pre.mermaid, pre > code.language-me
   node.replaceWith(div);
 }
 await mermaid.run();
+
+const overlay = document.createElement('div');
+overlay.className = 'diagram-overlay';
+document.body.appendChild(overlay);
+overlay.addEventListener('click', () => overlay.classList.remove('open'));
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') overlay.classList.remove('open');
+});
+for (const diagram of document.querySelectorAll('.mermaid')) {
+  diagram.addEventListener('click', () => {
+    const svg = diagram.querySelector('svg');
+    if (!svg) return;
+    overlay.innerHTML = '';
+    overlay.appendChild(svg.cloneNode(true));
+    overlay.classList.add('open');
+  });
+}
+
+for (const img of document.querySelectorAll('article img')) {
+  img.addEventListener('click', () => {
+    overlay.innerHTML = '';
+    const clone = img.cloneNode();
+    clone.style.cssText = 'max-width:95vw;max-height:95vh;width:auto;height:auto;border-radius:6px;';
+    overlay.appendChild(clone);
+    overlay.classList.add('open');
+  });
+}
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem('theme', next);
+});
 </script>
 </body>
 </html>

@@ -1,8 +1,8 @@
 # @sanderling/spec
 
-TypeScript spec API for [sanderling](https://github.com/priyanshujain/sanderling), a property-based UI fuzzer for mobile apps.
+TypeScript spec API for [sanderling](https://github.com/priyanshujain/sanderling), a property-based UI fuzzer for mobile and web apps.
 
-Spec authors write specs in TypeScript that describe what an app should *always* do (safety invariants), generate weighted actions to exercise the app, and extract structured state from the accessibility tree. The `sanderling` CLI picks up the spec and drives the app under test.
+Spec authors write properties (what the app must always or eventually do), extractors (structured state from the UI), and action generators (what sanderling is allowed to do). The `sanderling` CLI evaluates the spec in a loop against a running app.
 
 ## Install
 
@@ -13,27 +13,29 @@ npm install --save-dev @sanderling/spec
 ## Usage
 
 ```ts
-import { extract, always, actions, Tap, weighted } from "@sanderling/spec";
+import { extract, always, eventually, now, actions, weighted, taps, swipes, InputText, Tap } from "@sanderling/spec";
 
-export const spec = {
-  extract: extract((tree) => ({
-    onHomeScreen: tree.some((n) => n.text === "Home"),
-  })),
+const loggedIn = extract((s) => !!s.ax.find("id:home-tab-bar"));
+const balance = extract<number>((s) => (s.snapshots.balance as number) ?? 0);
 
-  always: always(({ state }) => state.onHomeScreen || !state.startedOnHome),
-
-  actions: actions(({ tree }) =>
-    weighted([
-      [1, Tap(tree.first((n) => n.text === "Checkout"))],
-    ]),
-  ),
+export const properties = {
+  balanceNeverNegative: always(() => balance.current >= 0),
+  loginSucceeds: eventually(() => loggedIn.current).within(30, "seconds"),
 };
+
+const doLogin = actions(() => {
+  if (loggedIn.current) return [];
+  const email = state.ax.find("id:email-field");
+  const submit = state.ax.find("id:sign-in-button");
+  if (!email || !submit) return [];
+  return [InputText({ into: email, text: "test@example.com" }), Tap({ on: submit })];
+});
+
+export const actions = weighted(
+  [50, doLogin],
+  [10, taps],
+  [2,  swipes],
+);
 ```
 
-## Version compatibility
-
-`@sanderling/spec` is released in lockstep with the sanderling CLI. Pin the same major/minor version as your installed `sanderling` binary.
-
-## License
-
-Apache-2.0
+Works identically across Android, iOS, and web targets.

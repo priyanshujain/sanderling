@@ -4,30 +4,54 @@ title: Architecture
 
 # Architecture
 
-Three processes, two transports.
+```mermaid
+flowchart TB
+    subgraph go["sanderling (Go)"]
+        direction LR
+        B["Bundler / esbuild"] --> V["Verifier / goja + LTL"]
+        V <--> R["Runner"]
+        R --> D["DeviceDriver"]
+        R --> T["Trace writer\nJSONL + PNG"]
+    end
 
-<img src="../_assets/diagrams/architecture.svg" alt="sanderling architecture" />
+    SC["Maestro sidecar (JVM)"]
+    SDK["in-app SDK\n(Device / Emulator)"]
+    CH["Chrome (CDP)"]
+    RD[("runs/")]
+    IN["sanderling inspect\nHTTP + SSE"]
+    UI["Web UI (React)"]
+
+    D -->|gRPC| SC
+    SC -->|UIAutomator / XCTest| SDK
+    R -->|"Unix socket<br/>(pause / state / logs)"| SDK
+    D -->|CDP| CH
+
+    T --> RD --> IN --> UI
+```
 
 ## Processes
 
-**sanderling (Go).** The top-level binary. Bundles the spec with esbuild, evaluates it in goja, runs the main loop, dispatches actions through the driver, writes the trace.
+**sanderling (Go).** The top-level binary. Bundles the spec with esbuild, evaluates it in goja, runs the main loop, dispatches actions through the `DeviceDriver` interface, writes the trace.
 
-**Maestro sidecar (JVM).** A Kotlin process that wraps `maestro-client` and exposes a gRPC surface matching the `driver.Driver` interface. Handles UI input, screenshots, the system accessibility tree, and OS-level alerts.
+**Maestro sidecar (JVM).** A Kotlin process that wraps `maestro-client` and exposes a gRPC surface matching the `DeviceDriver` interface. Handles UI input, screenshots, the system accessibility tree, and OS-level alerts. Native platforms only.
 
-**In-app SDK.** A Kotlin (or Swift for iOS) library linked into the app under test. Exposes a Unix socket to the runner. Provides pause and resume, view-hierarchy dumps, coverage reads, log capture, and user-registered state extractors.
+**In-app SDK.** A Kotlin (or Swift for iOS) library linked into the app under test. Exposes a Unix socket to the runner. Provides pause and resume, view-hierarchy dumps, coverage reads, log capture, and user-registered state extractors. Native platforms only.
+
+**Chrome (CDP).** For web targets, the Go binary drives Chrome directly over the Chrome DevTools Protocol. No sidecar or in-app SDK is involved.
 
 ## Transports
 
-| Channel | Transport | Purpose |
-|---|---|---|
-| Go to Maestro sidecar | gRPC (localhost TCP) | UI input, screenshots, system alerts |
-| Go to in-app SDK | Unix domain socket | Pause / resume, hierarchy, coverage, logs, extractors |
+| Channel | Platform | Transport | Purpose |
+|---|---|---|---|
+| Go to Maestro sidecar | Native | gRPC (localhost TCP) | UI input, screenshots, system alerts |
+| Go to in-app SDK | Native | Unix domain socket | Pause / resume, hierarchy, coverage, logs, extractors |
+| Go to Chrome | Web | Chrome DevTools Protocol | UI input, screenshots, DOM hierarchy, console logs |
 
-The split exists for one reason: only real UI events need the cost of crossing process and OS-API boundaries. Introspection is cheap, frequent, and lives on a fast local socket directly to the app.
+On native, the transport split exists because only real UI events need to cross process and OS-API boundaries. Introspection is cheap, frequent, and lives on a fast local socket directly to the app. On web, CDP handles both.
 
 ## Inspect UI
 
-`sanderling inspect` is a separate mode of the same Go binary. It serves an embedded React bundle and reads `runs/` from disk, streaming file-watcher events over SSE so the UI updates as new steps land. It has no connection to the sidecar or the SDK; it only consumes the trace artifacts.
+`sanderling inspect` is a separate mode of the same Go binary. It serves an embedded React bundle and reads `runs/` from disk, streaming file-watcher events over SSE so the UI updates as new steps land. It has no connection to any driver; it only consumes the trace artifacts.
 
 ## Per-step cycle
 
@@ -37,14 +61,20 @@ The heart of the system is:
 pause  ─►  capture state  ─►  evaluate properties  ─►  pick action  ─►  resume  ─►  dispatch
 ```
 
+**Native (Android / iOS):**
+
 1. The runner asks the driver to wait until the UI is idle.
-2. The runner sends `PAUSE` to the SDK over the agent socket. The SDK freezes the main runloop at a safe point.
+2. The runner sends `PAUSE` to the SDK over the Unix socket. The SDK freezes the main runloop at a safe point.
 3. The SDK sends back a `STATE` message: view hierarchy, coverage delta, logs since last step, exception list, snapshot values.
 4. The runner feeds state into goja. Extractors re-read; properties re-evaluate; the action generator returns a weighted tree.
 5. The runner writes the trace entry for this step.
 6. The runner picks an action by weight.
-7. The runner sends `RESUME` to the SDK, then dispatches the action through the driver (gRPC to sidecar, which talks to Maestro, which talks to UIAutomator or XCTest).
+7. The runner sends `RESUME` to the SDK, then dispatches the action through the driver (gRPC to sidecar → Maestro → UIAutomator or XCTest).
 8. Loop.
+
+**Web (Chrome):**
+
+Steps 2-3 use CDP to capture the DOM hierarchy and console logs directly; there is no SDK pause/resume. The rest of the cycle is identical.
 
 The cycle runs hundreds of times per minute. Every step produces one row in `trace.jsonl` and one screenshot.
 

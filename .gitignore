@@ -37,11 +37,10 @@ pkg/spec/dist/
 # goreleaser local output
 /dist/
 
-# inspect web bundle output (real bundle wired in Stage 4 via Makefile/CI).
-# Track only the stub index.html + .gitkeep so //go:embed succeeds.
+# inspect web bundle output; built by `make web-build` before go build.
+# Only .gitkeep is tracked so //go:embed all:dist compiles on a fresh checkout.
 /internal/inspect/dist/*
 !/internal/inspect/dist/.gitkeep
-!/internal/inspect/dist/index.html
 
 # inspect web frontend
 inspect-ui/node_modules/
@@ -53,15 +52,9 @@ examples/folio-web/node_modules/
 examples/folio-web/dist/
 examples/folio-web/.vite/
 
-# d2 diagrams render into build/site/_assets/diagrams; keep sources only
-/docs/_diagrams/*.svg
-/docs/_diagrams/*.png
-
 # coding agent files
 .claude/
 .claude/*
 
 # Personal research notes
 /research/
-
-internal/inspect/dist/*
