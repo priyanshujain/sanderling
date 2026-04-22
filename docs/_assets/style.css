@@ -132,6 +132,7 @@ main article img {
   display: block;
   margin: 1.25rem 0;
   border-radius: 4px;
+  cursor: zoom-in;
 }
 
 a { color: var(--accent); }

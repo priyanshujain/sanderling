@@ -84,6 +84,16 @@ for (const diagram of document.querySelectorAll('.mermaid')) {
   });
 }
 
+for (const img of document.querySelectorAll('article img')) {
+  img.addEventListener('click', () => {
+    overlay.innerHTML = '';
+    const clone = img.cloneNode();
+    clone.style.cssText = 'max-width:95vw;max-height:95vh;width:auto;height:auto;border-radius:6px;';
+    overlay.appendChild(clone);
+    overlay.classList.add('open');
+  });
+}
+
 document.getElementById('theme-toggle').addEventListener('click', () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
