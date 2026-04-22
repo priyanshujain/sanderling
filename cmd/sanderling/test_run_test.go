@@ -8,7 +8,7 @@ import (
 
 func TestResolveSpecAPIPath_FindsUpwardSibling(t *testing.T) {
 	root := t.TempDir()
-	apiPath := filepath.Join(root, "pkg", "spec-api", "src", "index.ts")
+	apiPath := filepath.Join(root, "pkg", "spec", "src", "index.ts")
 	if err := os.MkdirAll(filepath.Dir(apiPath), 0o755); err != nil {
 		t.Fatal(err)
 	}

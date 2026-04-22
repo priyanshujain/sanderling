@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/agent"
+	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/driver/chrome"
@@ -31,7 +32,7 @@ const (
 
 func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer) error {
 	if options.platform == "android" || options.platform == "ios" {
-		if err := ensureDevice(ctx, options.avd, stdout); err != nil {
+		if err := android.EnsureDevice(ctx, options.avd, stdout); err != nil {
 			return err
 		}
 	}
@@ -68,11 +69,11 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	agentPort := listener.Addr().(*net.TCPAddr).Port
 
 	if options.platform != "web" {
-		if err := adbReverse(socketName, agentPort); err != nil {
+		if err := android.AdbReverse(socketName, agentPort); err != nil {
 			return fmt.Errorf("adb reverse: %w", err)
 		}
 		defer func() {
-			if err := adbReverseRemove(socketName); err != nil {
+			if err := android.AdbReverseRemove(socketName); err != nil {
 				fmt.Fprintf(stdout, "warning: adb reverse cleanup: %v\n", err)
 			}
 		}()
@@ -204,7 +205,7 @@ func buildDriver(ctx context.Context, options testOptions, stdout io.Writer) (dr
 	)
 	sidecarCommand.Stdout = stdout
 	sidecarCommand.Stderr = stdout
-	sidecarCommand.Env = envWithAndroidPlatformTools(os.Environ())
+	sidecarCommand.Env = android.EnvWithAndroidPlatformTools(os.Environ())
 	if err := sidecarCommand.Start(); err != nil {
 		return nil, nil, fmt.Errorf("spawn sidecar: %w", err)
 	}
@@ -271,19 +272,3 @@ func pickFreePort() (int, error) {
 	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 
-func adbReverse(socket string, port int) error {
-	adb, err := adbBinary()
-	if err != nil {
-		return err
-	}
-	command := exec.Command(adb, "reverse", "localabstract:"+socket, fmt.Sprintf("tcp:%d", port))
-	return command.Run()
-}
-
-func adbReverseRemove(socket string) error {
-	adb, err := adbBinary()
-	if err != nil {
-		return err
-	}
-	return exec.Command(adb, "reverse", "--remove", "localabstract:"+socket).Run()
-}
