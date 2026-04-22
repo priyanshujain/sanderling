@@ -18,7 +18,7 @@ DIAGRAM_SRC := $(shell find docs/_diagrams -type f -name '*.d2' 2>/dev/null)
 DIAGRAM_OUT := $(patsubst docs/_diagrams/%.d2,build/site/_assets/diagrams/%.svg,$(DIAGRAM_SRC))
 
 INSPECT_DIST := internal/inspect/dist
-WEB_DIST := web/dist
+WEB_DIST := inspect-ui/dist
 
 .PHONY: bootstrap proto sidecar sdk-android sdk-android-publish sanderling install test test-go test-kotlin test-spec-api web-typecheck web-build web-dev inspect-dev docs clean release-cli release-android-local release-npm-dry
 
@@ -52,19 +52,19 @@ install: $(SIDECAR_EMBED) web-build
 	@dest="$$($(GO) env GOBIN)"; [ -n "$$dest" ] || dest="$$($(GO) env GOPATH)/bin"; echo "installed sanderling to $$dest"
 
 web-build:
-	cd web && bun install --frozen-lockfile && bun run build
+	cd inspect-ui && bun install --frozen-lockfile && bun run build
 	mkdir -p $(INSPECT_DIST)
 	rm -rf $(INSPECT_DIST)/assets $(INSPECT_DIST)/fonts
 	cp -R $(WEB_DIST)/. $(INSPECT_DIST)/
 
 web-dev:
-	cd web && bun run dev
+	cd inspect-ui && bun run dev
 
 inspect-dev: $(SIDECAR_EMBED)
 	$(GO) run -tags withsidecar ./cmd/sanderling inspect --dev
 
 web-typecheck:
-	cd web && bun install --frozen-lockfile && bun run typecheck
+	cd inspect-ui && bun install --frozen-lockfile && bun run typecheck
 
 $(SIDECAR_JAR):
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:shadowJar
