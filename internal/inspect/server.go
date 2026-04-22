@@ -18,6 +18,8 @@ import (
 type ServerOptions struct {
 	RunsDirectory string
 	DevTarget     string
+	// AssetsFS overrides the default embedded dist FS. Intended for tests.
+	AssetsFS fs.FS
 }
 
 // Server holds the HTTP handlers for `sanderling inspect`.
@@ -33,11 +35,15 @@ type Server struct {
 // server reverse-proxies non-API GETs to it; otherwise it serves embedded
 // assets from the dist FS.
 func NewServer(options ServerOptions) (*Server, error) {
+	assetsFS := options.AssetsFS
+	if assetsFS == nil {
+		assetsFS = Assets()
+	}
 	server := &Server{
 		options: options,
 		cache:   NewCache(options.RunsDirectory),
 		watcher: NewWatcher(options.RunsDirectory),
-		assets:  spaHandler(Assets()),
+		assets:  spaHandler(assetsFS),
 	}
 	if options.DevTarget != "" {
 		proxy, err := newDevProxy(options.DevTarget)
@@ -207,12 +213,12 @@ func spaHandler(assets fs.FS) http.Handler {
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		clean := strings.TrimPrefix(path.Clean(request.URL.Path), "/")
 		if clean == "" {
-			serveIndex(responseWriter, request, assets)
+			serveIndex(responseWriter, assets)
 			return
 		}
 		file, err := assets.Open(clean)
 		if err != nil {
-			serveIndex(responseWriter, request, assets)
+			serveIndex(responseWriter, assets)
 			return
 		}
 		file.Close()
@@ -220,7 +226,7 @@ func spaHandler(assets fs.FS) http.Handler {
 	})
 }
 
-func serveIndex(responseWriter http.ResponseWriter, request *http.Request, assets fs.FS) {
+func serveIndex(responseWriter http.ResponseWriter, assets fs.FS) {
 	file, err := assets.Open("index.html")
 	if err != nil {
 		http.Error(responseWriter, "index.html missing from embedded assets", http.StatusInternalServerError)
