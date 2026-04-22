@@ -1,0 +1,29 @@
+set shell := ["bash", "-cu"]
+
+sanderling := env_var_or_default("SANDERLING", "sanderling")
+duration   := env_var_or_default("DURATION", "1m")
+seed       := env_var_or_default("SEED", "0")
+output     := env_var_or_default("OUTPUT", justfile_directory() / "sanderling" / "runs")
+port       := env_var_or_default("PORT", "5173")
+
+default:
+    @just --list
+
+# Run sanderling property tests against the folio web app.
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bun run dev --port {{port}} &
+    DEV_PID=$!
+    trap "kill $DEV_PID 2>/dev/null || true" EXIT
+    for i in $(seq 1 30); do
+      curl -sf "http://localhost:{{port}}" > /dev/null && break
+      sleep 1
+    done
+    "{{sanderling}}" test \
+      --spec "{{justfile_directory()}}/sanderling/spec.ts" \
+      --bundle-id "http://localhost:{{port}}" \
+      --platform web \
+      --duration "{{duration}}" \
+      --seed "{{seed}}" \
+      --output "{{output}}"
