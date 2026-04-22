@@ -26,7 +26,6 @@ val maestroVersion = "1.40.0"
 dependencies {
     implementation("dev.mobile:maestro-client:$maestroVersion")
     implementation("dev.mobile:maestro-utils:$maestroVersion")
-    implementation("io.micrometer:micrometer-core:1.13.4")
 
     implementation("io.grpc:grpc-netty-shaded:$grpcVersion")
     implementation("io.grpc:grpc-protobuf:$grpcVersion")
