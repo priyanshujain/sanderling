@@ -23,15 +23,14 @@ import java.util.concurrent.atomic.AtomicReference
 
 class DriverService(
     private val platform: String = "android",
-    private val serial: String? = null,
-    private val backend: DriverBackend = StubDriverBackend(platform),
+    private val backend: DriverBackend,
 ) : DriverGrpc.DriverImplBase() {
 
     private val launchedBundleId = AtomicReference<String?>(null)
 
     override fun launch(request: LaunchRequest, responseObserver: StreamObserver<Empty>) {
         runRpc(responseObserver) {
-            backend.launch(request.bundleId, request.launcherActivity, request.clearState)
+            backend.launch(request.bundleId, request.clearState)
             launchedBundleId.set(request.bundleId)
             Empty.getDefaultInstance()
         }

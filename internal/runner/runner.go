@@ -25,7 +25,7 @@ type Options struct {
 
 	BundleID    string
 	Connection  *agent.Conn
-	Driver      driver.Driver
+	Driver      driver.DeviceDriver
 	Verifier    *verifier.Verifier
 	TraceWriter *trace.Writer
 	Logger      *slog.Logger
@@ -272,7 +272,7 @@ func screenFromSnapshot(snapshots map[string]json.RawMessage) (string, error) {
 	return screen, nil
 }
 
-func applyAction(ctx context.Context, drv driver.Driver, action verifier.Action, tree *hierarchy.Tree) error {
+func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
 	switch action.Kind {
 	case verifier.ActionKindTap:
 		x, y, ok := resolveCoordinates(action, tree)
@@ -326,7 +326,7 @@ func applyAction(ctx context.Context, drv driver.Driver, action verifier.Action,
 // collectLogs pulls recent error-level log entries from the driver since the
 // previous fetch. A failure is warned-on but not fatal: log capture is a
 // best-effort observability channel, not a correctness dependency.
-func collectLogs(ctx context.Context, drv driver.Driver, since time.Time) []verifier.LogEntry {
+func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) []verifier.LogEntry {
 	entries, err := drv.RecentLogs(ctx, since, "E")
 	if err != nil {
 		return nil
@@ -374,7 +374,7 @@ func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int,
 	return 0, 0, false
 }
 
-func fetchHierarchy(ctx context.Context, drv driver.Driver) (*hierarchy.Tree, error) {
+func fetchHierarchy(ctx context.Context, drv driver.DeviceDriver) (*hierarchy.Tree, error) {
 	xmlText, err := drv.Hierarchy(ctx)
 	if err != nil {
 		return nil, err

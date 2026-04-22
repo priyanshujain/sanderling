@@ -76,15 +76,29 @@ func TestParseTestArgs_AVDIsOptional(t *testing.T) {
 	}
 }
 
-func TestParseTestArgs_RejectsNonAndroidPlatform(t *testing.T) {
+func TestParseTestArgs_RejectsUnknownPlatform(t *testing.T) {
 	_, err := parseTestArgs([]string{
 		"--spec", "s.ts",
 		"--bundle-id", "com.example",
-		"--platform", "ios",
+		"--platform", "fuchsia",
 		"--avd", "x",
 	}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unsupported platform") {
 		t.Fatalf("expected unsupported-platform error, got %v", err)
+	}
+}
+
+func TestParseTestArgs_AcceptsWebPlatform(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "http://localhost:3000",
+		"--platform", "web",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error for web platform: %v", err)
+	}
+	if options.platform != "web" {
+		t.Errorf("expected platform=web, got %q", options.platform)
 	}
 }
 

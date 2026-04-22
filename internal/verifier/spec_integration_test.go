@@ -65,7 +65,7 @@ func TestIntegrationSpecFiresInputActions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tree, err := hierarchy.Parse(formHierarchyXML)
+	tree, err := hierarchy.Parse(formHierarchyJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestIntegrationSpecPropertiesEvaluate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tree, err := hierarchy.Parse(listHierarchyXML)
+	tree, err := hierarchy.Parse(listHierarchyJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,21 +134,21 @@ func TestIntegrationSpecPropertiesEvaluate(t *testing.T) {
 func TestIntegrationSpecActionsFireOnEachRoute(t *testing.T) {
 	cases := []struct {
 		name       string
-		xml        string
+		hierarchy  string
 		snapshots  Snapshots
 		expectKind ActionKind
 		expectOns  []string
 	}{
 		{
 			name:       "list",
-			xml:        listHierarchyXML,
+			hierarchy:  listHierarchyJSON,
 			snapshots:  listSnapshots(),
 			expectKind: ActionKindTap,
 			expectOns:  []string{"desc:primary_action", "desc:secondary_action"},
 		},
 		{
 			name:       "form",
-			xml:        formHierarchyXML,
+			hierarchy:  formHierarchyJSON,
 			snapshots:  formSnapshots(),
 			expectKind: ActionKindTap,
 			expectOns:  []string{"desc:primary_action", "desc:secondary_action"},
@@ -161,7 +161,7 @@ func TestIntegrationSpecActionsFireOnEachRoute(t *testing.T) {
 			if err := v.Load(bundleIntegrationSpec(t)); err != nil {
 				t.Fatal(err)
 			}
-			tree, err := hierarchy.Parse(tc.xml)
+			tree, err := hierarchy.Parse(tc.hierarchy)
 			if err != nil {
 				t.Fatal(err)
 			}
