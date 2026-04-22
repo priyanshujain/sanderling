@@ -35,7 +35,7 @@ const loggedIn = extract<boolean>(
   (state) => (state.snapshots.logged_in as boolean) ?? false,
 );
 const route = extract<string>(
-  (state) => (state.snapshots.route as string) ?? "",
+  (state) => (state.snapshots.screen as string) ?? "",
 );
 const accounts = extract<AccountSnapshot[]>(
   (state) => (state.snapshots.accounts as AccountSnapshot[]) ?? [],
