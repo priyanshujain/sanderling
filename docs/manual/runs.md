@@ -38,7 +38,7 @@ Long-linear trajectories find bugs that restart-based testing structurally canno
 
 ## Setup cost amortizes
 
-Preconditions (login, onboarding, consent dialogs) are written as weighted action generators gated on extractors. See [writing specs](./writing-specs.html#pattern-preconditions-login-onboarding). They fire only when applicable, so login happens once per run, not per step.
+Preconditions (login, onboarding, consent dialogs) are written as weighted action generators gated on extractors. See [writing specs](./writing-specs/#pattern-preconditions-login-onboarding). They fire only when applicable, so login happens once per run, not per step.
 
 | Run length | Login cost | % of run |
 |---|---|---|

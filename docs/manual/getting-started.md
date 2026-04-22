@@ -83,6 +83,6 @@ runs/2026-04-18T12-34-56/
 └── meta.json
 ```
 
-Browse it with `sanderling inspect` (see [inspect](./inspect.html)), or read `trace.jsonl` step by step.
+Browse it with `sanderling inspect` (see [inspect](./inspect/)), or read `trace.jsonl` step by step.
 
-Next: [writing specs](./writing-specs.html).
+Next: [writing specs](./writing-specs/).

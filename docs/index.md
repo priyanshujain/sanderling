@@ -9,11 +9,11 @@ Autonomous property-based testing for mobile/web apps. Specs in TypeScript. Core
 Alpha: Scope of v0.1.0 is tracked in [issue #4](https://github.com/priyanshujain/sanderling/issues/4).
 
 
-- [Getting started](./manual/getting-started.html)
-- [Writing specs](./manual/writing-specs.html)
-- [Runs](./manual/runs.html)
-- [Inspect](./manual/inspect.html)
-- [CLI reference](./manual/cli.html)
+- [Getting started](./manual/getting-started/)
+- [Writing specs](./manual/writing-specs/)
+- [Runs](./manual/runs/)
+- [Inspect](./manual/inspect/)
+- [CLI reference](./manual/cli/)
 
 ---
 

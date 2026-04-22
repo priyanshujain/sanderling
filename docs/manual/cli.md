@@ -33,7 +33,7 @@ Serve a local web UI for browsing traces. The positional argument is optional an
 | `--no-open` | `false` | Skip opening the default browser on startup. |
 | `--dev` | `false` | Reverse-proxy non-API requests to the Vite dev server on `127.0.0.1:5173`. |
 
-See [the inspect UI page](inspect.md) for the panel reference and keyboard shortcuts.
+See [the inspect UI page](./inspect/) for the panel reference and keyboard shortcuts.
 
 ## `sanderling doctor`
 
