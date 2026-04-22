@@ -45,7 +45,12 @@ fun main(arguments: Array<String>) {
         if (index >= 0 && index + 1 < arguments.size) arguments[index + 1] else null
     }
 
-    val service = DriverService(platform = platform, serial = serial)
+    val backend: DriverBackend = if (platform == "android") {
+        MaestroDriverBackend(serial)
+    } else {
+        StubDriverBackend(platform)
+    }
+    val service = DriverService(platform = platform, backend = backend)
     val server = SidecarServer(port, service)
     val boundPort = server.start()
     println("sanderling-sidecar listening on 127.0.0.1:$boundPort platform=$platform")
