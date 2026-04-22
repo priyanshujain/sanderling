@@ -135,6 +135,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if screenErr != nil {
 			logger.Warn("screen snapshot decode failed", "step", stepIndex, "err", screenErr)
 		}
+		if screen == "" && tree != nil && len(tree.Elements) > 0 {
+			screen = tree.Elements[0].Screen
+		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
 		verdicts := options.Verifier.EvaluateProperties()
 		violations := violationNames(verdicts)
