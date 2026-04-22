@@ -12,7 +12,7 @@ sanderling inspect [run-or-runs-dir] [--port N] [--no-open] [--dev]
 
 The positional argument can be a runs directory or a single run directory (auto-detected by `meta.json`). Defaults to `./runs`.
 
-![sanderling inspect](../_assets/inspect-ui.png)
+![sanderling inspect](../../_assets/inspect-ui.png)
 
 ## Keyboard shortcuts
 
