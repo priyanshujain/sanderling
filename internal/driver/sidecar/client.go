@@ -1,4 +1,4 @@
-package maestro
+package sidecar
 
 import (
 	"context"
@@ -48,11 +48,10 @@ func (c *Client) WaitForHealth(ctx context.Context, pollInterval time.Duration) 
 	}
 }
 
-func (c *Client) Launch(ctx context.Context, bundleID, launcherActivity string, clearState bool) error {
+func (c *Client) Launch(ctx context.Context, bundleID string, clearState bool) error {
 	_, err := c.stub.Launch(ctx, &driverpb.LaunchRequest{
-		BundleId:         bundleID,
-		ClearState:       clearState,
-		LauncherActivity: launcherActivity,
+		BundleId:   bundleID,
+		ClearState: clearState,
 	})
 	return err
 }
@@ -165,4 +164,4 @@ func (c *Client) Metrics(ctx context.Context, bundleID string) (driver.Metrics, 
 	}, nil
 }
 
-var _ driver.Driver = (*Client)(nil)
+var _ driver.DeviceDriver = (*Client)(nil)
