@@ -14,7 +14,9 @@ import (
 
 	"github.com/priyanshujain/sanderling/internal/agent"
 	"github.com/priyanshujain/sanderling/internal/bundler"
-	"github.com/priyanshujain/sanderling/internal/driver/maestro"
+	"github.com/priyanshujain/sanderling/internal/driver"
+	"github.com/priyanshujain/sanderling/internal/driver/chrome"
+	driverSidecar "github.com/priyanshujain/sanderling/internal/driver/sidecar"
 	"github.com/priyanshujain/sanderling/internal/runner"
 	"github.com/priyanshujain/sanderling/internal/sidecar"
 	"github.com/priyanshujain/sanderling/internal/trace"
@@ -28,7 +30,7 @@ const (
 )
 
 func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer) error {
-	if options.platform == "android" {
+	if options.platform == "android" || options.platform == "ios" {
 		if err := ensureDevice(ctx, options.avd, stdout); err != nil {
 			return err
 		}
@@ -36,8 +38,6 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	aliases := map[string]string{}
 	if specApiPath := resolveSpecAPIPath(options.spec); specApiPath != "" {
 		aliases["@sanderling/spec"] = specApiPath
-		// Also alias published subpath exports so specs importing from
-		// "@sanderling/spec/defaults/properties" resolve to the in-tree source.
 		base := filepath.Dir(specApiPath)
 		aliases["@sanderling/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
 	}
@@ -54,46 +54,11 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	}
 	fmt.Fprintf(stdout, "bundled spec: %d bytes (sha256=%s)\n", len(bundle.JavaScript), bundle.SHA256[:12])
 
-	sidecarDirectory := filepath.Join(os.TempDir(), "sanderling-sidecar")
-	jarPath, err := sidecar.Extract(sidecarDirectory)
-	if err != nil {
-		return fmt.Errorf("extract sidecar: %w", err)
-	}
-	fmt.Fprintf(stdout, "sidecar JAR: %s (size=%d)\n", jarPath, sidecar.EmbeddedSize())
-
-	sidecarPort, err := pickFreePort()
+	activeDriver, cleanup, err := buildDriver(ctx, options, stdout)
 	if err != nil {
 		return err
 	}
-	sidecarCommand := exec.CommandContext(ctx, "java", "-jar", jarPath,
-		"--port", strconv.Itoa(sidecarPort),
-		"--platform", options.platform,
-	)
-	sidecarCommand.Stdout = stdout
-	sidecarCommand.Stderr = stdout
-	sidecarCommand.Env = envWithAndroidPlatformTools(os.Environ())
-	if err := sidecarCommand.Start(); err != nil {
-		return fmt.Errorf("spawn sidecar: %w", err)
-	}
-	defer func() {
-		if sidecarCommand.Process != nil {
-			_ = sidecarCommand.Process.Kill()
-		}
-	}()
-	fmt.Fprintf(stdout, "sidecar pid=%d listening on 127.0.0.1:%d\n", sidecarCommand.Process.Pid, sidecarPort)
-
-	driverClient, err := maestro.Dial(fmt.Sprintf("127.0.0.1:%d", sidecarPort))
-	if err != nil {
-		return fmt.Errorf("dial sidecar: %w", err)
-	}
-	defer driverClient.Close()
-	healthCtx, healthCancel := context.WithTimeout(ctx, sidecarStartupTimeout)
-	if err := driverClient.WaitForHealth(healthCtx, 250*time.Millisecond); err != nil {
-		healthCancel()
-		return fmt.Errorf("sidecar health check: %w", err)
-	}
-	healthCancel()
-	fmt.Fprintln(stdout, "sidecar is healthy")
+	defer cleanup()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -102,15 +67,17 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	defer listener.Close()
 	agentPort := listener.Addr().(*net.TCPAddr).Port
 
-	if err := adbReverse(socketName, agentPort); err != nil {
-		return fmt.Errorf("adb reverse: %w", err)
-	}
-	defer func() {
-		if err := adbReverseRemove(socketName); err != nil {
-			fmt.Fprintf(stdout, "warning: adb reverse cleanup: %v\n", err)
+	if options.platform != "web" {
+		if err := adbReverse(socketName, agentPort); err != nil {
+			return fmt.Errorf("adb reverse: %w", err)
 		}
-	}()
-	fmt.Fprintf(stdout, "forwarded localabstract:%s -> tcp:%d\n", socketName, agentPort)
+		defer func() {
+			if err := adbReverseRemove(socketName); err != nil {
+				fmt.Fprintf(stdout, "warning: adb reverse cleanup: %v\n", err)
+			}
+		}()
+		fmt.Fprintf(stdout, "forwarded localabstract:%s -> tcp:%d\n", socketName, agentPort)
+	}
 
 	agentServer := agent.NewServer(listener)
 
@@ -126,7 +93,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		acceptChannel <- acceptResult{connection: connection, err: acceptErr}
 	}()
 
-	if err := driverClient.Launch(ctx, options.bundleID, options.launcherActivity, false); err != nil {
+	if err := activeDriver.Launch(ctx, options.bundleID, false); err != nil {
 		return fmt.Errorf("launch app: %w", err)
 	}
 	fmt.Fprintf(stdout, "launched %s; waiting for SDK to connect (%.0fs timeout)\n", options.bundleID, sdkAcceptTimeout.Seconds())
@@ -160,13 +127,13 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 	}
 	defer traceWriter.Close()
 	meta := trace.Meta{
-		Seed:         seed,
-		SpecPath:     options.spec,
-		BundleSHA256: bundle.SHA256,
-		Platform:     options.platform,
-		BundleID:     options.bundleID,
-		StartedAt:    time.Now().UTC(),
-		SanderlingVersion:  "0.0.1",
+		Seed:              seed,
+		SpecPath:          options.spec,
+		BundleSHA256:      bundle.SHA256,
+		Platform:          options.platform,
+		BundleID:          options.bundleID,
+		StartedAt:         time.Now().UTC(),
+		SanderlingVersion: "0.0.1",
 	}
 	if err := traceWriter.WriteMeta(meta); err != nil {
 		return fmt.Errorf("trace meta: %w", err)
@@ -185,14 +152,14 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		IdleTimeout:     1 * time.Second,
 		BundleID:        options.bundleID,
 		Connection:      connection,
-		Driver:          driverClient,
+		Driver:          activeDriver,
 		Verifier:        verifierInstance,
 		TraceWriter:     traceWriter,
 		Logger:          newProgressLogger(stdout),
 	})
 
 	terminateCtx, terminateCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_ = driverClient.Terminate(terminateCtx)
+	_ = activeDriver.Terminate(terminateCtx)
 	terminateCancel()
 
 	if err != nil {
@@ -209,6 +176,62 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		}
 	}
 	return nil
+}
+
+// buildDriver creates the appropriate DeviceDriver for the platform and returns
+// a cleanup function. For web, ChromeDriver is used directly; for android/ios
+// the JVM sidecar is extracted, spawned, and dialed.
+func buildDriver(ctx context.Context, options testOptions, stdout io.Writer) (driver.DeviceDriver, func(), error) {
+	if options.platform == "web" {
+		d := chrome.New()
+		return d, func() { _ = d.Terminate(context.Background()) }, nil
+	}
+
+	sidecarDirectory := filepath.Join(os.TempDir(), "sanderling-sidecar")
+	jarPath, err := sidecar.Extract(sidecarDirectory)
+	if err != nil {
+		return nil, nil, fmt.Errorf("extract sidecar: %w", err)
+	}
+	fmt.Fprintf(stdout, "sidecar JAR: %s (size=%d)\n", jarPath, sidecar.EmbeddedSize())
+
+	sidecarPort, err := pickFreePort()
+	if err != nil {
+		return nil, nil, err
+	}
+	sidecarCommand := exec.CommandContext(ctx, "java", "-jar", jarPath,
+		"--port", strconv.Itoa(sidecarPort),
+		"--platform", options.platform,
+	)
+	sidecarCommand.Stdout = stdout
+	sidecarCommand.Stderr = stdout
+	sidecarCommand.Env = envWithAndroidPlatformTools(os.Environ())
+	if err := sidecarCommand.Start(); err != nil {
+		return nil, nil, fmt.Errorf("spawn sidecar: %w", err)
+	}
+	fmt.Fprintf(stdout, "sidecar pid=%d listening on 127.0.0.1:%d\n", sidecarCommand.Process.Pid, sidecarPort)
+
+	driverClient, err := driverSidecar.Dial(fmt.Sprintf("127.0.0.1:%d", sidecarPort))
+	if err != nil {
+		_ = sidecarCommand.Process.Kill()
+		return nil, nil, fmt.Errorf("dial sidecar: %w", err)
+	}
+	healthCtx, healthCancel := context.WithTimeout(ctx, sidecarStartupTimeout)
+	if err := driverClient.WaitForHealth(healthCtx, 250*time.Millisecond); err != nil {
+		healthCancel()
+		_ = sidecarCommand.Process.Kill()
+		_ = driverClient.Close()
+		return nil, nil, fmt.Errorf("sidecar health check: %w", err)
+	}
+	healthCancel()
+	fmt.Fprintln(stdout, "sidecar is healthy")
+
+	cleanup := func() {
+		_ = driverClient.Close()
+		if sidecarCommand.Process != nil {
+			_ = sidecarCommand.Process.Kill()
+		}
+	}
+	return driverClient, cleanup, nil
 }
 
 // resolveSpecAPIPath returns the path to pkg/spec-api/src/index.ts inside
