@@ -19,11 +19,11 @@ func bundleIntegrationSpec(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apiPath, err := filepath.Abs("../../pkg/spec-api/src/index.ts")
+	apiPath, err := filepath.Abs("../../pkg/spec/src/index.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defaultsPath, err := filepath.Abs("../../pkg/spec-api/src/defaults/properties.ts")
+	defaultsPath, err := filepath.Abs("../../pkg/spec/src/defaults/properties.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
