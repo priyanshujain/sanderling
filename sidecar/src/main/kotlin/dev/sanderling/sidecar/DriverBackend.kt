@@ -316,8 +316,8 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
         return try {
             val process = ProcessBuilder(
                 listOf(
-                    "adb", "shell",
-                    "uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1 && cat /sdcard/window_dump.xml",
+                    "adb", "exec-out",
+                    "uiautomator dump /data/local/tmp/window_dump.xml >/dev/null 2>&1 && cat /data/local/tmp/window_dump.xml",
                 ),
             ).redirectErrorStream(false).start()
             val output = process.inputStream.bufferedReader().readText()
