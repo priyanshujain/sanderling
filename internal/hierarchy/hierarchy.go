@@ -1,5 +1,5 @@
-// Package hierarchy parses the XML produced by `uiautomator dump` and
-// resolves selectors against it.
+// Package hierarchy parses the TreeNode JSON produced by the Maestro sidecar
+// and resolves selectors against it.
 //
 // Selector grammar (v0.1):
 //
@@ -10,7 +10,7 @@
 package hierarchy
 
 import (
-	"encoding/xml"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -36,7 +36,7 @@ func (b Bounds) Width() int { return b.Right - b.Left }
 // Height returns the bounds' height.
 func (b Bounds) Height() int { return b.Bottom - b.Top }
 
-// Element is a flattened view of one uiautomator node.
+// Element is a flattened view of one hierarchy node.
 type Element struct {
 	ResourceID  string `json:"resourceId,omitempty"`
 	Text        string `json:"text,omitempty"`
@@ -56,36 +56,80 @@ type Tree struct {
 	Elements []*Element `json:"elements"`
 }
 
-// Parse parses a uiautomator-style XML dump.
-func Parse(xmlText string) (*Tree, error) {
-	xmlText = strings.TrimSpace(xmlText)
-	if xmlText == "" {
+// treeNodeJSON mirrors the Maestro TreeNode JSON structure.
+type treeNodeJSON struct {
+	Attributes map[string]string `json:"attributes"`
+	Children   []treeNodeJSON    `json:"children"`
+	Clickable  *bool             `json:"clickable"`
+	Enabled    *bool             `json:"enabled"`
+	Focused    *bool             `json:"focused"`
+	Checked    *bool             `json:"checked"`
+	Selected   *bool             `json:"selected"`
+}
+
+// Parse parses a Maestro TreeNode JSON hierarchy.
+func Parse(text string) (*Tree, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
 		return &Tree{}, nil
 	}
-	decoder := xml.NewDecoder(strings.NewReader(xmlText))
-	tree := &Tree{}
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			break
-		}
-		start, ok := token.(xml.StartElement)
-		if !ok {
-			continue
-		}
-		if start.Name.Local != "node" {
-			continue
-		}
-		element, parseErr := elementFromStart(start)
-		if parseErr != nil {
-			return nil, parseErr
-		}
-		tree.Elements = append(tree.Elements, element)
+	var root treeNodeJSON
+	if err := json.Unmarshal([]byte(text), &root); err != nil {
+		return nil, fmt.Errorf("hierarchy: %w", err)
 	}
+	tree := &Tree{}
+	walkNode(&root, tree)
 	return tree, nil
+}
+
+func walkNode(node *treeNodeJSON, tree *Tree) {
+	element := elementFromNode(node)
+	tree.Elements = append(tree.Elements, element)
+	for i := range node.Children {
+		walkNode(&node.Children[i], tree)
+	}
+}
+
+func elementFromNode(node *treeNodeJSON) *Element {
+	attrs := node.Attributes
+	element := &Element{}
+
+	element.ResourceID = attrs["resource-id"]
+	if element.ResourceID == "" {
+		element.ResourceID = attrs["identifier"]
+	}
+	element.Text = attrs["text"]
+	element.Description = attrs["content-desc"]
+	if element.Description == "" {
+		element.Description = attrs["accessibilityText"]
+	}
+	element.Class = attrs["class"]
+	element.Package = attrs["package"]
+
+	if node.Clickable != nil {
+		element.Clickable = *node.Clickable
+	}
+	if node.Enabled != nil {
+		element.Enabled = *node.Enabled
+	}
+	if node.Focused != nil {
+		element.Focused = *node.Focused
+	}
+	if node.Checked != nil {
+		element.Checked = *node.Checked
+	}
+	if node.Selected != nil {
+		element.Selected = *node.Selected
+	}
+
+	if b, ok := attrs["bounds"]; ok && b != "" {
+		bounds, err := parseBounds(b)
+		if err == nil {
+			element.Bounds = bounds
+		}
+	}
+
+	return element
 }
 
 // Find returns the first element matching the selector, or nil.
@@ -131,11 +175,7 @@ func match(element *Element, kind, value string) bool {
 		if element.ResourceID == value {
 			return true
 		}
-		// ResourceID looks like "<package>:id/<suffix>".
-		if strings.HasSuffix(element.ResourceID, ":id/"+value) {
-			return true
-		}
-		return false
+		return strings.HasSuffix(element.ResourceID, ":id/"+value)
 	case "text":
 		return element.Text == value
 	case "desc":
@@ -147,59 +187,21 @@ func match(element *Element, kind, value string) bool {
 	}
 }
 
-func elementFromStart(start xml.StartElement) (*Element, error) {
-	element := &Element{}
-	var boundsText string
-	for _, attribute := range start.Attr {
-		switch attribute.Name.Local {
-		case "resource-id":
-			element.ResourceID = attribute.Value
-		case "text":
-			element.Text = attribute.Value
-		case "content-desc":
-			element.Description = attribute.Value
-		case "class":
-			element.Class = attribute.Value
-		case "package":
-			element.Package = attribute.Value
-		case "clickable":
-			element.Clickable = attribute.Value == "true"
-		case "enabled":
-			element.Enabled = attribute.Value == "true"
-		case "checked":
-			element.Checked = attribute.Value == "true"
-		case "focused":
-			element.Focused = attribute.Value == "true"
-		case "selected":
-			element.Selected = attribute.Value == "true"
-		case "bounds":
-			boundsText = attribute.Value
-		}
-	}
-	if boundsText != "" {
-		bounds, err := parseBounds(boundsText)
-		if err != nil {
-			return nil, fmt.Errorf("bounds %q: %w", boundsText, err)
-		}
-		element.Bounds = bounds
-	}
-	return element, nil
-}
-
-var boundsPattern = regexp.MustCompile(`^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$`)
+// boundsPattern matches "[l,t,r,b]" (4-value Maestro format).
+var boundsPattern = regexp.MustCompile(`^\[(-?\d+),(-?\d+),(-?\d+),(-?\d+)\]$`)
 
 func parseBounds(text string) (Bounds, error) {
-	match := boundsPattern.FindStringSubmatch(text)
-	if match == nil {
-		return Bounds{}, fmt.Errorf("not in [L,T][R,B] form")
+	m := boundsPattern.FindStringSubmatch(text)
+	if m == nil {
+		return Bounds{}, fmt.Errorf("bounds %q: not in [L,T,R,B] form", text)
 	}
-	coordinates := make([]int, 4)
-	for index := range 4 {
-		value, err := strconv.Atoi(match[index+1])
+	coords := make([]int, 4)
+	for i := range 4 {
+		v, err := strconv.Atoi(m[i+1])
 		if err != nil {
 			return Bounds{}, err
 		}
-		coordinates[index] = value
+		coords[i] = v
 	}
-	return Bounds{Left: coordinates[0], Top: coordinates[1], Right: coordinates[2], Bottom: coordinates[3]}, nil
+	return Bounds{Left: coords[0], Top: coords[1], Right: coords[2], Bottom: coords[3]}, nil
 }
