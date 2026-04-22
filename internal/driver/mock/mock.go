@@ -27,20 +27,19 @@ const (
 )
 
 type Action struct {
-	Kind             ActionKind
-	BundleID         string
-	LauncherActivity string
-	ClearState       bool
-	X, Y             int
-	FromX, FromY     int
-	ToX, ToY         int
-	Duration         time.Duration
-	Selector         string
-	Text             string
-	Key              string
-	LogLevel         string
-	LogSince         time.Time
-	Idle             time.Duration
+	Kind       ActionKind
+	BundleID   string
+	ClearState bool
+	X, Y       int
+	FromX, FromY int
+	ToX, ToY   int
+	Duration   time.Duration
+	Selector   string
+	Text       string
+	Key        string
+	LogLevel   string
+	LogSince   time.Time
+	Idle       time.Duration
 }
 
 // Driver is an in-memory Driver implementation for unit tests.
@@ -89,11 +88,11 @@ func (d *Driver) failure(kind ActionKind) error {
 	return d.Failures[kind]
 }
 
-func (d *Driver) Launch(ctx context.Context, bundleID, launcherActivity string, clearState bool) error {
+func (d *Driver) Launch(_ context.Context, bundleID string, clearState bool) error {
 	if err := d.failure(ActionLaunch); err != nil {
 		return err
 	}
-	d.record(Action{Kind: ActionLaunch, BundleID: bundleID, LauncherActivity: launcherActivity, ClearState: clearState})
+	d.record(Action{Kind: ActionLaunch, BundleID: bundleID, ClearState: clearState})
 	return nil
 }
 
@@ -220,4 +219,4 @@ func (d *Driver) Metrics(ctx context.Context, bundleID string) (driver.Metrics, 
 	return d.MetricsData, nil
 }
 
-var _ driver.Driver = (*Driver)(nil)
+var _ driver.DeviceDriver = (*Driver)(nil)

@@ -321,10 +321,7 @@ func TestRunner_StampsHierarchyResolvedBoundsAndResiduals(t *testing.T) {
 	state.startSDK(t)
 	state.acceptConnection(t)
 
-	state.mock.HierarchyJSON = `<?xml version="1.0"?>
-<hierarchy>
-  <node resource-id="com.fixture:id/next" clickable="true" enabled="true" bounds="[40,80][240,160]"/>
-</hierarchy>`
+	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"com.fixture:id/next","bounds":"[40,80,240,160]"},"children":[],"clickable":true,"enabled":true}`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
