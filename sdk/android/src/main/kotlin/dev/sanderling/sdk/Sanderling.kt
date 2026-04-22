@@ -2,6 +2,15 @@ package dev.sanderling.sdk
 
 import android.app.Application
 import android.util.Log
+import kotlin.properties.ReadOnlyProperty
+import kotlin.reflect.KProperty
+
+internal fun String.camelToSnakeCase(): String = buildString {
+    for ((i, c) in this@camelToSnakeCase.withIndex()) {
+        if (c.isUpperCase() && i > 0) append('_')
+        append(c.lowercaseChar())
+    }
+}
 
 data class Configuration(
     val socketName: String = "sanderling-agent",
@@ -36,6 +45,8 @@ object Sanderling {
         activeRuntime.register(name, function)
     }
 
+    fun <T> snapshot(function: () -> T): SnapshotDelegate<T> = SnapshotDelegate(function)
+
     /**
      * Records a caught [Throwable] so it surfaces in the next STATE message's
      * exceptions field. Useful for coroutine CoroutineExceptionHandler,
@@ -50,5 +61,12 @@ object Sanderling {
     internal fun stopForTest() {
         runtime?.stop()
         runtime = null
+    }
+}
+
+class SnapshotDelegate<T>(private val function: () -> T) {
+    operator fun provideDelegate(thisRef: Any?, prop: KProperty<*>): ReadOnlyProperty<Any?, T> {
+        Sanderling.extract(prop.name.camelToSnakeCase(), function as () -> Any?)
+        return ReadOnlyProperty { _, _ -> function() }
     }
 }
