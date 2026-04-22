@@ -61,6 +61,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	stepIndex := 0
 	var lastAction *verifier.Action
 	var lastLogTime time.Time
+	var pendingPostScreenshotStep int
+	pendingPostScreenshot := false
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			break
@@ -92,6 +94,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			logs = collectLogs(ctx, options.Driver, logSince)
 			return nil
 		})
+		if pendingPostScreenshot {
+			postStep := pendingPostScreenshotStep
+			g.Go(func() error {
+				captureScreenshot(ctx, options, logger, postStep, true)
+				return nil
+			})
+			pendingPostScreenshot = false
+		}
 		g.Wait()
 
 		if hierarchyErr != nil {
@@ -188,12 +198,17 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
 		idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
 		if nextErr == nil {
-			captureScreenshot(ctx, options, logger, stepIndex, true)
+			pendingPostScreenshot = true
+			pendingPostScreenshotStep = stepIndex
 		}
 		if idleErr != nil && idleCtx.Err() == nil {
 			logger.Warn("wait_for_idle failed", "step", stepIndex, "err", idleErr)
 		}
 		idleCancel()
+	}
+
+	if pendingPostScreenshot {
+		captureScreenshot(ctx, options, logger, pendingPostScreenshotStep, true)
 	}
 
 	summary.EndTime = time.Now()
