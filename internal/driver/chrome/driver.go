@@ -116,7 +116,7 @@ func (d *Driver) TapSelector(_ context.Context, selector string) error {
 func (d *Driver) InputText(_ context.Context, text string) error {
 	return chromedp.Run(d.tabCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			return input.DispatchKeyEvent(input.KeyChar).WithText(text).Do(ctx)
+			return input.InsertText(text).Do(ctx)
 		}),
 	)
 }
