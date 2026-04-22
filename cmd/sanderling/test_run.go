@@ -234,7 +234,7 @@ func buildDriver(ctx context.Context, options testOptions, stdout io.Writer) (dr
 	return driverClient, cleanup, nil
 }
 
-// resolveSpecAPIPath returns the path to pkg/spec-api/src/index.ts inside
+// resolveSpecAPIPath returns the path to pkg/spec/src/index.ts inside
 // a sanderling source checkout, searched upward from the spec file and the cwd.
 // Returns "" when not found, in which case esbuild resolves @sanderling/spec via
 // node_modules the way a downstream user's project would.
@@ -243,7 +243,7 @@ func resolveSpecAPIPath(specPath string) string {
 	if absoluteSpec, err := filepath.Abs(specPath); err == nil {
 		directory := filepath.Dir(absoluteSpec)
 		for {
-			candidates = append(candidates, filepath.Join(directory, "pkg/spec-api/src/index.ts"))
+			candidates = append(candidates, filepath.Join(directory, "pkg/spec/src/index.ts"))
 			parent := filepath.Dir(directory)
 			if parent == directory {
 				break
@@ -252,7 +252,7 @@ func resolveSpecAPIPath(specPath string) string {
 		}
 	}
 	if cwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(cwd, "pkg/spec-api/src/index.ts"))
+		candidates = append(candidates, filepath.Join(cwd, "pkg/spec/src/index.ts"))
 	}
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
