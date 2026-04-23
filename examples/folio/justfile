@@ -97,3 +97,21 @@ test:
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"
+
+# Build + install + run sanderling spec on iOS simulator.
+test-ios:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just ios
+    ios_device_flag=()
+    if [[ -n "{{ios_device}}" ]]; then
+      ios_device_flag=(--ios-device "{{ios_device}}")
+    fi
+    "{{sanderling}}" test \
+      --platform ios \
+      --spec "{{justfile_directory()}}/sanderling/spec.ts" \
+      --bundle-id app.folio \
+      "${ios_device_flag[@]}" \
+      --duration "{{duration}}" \
+      --seed "{{seed}}" \
+      --output "{{output}}"

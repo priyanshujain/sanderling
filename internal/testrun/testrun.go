@@ -8,11 +8,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/agent"
 	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/bundler"
+	"github.com/priyanshujain/sanderling/internal/ios"
 	"github.com/priyanshujain/sanderling/internal/runner"
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
@@ -26,19 +28,25 @@ const (
 
 // Options are the parameters for a single test pipeline run.
 type Options struct {
-	Spec     string
-	BundleID string
-	Platform string
-	AVD      string
-	Duration time.Duration
-	Seed     int64
-	Output   string
+	Spec      string
+	BundleID  string
+	Platform  string
+	AVD       string
+	IosDevice string
+	Duration  time.Duration
+	Seed      int64
+	Output    string
 }
 
 // Execute runs the full test pipeline: bundle, connect SDK, verify properties.
 func Execute(ctx context.Context, options Options, stdout io.Writer) error {
-	if options.Platform == "android" || options.Platform == "ios" {
+	switch options.Platform {
+	case "android":
 		if err := android.EnsureDevice(ctx, options.AVD, stdout); err != nil {
+			return err
+		}
+	case "ios":
+		if err := ios.EnsureSimulator(ctx, options.IosDevice, stdout); err != nil {
 			return err
 		}
 	}
@@ -69,7 +77,8 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 
 	var connection *agent.Conn
 
-	if options.Platform != "web" {
+	switch options.Platform {
+	case "android":
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return fmt.Errorf("agent listener: %w", err)
@@ -114,7 +123,43 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		defer connection.Close()
 		hello := connection.Hello()
 		fmt.Fprintf(stdout, "SDK connected: platform=%s app=%s sdk=%s\n", hello.Platform, hello.AppPackage, hello.Version)
-	} else {
+
+	case "ios":
+		// iOS simulator shares the Mac's loopback — no port forwarding needed.
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fmt.Errorf("agent listener: %w", err)
+		}
+		defer listener.Close()
+		agentPort := listener.Addr().(*net.TCPAddr).Port
+
+		// Launch app via simctl with SANDERLING_PORT so the SDK can connect.
+		if err := ios.LaunchApp(ctx, options.BundleID, map[string]string{
+			"SANDERLING_PORT": strconv.Itoa(agentPort),
+		}); err != nil {
+			return fmt.Errorf("launch app: %w", err)
+		}
+		fmt.Fprintf(stdout, "iOS app launched with SANDERLING_PORT=%d; waiting for SDK (%.0fs timeout)\n", agentPort, sdkAcceptTimeout.Seconds())
+
+		agentServer := agent.NewServer(listener)
+		acceptCtx, acceptCancel := context.WithTimeout(ctx, sdkAcceptTimeout)
+		conn, acceptErr := agentServer.Accept(acceptCtx)
+		acceptCancel()
+		if acceptErr != nil {
+			return fmt.Errorf("accept SDK: %w", acceptErr)
+		}
+		connection = conn
+		defer connection.Close()
+		hello := connection.Hello()
+		fmt.Fprintf(stdout, "SDK connected: platform=%s app=%s sdk=%s\n", hello.Platform, hello.AppPackage, hello.Version)
+
+		// Initialize Maestro XCTest session after the app is running.
+		// clearState=false avoids relaunching the already-connected app.
+		if err := activeDriver.Launch(ctx, options.BundleID, false); err != nil {
+			fmt.Fprintf(stdout, "warn: maestro launch: %v\n", err)
+		}
+
+	case "web":
 		fmt.Fprintln(stdout, "web mode: skipping SDK")
 		if err := activeDriver.Launch(ctx, options.BundleID, false); err != nil {
 			return fmt.Errorf("launch app: %w", err)

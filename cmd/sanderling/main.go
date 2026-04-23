@@ -15,13 +15,14 @@ import (
 var Version = "dev"
 
 type testOptions struct {
-	spec     string
-	bundleID string
-	platform string
-	avd      string
-	duration time.Duration
-	seed     int64
-	output   string
+	spec      string
+	bundleID  string
+	platform  string
+	avd       string
+	iosDevice string
+	duration  time.Duration
+	seed      int64
+	output    string
 }
 
 const topUsage = `sanderling is a property-based UI fuzzer for mobile apps.
@@ -44,8 +45,9 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	var options testOptions
 	flagSet.StringVar(&options.spec, "spec", "", "path to the TypeScript spec (required)")
 	flagSet.StringVar(&options.bundleID, "bundle-id", "", "target app bundle ID (required)")
-	flagSet.StringVar(&options.platform, "platform", "android", "target platform: android, web")
+	flagSet.StringVar(&options.platform, "platform", "android", "target platform: android, ios, web")
 	flagSet.StringVar(&options.avd, "avd", "", "Android AVD name to boot if no device is connected")
+	flagSet.StringVar(&options.iosDevice, "ios-device", "", "iOS simulator name or UDID to boot if none is running")
 	flagSet.DurationVar(&options.duration, "duration", 5*time.Minute, "total test duration")
 	flagSet.Int64Var(&options.seed, "seed", 0, "RNG seed (0 = random)")
 	flagSet.StringVar(&options.output, "output", "./runs", "output directory for traces")
@@ -61,7 +63,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	switch options.platform {
 	case "android", "ios", "web":
 	default:
-		return testOptions{}, fmt.Errorf("unsupported platform: %q (android, web)", options.platform)
+		return testOptions{}, fmt.Errorf("unsupported platform: %q (android, ios, web)", options.platform)
 	}
 	return options, nil
 }
