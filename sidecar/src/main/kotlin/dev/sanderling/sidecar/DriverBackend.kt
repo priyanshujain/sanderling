@@ -492,11 +492,12 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     init {
         val httpClient = xcuitest.api.OkHttpClientInstance.get()
         val metrics = maestro.utils.NoOpMetrics()
+        val wdaPort = maestro.utils.SocketUtils.nextFreePort(22000, 23000)
         val installer = xcuitest.installer.LocalXCTestInstaller(
             udid,
             "localhost",
             false,
-            9100,
+            wdaPort,
             metrics,
             httpClient,
             false,
