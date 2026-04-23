@@ -509,6 +509,19 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
         val device = ios.LocalIOSDevice(udid, xcTestDevice, simctlDevice, maestro.utils.NoopInsights)
         driver = maestro.drivers.IOSDriver(device, maestro.utils.NoopInsights, metrics)
         driver.open()
+        // warm up: absorbs WDA startup race (health check passes before accept() loop is stable)
+        var warmupErr: Exception? = null
+        repeat(3) { attempt ->
+            try {
+                driver.contentDescriptor(false)
+                warmupErr = null
+                return@repeat
+            } catch (e: Exception) {
+                warmupErr = e
+                if (attempt < 2) Thread.sleep(500)
+            }
+        }
+        warmupErr?.let { throw IllegalStateException("WDA warmup failed after 3 attempts: $it") }
     }
 
     override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
