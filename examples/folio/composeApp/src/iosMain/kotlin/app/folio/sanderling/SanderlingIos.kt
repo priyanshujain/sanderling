@@ -15,10 +15,22 @@ object SanderlingIos {
     internal val extractors = mutableMapOf<String, () -> Any?>()
 
     fun start() {
-        val env = NSProcessInfo.processInfo.environment
-        val portStr = env["SANDERLING_PORT"] as? String ?: return
-        val port = portStr.toIntOrNull() ?: return
+        val port = resolvePort() ?: return
         IosAgent.start("127.0.0.1", port)
+    }
+
+    private fun resolvePort(): Int? {
+        // Env var set via SIMCTL_CHILD_SANDERLING_PORT (simctl direct launch).
+        (NSProcessInfo.processInfo.environment["SANDERLING_PORT"] as? String)
+            ?.toIntOrNull()?.let { return it }
+        // Launch argument -SANDERLING_PORT <value> (Maestro simctl launch).
+        @Suppress("UNCHECKED_CAST")
+        val args = NSProcessInfo.processInfo.arguments as? List<String> ?: return null
+        val idx = args.indexOfFirst { it == "-SANDERLING_PORT" }
+        if (idx >= 0 && idx + 1 < args.size) {
+            return args[idx + 1].toIntOrNull()
+        }
+        return null
     }
 
     fun extract(name: String, block: () -> Any?) {
