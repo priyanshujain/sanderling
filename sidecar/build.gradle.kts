@@ -26,6 +26,8 @@ val maestroVersion = "1.40.0"
 dependencies {
     implementation("dev.mobile:maestro-client:$maestroVersion")
     implementation("dev.mobile:maestro-utils:$maestroVersion")
+    implementation("dev.mobile:maestro-ios:$maestroVersion")
+    implementation("dev.mobile:maestro-ios-driver:$maestroVersion")
 
     implementation("io.grpc:grpc-netty-shaded:$grpcVersion")
     implementation("io.grpc:grpc-protobuf:$grpcVersion")

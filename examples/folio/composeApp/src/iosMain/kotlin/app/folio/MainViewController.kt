@@ -29,11 +29,11 @@ private val backGestureTarget = BackGestureTarget()
 @OptIn(ExperimentalForeignApi::class)
 fun MainViewController(): UIViewController {
     Repository.init()
-    app.folio.sanderling.SanderlingIos.start()
     app.folio.sanderling.AuthSnapshots
     app.folio.sanderling.AccountSnapshots
     app.folio.sanderling.LedgerSnapshots
     app.folio.sanderling.NavigationSnapshots
+    app.folio.sanderling.SanderlingIos.start()
     val vc = ComposeUIViewController { App() }
     val gesture = UIScreenEdgePanGestureRecognizer(
         target = backGestureTarget,

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -55,18 +54,13 @@ func EnsureSimulator(ctx context.Context, deviceName string, stdout io.Writer) e
 	return nil
 }
 
-func LaunchApp(ctx context.Context, bundleID string, env map[string]string) error {
-	args := []string{"simctl", "launch", "--terminate-running-process", "booted", bundleID}
-	cmd := exec.CommandContext(ctx, "xcrun", args...)
-	cmd.Env = os.Environ()
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, "SIMCTL_CHILD_"+k+"="+v)
+// BootedUDID returns the UDID of the currently booted iOS simulator, or "" if none is booted.
+func BootedUDID(ctx context.Context) string {
+	d, _ := bootedSimulator(ctx)
+	if d == nil {
+		return ""
 	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("launch %s: %w\n%s", bundleID, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return d.UDID
 }
 
 func bootedSimulator(ctx context.Context) (*simDevice, error) {

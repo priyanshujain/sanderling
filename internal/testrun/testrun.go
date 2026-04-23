@@ -110,7 +110,7 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 			acceptChannel <- acceptResult{conn: conn, err: acceptErr}
 		}()
 
-		if err := activeDriver.Launch(ctx, options.BundleID, false); err != nil {
+		if err := activeDriver.Launch(ctx, options.BundleID, false, nil); err != nil {
 			return fmt.Errorf("launch app: %w", err)
 		}
 		fmt.Fprintf(stdout, "launched %s; waiting for SDK to connect (%.0fs timeout)\n", options.BundleID, sdkAcceptTimeout.Seconds())
@@ -133,35 +133,40 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		defer listener.Close()
 		agentPort := listener.Addr().(*net.TCPAddr).Port
 
-		// Launch app via simctl with SANDERLING_PORT so the SDK can connect.
-		if err := ios.LaunchApp(ctx, options.BundleID, map[string]string{
+		agentServer := agent.NewServer(listener)
+
+		type acceptResult struct {
+			conn *agent.Conn
+			err  error
+		}
+		acceptChannel := make(chan acceptResult, 1)
+		go func() {
+			acceptCtx, cancel := context.WithTimeout(ctx, sdkAcceptTimeout)
+			defer cancel()
+			conn, acceptErr := agentServer.Accept(acceptCtx)
+			acceptChannel <- acceptResult{conn: conn, err: acceptErr}
+		}()
+
+		// Launch app via XCTest with SANDERLING_PORT so the SDK can connect.
+		if err := activeDriver.Launch(ctx, options.BundleID, false, map[string]string{
 			"SANDERLING_PORT": strconv.Itoa(agentPort),
 		}); err != nil {
 			return fmt.Errorf("launch app: %w", err)
 		}
 		fmt.Fprintf(stdout, "iOS app launched with SANDERLING_PORT=%d; waiting for SDK (%.0fs timeout)\n", agentPort, sdkAcceptTimeout.Seconds())
 
-		agentServer := agent.NewServer(listener)
-		acceptCtx, acceptCancel := context.WithTimeout(ctx, sdkAcceptTimeout)
-		conn, acceptErr := agentServer.Accept(acceptCtx)
-		acceptCancel()
-		if acceptErr != nil {
-			return fmt.Errorf("accept SDK: %w", acceptErr)
+		result := <-acceptChannel
+		if result.err != nil {
+			return fmt.Errorf("accept SDK: %w", result.err)
 		}
-		connection = conn
+		connection = result.conn
 		defer connection.Close()
 		hello := connection.Hello()
 		fmt.Fprintf(stdout, "SDK connected: platform=%s app=%s sdk=%s\n", hello.Platform, hello.AppPackage, hello.Version)
 
-		// Initialize Maestro XCTest session after the app is running.
-		// clearState=false avoids relaunching the already-connected app.
-		if err := activeDriver.Launch(ctx, options.BundleID, false); err != nil {
-			fmt.Fprintf(stdout, "warn: maestro launch: %v\n", err)
-		}
-
 	case "web":
 		fmt.Fprintln(stdout, "web mode: skipping SDK")
-		if err := activeDriver.Launch(ctx, options.BundleID, false); err != nil {
+		if err := activeDriver.Launch(ctx, options.BundleID, false, nil); err != nil {
 			return fmt.Errorf("launch app: %w", err)
 		}
 	}

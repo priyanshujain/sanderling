@@ -191,7 +191,7 @@ func TestClient_LaunchAndTerminate(t *testing.T) {
 	client, _ := Dial(state.address)
 	defer client.Close()
 
-	if err := client.Launch(context.Background(), "com.example", true); err != nil {
+	if err := client.Launch(context.Background(), "com.example", true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if state.fake.launchedBundleID != "com.example" || !state.fake.clearState {

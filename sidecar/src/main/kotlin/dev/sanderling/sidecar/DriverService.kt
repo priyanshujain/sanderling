@@ -30,7 +30,7 @@ class DriverService(
 
     override fun launch(request: LaunchRequest, responseObserver: StreamObserver<Empty>) {
         runRpc(responseObserver) {
-            backend.launch(request.bundleId, request.clearState)
+            backend.launch(request.bundleId, request.clearState, request.envMap)
             launchedBundleId.set(request.bundleId)
             Empty.getDefaultInstance()
         }
@@ -150,7 +150,8 @@ class DriverService(
             observer.onNext(block())
             observer.onCompleted()
         } catch (cause: Exception) {
-            observer.onError(cause)
+            observer.onError(io.grpc.Status.INTERNAL.withDescription(cause.toString())
+                .withCause(cause).asRuntimeException())
         }
     }
 

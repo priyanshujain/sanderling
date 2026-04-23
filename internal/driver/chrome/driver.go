@@ -77,7 +77,7 @@ func New() *Driver {
 	return d
 }
 
-func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool) error {
+func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _ map[string]string) error {
 	if clearState {
 		if err := chromedp.Run(d.tabCtx, network.ClearBrowserCookies()); err != nil {
 			return fmt.Errorf("clear cookies: %w", err)
