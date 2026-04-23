@@ -10,7 +10,7 @@ import (
 // lives under driver/sidecar; the web implementation under driver/chrome;
 // tests use driver/mock.
 type DeviceDriver interface {
-	Launch(ctx context.Context, bundleID string, clearState bool) error
+	Launch(ctx context.Context, bundleID string, clearState bool, env map[string]string) error
 	Terminate(ctx context.Context) error
 
 	Tap(ctx context.Context, x, y int) error

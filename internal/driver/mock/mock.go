@@ -88,7 +88,7 @@ func (d *Driver) failure(kind ActionKind) error {
 	return d.Failures[kind]
 }
 
-func (d *Driver) Launch(_ context.Context, bundleID string, clearState bool) error {
+func (d *Driver) Launch(_ context.Context, bundleID string, clearState bool, _ map[string]string) error {
 	if err := d.failure(ActionLaunch); err != nil {
 		return err
 	}
