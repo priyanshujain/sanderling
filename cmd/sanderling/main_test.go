@@ -146,6 +146,35 @@ func TestRun_Doctor(t *testing.T) {
 	}
 }
 
+func TestParseTestArgs_AcceptsIosPlatform(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example.app",
+		"--platform", "ios",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error for ios platform: %v", err)
+	}
+	if options.platform != "ios" {
+		t.Errorf("expected platform=ios, got %q", options.platform)
+	}
+}
+
+func TestParseTestArgs_IosDeviceFlag(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example.app",
+		"--platform", "ios",
+		"--ios-device", "iPhone 15 Pro",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.iosDevice != "iPhone 15 Pro" {
+		t.Errorf("expected iosDevice=iPhone 15 Pro, got %q", options.iosDevice)
+	}
+}
+
 func TestRun_TestSubcommand_PipelineErrors(t *testing.T) {
 	// Without a real spec, a real device, or a bootable AVD the pipeline
 	// must surface a specific error rather than panicking — proves the flag
