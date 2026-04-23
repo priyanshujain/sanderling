@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -192,6 +193,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 
 		if nextErr == nil {
 			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
+				if isWDADrop(err) {
+					return summary, fmt.Errorf("step %d: iOS XCTest runner lost connection - known WDA startup flake, re-run the test: %w", stepIndex, err)
+				}
 				return summary, fmt.Errorf("step %d apply: %w", stepIndex, err)
 			}
 			actionCopy := nextAction
@@ -498,6 +502,12 @@ func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessa
 		encoded[name] = body
 	}
 	return encoded, firstErr
+}
+
+func isWDADrop(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "ConnectException") ||
+		(strings.Contains(msg, "code = Internal") && strings.Contains(msg, "SocketException"))
 }
 
 func traceExceptions(exceptions []verifier.Exception) []trace.Exception {
