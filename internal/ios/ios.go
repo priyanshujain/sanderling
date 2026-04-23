@@ -55,15 +55,12 @@ func EnsureSimulator(ctx context.Context, deviceName string, stdout io.Writer) e
 }
 
 // BootedUDID returns the UDID of the currently booted iOS simulator, or "" if none is booted.
-func BootedUDID(ctx context.Context) (string, error) {
-	d, err := bootedSimulator(ctx)
-	if err != nil {
-		return "", err
-	}
+func BootedUDID(ctx context.Context) string {
+	d, _ := bootedSimulator(ctx)
 	if d == nil {
-		return "", nil
+		return ""
 	}
-	return d.UDID, nil
+	return d.UDID
 }
 
 func bootedSimulator(ctx context.Context) (*simDevice, error) {

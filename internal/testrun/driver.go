@@ -41,11 +41,7 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 		"--platform", options.Platform,
 	}
 	if options.Platform == "ios" {
-		udid, err := ios.BootedUDID(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("find booted simulator: %w", err)
-		}
-		if udid != "" {
+		if udid := ios.BootedUDID(ctx); udid != "" {
 			sidecarArgs = append(sidecarArgs, "--udid", udid)
 		}
 	}
