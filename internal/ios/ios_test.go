@@ -82,7 +82,10 @@ func TestPickSimulator_EmptyList(t *testing.T) {
 func TestBootedUDID_CanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	udid := BootedUDID(ctx)
+	udid, err := BootedUDID(ctx)
+	if err == nil {
+		t.Error("expected error for canceled context, got nil")
+	}
 	if udid != "" {
 		t.Errorf("expected empty UDID on canceled context, got %q", udid)
 	}
