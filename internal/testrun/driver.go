@@ -12,6 +12,7 @@ import (
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/driver/chrome"
 	driverSidecar "github.com/priyanshujain/sanderling/internal/driver/sidecar"
+	"github.com/priyanshujain/sanderling/internal/ios"
 	"github.com/priyanshujain/sanderling/internal/sidecar"
 )
 
@@ -35,10 +36,16 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	if err != nil {
 		return nil, nil, err
 	}
-	sidecarCommand := exec.CommandContext(ctx, "java", "-jar", jarPath,
+	sidecarArgs := []string{"-jar", jarPath,
 		"--port", strconv.Itoa(sidecarPort),
 		"--platform", options.Platform,
-	)
+	}
+	if options.Platform == "ios" {
+		if udid := ios.BootedUDID(ctx); udid != "" {
+			sidecarArgs = append(sidecarArgs, "--udid", udid)
+		}
+	}
+	sidecarCommand := exec.CommandContext(ctx, "java", sidecarArgs...)
 	sidecarCommand.Stdout = stdout
 	sidecarCommand.Stderr = stdout
 	sidecarCommand.Env = android.EnvWithAndroidPlatformTools(os.Environ())

@@ -69,6 +69,15 @@ func LaunchApp(ctx context.Context, bundleID string, env map[string]string) erro
 	return nil
 }
 
+// BootedUDID returns the UDID of the currently booted iOS simulator, or "" if none is booted.
+func BootedUDID(ctx context.Context) string {
+	d, _ := bootedSimulator(ctx)
+	if d == nil {
+		return ""
+	}
+	return d.UDID
+}
+
 func bootedSimulator(ctx context.Context) (*simDevice, error) {
 	out, err := exec.CommandContext(ctx, "xcrun", "simctl", "list", "devices", "booted", "--json").Output()
 	if err != nil {
