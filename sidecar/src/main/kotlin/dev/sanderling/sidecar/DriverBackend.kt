@@ -1,7 +1,7 @@
 package dev.sanderling.sidecar
 
 interface DriverBackend {
-    fun launch(bundleId: String, clearState: Boolean)
+    fun launch(bundleId: String, clearState: Boolean, env: Map<String, String> = emptyMap())
     fun terminate(bundleId: String)
     fun tap(x: Int, y: Int)
     fun tapSelector(selector: String)
@@ -131,7 +131,7 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     @Volatile var lastInputText: String? = null
         private set
 
-    override fun launch(bundleId: String, clearState: Boolean) {
+    override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
         launchCount++
         lastBundleId = bundleId
         if (clearState) {
@@ -386,9 +386,9 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         driver.open()
     }
 
-    override fun launch(bundleId: String, clearState: Boolean) {
+    override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
         if (clearState) driver.clearAppState(bundleId)
-        driver.launchApp(bundleId, emptyMap(), java.util.UUID.randomUUID())
+        driver.launchApp(bundleId, env, java.util.UUID.randomUUID())
     }
 
     override fun terminate(bundleId: String) = driver.stopApp(bundleId)
@@ -484,6 +484,80 @@ private fun pngHeight(bytes: ByteArray): Int {
     if (bytes.size < 24) return 0
     return (bytes[20].toInt() and 0xFF shl 24) or (bytes[21].toInt() and 0xFF shl 16) or
         (bytes[22].toInt() and 0xFF shl 8) or (bytes[23].toInt() and 0xFF)
+}
+
+class IosDriverBackend(private val udid: String) : DriverBackend {
+    private val driver: maestro.drivers.IOSDriver
+
+    init {
+        val httpClient = xcuitest.api.OkHttpClientInstance.get()
+        val metrics = maestro.utils.NoOpMetrics()
+        val wdaPort = maestro.utils.SocketUtils.nextFreePort(22000, 23000)
+        val installer = xcuitest.installer.LocalXCTestInstaller(
+            udid,
+            "localhost",
+            false,
+            wdaPort,
+            metrics,
+            httpClient,
+            false,
+            false,
+        )
+        val xcTestDriverClient = xcuitest.XCTestDriverClient(installer, httpClient, false)
+        val xcTestDevice = ios.xctest.XCTestIOSDevice(udid, xcTestDriverClient) { emptySet() }
+        val simctlDevice = ios.simctl.SimctlIOSDevice(udid)
+        val device = ios.LocalIOSDevice(udid, xcTestDevice, simctlDevice, maestro.utils.NoopInsights)
+        driver = maestro.drivers.IOSDriver(device, maestro.utils.NoopInsights, metrics)
+        driver.open()
+    }
+
+    override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
+        runCatching { driver.stopApp(bundleId) }
+        if (clearState) driver.clearAppState(bundleId)
+        driver.launchApp(bundleId, env, java.util.UUID.randomUUID())
+    }
+
+    override fun terminate(bundleId: String) = driver.stopApp(bundleId)
+
+    override fun tap(x: Int, y: Int) = driver.tap(maestro.Point(x, y))
+
+    override fun tapSelector(selector: String) {
+        val root = driver.contentDescriptor(false)
+        val bounds = findBoundsBySelector(root, selector) ?: return
+        driver.tap(maestro.Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2))
+    }
+
+    override fun inputText(text: String) = driver.inputText(text)
+
+    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) =
+        driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))
+
+    override fun pressKey(key: String) {
+        StubDriverBackend.KEY_MAP[key]?.let { keyCode ->
+            keyCodeToMaestro(keyCode)?.let { driver.pressKey(it) }
+        }
+    }
+
+    override fun screenshot(): Triple<ByteArray, Int, Int> {
+        val buf = okio.Buffer()
+        driver.takeScreenshot(buf, false)
+        val bytes = buf.readByteArray()
+        return Triple(bytes, pngWidth(bytes), pngHeight(bytes))
+    }
+
+    override fun hierarchy(): String =
+        com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+            .writeValueAsString(driver.contentDescriptor(false))
+
+    override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> = emptyList()
+
+    override fun waitForIdle(durationMillis: Long) {
+        driver.waitForAppToSettle(null, null, durationMillis.toInt())
+    }
+
+    override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
+
+    override fun metrics(bundleId: String) = MetricsSample(0.0, 0L, 0L)
 }
 
 private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? {
