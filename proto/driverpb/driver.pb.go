@@ -61,6 +61,7 @@ type LaunchRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	BundleId      string                 `protobuf:"bytes,1,opt,name=bundle_id,json=bundleId,proto3" json:"bundle_id,omitempty"`
 	ClearState    bool                   `protobuf:"varint,2,opt,name=clear_state,json=clearState,proto3" json:"clear_state,omitempty"`
+	Env           map[string]string      `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -107,6 +108,13 @@ func (x *LaunchRequest) GetClearState() bool {
 		return x.ClearState
 	}
 	return false
+}
+
+func (x *LaunchRequest) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
 }
 
 type Point struct {
@@ -839,11 +847,15 @@ var File_driverpb_driver_proto protoreflect.FileDescriptor
 const file_driverpb_driver_proto_rawDesc = "" +
 	"\n" +
 	"\x15driverpb/driver.proto\x12\x14sanderling.driver.v1\"\a\n" +
-	"\x05Empty\"M\n" +
+	"\x05Empty\"\xc5\x01\n" +
 	"\rLaunchRequest\x12\x1b\n" +
 	"\tbundle_id\x18\x01 \x01(\tR\bbundleId\x12\x1f\n" +
 	"\vclear_state\x18\x02 \x01(\bR\n" +
-	"clearState\"#\n" +
+	"clearState\x12>\n" +
+	"\x03env\x18\x03 \x03(\v2,.sanderling.driver.v1.LaunchRequest.EnvEntryR\x03env\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"#\n" +
 	"\x05Point\x12\f\n" +
 	"\x01x\x18\x01 \x01(\x05R\x01x\x12\f\n" +
 	"\x01y\x18\x02 \x01(\x05R\x01y\"\x1c\n" +
@@ -919,7 +931,7 @@ func file_driverpb_driver_proto_rawDescGZIP() []byte {
 	return file_driverpb_driver_proto_rawDescData
 }
 
-var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_driverpb_driver_proto_goTypes = []any{
 	(*Empty)(nil),             // 0: sanderling.driver.v1.Empty
 	(*LaunchRequest)(nil),     // 1: sanderling.driver.v1.LaunchRequest
@@ -937,42 +949,44 @@ var file_driverpb_driver_proto_goTypes = []any{
 	(*LogEntry)(nil),          // 13: sanderling.driver.v1.LogEntry
 	(*MetricsRequest)(nil),    // 14: sanderling.driver.v1.MetricsRequest
 	(*MetricsResponse)(nil),   // 15: sanderling.driver.v1.MetricsResponse
+	nil,                       // 16: sanderling.driver.v1.LaunchRequest.EnvEntry
 }
 var file_driverpb_driver_proto_depIdxs = []int32{
-	2,  // 0: sanderling.driver.v1.SwipeRequest.from:type_name -> sanderling.driver.v1.Point
-	2,  // 1: sanderling.driver.v1.SwipeRequest.to:type_name -> sanderling.driver.v1.Point
-	13, // 2: sanderling.driver.v1.LogEntries.entries:type_name -> sanderling.driver.v1.LogEntry
-	1,  // 3: sanderling.driver.v1.Driver.Launch:input_type -> sanderling.driver.v1.LaunchRequest
-	0,  // 4: sanderling.driver.v1.Driver.Terminate:input_type -> sanderling.driver.v1.Empty
-	2,  // 5: sanderling.driver.v1.Driver.Tap:input_type -> sanderling.driver.v1.Point
-	4,  // 6: sanderling.driver.v1.Driver.TapSelector:input_type -> sanderling.driver.v1.Selector
-	3,  // 7: sanderling.driver.v1.Driver.InputText:input_type -> sanderling.driver.v1.Text
-	9,  // 8: sanderling.driver.v1.Driver.Swipe:input_type -> sanderling.driver.v1.SwipeRequest
-	10, // 9: sanderling.driver.v1.Driver.PressKey:input_type -> sanderling.driver.v1.PressKeyRequest
-	0,  // 10: sanderling.driver.v1.Driver.Screenshot:input_type -> sanderling.driver.v1.Empty
-	0,  // 11: sanderling.driver.v1.Driver.Hierarchy:input_type -> sanderling.driver.v1.Empty
-	11, // 12: sanderling.driver.v1.Driver.RecentLogs:input_type -> sanderling.driver.v1.RecentLogsRequest
-	7,  // 13: sanderling.driver.v1.Driver.WaitForIdle:input_type -> sanderling.driver.v1.Duration
-	0,  // 14: sanderling.driver.v1.Driver.Health:input_type -> sanderling.driver.v1.Empty
-	14, // 15: sanderling.driver.v1.Driver.Metrics:input_type -> sanderling.driver.v1.MetricsRequest
-	0,  // 16: sanderling.driver.v1.Driver.Launch:output_type -> sanderling.driver.v1.Empty
-	0,  // 17: sanderling.driver.v1.Driver.Terminate:output_type -> sanderling.driver.v1.Empty
-	0,  // 18: sanderling.driver.v1.Driver.Tap:output_type -> sanderling.driver.v1.Empty
-	0,  // 19: sanderling.driver.v1.Driver.TapSelector:output_type -> sanderling.driver.v1.Empty
-	0,  // 20: sanderling.driver.v1.Driver.InputText:output_type -> sanderling.driver.v1.Empty
-	0,  // 21: sanderling.driver.v1.Driver.Swipe:output_type -> sanderling.driver.v1.Empty
-	0,  // 22: sanderling.driver.v1.Driver.PressKey:output_type -> sanderling.driver.v1.Empty
-	5,  // 23: sanderling.driver.v1.Driver.Screenshot:output_type -> sanderling.driver.v1.Image
-	6,  // 24: sanderling.driver.v1.Driver.Hierarchy:output_type -> sanderling.driver.v1.HierarchyJSON
-	12, // 25: sanderling.driver.v1.Driver.RecentLogs:output_type -> sanderling.driver.v1.LogEntries
-	0,  // 26: sanderling.driver.v1.Driver.WaitForIdle:output_type -> sanderling.driver.v1.Empty
-	8,  // 27: sanderling.driver.v1.Driver.Health:output_type -> sanderling.driver.v1.HealthStatus
-	15, // 28: sanderling.driver.v1.Driver.Metrics:output_type -> sanderling.driver.v1.MetricsResponse
-	16, // [16:29] is the sub-list for method output_type
-	3,  // [3:16] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	16, // 0: sanderling.driver.v1.LaunchRequest.env:type_name -> sanderling.driver.v1.LaunchRequest.EnvEntry
+	2,  // 1: sanderling.driver.v1.SwipeRequest.from:type_name -> sanderling.driver.v1.Point
+	2,  // 2: sanderling.driver.v1.SwipeRequest.to:type_name -> sanderling.driver.v1.Point
+	13, // 3: sanderling.driver.v1.LogEntries.entries:type_name -> sanderling.driver.v1.LogEntry
+	1,  // 4: sanderling.driver.v1.Driver.Launch:input_type -> sanderling.driver.v1.LaunchRequest
+	0,  // 5: sanderling.driver.v1.Driver.Terminate:input_type -> sanderling.driver.v1.Empty
+	2,  // 6: sanderling.driver.v1.Driver.Tap:input_type -> sanderling.driver.v1.Point
+	4,  // 7: sanderling.driver.v1.Driver.TapSelector:input_type -> sanderling.driver.v1.Selector
+	3,  // 8: sanderling.driver.v1.Driver.InputText:input_type -> sanderling.driver.v1.Text
+	9,  // 9: sanderling.driver.v1.Driver.Swipe:input_type -> sanderling.driver.v1.SwipeRequest
+	10, // 10: sanderling.driver.v1.Driver.PressKey:input_type -> sanderling.driver.v1.PressKeyRequest
+	0,  // 11: sanderling.driver.v1.Driver.Screenshot:input_type -> sanderling.driver.v1.Empty
+	0,  // 12: sanderling.driver.v1.Driver.Hierarchy:input_type -> sanderling.driver.v1.Empty
+	11, // 13: sanderling.driver.v1.Driver.RecentLogs:input_type -> sanderling.driver.v1.RecentLogsRequest
+	7,  // 14: sanderling.driver.v1.Driver.WaitForIdle:input_type -> sanderling.driver.v1.Duration
+	0,  // 15: sanderling.driver.v1.Driver.Health:input_type -> sanderling.driver.v1.Empty
+	14, // 16: sanderling.driver.v1.Driver.Metrics:input_type -> sanderling.driver.v1.MetricsRequest
+	0,  // 17: sanderling.driver.v1.Driver.Launch:output_type -> sanderling.driver.v1.Empty
+	0,  // 18: sanderling.driver.v1.Driver.Terminate:output_type -> sanderling.driver.v1.Empty
+	0,  // 19: sanderling.driver.v1.Driver.Tap:output_type -> sanderling.driver.v1.Empty
+	0,  // 20: sanderling.driver.v1.Driver.TapSelector:output_type -> sanderling.driver.v1.Empty
+	0,  // 21: sanderling.driver.v1.Driver.InputText:output_type -> sanderling.driver.v1.Empty
+	0,  // 22: sanderling.driver.v1.Driver.Swipe:output_type -> sanderling.driver.v1.Empty
+	0,  // 23: sanderling.driver.v1.Driver.PressKey:output_type -> sanderling.driver.v1.Empty
+	5,  // 24: sanderling.driver.v1.Driver.Screenshot:output_type -> sanderling.driver.v1.Image
+	6,  // 25: sanderling.driver.v1.Driver.Hierarchy:output_type -> sanderling.driver.v1.HierarchyJSON
+	12, // 26: sanderling.driver.v1.Driver.RecentLogs:output_type -> sanderling.driver.v1.LogEntries
+	0,  // 27: sanderling.driver.v1.Driver.WaitForIdle:output_type -> sanderling.driver.v1.Empty
+	8,  // 28: sanderling.driver.v1.Driver.Health:output_type -> sanderling.driver.v1.HealthStatus
+	15, // 29: sanderling.driver.v1.Driver.Metrics:output_type -> sanderling.driver.v1.MetricsResponse
+	17, // [17:30] is the sub-list for method output_type
+	4,  // [4:17] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_driverpb_driver_proto_init() }
@@ -986,7 +1000,7 @@ func file_driverpb_driver_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_driverpb_driver_proto_rawDesc), len(file_driverpb_driver_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
