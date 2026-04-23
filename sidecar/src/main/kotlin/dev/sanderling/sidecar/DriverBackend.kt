@@ -503,12 +503,15 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
             false,
         )
         val xcTestDriverClient = xcuitest.XCTestDriverClient(installer, httpClient, false)
-        val device = ios.xctest.XCTestIOSDevice(udid, xcTestDriverClient) { emptySet() }
+        val xcTestDevice = ios.xctest.XCTestIOSDevice(udid, xcTestDriverClient) { emptySet() }
+        val simctlDevice = ios.simctl.SimctlIOSDevice(udid)
+        val device = ios.LocalIOSDevice(udid, xcTestDevice, simctlDevice, maestro.utils.NoopInsights)
         driver = maestro.drivers.IOSDriver(device, maestro.utils.NoopInsights, metrics)
         driver.open()
     }
 
     override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
+        runCatching { driver.stopApp(bundleId) }
         if (clearState) driver.clearAppState(bundleId)
         driver.launchApp(bundleId, env, java.util.UUID.randomUUID())
     }

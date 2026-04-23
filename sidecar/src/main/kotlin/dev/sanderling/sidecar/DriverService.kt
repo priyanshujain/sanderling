@@ -150,7 +150,9 @@ class DriverService(
             observer.onNext(block())
             observer.onCompleted()
         } catch (cause: Exception) {
-            observer.onError(cause)
+            cause.printStackTrace()
+            observer.onError(io.grpc.Status.INTERNAL.withDescription(cause.toString())
+                .withCause(cause).asRuntimeException())
         }
     }
 
