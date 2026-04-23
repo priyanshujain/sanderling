@@ -106,6 +106,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		g.Wait()
 
 		if hierarchyErr != nil {
+			if isWDADrop(hierarchyErr) {
+				return summary, fmt.Errorf("WDA connection permanently lost at step %d - re-run the test: %w", stepIndex, hierarchyErr)
+			}
 			logger.Warn("hierarchy fetch failed", "step", stepIndex, "err", hierarchyErr)
 		}
 		treeSize := 0
