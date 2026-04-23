@@ -15,7 +15,8 @@ internal object IosPauser {
             dispatch_semaphore_signal(snapshotReady)
             dispatch_semaphore_wait(resumeGate, dispatch_time(DISPATCH_TIME_NOW, 5_000_000_000L))
         }
-        dispatch_semaphore_wait(snapshotReady, dispatch_time(DISPATCH_TIME_NOW, 5_000_000_000L))
+        val waited = dispatch_semaphore_wait(snapshotReady, dispatch_time(DISPATCH_TIME_NOW, 5_000_000_000L))
+        check(waited == 0L) { "snapshot timed out: main thread did not signal within 5s" }
         return capturedSnapshot
     }
 
