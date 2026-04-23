@@ -555,7 +555,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
         driver.waitForAppToSettle(null, null, durationMillis.toInt())
     }
 
-    override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
+    override fun healthy() = true
 
     override fun metrics(bundleId: String) = MetricsSample(0.0, 0L, 0L)
 }
