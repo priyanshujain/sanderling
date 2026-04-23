@@ -49,8 +49,8 @@ internal object IosAgent {
 
     private fun handlePause(conn: TcpConnection, id: Long) {
         val snapshots = IosPauser.pauseAndSnapshot {
-            val snap = synchronized(SanderlingIos.extractors) { SanderlingIos.extractors.toMap() }
-            buildMap { for ((name, fn) in snap) put(name, runCatching { fn() }.getOrNull()) }
+            val snap = SanderlingIos.extractors.toMap()
+            buildMap { for ((name, extractor) in snap) put(name, runCatching { extractor() }.getOrNull()) }
         }
         val snapshotsJson = snapshots.entries.joinToString(",") { (k, v) -> "${jsonString(k)}:${jsonValue(v)}" }
         conn.writeFrame("""{"type":"STATE","id":$id,"snapshots":{$snapshotsJson}}""".encodeToByteArray())
@@ -84,7 +84,7 @@ internal fun jsonValue(value: Any?): String = when (value) {
     is Float -> value.toString()
     is Double -> value.toString()
     is String -> jsonString(value)
-    is Map<*, *> -> "{${(value as Map<*, *>).entries.joinToString(",") { (k, v) -> "${jsonString(k.toString())}:${jsonValue(v)}" }}}"
-    is List<*> -> "[${(value as List<*>).joinToString(",") { jsonValue(it) }}]"
+    is Map<*, *> -> "{${value.entries.joinToString(",") { (k, v) -> "${jsonString(k.toString())}:${jsonValue(v)}" }}}"
+    is List<*> -> "[${value.joinToString(",") { jsonValue(it) }}]"
     else -> jsonString(value.toString())
 }

@@ -12,15 +12,26 @@ internal class TcpConnection private constructor(private val fd: Int) {
             memScoped {
                 val addr = alloc<sockaddr_in>()
                 addr.sin_family = AF_INET.convert()
-                addr.sin_port = htons(port.convert())
-                inet_pton(AF_INET, host, addr.sin_addr.ptr)
+                addr.sin_port = networkShort(port)
+                addr.sin_addr.s_addr = networkAddress(host)
                 val result = platform.posix.connect(sock, addr.ptr.reinterpret(), sizeOf<sockaddr_in>().convert())
                 if (result < 0) {
                     close(sock)
-                    error("connect() failed: errno=$errno")
+                    error("connect() to $host:$port failed: errno=$errno")
                 }
             }
             return TcpConnection(sock)
+        }
+
+        // Convert port to network byte order (big-endian bytes in memory on little-endian iOS).
+        private fun networkShort(value: Int): UShort =
+            (((value ushr 8) and 0xFF) or ((value and 0xFF) shl 8)).toUShort()
+
+        // Parse "a.b.c.d" → UInt with bytes [a,b,c,d] in memory (little-endian storage).
+        private fun networkAddress(host: String): UInt {
+            val parts = host.split(".").map { it.toInt() }
+            check(parts.size == 4) { "expected IPv4 address, got: $host" }
+            return (parts[0] or (parts[1] shl 8) or (parts[2] shl 16) or (parts[3] shl 24)).toUInt()
         }
     }
 

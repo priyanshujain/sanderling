@@ -7,7 +7,7 @@ import platform.darwin.*
 internal object IosPauser {
     private val snapshotReady = dispatch_semaphore_create(0)
     private val resumeGate = dispatch_semaphore_create(0)
-    @Volatile private var capturedSnapshot: Map<String, Any?> = emptyMap()
+    private var capturedSnapshot: Map<String, Any?> = emptyMap()
 
     fun pauseAndSnapshot(extractors: () -> Map<String, Any?>): Map<String, Any?> {
         dispatch_async(dispatch_get_main_queue()) {
