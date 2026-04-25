@@ -530,11 +530,12 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     private fun <T> withReconnect(block: () -> T): T {
         return try {
             block()
-        } catch (e: java.io.IOException) {
-            try {
-                driver.open()
-                warmup()
-            } catch (reconnectErr: Exception) {
+        } catch (e: Exception) {
+            val isIoFailure = generateSequence(e as Throwable) { it.cause }
+                .any { it is java.io.IOException }
+            if (!isIoFailure) throw e
+            try { driver.open(); warmup() }
+            catch (reconnectErr: Exception) {
                 throw IllegalStateException("WDA reconnect failed: $reconnectErr", e)
             }
             block()
