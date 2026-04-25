@@ -3,20 +3,16 @@ package runner
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/priyanshujain/sanderling/internal/agent"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 	"github.com/priyanshujain/sanderling/internal/trace"
@@ -24,7 +20,6 @@ import (
 )
 
 const fixtureSpec = `
-const screen = __sanderling__.extract(state => state.snapshots.screen ?? "");
 const balance = __sanderling__.extract(state => state.snapshots.balance ?? 0);
 globalThis.properties = {
   balanceNonNegative: __sanderling__.always(() => balance.current >= 0),
@@ -32,28 +27,25 @@ globalThis.properties = {
 globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:next" })]);
 `
 
+const violationSpec = `
+globalThis.properties = {
+  balanceNonNegative: __sanderling__.always(() => false),
+};
+globalThis.actions = __sanderling__.actions(() => []);
+`
+
 type harness struct {
-	server   *agent.Server
-	listener net.Listener
-	clientWG sync.WaitGroup
-	conn     *agent.Conn
 	mock     *mockdriver.Driver
 	verifier *verifier.Verifier
 	writer   *trace.Writer
-	snapshot []map[string]json.RawMessage
 }
 
-func newHarness(t *testing.T, snapshots []map[string]json.RawMessage) *harness {
-	return newHarnessWithSpec(t, snapshots, fixtureSpec)
+func newHarness(t *testing.T) *harness {
+	return newHarnessWithSpec(t, fixtureSpec)
 }
 
-func newHarnessWithSpec(t *testing.T, snapshots []map[string]json.RawMessage, spec string) *harness {
+func newHarnessWithSpec(t *testing.T, spec string) *harness {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := agent.NewServer(listener)
 	directory := t.TempDir()
 	writer, err := trace.NewWriter(directory)
 	if err != nil {
@@ -67,84 +59,25 @@ func newHarnessWithSpec(t *testing.T, snapshots []map[string]json.RawMessage, sp
 		t.Fatal(err)
 	}
 	state := &harness{
-		server:   server,
-		listener: listener,
 		mock:     mockdriver.New(),
 		verifier: verifierInstance,
 		writer:   writer,
-		snapshot: snapshots,
 	}
-	t.Cleanup(func() {
-		_ = listener.Close()
-		_ = writer.Close()
-	})
+	t.Cleanup(func() { _ = writer.Close() })
 	return state
 }
 
-func (h *harness) startSDK(t *testing.T) {
-	t.Helper()
-	h.clientWG.Go(func() {
-		conn, err := net.Dial("tcp", h.listener.Addr().String())
-		if err != nil {
-			t.Errorf("dial: %v", err)
-			return
-		}
-		defer conn.Close()
-		if err := agent.WriteMessage(conn, agent.Hello("0.0.1", "android", "com.fixture")); err != nil {
-			t.Errorf("hello: %v", err)
-			return
-		}
-		index := 0
-		for {
-			message, err := agent.ReadMessage(conn)
-			if err != nil {
-				return
-			}
-			if message.Type == agent.MessageTypePause {
-				snapshots := map[string]json.RawMessage{}
-				if index < len(h.snapshot) {
-					snapshots = h.snapshot[index]
-				}
-				if err := agent.WriteMessage(conn, agent.State(message.ID, snapshots)); err != nil {
-					return
-				}
-				index++
-			}
-		}
-	})
-}
-
-func (h *harness) acceptConnection(t *testing.T) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	connection, err := h.server.Accept(ctx)
-	if err != nil {
-		t.Fatalf("Accept: %v", err)
-	}
-	h.conn = connection
-}
-
 func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
-	snapshots := []map[string]json.RawMessage{
-		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`100`)},
-		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`200`)},
-		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`300`)},
-	}
-	state := newHarness(t, snapshots)
-	state.startSDK(t)
-	state.acceptConnection(t)
+	state := newHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	summary, err := Run(ctx, Options{
-		Duration:        100 * time.Millisecond,
-		SnapshotTimeout: 2 * time.Second,
-		IdleTimeout:     50 * time.Millisecond,
-		Connection:      state.conn,
-		Driver:          state.mock,
-		Verifier:        state.verifier,
-		TraceWriter:     state.writer,
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 50 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -163,25 +96,16 @@ func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
 }
 
 func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
-	snapshots := []map[string]json.RawMessage{
-		{"balance": json.RawMessage(`100`)},
-		{"balance": json.RawMessage(`-1`)},
-		{"balance": json.RawMessage(`50`)},
-	}
-	state := newHarness(t, snapshots)
-	state.startSDK(t)
-	state.acceptConnection(t)
+	state := newHarnessWithSpec(t, violationSpec)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	summary, err := Run(ctx, Options{
-		Duration:        100 * time.Millisecond,
-		SnapshotTimeout: 2 * time.Second,
-		IdleTimeout:     50 * time.Millisecond,
-		Connection:      state.conn,
-		Driver:          state.mock,
-		Verifier:        state.verifier,
-		TraceWriter:     state.writer,
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 50 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -201,9 +125,7 @@ globalThis.properties = {
 };
 globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:next" })]);
 `
-	state := newHarnessWithSpec(t, []map[string]json.RawMessage{{}, {}}, throwingSpec)
-	state.startSDK(t)
-	state.acceptConnection(t)
+	state := newHarnessWithSpec(t, throwingSpec)
 
 	var buffer bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -211,14 +133,12 @@ globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	summary, err := Run(ctx, Options{
-		Duration:        100 * time.Millisecond,
-		SnapshotTimeout: 2 * time.Second,
-		IdleTimeout:     50 * time.Millisecond,
-		Connection:      state.conn,
-		Driver:          state.mock,
-		Verifier:        state.verifier,
-		TraceWriter:     state.writer,
-		Logger:          logger,
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 50 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Logger:      logger,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -240,7 +160,6 @@ func TestRunner_RejectsMissingFields(t *testing.T) {
 
 func TestRunner_RejectsZeroDuration(t *testing.T) {
 	_, err := Run(context.Background(), Options{
-		Connection:  &agent.Conn{},
 		Driver:      mockdriver.New(),
 		Verifier:    mustNewVerifier(t),
 		TraceWriter: mustNewTraceWriter(t),
@@ -250,89 +169,18 @@ func TestRunner_RejectsZeroDuration(t *testing.T) {
 	}
 }
 
-func TestRunner_RecordsScreenFieldFromSnapshot(t *testing.T) {
-	snapshots := []map[string]json.RawMessage{
-		{"screen": json.RawMessage(`"customer_ledger"`), "balance": json.RawMessage(`1`)},
-	}
-	state := newHarness(t, snapshots)
-	state.startSDK(t)
-	state.acceptConnection(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:        100 * time.Millisecond,
-		SnapshotTimeout: 2 * time.Second,
-		IdleTimeout:     50 * time.Millisecond,
-		Connection:      state.conn,
-		Driver:          state.mock,
-		Verifier:        state.verifier,
-		TraceWriter:     state.writer,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(body), `"screen":"customer_ledger"`) {
-		t.Errorf("screen field not in trace: %s", body)
-	}
-}
-
-func TestScreenFromSnapshot(t *testing.T) {
-	t.Run("string value returns screen", func(t *testing.T) {
-		snapshots := map[string]json.RawMessage{"screen": json.RawMessage(`"home"`)}
-		screen, err := screenFromSnapshot(snapshots)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if screen != "home" {
-			t.Errorf("screen = %q, want %q", screen, "home")
-		}
-	})
-	t.Run("missing key returns empty with no error", func(t *testing.T) {
-		screen, err := screenFromSnapshot(map[string]json.RawMessage{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if screen != "" {
-			t.Errorf("screen = %q, want empty", screen)
-		}
-	})
-	t.Run("non-string value returns error", func(t *testing.T) {
-		snapshots := map[string]json.RawMessage{"screen": json.RawMessage(`{"nested":1}`)}
-		screen, err := screenFromSnapshot(snapshots)
-		if err == nil {
-			t.Fatalf("expected error for non-string screen, got nil")
-		}
-		if screen != "" {
-			t.Errorf("screen = %q, want empty on error", screen)
-		}
-	})
-}
-
 func TestRunner_StampsHierarchyResolvedBoundsAndResiduals(t *testing.T) {
-	snapshots := []map[string]json.RawMessage{
-		{"balance": json.RawMessage(`100`)},
-		{"balance": json.RawMessage(`200`)},
-	}
-	state := newHarness(t, snapshots)
-	state.startSDK(t)
-	state.acceptConnection(t)
-
+	state := newHarness(t)
 	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"com.fixture:id/next","bounds":"[40,80,240,160]"},"children":[],"clickable":true,"enabled":true}`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := Run(ctx, Options{
-		Duration:        100 * time.Millisecond,
-		SnapshotTimeout: 2 * time.Second,
-		IdleTimeout:     50 * time.Millisecond,
-		Connection:      state.conn,
-		Driver:          state.mock,
-		Verifier:        state.verifier,
-		TraceWriter:     state.writer,
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 50 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -359,12 +207,7 @@ func TestRunner_StampsHierarchyResolvedBoundsAndResiduals(t *testing.T) {
 }
 
 func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
-	snapshots := []map[string]json.RawMessage{
-		{"balance": json.RawMessage(`100`)},
-	}
-	state := newHarness(t, snapshots)
-	state.startSDK(t)
-	state.acceptConnection(t)
+	state := newHarness(t)
 	state.mock.Failures[mockdriver.ActionWaitForIdle] = errors.New("sidecar lost gRPC stream")
 
 	var logBuf bytes.Buffer
@@ -373,14 +216,12 @@ func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := Run(ctx, Options{
-		Duration:        100 * time.Millisecond,
-		SnapshotTimeout: 2 * time.Second,
-		IdleTimeout:     50 * time.Millisecond,
-		Connection:      state.conn,
-		Driver:          state.mock,
-		Verifier:        state.verifier,
-		TraceWriter:     state.writer,
-		Logger:          logger,
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 50 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Logger:      logger,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -423,28 +264,21 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 }
 
 func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
-	snapshots := []map[string]json.RawMessage{
-		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`100`)},
-	}
-	state := newHarness(t, snapshots)
+	state := newHarness(t)
 	state.mock.MetricsData = driver.Metrics{CPUPercent: 5.0, HeapBytes: 1024, TotalMemoryBytes: 4096}
 	state.mock.LogEntries = []driver.LogEntry{
 		{UnixMillis: 1000, Level: "E", Tag: "test", Message: "boom"},
 	}
-	state.startSDK(t)
-	state.acceptConnection(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := Run(ctx, Options{
-		Duration:        100 * time.Millisecond,
-		SnapshotTimeout: 2 * time.Second,
-		IdleTimeout:     50 * time.Millisecond,
-		BundleID:        "com.fixture",
-		Connection:      state.conn,
-		Driver:          state.mock,
-		Verifier:        state.verifier,
-		TraceWriter:     state.writer,
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 50 * time.Millisecond,
+		BundleID:    "com.fixture",
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -474,26 +308,17 @@ func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
 }
 
 func TestRunner_PipelinedPostScreenshotWritten(t *testing.T) {
-	snapshots := []map[string]json.RawMessage{
-		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`100`)},
-		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`200`)},
-		{"screen": json.RawMessage(`"home"`), "balance": json.RawMessage(`300`)},
-	}
-	state := newHarness(t, snapshots)
+	state := newHarness(t)
 	state.mock.ImageData = driver.Image{PNG: []byte("fakepng"), Width: 100, Height: 200}
-	state.startSDK(t)
-	state.acceptConnection(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	summary, err := Run(ctx, Options{
-		Duration:        200 * time.Millisecond,
-		SnapshotTimeout: 2 * time.Second,
-		IdleTimeout:     50 * time.Millisecond,
-		Connection:      state.conn,
-		Driver:          state.mock,
-		Verifier:        state.verifier,
-		TraceWriter:     state.writer,
+		Duration:    200 * time.Millisecond,
+		IdleTimeout: 50 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -509,13 +334,11 @@ func TestRunner_PipelinedPostScreenshotWritten(t *testing.T) {
 		t.Errorf("expected pre-screenshot for step 1: %s", preFile)
 	}
 
-	// Step 1's post-screenshot is pipelined into step 2's errgroup
 	postFile := filepath.Join(screenshotDir, "step-00001-after.png")
 	if _, err := os.Stat(postFile); os.IsNotExist(err) {
 		t.Errorf("expected pipelined post-screenshot for step 1: %s", postFile)
 	}
 
-	// Last step's post-screenshot is flushed after the loop
 	lastAfter := filepath.Join(screenshotDir, fmt.Sprintf("step-%05d-after.png", summary.Steps))
 	if _, err := os.Stat(lastAfter); os.IsNotExist(err) {
 		t.Errorf("expected flushed post-screenshot for last step %d: %s", summary.Steps, lastAfter)
