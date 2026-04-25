@@ -36,15 +36,17 @@ function parseCents(desc: string | null | undefined): number {
   return Number(parts[1]) || 0;
 }
 
-const loggedIn = extract(s => s.ax.find("id:LoginScreen") == null);
+// Screen detection via unique element presence
+const loggedIn = extract(s => s.ax.find("desc:login_submit") == null);
 const route = extract<string | null>(s => {
-  if (s.ax.find("id:LoginScreen")) return "login";
-  if (s.ax.find("id:HomeScreen")) return "home";
-  if (s.ax.find("id:AddAccountScreen")) return "add-account";
-  if (s.ax.find("id:LedgerScreen")) return "ledger";
-  if (s.ax.find("id:AddTransactionScreen")) return "add-transaction";
+  if (s.ax.find("desc:login_submit")) return "login";
+  if (s.ax.find("desc:add_account_button")) return "home";
+  if (s.ax.find("desc:account_name_field")) return "add-account";
+  if (s.ax.find("descPrefix:active_account:")) return "ledger";
+  if (s.ax.find("desc:txn_amount")) return "add-transaction";
   return null;
 });
+
 const accounts = extract(s => s.ax.findAll("descPrefix:account:")
   .map(el => parseAccount(el.desc)));
 const ledgerRows = extract(s => s.ax.findAll("descPrefix:ledger_row:")
@@ -56,15 +58,15 @@ const activeAccountId = extract(s =>
 const focusedInput = extract(s =>
   s.ax.find("descPrefix:focused_input:")?.desc?.split(":")[1] ?? null);
 
-const loginEmailField = extract(s => s.ax.find("id:LoginScreen > desc:login_email"));
-const loginPasswordField = extract(s => s.ax.find("id:LoginScreen > desc:login_password"));
-const loginSubmit = extract(s => s.ax.find("id:LoginScreen > desc:login_submit"));
-const addAccountButton = extract(s => s.ax.find("id:HomeScreen > desc:add_account_button"));
-const accountNameField = extract(s => s.ax.find("id:AddAccountScreen > desc:account_name_field"));
-const addAccountSubmit = extract(s => s.ax.find("id:AddAccountScreen > desc:add_account_submit"));
-const addTxnButton = extract(s => s.ax.find("id:LedgerScreen > desc:add_txn_button"));
-const txnAmountField = extract(s => s.ax.find("id:AddTransactionScreen > desc:txn_amount"));
-const txnSubmit = extract(s => s.ax.find("id:AddTransactionScreen > desc:txn_submit"));
+const loginEmailField = extract(s => s.ax.find("desc:login_email"));
+const loginPasswordField = extract(s => s.ax.find("desc:login_password"));
+const loginSubmit = extract(s => s.ax.find("desc:login_submit"));
+const addAccountButton = extract(s => s.ax.find("desc:add_account_button"));
+const accountNameField = extract(s => s.ax.find("desc:account_name_field"));
+const addAccountSubmit = extract(s => s.ax.find("desc:add_account_submit"));
+const addTxnButton = extract(s => s.ax.find("desc:add_txn_button"));
+const txnAmountField = extract(s => s.ax.find("desc:txn_amount"));
+const txnSubmit = extract(s => s.ax.find("desc:txn_submit"));
 const accountCards = extract(s => s.ax.findAll("descPrefix:account:"));
 const backButton = extract(s => s.ax.find("desc:Back"));
 
