@@ -568,6 +568,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
         StubDriverBackend.KEY_MAP[key]?.let { keyCode ->
             keyCodeToMaestro(keyCode)?.let { driver.pressKey(it) }
         }
+        Unit
     }
 
     override fun screenshot(): Triple<ByteArray, Int, Int> = withReconnect {
@@ -586,6 +587,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
 
     override fun waitForIdle(durationMillis: Long) = withReconnect {
         driver.waitForAppToSettle(null, null, durationMillis.toInt())
+        Unit
     }
 
     override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
