@@ -37,40 +37,52 @@ function parseCents(desc: string | null | undefined): number {
 }
 
 // Route and auth state derived from screen root nodes
-const loggedIn = extract(s => s.ax.find("desc:LoginScreen") == null);
+const loggedIn = extract(s => s.ax.find({ accessibilityText: "LoginScreen" }) == null);
 const route = extract<string | null>(s => {
-  if (s.ax.find("desc:LoginScreen")) return "login";
-  if (s.ax.find("desc:HomeScreen")) return "home";
-  if (s.ax.find("desc:AddAccountScreen")) return "add-account";
-  if (s.ax.find("desc:LedgerScreen")) return "ledger";
-  if (s.ax.find("desc:AddTransactionScreen")) return "add-transaction";
+  if (s.ax.find({ accessibilityText: "LoginScreen" })) return "login";
+  if (s.ax.find({ accessibilityText: "HomeScreen" })) return "home";
+  if (s.ax.find({ accessibilityText: "AddAccountScreen" })) return "add-account";
+  if (s.ax.find({ accessibilityText: "LedgerScreen" })) return "ledger";
+  if (s.ax.find({ accessibilityText: "AddTransactionScreen" })) return "add-transaction";
   return null;
 });
 
 // All element lookups scoped through their screen root
-const accounts = extract(s => s.ax.findAll("desc:HomeScreen > descPrefix:account:")
-  .map(el => parseAccount(el.desc)));
-const ledgerRows = extract(s => s.ax.findAll("desc:LedgerScreen > descPrefix:ledger_row:")
-  .map(el => parseLedgerRow(el.desc)));
+const accounts = extract(s =>
+  s.ax.find({ accessibilityText: "HomeScreen" })?.findAll("descPrefix:account:")
+    .map(el => parseAccount(el.desc)) ?? []);
+const ledgerRows = extract(s =>
+  s.ax.find({ accessibilityText: "LedgerScreen" })?.findAll("descPrefix:ledger_row:")
+    .map(el => parseLedgerRow(el.desc)) ?? []);
 const ledgerBalance = extract(s =>
-  parseCents(s.ax.find("desc:LedgerScreen > descPrefix:ledger_balance:")?.desc));
+  parseCents(s.ax.find({ accessibilityText: "LedgerScreen" })?.find("descPrefix:ledger_balance:")?.desc));
 const activeAccountId = extract(s =>
-  s.ax.find("desc:LedgerScreen > descPrefix:active_account:")?.desc?.split(":")[1] ?? null);
+  s.ax.find({ accessibilityText: "LedgerScreen" })?.find("descPrefix:active_account:")?.desc?.split(":")[1] ?? null);
 
 // focusedInput lives in the app root (not inside any screen), so unscoped
 const focusedInput = extract(s =>
   s.ax.find("descPrefix:focused_input:")?.desc?.split(":")[1] ?? null);
 
-const loginEmailField = extract(s => s.ax.find("desc:LoginScreen > desc:login_email"));
-const loginPasswordField = extract(s => s.ax.find("desc:LoginScreen > desc:login_password"));
-const loginSubmit = extract(s => s.ax.find("desc:LoginScreen > desc:login_submit"));
-const addAccountButton = extract(s => s.ax.find("desc:HomeScreen > desc:add_account_button"));
-const accountNameField = extract(s => s.ax.find("desc:AddAccountScreen > desc:account_name_field"));
-const addAccountSubmit = extract(s => s.ax.find("desc:AddAccountScreen > desc:add_account_submit"));
-const addTxnButton = extract(s => s.ax.find("desc:LedgerScreen > desc:add_txn_button"));
-const txnAmountField = extract(s => s.ax.find("desc:AddTransactionScreen > desc:txn_amount"));
-const txnSubmit = extract(s => s.ax.find("desc:AddTransactionScreen > desc:txn_submit"));
-const accountCards = extract(s => s.ax.findAll("desc:HomeScreen > descPrefix:account:"));
+const loginEmailField = extract(s =>
+  s.ax.find({ accessibilityText: "LoginScreen" })?.find({ accessibilityText: "login_email" }));
+const loginPasswordField = extract(s =>
+  s.ax.find({ accessibilityText: "LoginScreen" })?.find({ accessibilityText: "login_password" }));
+const loginSubmit = extract(s =>
+  s.ax.find({ accessibilityText: "LoginScreen" })?.find({ accessibilityText: "login_submit" }));
+const addAccountButton = extract(s =>
+  s.ax.find({ accessibilityText: "HomeScreen" })?.find({ accessibilityText: "add_account_button" }));
+const accountNameField = extract(s =>
+  s.ax.find({ accessibilityText: "AddAccountScreen" })?.find({ accessibilityText: "account_name_field" }));
+const addAccountSubmit = extract(s =>
+  s.ax.find({ accessibilityText: "AddAccountScreen" })?.find({ accessibilityText: "add_account_submit" }));
+const addTxnButton = extract(s =>
+  s.ax.find({ accessibilityText: "LedgerScreen" })?.find({ accessibilityText: "add_txn_button" }));
+const txnAmountField = extract(s =>
+  s.ax.find({ accessibilityText: "AddTransactionScreen" })?.find({ accessibilityText: "txn_amount" }));
+const txnSubmit = extract(s =>
+  s.ax.find({ accessibilityText: "AddTransactionScreen" })?.find({ accessibilityText: "txn_submit" }));
+const accountCards = extract(s =>
+  s.ax.find({ accessibilityText: "HomeScreen" })?.findAll("descPrefix:account:") ?? []);
 const backButton = extract(s => s.ax.find("desc:Back"));
 
 // Property 1: every new account starts with balance === 0
