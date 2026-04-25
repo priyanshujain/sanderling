@@ -1,4 +1,5 @@
 export type Snapshots = Record<string, unknown>;
+export type AttrSelector = Record<string, string>;
 
 export interface AccessibilityElement {
   id?: string;
@@ -13,11 +14,14 @@ export interface AccessibilityElement {
   bounds?: { left: number; top: number; right: number; bottom: number };
   x?: number;
   y?: number;
+  attrs?: Record<string, string>;
+  find(selector: string | AttrSelector): AccessibilityElement | undefined;
+  findAll(selector: string | AttrSelector): AccessibilityElement[];
 }
 
 export interface AccessibilityTree {
-  find(selector: string): AccessibilityElement | undefined;
-  findAll(selector: string): AccessibilityElement[];
+  find(selector: string | AttrSelector): AccessibilityElement | undefined;
+  findAll(selector: string | AttrSelector): AccessibilityElement[];
 }
 
 export interface LogEntry {
