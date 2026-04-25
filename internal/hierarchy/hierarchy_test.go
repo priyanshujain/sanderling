@@ -307,3 +307,172 @@ func TestIOSBoundsFormat(t *testing.T) {
 		t.Errorf("unexpected center: (%d, %d)", cx, cy)
 	}
 }
+
+// --- full-attribute selector tests ---
+
+const androidAttrDump = `{
+  "attributes": {"resource-id": "com.app:id/list", "bounds": "[0,0,1080,2340]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "com.app:id/row1", "scrollable": "true", "bounds": "[0,0,1080,200]"},
+      "children": [],
+      "clickable": true,
+      "enabled": true
+    },
+    {
+      "attributes": {"resource-id": "com.app:id/row2", "scrollable": "false", "bounds": "[0,200,1080,400]"},
+      "children": [],
+      "clickable": false,
+      "enabled": true
+    }
+  ]
+}`
+
+const iosAttrDump = `{
+  "attributes": {"bounds": "[0,0,390,844]"},
+  "children": [
+    {
+      "attributes": {"accessibilityText": "Close", "title": "Settings", "bounds": "[0,0,100,50]"},
+      "children": [],
+      "enabled": true
+    }
+  ]
+}`
+
+func TestRawResourceIDSubstringMatch(t *testing.T) {
+	tree, _ := Parse(androidAttrDump)
+	el := tree.Find("resource-id:row1")
+	if el == nil {
+		t.Fatal("expected resource-id: to match via substring")
+	}
+}
+
+func TestLabelAliasMatchesAccessibilityText(t *testing.T) {
+	tree, _ := Parse(iosAttrDump)
+	el := tree.Find("label:Close")
+	if el == nil {
+		t.Fatal("expected label: to match accessibilityText via alias")
+	}
+}
+
+func TestContentDescAliasOnIOS(t *testing.T) {
+	tree, _ := Parse(iosAttrDump)
+	el := tree.Find("content-desc:Close")
+	if el == nil {
+		t.Fatal("expected content-desc: to match accessibilityText via alias on iOS")
+	}
+}
+
+func TestScrollableTrueMatches(t *testing.T) {
+	tree, _ := Parse(androidAttrDump)
+	el := tree.Find("scrollable:true")
+	if el == nil {
+		t.Fatal("expected scrollable:true to match")
+	}
+	if el.ResourceID != "com.app:id/row1" {
+		t.Fatalf("got %q, want row1", el.ResourceID)
+	}
+}
+
+func TestScrollableFalseMatchesSecondRow(t *testing.T) {
+	tree, _ := Parse(androidAttrDump)
+	el := tree.Find("scrollable:false")
+	if el == nil {
+		t.Fatal("expected scrollable:false to match row2")
+	}
+	if el.ResourceID != "com.app:id/row2" {
+		t.Fatalf("got %q, want row2", el.ResourceID)
+	}
+}
+
+func TestTitleMatchesIOSElement(t *testing.T) {
+	tree, _ := Parse(iosAttrDump)
+	el := tree.Find("title:Settings")
+	if el == nil {
+		t.Fatal("expected title:Settings to match iOS element")
+	}
+}
+
+func TestTitleReturnsNilForAndroid(t *testing.T) {
+	tree, _ := Parse(androidAttrDump)
+	el := tree.Find("title:Settings")
+	if el != nil {
+		t.Fatal("expected title:Settings to return nil for Android element (graceful ignore)")
+	}
+}
+
+func TestScrollableGracefulIgnoreOnIOS(t *testing.T) {
+	tree, _ := Parse(iosAttrDump)
+	el := tree.Find("scrollable:true")
+	if el != nil {
+		t.Fatal("expected scrollable:true to return nil on iOS hierarchy (graceful ignore)")
+	}
+}
+
+func TestTextIsNowSubstring(t *testing.T) {
+	tree, _ := Parse(sampleDump)
+	el := tree.Find("text:Hel")
+	if el == nil {
+		t.Fatal("expected text: to match substring")
+	}
+	if el.Text != "Hello" {
+		t.Fatalf("got %q, want Hello", el.Text)
+	}
+}
+
+func TestMultiFilterSelectorAND(t *testing.T) {
+	tree, _ := Parse(androidAttrDump)
+	sel := Selector{Filters: []AttrFilter{
+		{Attr: "scrollable", Value: "true"},
+		{Attr: "resource-id", Value: "row1"},
+	}}
+	node := tree.Root.FindBySelector(sel)
+	if node == nil {
+		t.Fatal("expected AND selector to find row1 (scrollable=true AND resource-id contains row1)")
+	}
+	if node.Element.ResourceID != "com.app:id/row1" {
+		t.Fatalf("got %q, want row1", node.Element.ResourceID)
+	}
+}
+
+func TestMultiFilterSelectorMissReturnsNil(t *testing.T) {
+	tree, _ := Parse(androidAttrDump)
+	sel := Selector{Filters: []AttrFilter{
+		{Attr: "scrollable", Value: "true"},
+		{Attr: "resource-id", Value: "row2"}, // row2 is not scrollable=true
+	}}
+	node := tree.Root.FindBySelector(sel)
+	if node != nil {
+		t.Fatal("expected AND selector to return nil when one filter misses")
+	}
+}
+
+func TestNodeFindScopedSearch(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	// A2 has a child B2 with content-desc "label_b"
+	// Find the A node, then search its subtree for label_b -- should find B (not B2)
+	aNode := tree.FindNode("id:A")
+	if aNode == nil {
+		t.Fatal("expected to find A node")
+	}
+	result := aNode.Find("desc:label_b")
+	if result == nil {
+		t.Fatal("expected Node.Find to find label_b in A's subtree")
+	}
+	if result.Element.ResourceID != "B" {
+		t.Fatalf("got %q, want B (not B2 from sibling A2)", result.Element.ResourceID)
+	}
+}
+
+func TestNodeFindDoesNotReturnSiblings(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	a2Node := tree.FindNode("id:A2")
+	if a2Node == nil {
+		t.Fatal("expected to find A2 node")
+	}
+	// B is under A, not A2 -- should not be found from A2's subtree
+	result := a2Node.Find("id:B")
+	if result != nil && result.Element.ResourceID == "B" {
+		t.Fatal("Node.Find should not return nodes from sibling subtrees")
+	}
+}
