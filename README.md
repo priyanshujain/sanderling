@@ -1,6 +1,6 @@
 # sanderling
 
-Autonomous property-based testing for mobile apps. Specs in TypeScript. Core in Go. Drives the app under test through Maestro and an in-app SDK.
+Autonomous property-based testing for mobile apps. Specs in TypeScript. Core in Go. Drives the app under test through Maestro.
 
 > Alpha. Android emulator only. Full scope in the [v0.1.0 roadmap](https://github.com/priyanshujain/sanderling/issues/4).
 
