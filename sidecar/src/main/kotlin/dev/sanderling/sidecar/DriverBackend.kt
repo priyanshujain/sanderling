@@ -488,6 +488,7 @@ private fun pngHeight(bytes: ByteArray): Int {
 
 class IosDriverBackend(private val udid: String) : DriverBackend {
     private lateinit var driver: maestro.drivers.IOSDriver
+    private val reconnectLock = java.util.concurrent.locks.ReentrantLock()
 
     init {
         val httpClient = xcuitest.api.OkHttpClientInstance.get()
@@ -534,9 +535,14 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
             val isIoFailure = generateSequence(e as Throwable) { it.cause }
                 .any { it is java.io.IOException }
             if (!isIoFailure) throw e
-            try { driver.open(); warmup() }
-            catch (reconnectErr: Exception) {
-                throw IllegalStateException("WDA reconnect failed: $reconnectErr", e)
+            reconnectLock.lock()
+            try {
+                try { driver.open(); warmup() }
+                catch (reconnectErr: Exception) {
+                    throw IllegalStateException("WDA reconnect failed: $reconnectErr", e)
+                }
+            } finally {
+                reconnectLock.unlock()
             }
             block()
         }
