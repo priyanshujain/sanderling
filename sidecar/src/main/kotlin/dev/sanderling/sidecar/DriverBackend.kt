@@ -487,7 +487,8 @@ private fun pngHeight(bytes: ByteArray): Int {
 }
 
 class IosDriverBackend(private val udid: String) : DriverBackend {
-    private val driver: maestro.drivers.IOSDriver
+    private lateinit var driver: maestro.drivers.IOSDriver
+    private val reconnectLock = java.util.concurrent.locks.ReentrantLock()
 
     init {
         val httpClient = xcuitest.api.OkHttpClientInstance.get()
@@ -509,50 +510,90 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
         val device = ios.LocalIOSDevice(udid, xcTestDevice, simctlDevice, maestro.utils.NoopInsights)
         driver = maestro.drivers.IOSDriver(device, maestro.utils.NoopInsights, metrics)
         driver.open()
+        warmup()
     }
 
-    override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
+    private fun warmup() {
+        var warmupErr: Exception? = null
+        repeat(3) { attempt ->
+            try {
+                driver.contentDescriptor(false)
+                warmupErr = null
+                return@repeat
+            } catch (e: Exception) {
+                warmupErr = e
+                if (attempt < 2) Thread.sleep(500)
+            }
+        }
+        warmupErr?.let { throw IllegalStateException("WDA warmup failed after 3 attempts: $it") }
+    }
+
+    private fun <T> withReconnect(block: () -> T): T {
+        return try {
+            block()
+        } catch (e: Exception) {
+            val isIoFailure = generateSequence(e as Throwable) { it.cause }
+                .any { it is java.io.IOException }
+            if (!isIoFailure) throw e
+            reconnectLock.lock()
+            try {
+                try { driver.open(); warmup() }
+                catch (reconnectErr: Exception) {
+                    throw IllegalStateException("WDA reconnect failed: $reconnectErr", e)
+                }
+            } finally {
+                reconnectLock.unlock()
+            }
+            block()
+        }
+    }
+
+    override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) = withReconnect {
         runCatching { driver.stopApp(bundleId) }
         if (clearState) driver.clearAppState(bundleId)
         driver.launchApp(bundleId, env, java.util.UUID.randomUUID())
     }
 
-    override fun terminate(bundleId: String) = driver.stopApp(bundleId)
+    override fun terminate(bundleId: String) = withReconnect { driver.stopApp(bundleId) }
 
-    override fun tap(x: Int, y: Int) = driver.tap(maestro.Point(x, y))
+    override fun tap(x: Int, y: Int) = withReconnect { driver.tap(maestro.Point(x, y)) }
 
-    override fun tapSelector(selector: String) {
+    override fun tapSelector(selector: String) = withReconnect {
         val root = driver.contentDescriptor(false)
-        val bounds = findBoundsBySelector(root, selector) ?: return
+        val bounds = findBoundsBySelector(root, selector) ?: return@withReconnect
         driver.tap(maestro.Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2))
     }
 
-    override fun inputText(text: String) = driver.inputText(text)
+    override fun inputText(text: String) = withReconnect { driver.inputText(text) }
 
-    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) =
+    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) = withReconnect {
         driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))
+    }
 
-    override fun pressKey(key: String) {
+    override fun pressKey(key: String) = withReconnect {
         StubDriverBackend.KEY_MAP[key]?.let { keyCode ->
             keyCodeToMaestro(keyCode)?.let { driver.pressKey(it) }
         }
+        Unit
     }
 
-    override fun screenshot(): Triple<ByteArray, Int, Int> {
+    override fun screenshot(): Triple<ByteArray, Int, Int> = withReconnect {
         val buf = okio.Buffer()
         driver.takeScreenshot(buf, false)
         val bytes = buf.readByteArray()
-        return Triple(bytes, pngWidth(bytes), pngHeight(bytes))
+        Triple(bytes, pngWidth(bytes), pngHeight(bytes))
     }
 
-    override fun hierarchy(): String =
+    override fun hierarchy(): String = withReconnect {
         com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
             .writeValueAsString(driver.contentDescriptor(false))
+    }
 
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> = emptyList()
 
-    override fun waitForIdle(durationMillis: Long) {
+    override fun waitForIdle(durationMillis: Long) = withReconnect {
         driver.waitForAppToSettle(null, null, durationMillis.toInt())
+        Unit
     }
 
     override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }

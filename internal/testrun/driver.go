@@ -59,6 +59,9 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 		_ = sidecarCommand.Process.Kill()
 		return nil, nil, fmt.Errorf("dial sidecar: %w", err)
 	}
+	// WaitForHealth confirms the gRPC sidecar is up. For iOS, the WDA warmup
+	// (absorbing the XCUITest startup race) runs inside IosDriverBackend.init
+	// in the sidecar - no additional sleep needed here.
 	healthCtx, healthCancel := context.WithTimeout(ctx, sidecarStartupTimeout)
 	if err := driverClient.WaitForHealth(healthCtx, 250e6); err != nil {
 		healthCancel()

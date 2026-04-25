@@ -164,3 +164,38 @@ func TestAccessibilityTextFallback(t *testing.T) {
 		t.Fatal("expected match via accessibilityText fallback")
 	}
 }
+
+func TestIOSMergedLabel(t *testing.T) {
+	// iOS merges contentDescription with child text: "add_account_button, + Add account"
+	input := `{
+	  "attributes": {"accessibilityText": "add_account_button, + Add account", "bounds": "[20,777][382,825]"},
+	  "children": []
+	}`
+	tree, _ := Parse(input)
+	el := tree.Find("desc:add_account_button")
+	if el == nil {
+		t.Fatal("expected desc: to match iOS merged label")
+	}
+	if el.Bounds.Left != 20 || el.Bounds.Top != 777 || el.Bounds.Right != 382 || el.Bounds.Bottom != 825 {
+		t.Errorf("unexpected bounds: %+v", el.Bounds)
+	}
+}
+
+func TestIOSBoundsFormat(t *testing.T) {
+	input := `{
+	  "attributes": {"accessibilityText": "account_card:abc123, Tim, $100", "bounds": "[20,130][382,202]"},
+	  "children": []
+	}`
+	tree, _ := Parse(input)
+	el := tree.Find("descPrefix:account_card:")
+	if el == nil {
+		t.Fatal("expected descPrefix to match iOS account card")
+	}
+	if el.Bounds.Left != 20 || el.Bounds.Top != 130 || el.Bounds.Right != 382 || el.Bounds.Bottom != 202 {
+		t.Errorf("unexpected bounds: %+v", el.Bounds)
+	}
+	cx, cy := el.Bounds.Center()
+	if cx != 201 || cy != 166 {
+		t.Errorf("unexpected center: (%d, %d)", cx, cy)
+	}
+}
