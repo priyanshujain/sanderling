@@ -20,14 +20,14 @@ interface LedgerRow {
   signed: number;
 }
 
-function parseAccount(desc: string): Account {
-  const parts = desc.split(":");
-  return { id: parts[1], balance: Number(parts[2]) };
+function parseAccount(desc: string | undefined): Account {
+  const parts = (desc ?? "").split(":");
+  return { id: parts[1] ?? "", balance: Number(parts[2]) };
 }
 
-function parseLedgerRow(desc: string): LedgerRow {
-  const parts = desc.split(":");
-  return { id: parts[1], signed: Number(parts[2]) };
+function parseLedgerRow(desc: string | undefined): LedgerRow {
+  const parts = (desc ?? "").split(":");
+  return { id: parts[1] ?? "", signed: Number(parts[2]) };
 }
 
 function parseCents(desc: string | null | undefined): number {
