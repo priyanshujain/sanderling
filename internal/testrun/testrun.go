@@ -5,13 +5,10 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
-	"github.com/priyanshujain/sanderling/internal/agent"
 	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/ios"
@@ -20,11 +17,7 @@ import (
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
-const (
-	socketName            = "sanderling-agent"
-	sidecarStartupTimeout = 30 * time.Second
-	sdkAcceptTimeout      = 60 * time.Second
-)
+const sidecarStartupTimeout = 30 * time.Second
 
 // Options are the parameters for a single test pipeline run.
 type Options struct {
@@ -38,7 +31,7 @@ type Options struct {
 	Output    string
 }
 
-// Execute runs the full test pipeline: bundle, connect SDK, verify properties.
+// Execute runs the full test pipeline: bundle, launch app, verify properties.
 func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	switch options.Platform {
 	case "android":
@@ -75,100 +68,8 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	}
 	defer cleanup()
 
-	var connection *agent.Conn
-
-	switch options.Platform {
-	case "android":
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return fmt.Errorf("agent listener: %w", err)
-		}
-		defer listener.Close()
-		agentPort := listener.Addr().(*net.TCPAddr).Port
-
-		if err := android.AdbReverse(socketName, agentPort); err != nil {
-			return fmt.Errorf("adb reverse: %w", err)
-		}
-		defer func() {
-			if err := android.AdbReverseRemove(socketName); err != nil {
-				fmt.Fprintf(stdout, "warning: adb reverse cleanup: %v\n", err)
-			}
-		}()
-		fmt.Fprintf(stdout, "forwarded localabstract:%s -> tcp:%d\n", socketName, agentPort)
-
-		agentServer := agent.NewServer(listener)
-
-		type acceptResult struct {
-			conn *agent.Conn
-			err  error
-		}
-		acceptChannel := make(chan acceptResult, 1)
-		go func() {
-			acceptCtx, cancel := context.WithTimeout(ctx, sdkAcceptTimeout)
-			defer cancel()
-			conn, acceptErr := agentServer.Accept(acceptCtx)
-			acceptChannel <- acceptResult{conn: conn, err: acceptErr}
-		}()
-
-		if err := activeDriver.Launch(ctx, options.BundleID, false, nil); err != nil {
-			return fmt.Errorf("launch app: %w", err)
-		}
-		fmt.Fprintf(stdout, "launched %s; waiting for SDK to connect (%.0fs timeout)\n", options.BundleID, sdkAcceptTimeout.Seconds())
-
-		result := <-acceptChannel
-		if result.err != nil {
-			return fmt.Errorf("accept SDK: %w", result.err)
-		}
-		connection = result.conn
-		defer connection.Close()
-		hello := connection.Hello()
-		fmt.Fprintf(stdout, "SDK connected: platform=%s app=%s sdk=%s\n", hello.Platform, hello.AppPackage, hello.Version)
-
-	case "ios":
-		// iOS simulator shares the Mac's loopback — no port forwarding needed.
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return fmt.Errorf("agent listener: %w", err)
-		}
-		defer listener.Close()
-		agentPort := listener.Addr().(*net.TCPAddr).Port
-
-		agentServer := agent.NewServer(listener)
-
-		type acceptResult struct {
-			conn *agent.Conn
-			err  error
-		}
-		acceptChannel := make(chan acceptResult, 1)
-		go func() {
-			acceptCtx, cancel := context.WithTimeout(ctx, sdkAcceptTimeout)
-			defer cancel()
-			conn, acceptErr := agentServer.Accept(acceptCtx)
-			acceptChannel <- acceptResult{conn: conn, err: acceptErr}
-		}()
-
-		// Launch app via XCTest with SANDERLING_PORT so the SDK can connect.
-		if err := activeDriver.Launch(ctx, options.BundleID, false, map[string]string{
-			"SANDERLING_PORT": strconv.Itoa(agentPort),
-		}); err != nil {
-			return fmt.Errorf("launch app: %w", err)
-		}
-		fmt.Fprintf(stdout, "iOS app launched with SANDERLING_PORT=%d; waiting for SDK (%.0fs timeout)\n", agentPort, sdkAcceptTimeout.Seconds())
-
-		result := <-acceptChannel
-		if result.err != nil {
-			return fmt.Errorf("accept SDK: %w", result.err)
-		}
-		connection = result.conn
-		defer connection.Close()
-		hello := connection.Hello()
-		fmt.Fprintf(stdout, "SDK connected: platform=%s app=%s sdk=%s\n", hello.Platform, hello.AppPackage, hello.Version)
-
-	case "web":
-		fmt.Fprintln(stdout, "web mode: skipping SDK")
-		if err := activeDriver.Launch(ctx, options.BundleID, false, nil); err != nil {
-			return fmt.Errorf("launch app: %w", err)
-		}
+	if err := activeDriver.Launch(ctx, options.BundleID, false, nil); err != nil {
+		return fmt.Errorf("launch app: %w", err)
 	}
 
 	seed := options.Seed
@@ -211,15 +112,13 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 
 	fmt.Fprintf(stdout, "running for %s (seed=%d)\n", options.Duration, seed)
 	summary, err := runner.Run(ctx, runner.Options{
-		Duration:        options.Duration,
-		SnapshotTimeout: 5 * time.Second,
-		IdleTimeout:     1 * time.Second,
-		BundleID:        options.BundleID,
-		Connection:      connection,
-		Driver:          activeDriver,
-		Verifier:        verifierInstance,
-		TraceWriter:     traceWriter,
-		Logger:          newProgressLogger(stdout),
+		Duration:    options.Duration,
+		IdleTimeout: 1 * time.Second,
+		BundleID:    options.BundleID,
+		Driver:      activeDriver,
+		Verifier:    verifierInstance,
+		TraceWriter: traceWriter,
+		Logger:      newProgressLogger(stdout),
 	})
 
 	terminateCtx, terminateCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -268,13 +167,4 @@ func resolveSpecAPIPath(specPath string) string {
 		}
 	}
 	return ""
-}
-
-func pickFreePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port, nil
 }
