@@ -183,7 +183,8 @@ func match(element *Element, kind, value string) bool {
 	case "text":
 		return element.Text == value
 	case "desc":
-		return element.Description == value
+		// Exact match, or iOS merged label "desc, child text".
+		return element.Description == value || strings.HasPrefix(element.Description, value+", ")
 	case "descPrefix":
 		return strings.HasPrefix(element.Description, value)
 	default:
@@ -191,21 +192,34 @@ func match(element *Element, kind, value string) bool {
 	}
 }
 
-// boundsPattern matches "[l,t,r,b]" (4-value Maestro format).
+// boundsPattern matches "[l,t,r,b]" (4-value Android/Maestro format).
 var boundsPattern = regexp.MustCompile(`^\[(-?\d+),(-?\d+),(-?\d+),(-?\d+)\]$`)
 
+// boundsPatternTwo matches "[x1,y1][x2,y2]" (iOS XCUITest format).
+var boundsPatternTwo = regexp.MustCompile(`^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$`)
+
 func parseBounds(text string) (Bounds, error) {
-	m := boundsPattern.FindStringSubmatch(text)
-	if m == nil {
-		return Bounds{}, fmt.Errorf("bounds %q: not in [L,T,R,B] form", text)
-	}
-	coords := make([]int, 4)
-	for i := range 4 {
-		v, err := strconv.Atoi(m[i+1])
-		if err != nil {
-			return Bounds{}, err
+	if m := boundsPattern.FindStringSubmatch(text); m != nil {
+		coords := make([]int, 4)
+		for i := range 4 {
+			v, err := strconv.Atoi(m[i+1])
+			if err != nil {
+				return Bounds{}, err
+			}
+			coords[i] = v
 		}
-		coords[i] = v
+		return Bounds{Left: coords[0], Top: coords[1], Right: coords[2], Bottom: coords[3]}, nil
 	}
-	return Bounds{Left: coords[0], Top: coords[1], Right: coords[2], Bottom: coords[3]}, nil
+	if m := boundsPatternTwo.FindStringSubmatch(text); m != nil {
+		coords := make([]int, 4)
+		for i := range 4 {
+			v, err := strconv.Atoi(m[i+1])
+			if err != nil {
+				return Bounds{}, err
+			}
+			coords[i] = v
+		}
+		return Bounds{Left: coords[0], Top: coords[1], Right: coords[2], Bottom: coords[3]}, nil
+	}
+	return Bounds{}, fmt.Errorf("bounds %q: not in [L,T,R,B] or [x1,y1][x2,y2] form", text)
 }
