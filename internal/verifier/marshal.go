@@ -61,33 +61,34 @@ func stateObject(runtime *goja.Runtime, input stateInput) (*goja.Object, error) 
 
 func accessibilityObject(runtime *goja.Runtime, tree *hierarchy.Tree) *goja.Object {
 	accessibility := runtime.NewObject()
-	find := func(selector string) goja.Value {
+	find := func(call goja.FunctionCall) goja.Value {
 		if tree == nil {
 			return goja.Undefined()
 		}
-		element := tree.Find(selector)
-		if element == nil {
+		node := findNodeFromJS(runtime, tree, call.Argument(0))
+		if node == nil {
 			return goja.Undefined()
 		}
-		return elementObject(runtime, element, selector)
+		return nodeObject(runtime, node, selectorStringFromJS(call.Argument(0)))
 	}
-	findAll := func(selector string) []goja.Value {
+	findAll := func(call goja.FunctionCall) goja.Value {
 		if tree == nil {
-			return nil
+			return goja.Undefined()
 		}
-		elements := tree.FindAll(selector)
-		result := make([]goja.Value, len(elements))
-		for index, element := range elements {
-			result[index] = elementObject(runtime, element, selector)
+		nodes := findAllNodesFromJS(runtime, tree, call.Argument(0))
+		array := runtime.NewArray()
+		for i, n := range nodes {
+			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(call.Argument(0))))
 		}
-		return result
+		return array
 	}
 	_ = accessibility.Set("find", runtime.ToValue(find))
 	_ = accessibility.Set("findAll", runtime.ToValue(findAll))
 	return accessibility
 }
 
-func elementObject(runtime *goja.Runtime, element *hierarchy.Element, selector string) goja.Value {
+func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) goja.Value {
+	element := &node.Element
 	object := runtime.NewObject()
 	centerX, centerY := element.Bounds.Center()
 	_ = object.Set("id", element.ResourceID)
@@ -108,7 +109,127 @@ func elementObject(runtime *goja.Runtime, element *hierarchy.Element, selector s
 	_ = bounds.Set("right", element.Bounds.Right)
 	_ = bounds.Set("bottom", element.Bounds.Bottom)
 	_ = object.Set("bounds", bounds)
+	attrs := runtime.NewObject()
+	for k, v := range element.Attributes {
+		_ = attrs.Set(k, v)
+	}
+	_ = object.Set("attrs", attrs)
+	childFind := func(call goja.FunctionCall) goja.Value {
+		arg := call.Argument(0)
+		childNode := findNodeInSubtreeFromJS(runtime, node, arg)
+		if childNode == nil {
+			return goja.Undefined()
+		}
+		return nodeObject(runtime, childNode, selectorStringFromJS(arg))
+	}
+	childFindAll := func(call goja.FunctionCall) goja.Value {
+		arg := call.Argument(0)
+		childNodes := findAllNodesInSubtreeFromJS(runtime, node, arg)
+		array := runtime.NewArray()
+		for i, n := range childNodes {
+			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(arg)))
+		}
+		return array
+	}
+	_ = object.Set("find", runtime.ToValue(childFind))
+	_ = object.Set("findAll", runtime.ToValue(childFindAll))
 	return object
+}
+
+// findNodeFromJS dispatches a JS value (string or object) to Tree-level node lookup.
+func findNodeFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Value) *hierarchy.Node {
+	if goja.IsUndefined(arg) || goja.IsNull(arg) {
+		return nil
+	}
+	if tree == nil {
+		return nil
+	}
+	if s, ok := arg.Export().(string); ok {
+		return tree.FindNode(s)
+	}
+	sel := selectorFromJSObject(runtime, arg)
+	if len(sel.Filters) == 0 {
+		return nil
+	}
+	return tree.Root.FindBySelector(sel)
+}
+
+// findAllNodesFromJS dispatches a JS value to Tree-level multi-node lookup.
+func findAllNodesFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Value) []*hierarchy.Node {
+	if goja.IsUndefined(arg) || goja.IsNull(arg) || tree == nil {
+		return nil
+	}
+	if s, ok := arg.Export().(string); ok {
+		return tree.FindAllNodes(s)
+	}
+	sel := selectorFromJSObject(runtime, arg)
+	if len(sel.Filters) == 0 {
+		return nil
+	}
+	return tree.Root.FindAllBySelector(sel)
+}
+
+// findNodeInSubtreeFromJS dispatches a JS value to Node-level scoped lookup.
+func findNodeInSubtreeFromJS(runtime *goja.Runtime, node *hierarchy.Node, arg goja.Value) *hierarchy.Node {
+	if goja.IsUndefined(arg) || goja.IsNull(arg) {
+		return nil
+	}
+	if s, ok := arg.Export().(string); ok {
+		return node.Find(s)
+	}
+	sel := selectorFromJSObject(runtime, arg)
+	if len(sel.Filters) == 0 {
+		return nil
+	}
+	return node.FindBySelector(sel)
+}
+
+// findAllNodesInSubtreeFromJS dispatches a JS value to Node-level scoped multi-lookup.
+func findAllNodesInSubtreeFromJS(runtime *goja.Runtime, node *hierarchy.Node, arg goja.Value) []*hierarchy.Node {
+	if goja.IsUndefined(arg) || goja.IsNull(arg) {
+		return nil
+	}
+	if s, ok := arg.Export().(string); ok {
+		return node.FindAll(s)
+	}
+	sel := selectorFromJSObject(runtime, arg)
+	if len(sel.Filters) == 0 {
+		return nil
+	}
+	return node.FindAllBySelector(sel)
+}
+
+// selectorFromJSObject converts a JS object {attr: value, ...} into a Selector.
+func selectorFromJSObject(runtime *goja.Runtime, arg goja.Value) hierarchy.Selector {
+	obj := arg.ToObject(runtime)
+	if obj == nil {
+		return hierarchy.Selector{}
+	}
+	var sel hierarchy.Selector
+	for _, key := range obj.Keys() {
+		if key == tagSelector {
+			continue
+		}
+		val := obj.Get(key)
+		if val == nil || goja.IsUndefined(val) {
+			continue
+		}
+		sel.Filters = append(sel.Filters, hierarchy.AttrFilter{Attr: key, Value: val.String()})
+	}
+	return sel
+}
+
+// selectorStringFromJS returns a string representation of the selector argument
+// for tagging returned element objects (used by selectorOf to reconstruct the
+// selector when the element is passed back as an action target).
+func selectorStringFromJS(arg goja.Value) string {
+	if goja.IsUndefined(arg) || goja.IsNull(arg) {
+		return ""
+	}
+	if s, ok := arg.Export().(string); ok {
+		return s
+	}
+	return arg.String()
 }
 
 func lastActionObject(runtime *goja.Runtime, action *Action) goja.Value {
