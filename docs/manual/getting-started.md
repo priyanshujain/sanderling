@@ -4,20 +4,18 @@ title: Getting started
 
 # Getting started
 
-Install the CLI, link the SDK into your debug build, run a spec.
+Install the CLI, run a spec.
 
 ## Prerequisites
 
 **Android / iOS:**
 
 - An Android emulator with API level 30 or newer (or a connected device).
-- The app under test built as a debug variant with the sanderling Android SDK linked in.
 - `adb` on your PATH.
 
 **Web:**
 
 - Chrome installed. sanderling drives it via CDP; no other setup required.
-- No in-app SDK needed.
 
 Run `sanderling doctor` to check the host environment.
 
@@ -33,14 +31,6 @@ curl -fsSL https://raw.githubusercontent.com/priyanshujain/sanderling/master/ins
 
 ```sh
 npm install --save-dev @sanderling/spec
-```
-
-### Android SDK ([Maven Central](https://central.sonatype.com/artifact/io.github.priyanshujain.sanderling/sdk-android))
-
-```kotlin
-dependencies {
-    implementation("io.github.priyanshujain.sanderling:sdk-android:<version>")
-}
 ```
 
 ## Your first run

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -79,4 +80,13 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 		}
 	}
 	return driverClient, cleanup, nil
+}
+
+func pickFreePort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port, nil
 }

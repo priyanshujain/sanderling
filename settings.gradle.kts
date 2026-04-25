@@ -17,5 +17,3 @@ dependencyResolutionManagement {
 rootProject.name = "sanderling"
 
 include(":sidecar")
-include(":sdk-android")
-project(":sdk-android").projectDir = file("sdk/android")

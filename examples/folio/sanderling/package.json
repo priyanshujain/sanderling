@@ -3,6 +3,6 @@
   "private": true,
   "description": "Minimal sanderling integration example.",
   "devDependencies": {
-    "@sanderling/spec": "^0.0.1-rc4"
+    "@sanderling/spec": "file:../../../pkg/spec"
   }
 }

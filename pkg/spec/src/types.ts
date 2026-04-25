@@ -3,6 +3,13 @@ export type Snapshots = Record<string, unknown>;
 export interface AccessibilityElement {
   id?: string;
   text?: string;
+  desc?: string;
+  class?: string;
+  clickable?: boolean;
+  enabled?: boolean;
+  checked?: boolean;
+  focused?: boolean;
+  selected?: boolean;
   bounds?: { left: number; top: number; right: number; bottom: number };
   x?: number;
   y?: number;

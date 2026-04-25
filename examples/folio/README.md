@@ -10,7 +10,6 @@ sanderling runs its property-based specs against.
 - Kotlin Multiplatform + Compose Multiplatform (shared UI)
 - kotlinx.serialization for file-backed persistence
 - kotlinx.coroutines for state flows
-- sanderling `sdk-android` for harness integration on Android
 
 ## Prerequisites
 
@@ -70,9 +69,9 @@ Traces land in `./sanderling/runs/<timestamp>/`.
 
 ## How it connects to sanderling
 
-- `composeApp/src/androidMain/.../FolioApplication.kt` calls `Sanderling.start(this)`
-  and registers snapshot extractors (`logged_in`, `account_count`,
-  `total_balance`, `route`)
-- `sanderling/spec.ts` imports `@sanderling/spec`, reads those snapshots, asserts
-  properties, and weights the actions the fuzzer picks from
+- UI elements expose state via content descriptions (`account:$id:$balance`,
+  `ledger_row:$id:$signed`, `ledger_balance:$cents`, `active_account:$id`,
+  `focused_input:$field`)
+- `sanderling/spec.ts` imports `@sanderling/spec`, reads state via `s.ax.*`,
+  asserts properties, and weights the actions the fuzzer picks from
 - `just test` invokes `sanderling test` against the installed APK

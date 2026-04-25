@@ -75,7 +75,7 @@ fun LedgerScreen(accountId: String) {
     val balance = balanceOf(txns)
 
     Screen(
-        modifier = Modifier.testTag("LedgerScreen"),
+        modifier = Modifier.testTag("LedgerScreen").semantics { contentDescription = "LedgerScreen" },
         header = {
             Header(
                 title = account.name,
@@ -92,6 +92,8 @@ fun LedgerScreen(accountId: String) {
             )
         },
     ) {
+        Box(Modifier.size(1.dp).semantics { contentDescription = "active_account:$accountId" })
+        Box(Modifier.size(1.dp).semantics { contentDescription = "ledger_balance:$balance" })
         Card {
             Text("BALANCE", style = Type.label, color = t.textMuted)
             Text(formatCents(balance), style = Type.balance, color = t.text)
@@ -136,7 +138,7 @@ private fun TxnRow(id: String, type: TxnType, amount: Long, note: String, date: 
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 14.dp)
-            .semantics(mergeDescendants = true) { contentDescription = "txn_row:$id" },
+            .semantics(mergeDescendants = true) { contentDescription = "ledger_row:$id:$signed" },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

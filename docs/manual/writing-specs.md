@@ -11,7 +11,6 @@ import { extract, always, now, actions, weighted, Tap, taps, swipes } from "@san
 
 // 1. Extractors pull values from each observed state.
 const loggedIn = extract((s) => !!s.ax.find("id:home-tab-bar"));
-const cartCount = extract<number>((s) => (s.snapshots.cart_count as number) ?? 0);
 
 // 2. Properties are LTL formulas evaluated every step.
 export const properties = {
@@ -34,7 +33,6 @@ What extractors see:
 ```ts
 interface State {
   ax: AccessibilityTree;               // view hierarchy
-  snapshots: Record<string, unknown>;  // values registered by the in-app SDK
   screen: { id: string; hash: string };
   lastAction: Action | null;
   logs: LogEntry[];                    // since previous state
@@ -44,8 +42,6 @@ interface State {
 ```
 
 `ax.find("text:Click me")`, `ax.find("id:login-form")`, `ax.findAll("role:todo-row")` are the common accessors. Prefer stable testID-style identifiers over positional selectors, for the same reason you would in Espresso or XCUITest.
-
-`snapshots` is populated by the in-app SDK via `Sanderling.extract("name") { value }`. Use it when the UI does not expose a value you need, such as business-logic state or hidden fields.
 
 ## Pattern: preconditions (login, onboarding)
 
@@ -128,29 +124,6 @@ loginSucceedsWithin30s: eventually(() => loggedIn.current).within(30, "seconds")
 ```
 
 `within` takes `"milliseconds"`, `"seconds"`, or `"steps"`. Useful for liveness checks: the loading spinner eventually goes away, the deep link eventually lands on `/home`.
-
-## Pattern: snapshot-backed properties
-
-When the UI does not expose a value but the app knows it, use the SDK's extractor registry:
-
-```kotlin
-// in the app (Android)
-Sanderling.extract("cart_count") { store.cart.size }
-```
-
-```ts
-// in the spec
-const cartCount = extract<number>((s) => (s.snapshots.cart_count as number) ?? 0);
-
-export const properties = {
-  cartMonotonicAfterAdd: always(() => {
-    const previous = cartCount.previous;
-    return previous === undefined || cartCount.current >= previous;
-  }),
-};
-```
-
-This pattern lets you write properties against business logic that no UI element exposes.
 
 ## Pattern: weighted exploration sub-trees
 

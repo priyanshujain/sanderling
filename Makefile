@@ -8,7 +8,6 @@ BUF := buf
 GO_PACKAGES := ./...
 SIDECAR_JAR := sidecar/build/libs/sidecar-all.jar
 SIDECAR_EMBED := internal/sidecar/assets/sidecar-all.jar
-SDK_AAR := sdk/android/build/outputs/aar/sdk-android-release.aar
 SANDERLING_BIN := bin/sanderling
 
 DOCS_SRC      := $(shell find docs -type f -name '*.md' -not -path 'docs/_*')
@@ -22,7 +21,7 @@ DOCS_TEMPLATE := docs/_template/page.html
 INSPECT_DIST := internal/inspect/dist
 WEB_DIST := inspect-ui/dist
 
-.PHONY: bootstrap proto sidecar sdk-android sdk-android-publish sanderling install test test-go test-kotlin test-spec-api web-typecheck web-build web-dev inspect-dev docs clean release-cli release-android-local release-npm-dry
+.PHONY: bootstrap proto sidecar sanderling install test test-go test-kotlin test-spec-api web-typecheck web-build web-dev inspect-dev docs clean release-cli release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -34,12 +33,6 @@ proto:
 	$(BUF) generate
 
 sidecar: $(SIDECAR_JAR)
-
-sdk-android:
-	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:assembleRelease
-
-sdk-android-publish:
-	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:publishToMavenLocal
 
 sanderling: $(SANDERLING_BIN)
 
@@ -75,13 +68,13 @@ $(SIDECAR_EMBED): $(SIDECAR_JAR)
 	mkdir -p $(dir $@)
 	cp $< $@
 
-test: test-go test-kotlin test-spec-api web-typecheck
+test: test-go test-spec-api web-typecheck
 
 test-go:
 	$(GO) test $(GO_PACKAGES)
 
 test-kotlin:
-	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test :sdk-android:testDebugUnitTest
+	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test
 
 test-spec-api:
 	cd pkg/spec && npm test --silent
@@ -117,10 +110,6 @@ clean:
 
 release-cli: $(SIDECAR_JAR)
 	goreleaser release --snapshot --clean
-
-release-android-local:
-	@if [ -f .env.local ]; then set -a; . ./.env.local; set +a; fi; \
-	  ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sdk-android:publishToMavenLocal -Psanderling.version=0.0.0-local
 
 release-npm-dry:
 	cd pkg/spec && npm ci && npm run build && npm pack --dry-run
