@@ -20,20 +20,13 @@ interface LedgerRow {
   signed: number;
 }
 
-function parseAccount(desc: string | undefined): Account {
-  const parts = (desc ?? "").split(":");
-  return { id: parts[1] ?? "", balance: Number(parts[2]) };
-}
-
-function parseLedgerRow(desc: string | undefined): LedgerRow {
-  const parts = (desc ?? "").split(":");
-  return { id: parts[1] ?? "", signed: Number(parts[2]) };
-}
-
-function parseCents(desc: string | null | undefined): number {
-  if (!desc) return 0;
-  const parts = desc.split(":");
-  return Number(parts[1]) || 0;
+// Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to integer cents.
+// formatCents always uses $ prefix, . as decimal, , as thousands separator.
+function parseDollarCents(text: string | undefined): number {
+  if (!text) return 0;
+  const sign = text.startsWith("-") ? -1 : 1;
+  const digits = text.replace(/[^0-9]/g, "");
+  return digits ? sign * parseInt(digits, 10) : 0;
 }
 
 // Route and auth state derived from screen root nodes
@@ -49,15 +42,25 @@ const route = extract<string | null>(s => {
 
 // All element lookups scoped through their screen root
 const accounts = extract(s =>
-  s.ax.find({ accessibilityText: "HomeScreen" })?.findAll("descPrefix:account:")
-    .map(el => parseAccount(el.desc)) ?? []);
+  s.ax.find({ accessibilityText: "HomeScreen" })?.findAll("descPrefix:account_card:")
+    .map(el => ({
+      id: el.desc?.split(":")[1] ?? "",
+      balance: parseDollarCents(el.find({ accessibilityText: "account_balance" })?.text),
+    })) ?? []);
 const ledgerRows = extract(s =>
   s.ax.find({ accessibilityText: "LedgerScreen" })?.findAll("descPrefix:ledger_row:")
-    .map(el => parseLedgerRow(el.desc)) ?? []);
+    .map(el => ({
+      id: el.desc?.split(":")[1] ?? "",
+      signed: parseDollarCents(el.find({ accessibilityText: "txn_amount" })?.text),
+    })) ?? []);
 const ledgerBalance = extract(s =>
-  parseCents(s.ax.find({ accessibilityText: "LedgerScreen" })?.find("descPrefix:ledger_balance:")?.desc));
-const activeAccountId = extract(s =>
-  s.ax.find({ accessibilityText: "LedgerScreen" })?.find("descPrefix:active_account:")?.desc?.split(":")[1] ?? null);
+  parseDollarCents(
+    s.ax.find({ accessibilityText: "LedgerScreen" })?.find({ accessibilityText: "ledger_balance_display" })?.text
+  ));
+const activeAccountId = extract(s => {
+  const desc = s.ax.find("descPrefix:LedgerScreen:")?.desc;
+  return desc ? (desc.split(":")[1] ?? null) : null;
+});
 
 // focusedInput lives in the app root (not inside any screen), so unscoped
 const focusedInput = extract(s =>
@@ -82,7 +85,7 @@ const txnAmountField = extract(s =>
 const txnSubmit = extract(s =>
   s.ax.find({ accessibilityText: "AddTransactionScreen" })?.find({ accessibilityText: "txn_submit" }));
 const accountCards = extract(s =>
-  s.ax.find({ accessibilityText: "HomeScreen" })?.findAll("descPrefix:account:") ?? []);
+  s.ax.find({ accessibilityText: "HomeScreen" })?.findAll("descPrefix:account_card:") ?? []);
 const backButton = extract(s => s.ax.find("desc:Back"));
 
 // Property 1: every new account starts with balance === 0
