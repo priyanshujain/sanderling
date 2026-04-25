@@ -14,7 +14,6 @@
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
-    "@sanderling/spec": "^0.0.1-rc4",
     "@eslint/js": "^9.39.4",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
