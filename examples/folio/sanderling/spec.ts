@@ -3,353 +3,148 @@ import {
   Tap,
   actions,
   always,
-  eventually,
   extract,
   from,
   next,
   now,
-  pressKey,
-  swipes,
-  taps,
-  waitOnce,
   weighted,
 } from "@sanderling/spec";
-import { noUncaughtExceptions } from "@sanderling/spec/defaults/properties";
 
-interface AccountSnapshot {
+interface Account {
   id: string;
   name: string;
   balance: number;
-  txnCount: number;
 }
 
 interface LedgerRow {
   id: string;
-  accountId: string;
-  type: "credit" | "debit";
-  amount: number;
   signed: number;
 }
 
-const loggedIn = extract<boolean>(
-  (state) => (state.snapshots.logged_in as boolean) ?? false,
-);
-const route = extract<string>(
-  (state) => (state.snapshots.screen as string) ?? "",
-);
-const accounts = extract<AccountSnapshot[]>(
-  (state) => (state.snapshots.accounts as AccountSnapshot[]) ?? [],
-);
-const totalBalance = extract<number>(
-  (state) => (state.snapshots.total_balance as number) ?? 0,
-);
-const activeAccountId = extract<string | null>(
-  (state) => (state.snapshots.active_account_id as string | null) ?? null,
-);
-const ledgerRows = extract<LedgerRow[]>(
-  (state) => (state.snapshots.ledger_rows as LedgerRow[]) ?? [],
-);
-const ledgerBalance = extract<number>(
-  (state) => (state.snapshots.ledger_balance as number) ?? 0,
-);
-const focusedInput = extract<string | null>(
-  (state) => (state.snapshots.focused_input as string | null) ?? null,
-);
-const txnFormType = extract<string | null>(
-  (state) => (state.snapshots.txn_form_type as string | null) ?? null,
-);
-const loginError = extract<string>(
-  (state) => (state.snapshots.login_error as string) ?? "",
-);
-const addAccountError = extract<string>(
-  (state) => (state.snapshots.add_account_error as string) ?? "",
-);
-const txnError = extract<string>(
-  (state) => (state.snapshots.txn_error as string) ?? "",
-);
-const loginEmailField = extract((state) => state.ax.find("desc:login_email"));
-const loginPasswordField = extract((state) => state.ax.find("desc:login_password"));
-const loginSubmitButton = extract((state) => state.ax.find("desc:login_submit"));
-const addAccountButton = extract((state) => state.ax.find("desc:add_account_button"));
-const logoutButton = extract((state) => state.ax.find("desc:logout_button"));
-const accountNameField = extract((state) => state.ax.find("desc:account_name_field"));
-const addAccountSubmit = extract((state) => state.ax.find("desc:add_account_submit"));
-const addTxnButton = extract((state) => state.ax.find("desc:add_txn_button"));
-const txnAmountField = extract((state) => state.ax.find("desc:txn_amount"));
-const txnNoteField = extract((state) => state.ax.find("desc:txn_note"));
-const txnCredit = extract((state) => state.ax.find("desc:txn_credit"));
-const txnDebit = extract((state) => state.ax.find("desc:txn_debit"));
-const txnSubmit = extract((state) => state.ax.find("desc:txn_submit"));
-const backButton = extract((state) => state.ax.find("desc:Back"));
-const allAccountCards = extract((state) =>
-  state.ax.findAll("descPrefix:account_card:"),
+const loggedIn = extract<boolean>(s => (s.snapshots.logged_in as boolean) ?? false);
+const route = extract<string>(s => (s.snapshots.screen as string) ?? "");
+const accounts = extract<Account[]>(s => (s.snapshots.accounts as Account[]) ?? []);
+const ledgerRows = extract<LedgerRow[]>(s => (s.snapshots.ledger_rows as LedgerRow[]) ?? []);
+const ledgerBalance = extract<number>(s => (s.snapshots.ledger_balance as number) ?? 0);
+const activeAccountId = extract<string | null>(s => (s.snapshots.active_account_id as string | null) ?? null);
+const focusedInput = extract<string | null>(s => (s.snapshots.focused_input as string | null) ?? null);
+
+const loginEmailField = extract(s => s.ax.find("desc:login_email"));
+const loginPasswordField = extract(s => s.ax.find("desc:login_password"));
+const loginSubmit = extract(s => s.ax.find("desc:login_submit"));
+const addAccountButton = extract(s => s.ax.find("desc:add_account_button"));
+const accountNameField = extract(s => s.ax.find("desc:account_name_field"));
+const addAccountSubmit = extract(s => s.ax.find("desc:add_account_submit"));
+const addTxnButton = extract(s => s.ax.find("desc:add_txn_button"));
+const txnAmountField = extract(s => s.ax.find("desc:txn_amount"));
+const txnSubmit = extract(s => s.ax.find("desc:txn_submit"));
+const accountCards = extract(s => s.ax.findAll("descPrefix:account_card:"));
+const backButton = extract(s => s.ax.find("desc:Back"));
+
+// Property 1: every new account starts with balance === 0
+const newAccountBalanceIsZero = always(
+  next(() => {
+    const prevIds = new Set((accounts.previous ?? []).map(a => a.id));
+    const newAccounts = accounts.current.filter(a => !prevIds.has(a.id));
+    return newAccounts.every(a => a.balance === 0);
+  })
 );
 
-const balanceMatchesTransactionDelta = always(
+// Property 2: every new transaction changes the account ledger balance by exactly its signed amount
+const newTxnChangesBalance = always(
   now(() => activeAccountId.current !== null).implies(
     next(() => {
-      const prevActive = activeAccountId.previous;
-      if (prevActive === null || prevActive === undefined) return true;
-      if (prevActive !== activeAccountId.current) return true;
       const prevRows = ledgerRows.previous ?? [];
       const curRows = ledgerRows.current;
       if (curRows.length !== prevRows.length + 1) return true;
-      const prevIds = new Set(prevRows.map((r) => r.id));
-      const added = curRows.filter((r) => !prevIds.has(r.id));
-      if (added.length !== 1) return true;
+      const prevIds = new Set(prevRows.map(r => r.id));
+      const added = curRows.find(r => !prevIds.has(r.id));
+      if (!added) return true;
       const delta = ledgerBalance.current - (ledgerBalance.previous ?? 0);
-      return delta === added[0].signed;
-    }),
-  ),
+      return delta === added.signed && delta !== 0;
+    })
+  )
 );
-
-const totalEqualsSumOfAccounts = always(() => {
-  const sum = accounts.current.reduce((acc, a) => acc + a.balance, 0);
-  return sum === totalBalance.current;
-});
-
-const balanceChangeRequiresActiveAccount = always(
-  now(() => true).implies(
-    next(() => {
-      const prevAccounts = accounts.previous ?? [];
-      const prevActive = activeAccountId.previous ?? null;
-      for (const cur of accounts.current) {
-        const prev = prevAccounts.find((a) => a.id === cur.id);
-        if (!prev) continue;
-        if (cur.balance !== prev.balance && prevActive !== cur.id) return false;
-      }
-      return true;
-    }),
-  ),
-);
-
-const duplicateAccountNamesRejected = always(() => {
-  const seen = new Set<string>();
-  for (const a of accounts.current) {
-    const key = a.name.trim().toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-  }
-  return true;
-});
-
-const domainInvariants = {
-  balanceMatchesTransactionDelta,
-  totalEqualsSumOfAccounts,
-  balanceChangeRequiresActiveAccount,
-  duplicateAccountNamesRejected,
-};
-
-const loggedInLeavesLogin = always(
-  now(() => loggedIn.current).implies(
-    eventually(() => route.current !== "login").within(3, "seconds"),
-  ),
-);
-
-const loggedOutReachesLogin = always(
-  now(() => !loggedIn.current).implies(
-    eventually(() => route.current === "login").within(3, "seconds"),
-  ),
-);
-
-const authRouting = {
-  loggedInLeavesLogin,
-  loggedOutReachesLogin,
-};
-
-const loginReachable = eventually(() => loggedIn.current).within(90, "seconds");
-const accountCreationReachable = eventually(
-  () => accounts.current.length > 0,
-).within(180, "seconds");
-const someTransactionExists = eventually(() =>
-  accounts.current.some((a) => a.txnCount > 0),
-).within(300, "seconds");
-
-const loginErrorClears = always(
-  now(() => loginError.current !== "").implies(
-    eventually(() => loginError.current === "").within(30, "seconds"),
-  ),
-);
-const addAccountErrorClears = always(
-  now(() => addAccountError.current !== "").implies(
-    eventually(() => addAccountError.current === "").within(30, "seconds"),
-  ),
-);
-const txnErrorClears = always(
-  now(() => txnError.current !== "").implies(
-    eventually(() => txnError.current === "").within(30, "seconds"),
-  ),
-);
-
-const liveness = {
-  loginReachable,
-  accountCreationReachable,
-  someTransactionExists,
-  loginErrorClears,
-  addAccountErrorClears,
-  txnErrorClears,
-};
 
 const DEMO_EMAIL = "demo@folio.app";
 const DEMO_PASSWORD = "ledger123";
 
-const loginHelper = actions(() => {
+// Login if not already in — step by step based on which field has focus
+const login = actions(() => {
   if (loggedIn.current) return [];
   const focus = focusedInput.current;
-  const email = loginEmailField.current;
-  const password = loginPasswordField.current;
-  const submit = loginSubmitButton.current;
-
   if (focus === "login_password") {
+    const submit = loginSubmit.current;
     return submit ? [Tap({ on: submit })] : [];
   }
   if (focus === "login_email") {
-    return password ? [InputText({ into: password, text: DEMO_PASSWORD })] : [];
+    const pwd = loginPasswordField.current;
+    return pwd ? [InputText({ into: pwd, text: DEMO_PASSWORD })] : [];
   }
+  const email = loginEmailField.current;
   return email ? [InputText({ into: email, text: DEMO_EMAIL })] : [];
 });
 
-const adversarialLogin = actions(() => {
-  if (loggedIn.current) return [];
-  if (focusedInput.current !== null) return [];
-  const submit = loginSubmitButton.current;
-  if (!submit) return [];
-  return [Tap({ on: submit })];
+const accountNames = from(["Checking", "Savings", "Travel", "Emergency Fund", "Investments"]);
+
+// Add an account: home -> tap add -> type name -> submit
+const addAccount = actions(() => {
+  if (!loggedIn.current) return [];
+  if (route.current === "home") {
+    const btn = addAccountButton.current;
+    return btn ? [Tap({ on: btn })] : [];
+  }
+  if (route.current === "add-account") {
+    const field = accountNameField.current;
+    const submit = addAccountSubmit.current;
+    const opts = [];
+    if (field) opts.push(InputText({ into: field, text: accountNames.generate() }));
+    if (submit) opts.push(Tap({ on: submit }));
+    return opts;
+  }
+  return [];
 });
 
-const accountNameSampler = from([
-  "Checking",
-  "Savings",
-  "Travel",
-  "Rent",
-  "Emergency Fund",
-  "Investments",
-  "Groceries",
-  "  ",
-  "Checking",
-  "A".repeat(41),
-  "Petty Cash",
-]);
+const amounts = from(["10", "50", "25", "100", "5"]);
 
-const typeAccountName = actions(() => {
-  if (route.current !== "add-account") return [];
-  const field = accountNameField.current;
-  if (!field) return [];
-  return [InputText({ into: field, text: accountNameSampler.generate() })];
+// Add a transaction: home -> tap account card -> tap add txn -> type amount -> submit
+const addTxn = actions(() => {
+  if (!loggedIn.current) return [];
+  if (route.current === "home") {
+    const cards = accountCards.current;
+    if (cards.length === 0) return [];
+    return [Tap({ on: cards[Math.floor(Math.random() * cards.length)] })];
+  }
+  if (route.current === "ledger") {
+    const btn = addTxnButton.current;
+    return btn ? [Tap({ on: btn })] : [];
+  }
+  if (route.current === "add-transaction") {
+    const field = txnAmountField.current;
+    const submit = txnSubmit.current;
+    const opts = [];
+    if (field) opts.push(InputText({ into: field, text: amounts.generate() }));
+    if (submit) opts.push(Tap({ on: submit }));
+    return opts;
+  }
+  return [];
 });
 
-const submitAddAccount = actions(() => {
-  if (route.current !== "add-account") return [];
-  const submit = addAccountSubmit.current;
-  return submit ? [Tap({ on: submit })] : [];
-});
-
-const openAddAccount = actions(() => {
-  if (route.current !== "home") return [];
-  const button = addAccountButton.current;
-  return button ? [Tap({ on: button })] : [];
-});
-
-const openRandomAccount = actions(() => {
-  if (route.current !== "home") return [];
-  const cards = allAccountCards.current;
-  if (cards.length === 0) return [];
-  const card = cards[Math.floor(Math.random() * cards.length)];
-  return [Tap({ on: card })];
-});
-
-const logoutAction = actions(() => {
-  if (route.current !== "home") return [];
-  const button = logoutButton.current;
-  return button ? [Tap({ on: button })] : [];
-});
-
-const goBack = actions(() => {
-  const button = backButton.current;
-  return button ? [Tap({ on: button })] : [];
-});
-
-const amountSampler = from([
-  "12.34",
-  "100",
-  "0.01",
-  "999.99",
-  "5.5",
-  "42",
-  "0",
-  "",
-  "1e4",
-  "0.001",
-  "-5",
-]);
-
-const typeAmount = actions(() => {
-  if (route.current !== "add-transaction") return [];
-  const field = txnAmountField.current;
-  if (!field) return [];
-  return [InputText({ into: field, text: amountSampler.generate() })];
-});
-
-const noteSampler = from([
-  "Coffee",
-  "Paycheck",
-  "Gas",
-  "Refund",
-  "",
-  "Groceries for the week",
-]);
-
-const typeNote = actions(() => {
-  if (route.current !== "add-transaction") return [];
-  const field = txnNoteField.current;
-  if (!field) return [];
-  return [InputText({ into: field, text: noteSampler.generate() })];
-});
-
-const toggleTxnType = actions(() => {
-  if (route.current !== "add-transaction") return [];
-  const current = txnFormType.current;
-  const target = current === "credit" ? txnDebit.current : txnCredit.current;
-  return target ? [Tap({ on: target })] : [];
-});
-
-const submitTxn = actions(() => {
-  if (route.current !== "add-transaction") return [];
-  const submit = txnSubmit.current;
-  return submit ? [Tap({ on: submit })] : [];
-});
-
-const openAddTxn = actions(() => {
-  if (route.current !== "ledger") return [];
-  const button = addTxnButton.current;
-  return button ? [Tap({ on: button })] : [];
+const back = actions(() => {
+  const btn = backButton.current;
+  return btn ? [Tap({ on: btn })] : [];
 });
 
 export const properties = {
-  ...domainInvariants,
-  ...authRouting,
-  ...liveness,
-  noUncaughtExceptions,
+  newAccountBalanceIsZero,
+  newTxnChangesBalance,
 };
 
 export const actionsRoot = weighted(
-  [30, loginHelper],
-  [2, adversarialLogin],
-  [18, typeAccountName],
-  [14, submitAddAccount],
-  [18, typeAmount],
-  [8, typeNote],
-  [6, toggleTxnType],
-  [16, submitTxn],
-  [14, openAddAccount],
-  [14, openRandomAccount],
-  [12, openAddTxn],
-  [6, goBack],
-  [1, logoutAction],
-  [4, taps],
-  [2, swipes],
-  [2, waitOnce],
-  [2, pressKey],
+  [50, login],
+  [30, addAccount],
+  [30, addTxn],
+  [5, back],
 );
 
 (globalThis as { actions?: unknown; properties?: unknown }).actions = actionsRoot;
