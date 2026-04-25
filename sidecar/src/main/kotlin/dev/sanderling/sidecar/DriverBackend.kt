@@ -382,7 +382,8 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
 
     init {
         dadb = buildDadb(serial)
-        driver = maestro.drivers.AndroidDriver(dadb, 7001, "localhost")
+        val hostPort = java.net.ServerSocket(0).use { it.localPort }
+        driver = maestro.drivers.AndroidDriver(dadb, hostPort, "localhost")
         driver.open()
     }
 
