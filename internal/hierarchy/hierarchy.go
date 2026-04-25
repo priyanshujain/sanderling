@@ -1,18 +1,24 @@
 // Package hierarchy parses the TreeNode JSON produced by the Maestro sidecar
 // and resolves selectors against it.
 //
-// Selector grammar (v1.0):
+// Selector grammar (v2.0):
 //
-//   Single selectors (global scan):
-//     id:<suffix>         - resource-id == suffix or ends with ":id/<suffix>"
-//     text:<value>        - exact text match
-//     desc:<value>        - exact content-desc match
-//     descPrefix:<prefix> - content-desc starts with prefix
+//	String selectors (global scan or element-scoped):
+//	  attribute:value      - substring match; exact for "true"/"false" booleans
+//	  id:<suffix>          - substring on resource-id / identifier (backward compat)
+//	  text:<value>         - substring on text attribute
+//	  desc:<value>         - substring on content-desc / accessibilityText
+//	  descPrefix:<prefix>  - starts-with on content-desc / accessibilityText
 //
-//   Path queries (segments separated by " > "):
-//     <sel> > <sel> > ... - each segment is matched within the subtree of the
-//                           previous match (any descendant, not just direct child)
-//     example: id:LoginScreen > desc:EmailInput
+//	Object selectors (multi-attribute AND, element-scoped or global):
+//	  { attr: value, ... } - all key/value pairs must match; substring / boolean semantics
+//
+//	Path queries (global scan only, string form):
+//	  <sel> > <sel> > ...  - each segment matched within subtree of previous match
+//
+// Cross-platform aliases are expanded automatically: "label" / "accessibilityLabel"
+// resolve to accessibilityText; "content-desc" also checks accessibilityText and
+// vice-versa; "identifier" / "accessibilityIdentifier" resolve to resource-id.
 package hierarchy
 
 import (
@@ -51,13 +57,14 @@ type Element struct {
 	Package     string `json:"package,omitempty"`
 	// Screen holds the current route/screen name when set by the driver on the
 	// root element (web platform only; empty for native platforms).
-	Screen    string `json:"screen,omitempty"`
-	Clickable bool   `json:"clickable,omitempty"`
-	Enabled   bool   `json:"enabled,omitempty"`
-	Checked   bool   `json:"checked,omitempty"`
-	Focused   bool   `json:"focused,omitempty"`
-	Selected  bool   `json:"selected,omitempty"`
-	Bounds    Bounds `json:"bounds"`
+	Screen     string            `json:"screen,omitempty"`
+	Clickable  bool              `json:"clickable,omitempty"`
+	Enabled    bool              `json:"enabled,omitempty"`
+	Checked    bool              `json:"checked,omitempty"`
+	Focused    bool              `json:"focused,omitempty"`
+	Selected   bool              `json:"selected,omitempty"`
+	Bounds     Bounds            `json:"bounds"`
+	Attributes map[string]string `json:"attrs,omitempty"`
 }
 
 // Node is one node in the hierarchy tree.
@@ -81,6 +88,73 @@ type treeNodeJSON struct {
 	Focused    *bool             `json:"focused"`
 	Checked    *bool             `json:"checked"`
 	Selected   *bool             `json:"selected"`
+}
+
+// Selector describes a multi-attribute AND match.
+type Selector struct {
+	Filters []AttrFilter
+}
+
+// AttrFilter is a single attribute predicate within a Selector.
+type AttrFilter struct {
+	Attr  string
+	Value string
+}
+
+// attributeAliases maps user-written attribute names to the actual keys present
+// in the TreeNode attributes map. Both directions are listed so cross-platform
+// matching works regardless of which name the caller uses.
+var attributeAliases = map[string][]string{
+	// Android XML legacy name; web driver uses content-desc; Maestro normalises to accessibilityText
+	"content-desc": {"accessibilityText"},
+	// iOS AXElement / UIKit names
+	"label":              {"accessibilityText"},
+	"accessibilityLabel": {"accessibilityText"},
+	// accessibilityText is the canonical key; also check content-desc for Android/web
+	"accessibilityText": {"content-desc"},
+	// resource-id canonical key; also check identifier (iOS AXElement raw field)
+	"resource-id": {"identifier"},
+	// iOS identifier names
+	"identifier":              {"resource-id"},
+	"accessibilityIdentifier": {"resource-id"},
+	// iOS AXElement raw name for hintText
+	"placeholderValue": {"hintText"},
+	// iOS AXElement raw name for class
+	"elementType": {"class"},
+}
+
+// matchAttr returns true when the element has an attribute matching attr:value.
+// Alias expansion is applied so cross-platform names resolve correctly.
+// Boolean values ("true"/"false") use exact comparison; all others use substring.
+// Returns false gracefully when no candidate attribute has data.
+func matchAttr(element *Element, attr, value string) bool {
+	candidates := append([]string{attr}, attributeAliases[attr]...)
+	for _, key := range candidates {
+		attrVal, ok := element.Attributes[key]
+		if !ok || attrVal == "" {
+			continue
+		}
+		if value == "true" || value == "false" {
+			if attrVal == value {
+				return true
+			}
+		} else {
+			if strings.Contains(attrVal, value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// matchSelector returns true when all filters in sel match the element (AND semantics).
+func matchSelector(element *Element, sel Selector) bool {
+	for _, f := range sel.Filters {
+		if !matchAttr(element, f.Attr, f.Value) {
+			return false
+		}
+	}
+	return true
 }
 
 // Parse parses a Maestro TreeNode JSON hierarchy.
@@ -147,45 +221,125 @@ func elementFromNode(node *treeNodeJSON) *Element {
 		}
 	}
 
+	element.Attributes = make(map[string]string, len(attrs)+5)
+	for k, v := range attrs {
+		element.Attributes[k] = v
+	}
+	if node.Clickable != nil {
+		element.Attributes["clickable"] = strconv.FormatBool(*node.Clickable)
+	}
+	if node.Enabled != nil {
+		element.Attributes["enabled"] = strconv.FormatBool(*node.Enabled)
+	}
+	if node.Focused != nil {
+		element.Attributes["focused"] = strconv.FormatBool(*node.Focused)
+	}
+	if node.Checked != nil {
+		element.Attributes["checked"] = strconv.FormatBool(*node.Checked)
+	}
+	if node.Selected != nil {
+		element.Attributes["selected"] = strconv.FormatBool(*node.Selected)
+	}
+
 	return element
 }
 
 // Find returns the first element matching the selector, or nil.
 func (t *Tree) Find(selector string) *Element {
+	node := t.FindNode(selector)
+	if node == nil {
+		return nil
+	}
+	return &node.Element
+}
+
+// FindAll returns every element matching the selector.
+func (t *Tree) FindAll(selector string) []*Element {
+	nodes := t.FindAllNodes(selector)
+	elements := make([]*Element, len(nodes))
+	for i, n := range nodes {
+		elements[i] = &n.Element
+	}
+	return elements
+}
+
+// FindNode returns the first Node matching the selector, or nil.
+func (t *Tree) FindNode(selector string) *Node {
 	if strings.Contains(selector, " > ") {
-		return findPath(t.Root, strings.Split(selector, " > "))
+		return findPathNode(t.Root, strings.Split(selector, " > "))
 	}
 	kind, value, ok := parseSelector(selector)
 	if !ok {
 		return nil
 	}
-	for _, element := range t.Elements {
-		if match(element, kind, value) {
-			return element
+	nodes := searchSubtree(t.Root, kind, value)
+	if len(nodes) == 0 {
+		return nil
+	}
+	return nodes[0]
+}
+
+// FindAllNodes returns every Node matching the selector.
+func (t *Tree) FindAllNodes(selector string) []*Node {
+	if strings.Contains(selector, " > ") {
+		return findPathAllNodes(t.Root, strings.Split(selector, " > "))
+	}
+	kind, value, ok := parseSelector(selector)
+	if !ok {
+		return nil
+	}
+	return searchSubtree(t.Root, kind, value)
+}
+
+// Find returns the first Node in this node's subtree (descendants only) matching
+// the string selector. Path queries within the selector are not supported here.
+func (n *Node) Find(selector string) *Node {
+	kind, value, ok := parseSelector(selector)
+	if !ok {
+		return nil
+	}
+	for _, child := range n.Children {
+		if nodes := searchSubtree(child, kind, value); len(nodes) > 0 {
+			return nodes[0]
 		}
 	}
 	return nil
 }
 
-// FindAll returns every element matching the selector.
-func (t *Tree) FindAll(selector string) []*Element {
-	if strings.Contains(selector, " > ") {
-		return findPathAll(t.Root, strings.Split(selector, " > "))
-	}
+// FindAll returns all Nodes in this node's subtree (descendants only) matching
+// the string selector.
+func (n *Node) FindAll(selector string) []*Node {
 	kind, value, ok := parseSelector(selector)
 	if !ok {
 		return nil
 	}
-	var matches []*Element
-	for _, element := range t.Elements {
-		if match(element, kind, value) {
-			matches = append(matches, element)
-		}
+	var result []*Node
+	for _, child := range n.Children {
+		result = append(result, searchSubtree(child, kind, value)...)
 	}
-	return matches
+	return result
 }
 
-func findPath(root *Node, segments []string) *Element {
+// FindBySelector returns the first Node in this node's subtree matching sel (AND semantics).
+func (n *Node) FindBySelector(sel Selector) *Node {
+	for _, child := range n.Children {
+		if nodes := searchSubtreeBySelector(child, sel); len(nodes) > 0 {
+			return nodes[0]
+		}
+	}
+	return nil
+}
+
+// FindAllBySelector returns all Nodes in this node's subtree matching sel (AND semantics).
+func (n *Node) FindAllBySelector(sel Selector) []*Node {
+	var result []*Node
+	for _, child := range n.Children {
+		result = append(result, searchSubtreeBySelector(child, sel)...)
+	}
+	return result
+}
+
+func findPathNode(root *Node, segments []string) *Node {
 	if root == nil || len(segments) == 0 {
 		return nil
 	}
@@ -195,16 +349,16 @@ func findPath(root *Node, segments []string) *Element {
 	}
 	for _, node := range searchSubtree(root, kind, value) {
 		if len(segments) == 1 {
-			return &node.Element
+			return node
 		}
-		if result := findPathDescendants(node, segments[1:]); result != nil {
+		if result := findPathDescendantsNode(node, segments[1:]); result != nil {
 			return result
 		}
 	}
 	return nil
 }
 
-func findPathDescendants(root *Node, segments []string) *Element {
+func findPathDescendantsNode(root *Node, segments []string) *Node {
 	kind, value, ok := parseSelector(segments[0])
 	if !ok {
 		return nil
@@ -212,9 +366,9 @@ func findPathDescendants(root *Node, segments []string) *Element {
 	for _, child := range root.Children {
 		for _, node := range searchSubtree(child, kind, value) {
 			if len(segments) == 1 {
-				return &node.Element
+				return node
 			}
-			if result := findPathDescendants(node, segments[1:]); result != nil {
+			if result := findPathDescendantsNode(node, segments[1:]); result != nil {
 				return result
 			}
 		}
@@ -222,7 +376,7 @@ func findPathDescendants(root *Node, segments []string) *Element {
 	return nil
 }
 
-func findPathAll(root *Node, segments []string) []*Element {
+func findPathAllNodes(root *Node, segments []string) []*Node {
 	if root == nil || len(segments) == 0 {
 		return nil
 	}
@@ -230,30 +384,30 @@ func findPathAll(root *Node, segments []string) []*Element {
 	if !ok {
 		return nil
 	}
-	var result []*Element
+	var result []*Node
 	for _, node := range searchSubtree(root, kind, value) {
 		if len(segments) == 1 {
-			result = append(result, &node.Element)
+			result = append(result, node)
 			continue
 		}
-		result = append(result, findPathAllDescendants(node, segments[1:])...)
+		result = append(result, findPathAllDescendantsNodes(node, segments[1:])...)
 	}
 	return result
 }
 
-func findPathAllDescendants(root *Node, segments []string) []*Element {
+func findPathAllDescendantsNodes(root *Node, segments []string) []*Node {
 	kind, value, ok := parseSelector(segments[0])
 	if !ok {
 		return nil
 	}
-	var result []*Element
+	var result []*Node
 	for _, child := range root.Children {
 		for _, node := range searchSubtree(child, kind, value) {
 			if len(segments) == 1 {
-				result = append(result, &node.Element)
+				result = append(result, node)
 				continue
 			}
-			result = append(result, findPathAllDescendants(node, segments[1:])...)
+			result = append(result, findPathAllDescendantsNodes(node, segments[1:])...)
 		}
 	}
 	return result
@@ -274,6 +428,21 @@ func searchSubtree(root *Node, kind, value string) []*Node {
 	return result
 }
 
+// searchSubtreeBySelector returns all nodes under root (inclusive) matching sel.
+func searchSubtreeBySelector(root *Node, sel Selector) []*Node {
+	if root == nil {
+		return nil
+	}
+	var result []*Node
+	if matchSelector(&root.Element, sel) {
+		result = append(result, root)
+	}
+	for _, child := range root.Children {
+		result = append(result, searchSubtreeBySelector(child, sel)...)
+	}
+	return result
+}
+
 func parseSelector(selector string) (string, string, bool) {
 	index := strings.IndexByte(selector, ':')
 	if index <= 0 {
@@ -290,14 +459,13 @@ func match(element *Element, kind, value string) bool {
 		}
 		return strings.HasSuffix(element.ResourceID, ":id/"+value)
 	case "text":
-		return element.Text == value
+		return matchAttr(element, "text", value)
 	case "desc":
-		// Exact match, or iOS merged label "desc, child text".
 		return element.Description == value || strings.HasPrefix(element.Description, value+", ")
 	case "descPrefix":
 		return strings.HasPrefix(element.Description, value)
 	default:
-		return false
+		return matchAttr(element, kind, value)
 	}
 }
 
