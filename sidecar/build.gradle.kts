@@ -21,11 +21,12 @@ kotlin {
 
 val grpcVersion = "1.68.0"
 val protobufVersion = "3.25.5"
-val maestroVersion = "1.40.0"
+val maestroVersion = "2.4.0"
 
-// Maestro pulls in grpc-netty:1.50.2 and grpc-okhttp:1.50.2 which were compiled
-// against AbstractManagedChannelImplBuilder that was removed in grpc-core 1.64+.
-// Force them to match the grpc-core version we resolve to.
+// Maestro 2.4.0 still declares grpc-netty:1.50.2 and grpc-okhttp:1.50.2 which
+// were compiled against AbstractManagedChannelImplBuilder removed in grpc-core 1.64+.
+// Force them to the version we pin so they stay binary-compatible.
+// Also exclude GraalVM JS — not used by our sidecar and causes shadow JAR expansion errors.
 configurations.all {
     resolutionStrategy.eachDependency {
         if (requested.group == "io.grpc" &&
@@ -34,6 +35,10 @@ configurations.all {
             because("align grpc transport with grpc-core version")
         }
     }
+    exclude(group = "org.graalvm.js")
+    exclude(group = "org.graalvm.sdk")
+    exclude(group = "org.graalvm.regex")
+    exclude(group = "org.graalvm.truffle")
 }
 
 dependencies {
@@ -94,6 +99,7 @@ application {
 // depend on `version`.
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
     archiveFileName.set("sidecar-all.jar")
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
 }
 
 // JUnit 4 (vintage) for the gRPC GrpcCleanupRule + JUnit 5 (jupiter)
