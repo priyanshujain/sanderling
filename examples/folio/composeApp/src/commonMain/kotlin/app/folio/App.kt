@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -13,6 +14,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import app.folio.data.Repository
 import app.folio.feature.account.AddAccountScreen
 import app.folio.feature.auth.LoginScreen
@@ -21,6 +25,7 @@ import app.folio.feature.ledger.AddTransactionScreen
 import app.folio.feature.ledger.LedgerScreen
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
+import app.folio.FocusTracker
 import app.folio.ui.theme.LedgerTheme
 import app.folio.ui.theme.LocalTokens
 import app.folio.ui.theme.Tokens
@@ -29,6 +34,7 @@ import app.folio.ui.theme.Tokens
 fun App() {
     val session by Repository.session.collectAsState()
     val route by Navigator.current.collectAsState()
+    val focusedInput by FocusTracker.current.collectAsState()
 
     LaunchedEffect(session, route) {
         if (session == null && route !is Route.Login) {
@@ -47,6 +53,9 @@ fun App() {
                     .background(t.bg)
                     .windowInsetsPadding(WindowInsets.safeDrawing),
             ) {
+                if (focusedInput != null) {
+                    Box(Modifier.size(1.dp).semantics { contentDescription = "focused_input:$focusedInput" })
+                }
                 Column(Modifier.fillMaxSize()) {
                     when (val r = route) {
                         Route.Login -> LoginScreen(onLoggedIn = { Navigator.replace(Route.Home) })
