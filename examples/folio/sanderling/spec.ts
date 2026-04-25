@@ -74,10 +74,16 @@ const accountCards = extract(s => s.ax.findAll("desc:HomeScreen > descPrefix:acc
 const backButton = extract(s => s.ax.find("desc:Back"));
 
 // Property 1: every new account starts with balance === 0
+// Guard: only check when accounts were visible in the previous step too.
+// Without this, navigating away from HomeScreen (accounts=[]) then back
+// makes every account look "new", causing false positives on pre-existing balances.
 const newAccountBalanceIsZero = always(
   next(() => {
-    const prevIds = new Set((accounts.previous ?? []).map(a => a.id));
-    const newAccounts = accounts.current.filter(a => !prevIds.has(a.id));
+    const prev = accounts.previous ?? [];
+    const curr = accounts.current;
+    if (prev.length === 0 || curr.length === 0) return true;
+    const prevIds = new Set(prev.map(a => a.id));
+    const newAccounts = curr.filter(a => !prevIds.has(a.id));
     return newAccounts.every(a => a.balance === 0);
   })
 );
