@@ -14,6 +14,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.folio.data.Repository
 import app.folio.navigation.Navigator
@@ -60,7 +62,7 @@ fun AddAccountScreen() {
     }
 
     Screen(
-        modifier = Modifier.testTag("AddAccountScreen"),
+        modifier = Modifier.testTag("AddAccountScreen").semantics { contentDescription = "AddAccountScreen" },
         header = {
             Header(title = "New account", left = { BackButton(onClick = { Navigator.back(Route.Home) }) })
         },

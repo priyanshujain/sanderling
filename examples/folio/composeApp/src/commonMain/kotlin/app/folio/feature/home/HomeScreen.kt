@@ -50,7 +50,7 @@ fun HomeScreen(user: String, onLogout: () -> Unit) {
     val total = balanceOf(txns)
 
     Screen(
-        modifier = Modifier.testTag("HomeScreen"),
+        modifier = Modifier.testTag("HomeScreen").semantics { contentDescription = "HomeScreen" },
         header = {
             Header(
                 title = "Accounts",

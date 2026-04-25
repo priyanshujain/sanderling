@@ -75,7 +75,7 @@ fun LedgerScreen(accountId: String) {
     val balance = balanceOf(txns)
 
     Screen(
-        modifier = Modifier.testTag("LedgerScreen"),
+        modifier = Modifier.testTag("LedgerScreen").semantics { contentDescription = "LedgerScreen" },
         header = {
             Header(
                 title = account.name,
