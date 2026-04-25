@@ -12,7 +12,6 @@ import {
 
 interface Account {
   id: string;
-  name: string;
   balance: number;
 }
 
@@ -21,13 +20,41 @@ interface LedgerRow {
   signed: number;
 }
 
-const loggedIn = extract<boolean>(s => (s.snapshots.logged_in as boolean) ?? false);
-const route = extract<string>(s => (s.snapshots.screen as string) ?? "");
-const accounts = extract<Account[]>(s => (s.snapshots.accounts as Account[]) ?? []);
-const ledgerRows = extract<LedgerRow[]>(s => (s.snapshots.ledger_rows as LedgerRow[]) ?? []);
-const ledgerBalance = extract<number>(s => (s.snapshots.ledger_balance as number) ?? 0);
-const activeAccountId = extract<string | null>(s => (s.snapshots.active_account_id as string | null) ?? null);
-const focusedInput = extract<string | null>(s => (s.snapshots.focused_input as string | null) ?? null);
+function parseAccount(desc: string): Account {
+  const parts = desc.split(":");
+  return { id: parts[1], balance: Number(parts[2]) };
+}
+
+function parseLedgerRow(desc: string): LedgerRow {
+  const parts = desc.split(":");
+  return { id: parts[1], signed: Number(parts[2]) };
+}
+
+function parseCents(desc: string | null | undefined): number {
+  if (!desc) return 0;
+  const parts = desc.split(":");
+  return Number(parts[1]) || 0;
+}
+
+const loggedIn = extract(s => s.ax.find("id:LoginScreen") == null);
+const route = extract<string | null>(s => {
+  if (s.ax.find("id:LoginScreen")) return "login";
+  if (s.ax.find("id:HomeScreen")) return "home";
+  if (s.ax.find("id:AddAccountScreen")) return "add-account";
+  if (s.ax.find("id:LedgerScreen")) return "ledger";
+  if (s.ax.find("id:AddTransactionScreen")) return "add-transaction";
+  return null;
+});
+const accounts = extract(s => s.ax.findAll("descPrefix:account:")
+  .map(el => parseAccount(el.desc)));
+const ledgerRows = extract(s => s.ax.findAll("descPrefix:ledger_row:")
+  .map(el => parseLedgerRow(el.desc)));
+const ledgerBalance = extract(s =>
+  parseCents(s.ax.find("descPrefix:ledger_balance:")?.desc));
+const activeAccountId = extract(s =>
+  s.ax.find("descPrefix:active_account:")?.desc?.split(":")[1] ?? null);
+const focusedInput = extract(s =>
+  s.ax.find("descPrefix:focused_input:")?.desc?.split(":")[1] ?? null);
 
 const loginEmailField = extract(s => s.ax.find("id:LoginScreen > desc:login_email"));
 const loginPasswordField = extract(s => s.ax.find("id:LoginScreen > desc:login_password"));
@@ -38,7 +65,7 @@ const addAccountSubmit = extract(s => s.ax.find("id:AddAccountScreen > desc:add_
 const addTxnButton = extract(s => s.ax.find("id:LedgerScreen > desc:add_txn_button"));
 const txnAmountField = extract(s => s.ax.find("id:AddTransactionScreen > desc:txn_amount"));
 const txnSubmit = extract(s => s.ax.find("id:AddTransactionScreen > desc:txn_submit"));
-const accountCards = extract(s => s.ax.findAll("descPrefix:account_card:"));
+const accountCards = extract(s => s.ax.findAll("descPrefix:account:"));
 const backButton = extract(s => s.ax.find("desc:Back"));
 
 // Property 1: every new account starts with balance === 0
@@ -69,7 +96,7 @@ const newTxnChangesBalance = always(
 const DEMO_EMAIL = "demo@folio.app";
 const DEMO_PASSWORD = "ledger123";
 
-// Login if not already in — step by step based on which field has focus
+// Login if not already in - step by step based on which field has focus
 const login = actions(() => {
   if (loggedIn.current) return [];
   const focus = focusedInput.current;
