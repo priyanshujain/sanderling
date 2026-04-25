@@ -23,6 +23,19 @@ val grpcVersion = "1.68.0"
 val protobufVersion = "3.25.5"
 val maestroVersion = "1.40.0"
 
+// Maestro pulls in grpc-netty:1.50.2 and grpc-okhttp:1.50.2 which were compiled
+// against AbstractManagedChannelImplBuilder that was removed in grpc-core 1.64+.
+// Force them to match the grpc-core version we resolve to.
+configurations.all {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "io.grpc" &&
+            (requested.name == "grpc-netty" || requested.name == "grpc-okhttp")) {
+            useVersion(grpcVersion)
+            because("align grpc transport with grpc-core version")
+        }
+    }
+}
+
 dependencies {
     implementation("dev.mobile:maestro-client:$maestroVersion")
     implementation("dev.mobile:maestro-utils:$maestroVersion")
