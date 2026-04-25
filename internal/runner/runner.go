@@ -11,7 +11,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/priyanshujain/sanderling/internal/agent"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
 	"github.com/priyanshujain/sanderling/internal/ltl"
@@ -20,12 +19,10 @@ import (
 )
 
 type Options struct {
-	Duration        time.Duration
-	SnapshotTimeout time.Duration
-	IdleTimeout     time.Duration
+	Duration    time.Duration
+	IdleTimeout time.Duration
 
 	BundleID    string
-	Connection  *agent.Conn
 	Driver      driver.DeviceDriver
 	Verifier    *verifier.Verifier
 	TraceWriter *trace.Writer
@@ -44,10 +41,9 @@ type ViolationRecord struct {
 	Properties []string
 }
 
-// Run drives the snapshot/evaluate/release/act loop until the duration
-// elapses or the context is canceled. The caller is responsible for
-// launching the app and connecting the SDK before Run is called, and for
-// terminating the app afterwards.
+// Run drives the evaluate/act loop until the duration elapses or the context
+// is canceled. The caller is responsible for launching the app before Run is
+// called and for terminating it afterwards.
 func Run(ctx context.Context, options Options) (Summary, error) {
 	if err := validate(options); err != nil {
 		return Summary{}, err
@@ -71,10 +67,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		stepIndex++
 		stepStart := time.Now()
 
-		// Hierarchy, metrics, and logs are independent device reads. Run
-		// them concurrently so metrics+logs hide behind the hierarchy
-		// fetch (~2s). All three must finish before snapshotStep pauses
-		// the SDK.
+		// Hierarchy, metrics, and logs are independent device reads — run
+		// them concurrently so metrics+logs hide behind the hierarchy fetch.
 		var tree *hierarchy.Tree
 		var hierarchyErr error
 		var metrics *trace.Metrics
@@ -115,31 +109,20 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if tree != nil {
 			treeSize = len(tree.Elements)
 		}
-
-		snapshot, err := snapshotStep(ctx, options)
-		if err != nil {
-			return summary, fmt.Errorf("step %d snapshot: %w", stepIndex, err)
-		}
 		lastLogTime = stepStart
 
-		exceptions := decodeExceptions(snapshot)
-
 		if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
-			Snapshots:  verifier.Snapshots(snapshot.Snapshots),
 			Tree:       tree,
 			LastAction: lastAction,
 			StepTime:   stepStart,
 			RunStart:   summary.StartTime,
 			Logs:       logs,
-			Exceptions: exceptions,
 		}); err != nil {
 			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 		}
-		screen, screenErr := screenFromSnapshot(snapshot.Snapshots)
-		if screenErr != nil {
-			logger.Warn("screen snapshot decode failed", "step", stepIndex, "err", screenErr)
-		}
-		if screen == "" && tree != nil && len(tree.Elements) > 0 {
+
+		screen := ""
+		if tree != nil && len(tree.Elements) > 0 {
 			screen = tree.Elements[0].Screen
 		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
@@ -165,16 +148,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		step := trace.Step{
-			Index:      stepIndex,
-			Timestamp:  stepStart,
-			Screen:     screen,
-			Snapshots:  snapshot.Snapshots,
-			Action:     traceAction,
-			Exceptions: traceExceptions(exceptions),
+			Index:     stepIndex,
+			Timestamp: stepStart,
+			Screen:    screen,
+			Action:    traceAction,
 			Violations: violations,
-			Hierarchy:  tree,
-			Residuals:  residuals,
-			Metrics:    metrics,
+			Hierarchy: tree,
+			Residuals: residuals,
+			Metrics:   metrics,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
@@ -186,12 +167,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				StepIndex:  stepIndex,
 				Properties: violations,
 			})
-		}
-
-		if options.Connection != nil {
-			if err := options.Connection.Release(ctx); err != nil {
-				return summary, fmt.Errorf("step %d release: %w", stepIndex, err)
-			}
 		}
 
 		if nextErr == nil {
@@ -240,26 +215,10 @@ func validate(options Options) error {
 	if options.Duration <= 0 {
 		return errors.New("runner: Duration must be positive")
 	}
-	if options.SnapshotTimeout <= 0 {
-		options.SnapshotTimeout = 5 * time.Second
-	}
 	if options.IdleTimeout <= 0 {
 		options.IdleTimeout = 2 * time.Second
 	}
 	return nil
-}
-
-func snapshotStep(ctx context.Context, options Options) (agent.Message, error) {
-	if options.Connection == nil {
-		return agent.Message{}, nil
-	}
-	snapshotTimeout := options.SnapshotTimeout
-	if snapshotTimeout <= 0 {
-		snapshotTimeout = 5 * time.Second
-	}
-	snapshotCtx, snapshotCancel := context.WithTimeout(ctx, snapshotTimeout)
-	defer snapshotCancel()
-	return options.Connection.Snapshot(snapshotCtx)
 }
 
 func violationNames(verdicts map[string]ltl.Verdict) []string {
@@ -270,18 +229,6 @@ func violationNames(verdicts map[string]ltl.Verdict) []string {
 		}
 	}
 	return names
-}
-
-func screenFromSnapshot(snapshots map[string]json.RawMessage) (string, error) {
-	raw, ok := snapshots["screen"]
-	if !ok {
-		return "", nil
-	}
-	var screen string
-	if err := json.Unmarshal(raw, &screen); err != nil {
-		return "", err
-	}
-	return screen, nil
 }
 
 func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
@@ -355,22 +302,6 @@ func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) 
 	return result
 }
 
-func decodeExceptions(snapshot agent.Message) []verifier.Exception {
-	if len(snapshot.Exceptions) == 0 {
-		return nil
-	}
-	result := make([]verifier.Exception, 0, len(snapshot.Exceptions))
-	for _, e := range snapshot.Exceptions {
-		result = append(result, verifier.Exception{
-			Class:      e.Class,
-			Message:    e.Message,
-			StackTrace: e.StackTrace,
-			UnixMillis: e.UnixMillis,
-		})
-	}
-	return result
-}
-
 func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int, bool) {
 	if action.X > 0 && action.Y > 0 {
 		return action.X, action.Y, true
@@ -421,9 +352,7 @@ func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action 
 }
 
 // stampSelectorTarget mirrors applyAction's coordinate-resolution rule so the
-// trace records the same point the runner taps. When the spec passed an ax
-// element directly, action.X/Y are already populated and we use them; when the
-// spec passed a string selector, we resolve it against the captured hierarchy.
+// trace records the same point the runner taps.
 func stampSelectorTarget(traceAction *trace.Action, action verifier.Action, tree *hierarchy.Tree) {
 	if action.X > 0 && action.Y > 0 {
 		traceAction.TapPoint = &trace.PointRecord{X: action.X, Y: action.Y}
@@ -511,20 +440,4 @@ func isWDADrop(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "ConnectException") ||
 		(strings.Contains(msg, "code = Internal") && strings.Contains(msg, "SocketException"))
-}
-
-func traceExceptions(exceptions []verifier.Exception) []trace.Exception {
-	if len(exceptions) == 0 {
-		return nil
-	}
-	result := make([]trace.Exception, 0, len(exceptions))
-	for _, e := range exceptions {
-		result = append(result, trace.Exception{
-			Class:      e.Class,
-			Message:    e.Message,
-			StackTrace: e.StackTrace,
-			UnixMillis: e.UnixMillis,
-		})
-	}
-	return result
 }
