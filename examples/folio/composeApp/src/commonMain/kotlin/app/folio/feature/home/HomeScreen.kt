@@ -123,7 +123,7 @@ private fun AccountCard(
             .clip(RoundedCornerShape(RadiusLg))
             .background(t.surface)
             .border(1.dp, t.border, RoundedCornerShape(RadiusLg))
-            .semantics(mergeDescendants = true) { contentDescription = "account:$id:$balance" }
+            .semantics { contentDescription = "account_card:$id" }
             .clickable(role = Role.Button, onClick = onClick)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -148,6 +148,11 @@ private fun AccountCard(
             )
             Text(txnLabel, style = Type.caption, color = t.textMuted)
         }
-        Text(formatCents(balance), style = Type.bodyStrong, color = t.text)
+        Text(
+            formatCents(balance),
+            style = Type.bodyStrong,
+            color = t.text,
+            modifier = Modifier.semantics { contentDescription = "account_balance" },
+        )
     }
 }
