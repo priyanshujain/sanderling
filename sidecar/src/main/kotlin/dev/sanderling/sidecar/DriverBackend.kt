@@ -382,13 +382,14 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
 
     init {
         dadb = buildDadb(serial)
-        driver = maestro.drivers.AndroidDriver(dadb, 7001, "localhost")
+        val hostPort = java.net.ServerSocket(0).use { it.localPort }
+        driver = maestro.drivers.AndroidDriver(dadb, hostPort)
         driver.open()
     }
 
     override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
         if (clearState) driver.clearAppState(bundleId)
-        driver.launchApp(bundleId, env, java.util.UUID.randomUUID())
+        driver.launchApp(bundleId, env)
     }
 
     override fun terminate(bundleId: String) = driver.stopApp(bundleId)
@@ -491,24 +492,45 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     private val reconnectLock = java.util.concurrent.locks.ReentrantLock()
 
     init {
-        val httpClient = xcuitest.api.OkHttpClientInstance.get()
-        val metrics = maestro.utils.NoOpMetrics()
         val wdaPort = maestro.utils.SocketUtils.nextFreePort(22000, 23000)
-        val installer = xcuitest.installer.LocalXCTestInstaller(
-            udid,
-            "localhost",
-            false,
-            wdaPort,
-            metrics,
-            httpClient,
-            false,
-            false,
+        val tempFileHandler = maestro.utils.TempFileHandler()
+        val simctlDevice = device.SimctlIOSDevice(
+            deviceId = udid,
+            tempFileHandler = tempFileHandler,
         )
-        val xcTestDriverClient = xcuitest.XCTestDriverClient(installer, httpClient, false)
-        val xcTestDevice = ios.xctest.XCTestIOSDevice(udid, xcTestDriverClient) { emptySet() }
-        val simctlDevice = ios.simctl.SimctlIOSDevice(udid)
-        val device = ios.LocalIOSDevice(udid, xcTestDevice, simctlDevice, maestro.utils.NoopInsights)
-        driver = maestro.drivers.IOSDriver(device, maestro.utils.NoopInsights, metrics)
+        val driverConfig = xcuitest.installer.LocalXCTestInstaller.IOSDriverConfig(
+            prebuiltRunner = false,
+            sourceDirectory = "driver-iPhoneSimulator",
+            context = xcuitest.installer.Context.CLI,
+            snapshotKeyHonorModalViews = null,
+        )
+        val installer = xcuitest.installer.LocalXCTestInstaller(
+            deviceId = udid,
+            host = "127.0.0.1",
+            deviceType = util.IOSDeviceType.SIMULATOR,
+            defaultPort = wdaPort,
+            iOSDriverConfig = driverConfig,
+            deviceController = simctlDevice,
+            tempFileHandler = tempFileHandler,
+        )
+        val xcTestClient = xcuitest.XCTestClient("127.0.0.1", wdaPort)
+        val xcTestDriverClient = xcuitest.XCTestDriverClient(
+            installer = installer,
+            client = xcTestClient,
+        )
+        val xcRunnerUtils = util.XCRunnerCLIUtils(tempFileHandler)
+        val xcTestDevice = ios.xctest.XCTestIOSDevice(
+            deviceId = udid,
+            client = xcTestDriverClient,
+            getInstalledApps = { xcRunnerUtils.listApps(udid) },
+        )
+        val device = ios.LocalIOSDevice(
+            deviceId = udid,
+            xcTestDevice = xcTestDevice,
+            deviceController = simctlDevice,
+            insights = maestro.utils.NoopInsights,
+        )
+        driver = maestro.drivers.IOSDriver(device, maestro.utils.NoopInsights)
         driver.open()
         warmup()
     }
@@ -551,7 +573,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) = withReconnect {
         runCatching { driver.stopApp(bundleId) }
         if (clearState) driver.clearAppState(bundleId)
-        driver.launchApp(bundleId, env, java.util.UUID.randomUUID())
+        driver.launchApp(bundleId, env)
     }
 
     override fun terminate(bundleId: String) = withReconnect { driver.stopApp(bundleId) }

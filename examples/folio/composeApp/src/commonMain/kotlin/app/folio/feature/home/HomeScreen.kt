@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -49,6 +50,7 @@ fun HomeScreen(user: String, onLogout: () -> Unit) {
     val total = balanceOf(txns)
 
     Screen(
+        modifier = Modifier.testTag("HomeScreen"),
         header = {
             Header(
                 title = "Accounts",

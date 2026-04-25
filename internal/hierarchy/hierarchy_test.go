@@ -181,6 +181,114 @@ func TestIOSMergedLabel(t *testing.T) {
 	}
 }
 
+const pathDump = `{
+  "attributes": {"resource-id": "root", "bounds": "[0,0,1080,2340]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "A", "content-desc": "screen_a", "bounds": "[0,0,540,2340]"},
+      "children": [
+        {
+          "attributes": {"resource-id": "B", "content-desc": "label_b", "bounds": "[0,0,100,100]"},
+          "children": [
+            {
+              "attributes": {"resource-id": "C", "content-desc": "label_c", "bounds": "[0,0,50,50]"},
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "attributes": {"resource-id": "A2", "content-desc": "screen_a2", "bounds": "[540,0,1080,2340]"},
+      "children": [
+        {
+          "attributes": {"resource-id": "B2", "content-desc": "label_b", "bounds": "[540,0,640,100]"},
+          "children": []
+        }
+      ]
+    }
+  ]
+}`
+
+func TestPathQuerySingleLevel(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	el := tree.Find("id:A > id:B")
+	if el == nil {
+		t.Fatal("expected to find B under A")
+	}
+	if el.ResourceID != "B" {
+		t.Fatalf("got %q, want B", el.ResourceID)
+	}
+}
+
+func TestPathQueryNotBUnderOtherRoot(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	// B2 is under A2, not A; path from A should not reach B2
+	el := tree.Find("id:A > id:B2")
+	if el != nil {
+		t.Fatalf("expected nil, got element with id %q", el.ResourceID)
+	}
+}
+
+func TestPathQueryMultiLevel(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	el := tree.Find("id:A > id:B > id:C")
+	if el == nil {
+		t.Fatal("expected to find C under A > B")
+	}
+	if el.ResourceID != "C" {
+		t.Fatalf("got %q, want C", el.ResourceID)
+	}
+}
+
+func TestPathQueryMixedTypes(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	el := tree.Find("desc:screen_a > desc:label_b")
+	if el == nil {
+		t.Fatal("expected to find label_b under screen_a")
+	}
+	if el.Description != "label_b" {
+		t.Fatalf("got %q, want label_b", el.Description)
+	}
+}
+
+func TestPathQueryNotFound(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	if tree.Find("id:A > id:NoSuch") != nil {
+		t.Fatal("expected nil for missing second segment")
+	}
+}
+
+func TestPathQueryFirstMatchesSecondDoesNot(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	// B2 is under A2, so A > B2 should return nil (B2 is not a descendant of A)
+	if tree.Find("id:A > id:B2") != nil {
+		t.Fatal("B2 is not a descendant of A, expected nil")
+	}
+}
+
+func TestPathQueryFindAllAcrossRoots(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	// label_b appears under A (as B) and under A2 (as B2)
+	// FindAll("desc:screen_a > desc:label_b") should only find B under A, not B2 under A2
+	matches := tree.FindAll("desc:screen_a > desc:label_b")
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match, got %d", len(matches))
+	}
+	if matches[0].ResourceID != "B" {
+		t.Fatalf("got %q, want B", matches[0].ResourceID)
+	}
+}
+
+func TestPathQueryFindAllMultipleRootMatches(t *testing.T) {
+	tree, _ := Parse(pathDump)
+	// Both A and A2 are children of root, both have a child with content-desc "label_b"
+	matches := tree.FindAll("id:root > desc:label_b")
+	if len(matches) != 2 {
+		t.Fatalf("want 2 matches (B and B2), got %d", len(matches))
+	}
+}
+
 func TestIOSBoundsFormat(t *testing.T) {
 	input := `{
 	  "attributes": {"accessibilityText": "account_card:abc123, Tim, $100", "bounds": "[20,130][382,202]"},

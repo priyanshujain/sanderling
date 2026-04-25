@@ -19,12 +19,13 @@ import app.folio.ui.theme.ScreenPad
 
 @Composable
 fun Screen(
+    modifier: Modifier = Modifier,
     header: @Composable (() -> Unit)? = null,
     footer: @Composable (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val t = LocalTokens.current
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().then(modifier)) {
         if (header != null) header()
         Column(
             modifier = Modifier

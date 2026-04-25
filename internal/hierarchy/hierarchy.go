@@ -1,12 +1,18 @@
 // Package hierarchy parses the TreeNode JSON produced by the Maestro sidecar
 // and resolves selectors against it.
 //
-// Selector grammar (v0.1):
+// Selector grammar (v1.0):
 //
-//	id:<suffix>            — match resource-id ending with ":id/<suffix>" or equal to <suffix>
-//	text:<value>           — exact match on the node's text
-//	desc:<value>           — exact match on the node's content-desc
-//	descPrefix:<prefix>    — startsWith match on the node's content-desc (e.g. Compose testTag + UUID)
+//   Single selectors (global scan):
+//     id:<suffix>         - resource-id == suffix or ends with ":id/<suffix>"
+//     text:<value>        - exact text match
+//     desc:<value>        - exact content-desc match
+//     descPrefix:<prefix> - content-desc starts with prefix
+//
+//   Path queries (segments separated by " > "):
+//     <sel> > <sel> > ... - each segment is matched within the subtree of the
+//                           previous match (any descendant, not just direct child)
+//     example: id:LoginScreen > desc:EmailInput
 package hierarchy
 
 import (
@@ -54,8 +60,15 @@ type Element struct {
 	Bounds    Bounds `json:"bounds"`
 }
 
+// Node is one node in the hierarchy tree.
+type Node struct {
+	Element
+	Children []*Node `json:"-"`
+}
+
 // Tree is a flat collection of every node in a hierarchy dump, in pre-order.
 type Tree struct {
+	Root     *Node      `json:"-"`
 	Elements []*Element `json:"elements"`
 }
 
@@ -81,16 +94,17 @@ func Parse(text string) (*Tree, error) {
 		return nil, fmt.Errorf("hierarchy: %w", err)
 	}
 	tree := &Tree{}
-	walkNode(&root, tree)
+	tree.Root = walkNode(&root, tree)
 	return tree, nil
 }
 
-func walkNode(node *treeNodeJSON, tree *Tree) {
-	element := elementFromNode(node)
-	tree.Elements = append(tree.Elements, element)
+func walkNode(node *treeNodeJSON, tree *Tree) *Node {
+	n := &Node{Element: *elementFromNode(node)}
+	tree.Elements = append(tree.Elements, &n.Element)
 	for i := range node.Children {
-		walkNode(&node.Children[i], tree)
+		n.Children = append(n.Children, walkNode(&node.Children[i], tree))
 	}
+	return n
 }
 
 func elementFromNode(node *treeNodeJSON) *Element {
@@ -138,6 +152,9 @@ func elementFromNode(node *treeNodeJSON) *Element {
 
 // Find returns the first element matching the selector, or nil.
 func (t *Tree) Find(selector string) *Element {
+	if strings.Contains(selector, " > ") {
+		return findPath(t.Root, strings.Split(selector, " > "))
+	}
 	kind, value, ok := parseSelector(selector)
 	if !ok {
 		return nil
@@ -152,6 +169,9 @@ func (t *Tree) Find(selector string) *Element {
 
 // FindAll returns every element matching the selector.
 func (t *Tree) FindAll(selector string) []*Element {
+	if strings.Contains(selector, " > ") {
+		return findPathAll(t.Root, strings.Split(selector, " > "))
+	}
 	kind, value, ok := parseSelector(selector)
 	if !ok {
 		return nil
@@ -163,6 +183,95 @@ func (t *Tree) FindAll(selector string) []*Element {
 		}
 	}
 	return matches
+}
+
+func findPath(root *Node, segments []string) *Element {
+	if root == nil || len(segments) == 0 {
+		return nil
+	}
+	kind, value, ok := parseSelector(segments[0])
+	if !ok {
+		return nil
+	}
+	for _, node := range searchSubtree(root, kind, value) {
+		if len(segments) == 1 {
+			return &node.Element
+		}
+		if result := findPathDescendants(node, segments[1:]); result != nil {
+			return result
+		}
+	}
+	return nil
+}
+
+func findPathDescendants(root *Node, segments []string) *Element {
+	kind, value, ok := parseSelector(segments[0])
+	if !ok {
+		return nil
+	}
+	for _, child := range root.Children {
+		for _, node := range searchSubtree(child, kind, value) {
+			if len(segments) == 1 {
+				return &node.Element
+			}
+			if result := findPathDescendants(node, segments[1:]); result != nil {
+				return result
+			}
+		}
+	}
+	return nil
+}
+
+func findPathAll(root *Node, segments []string) []*Element {
+	if root == nil || len(segments) == 0 {
+		return nil
+	}
+	kind, value, ok := parseSelector(segments[0])
+	if !ok {
+		return nil
+	}
+	var result []*Element
+	for _, node := range searchSubtree(root, kind, value) {
+		if len(segments) == 1 {
+			result = append(result, &node.Element)
+			continue
+		}
+		result = append(result, findPathAllDescendants(node, segments[1:])...)
+	}
+	return result
+}
+
+func findPathAllDescendants(root *Node, segments []string) []*Element {
+	kind, value, ok := parseSelector(segments[0])
+	if !ok {
+		return nil
+	}
+	var result []*Element
+	for _, child := range root.Children {
+		for _, node := range searchSubtree(child, kind, value) {
+			if len(segments) == 1 {
+				result = append(result, &node.Element)
+				continue
+			}
+			result = append(result, findPathAllDescendants(node, segments[1:])...)
+		}
+	}
+	return result
+}
+
+// searchSubtree returns all nodes under root (inclusive) matching kind:value.
+func searchSubtree(root *Node, kind, value string) []*Node {
+	if root == nil {
+		return nil
+	}
+	var result []*Node
+	if match(&root.Element, kind, value) {
+		result = append(result, root)
+	}
+	for _, child := range root.Children {
+		result = append(result, searchSubtree(child, kind, value)...)
+	}
+	return result
 }
 
 func parseSelector(selector string) (string, string, bool) {

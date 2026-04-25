@@ -29,15 +29,15 @@ const ledgerBalance = extract<number>(s => (s.snapshots.ledger_balance as number
 const activeAccountId = extract<string | null>(s => (s.snapshots.active_account_id as string | null) ?? null);
 const focusedInput = extract<string | null>(s => (s.snapshots.focused_input as string | null) ?? null);
 
-const loginEmailField = extract(s => s.ax.find("desc:login_email"));
-const loginPasswordField = extract(s => s.ax.find("desc:login_password"));
-const loginSubmit = extract(s => s.ax.find("desc:login_submit"));
-const addAccountButton = extract(s => s.ax.find("desc:add_account_button"));
-const accountNameField = extract(s => s.ax.find("desc:account_name_field"));
-const addAccountSubmit = extract(s => s.ax.find("desc:add_account_submit"));
-const addTxnButton = extract(s => s.ax.find("desc:add_txn_button"));
-const txnAmountField = extract(s => s.ax.find("desc:txn_amount"));
-const txnSubmit = extract(s => s.ax.find("desc:txn_submit"));
+const loginEmailField = extract(s => s.ax.find("id:LoginScreen > desc:login_email"));
+const loginPasswordField = extract(s => s.ax.find("id:LoginScreen > desc:login_password"));
+const loginSubmit = extract(s => s.ax.find("id:LoginScreen > desc:login_submit"));
+const addAccountButton = extract(s => s.ax.find("id:HomeScreen > desc:add_account_button"));
+const accountNameField = extract(s => s.ax.find("id:AddAccountScreen > desc:account_name_field"));
+const addAccountSubmit = extract(s => s.ax.find("id:AddAccountScreen > desc:add_account_submit"));
+const addTxnButton = extract(s => s.ax.find("id:LedgerScreen > desc:add_txn_button"));
+const txnAmountField = extract(s => s.ax.find("id:AddTransactionScreen > desc:txn_amount"));
+const txnSubmit = extract(s => s.ax.find("id:AddTransactionScreen > desc:txn_submit"));
 const accountCards = extract(s => s.ax.findAll("descPrefix:account_card:"));
 const backButton = extract(s => s.ax.find("desc:Back"));
 
