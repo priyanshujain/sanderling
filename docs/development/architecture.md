@@ -52,7 +52,7 @@ On native, the transport split exists because only real UI events need to cross 
 The heart of the system is:
 
 ```
-pause  ─►  capture state  ─►  evaluate properties  ─►  pick action  ─►  resume  ─►  dispatch
+fetch state  ─►  evaluate properties  ─►  pick action  ─►  dispatch
 ```
 
 **Native (Android / iOS):**
