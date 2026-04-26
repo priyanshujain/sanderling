@@ -163,8 +163,9 @@ private fun TxnRow(type: TxnType, amount: Long, note: String, date: String) {
                 color = t.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("TxnNote"),
             )
-            Text(date, style = Type.caption, color = t.textFaint)
+            Text(date, style = Type.caption, color = t.textFaint, modifier = Modifier.testTag("TxnDate"))
         }
         Text(
             formatCents(signed, signed = true),

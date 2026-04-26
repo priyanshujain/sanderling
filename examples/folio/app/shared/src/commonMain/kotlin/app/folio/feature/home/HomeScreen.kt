@@ -151,6 +151,7 @@ private fun AccountCard(
                 color = t.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("AccountName"),
             )
             Text(txnLabel, style = Type.caption, color = t.textMuted)
         }

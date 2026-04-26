@@ -39,27 +39,25 @@ const route = extract<string | null>(s => {
   return null;
 });
 
-// Account cards on Home: identified by visible name (the first Text node inside).
-// Each card carries an AccountBalance Text with the formatted dollar value.
+// Account cards on Home: identity is the AccountName text; balance comes from AccountBalance.
 const accounts = extract<Account[]>(s => {
   const home = s.ax.find({ testTag: "HomeScreen" });
   if (!home) return [];
-  return home.findAll({ testTag: "AccountCard" }).map(card => {
-    const texts = card.findAll({}).map(c => c.text).filter((t): t is string => !!t);
-    const balance = parseDollarCents(card.find({ testTag: "AccountBalance" })?.text);
-    const name = texts.find(t => !t.startsWith("$") && !/^\d/.test(t) && t !== "transaction" && t !== "transactions") ?? "";
-    return { name, balance };
-  });
+  return home.findAll({ testTag: "AccountCard" }).map(card => ({
+    name: card.find({ testTag: "AccountName" })?.text ?? "",
+    balance: parseDollarCents(card.find({ testTag: "AccountBalance" })?.text),
+  }));
 });
 
-// Ledger rows: identified by the row's text contents joined together.
+// Ledger rows: identity composed from the row's stable testTag'd cells.
 const ledgerRows = extract<LedgerRow[]>(s => {
   const ledger = s.ax.find({ testTag: "LedgerScreen" });
   if (!ledger) return [];
   return ledger.findAll({ testTag: "LedgerRow" }).map(row => {
-    const texts = row.findAll({}).map(c => c.text).filter((t): t is string => !!t);
-    const signed = parseDollarCents(row.find({ testTag: "TxnAmount" })?.text);
-    return { key: texts.join("|"), signed };
+    const note = row.find({ testTag: "TxnNote" })?.text ?? "";
+    const date = row.find({ testTag: "TxnDate" })?.text ?? "";
+    const amount = row.find({ testTag: "TxnAmount" })?.text ?? "";
+    return { key: `${date}|${note}|${amount}`, signed: parseDollarCents(amount) };
   });
 });
 
