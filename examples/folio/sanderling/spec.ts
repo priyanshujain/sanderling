@@ -64,13 +64,7 @@ const ledgerRows = extract<LedgerRow[]>(s => {
 const ledgerBalance = extract(s =>
   parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text));
 
-// Focus uses the native focused="true" attribute. We surface whichever
-// stable identifier the focused element carries (testTag, label, etc).
-const focusedFieldTag = extract(s => {
-  const f = s.ax.find({ focused: "true" });
-  if (!f) return null;
-  return f.attrs?.["resource-id"] ?? f.attrs?.["accessibilityIdentifier"] ?? f.attrs?.["identifier"] ?? null;
-});
+const focusedFieldTag = extract(s => s.ax.find({ focused: "true" })?.id ?? null);
 
 const loginEmailField = extract(s =>
   s.ax.find({ testTag: "LoginScreen" })?.find({ testTag: "LoginEmail" }));
