@@ -22,6 +22,7 @@ Run a spec against an app for a fixed duration.
 | `--duration` | `5m` | Total test duration (`30s`, `5m`, `2h`, `1d`). |
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
 | `--output` | `./runs` | Output directory for traces. |
+| `--clear-data` | `false` | Clear app data before launching so the run starts from a fresh install. |
 
 ## `sanderling inspect [run-or-runs-dir]`
 
