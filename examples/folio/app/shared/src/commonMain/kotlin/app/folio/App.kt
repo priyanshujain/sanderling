@@ -70,6 +70,9 @@ private fun AppContent() {
 
     LaunchedEffect(navController) { graph.navigator.attach(navController) }
 
+    val initialSession = remember { graph.repository.session.value }
+    val startDestination: Route = if (initialSession != null) Route.Home else Route.Login
+
     val session by graph.repository.session.collectAsState()
     val currentEntry by navController.currentBackStackEntryAsState()
     val onLogin = currentEntry?.destination?.hasRoute(Route.Login::class) == true
@@ -84,7 +87,7 @@ private fun AppContent() {
 
     NavHost(
         navController = navController,
-        startDestination = Route.Home,
+        startDestination = startDestination,
         modifier = Modifier.fillMaxSize(),
     ) {
         composable<Route.Login> { LoginRoute() }
