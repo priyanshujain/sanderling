@@ -1,7 +1,6 @@
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 
 let db = null;
-let isPersistent = false;
 
 async function init() {
   const sqlite3 = await sqlite3InitModule({
@@ -9,20 +8,13 @@ async function init() {
     printErr: (msg) => console.error('[sqlite]', msg),
   });
 
-  try {
-    const pool = await sqlite3.installOpfsSAHPoolVfs({
-      directory: '/folio-sqlite-pool',
-      clearOnInit: false,
-      initialCapacity: 6,
-    });
-    db = new pool.OpfsSAHPoolDb('/folio.sqlite3');
-    isPersistent = true;
-    console.log('[sqlite] using OPFS SAH pool');
-  } catch (sahErr) {
-    console.warn('[sqlite] OPFS SAH pool unavailable, falling back to in-memory:', sahErr?.message ?? sahErr);
-    db = new sqlite3.oo1.DB(':memory:', 'ct');
-    isPersistent = false;
-  }
+  const pool = await sqlite3.installOpfsSAHPoolVfs({
+    directory: '/folio-sqlite-pool',
+    clearOnInit: false,
+    initialCapacity: 6,
+  });
+  db = new pool.OpfsSAHPoolDb('/folio.sqlite3');
+  console.log('[sqlite] using OPFS SAH pool');
 }
 
 function execQuery(sql, params) {
