@@ -1,9 +1,12 @@
 package app.folio.core.data
 
 import app.folio.core.platform.Platform
+import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.flow.StateFlow
 
+@SingleIn(AppScope::class)
 @Inject
 class Repository(private val store: LedgerStore) {
     val accounts: StateFlow<List<Account>> = store.accounts
