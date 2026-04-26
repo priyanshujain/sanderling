@@ -9,6 +9,7 @@ import {
   next,
   now,
   weighted,
+  whenRoute,
 } from "@sanderling/spec";
 
 interface Account {
@@ -131,27 +132,22 @@ const login = actions(() => {
 
 const accountNames = from(["Checking", "Savings", "Travel", "Emergency Fund", "Investments"]);
 
-const addAccount = actions(() => {
-  if (!loggedIn.current) return [];
+const addAccount = whenRoute(route, ["home", "add-account"], () => {
   if (route.current === "home") {
     const btn = addAccountButton.current;
     return btn ? [Tap({ on: btn })] : [];
   }
-  if (route.current === "add-account") {
-    const field = accountNameField.current;
-    const submit = addAccountSubmit.current;
-    const opts = [];
-    if (field) opts.push(InputText({ into: field, text: accountNames.generate() }));
-    if (submit) opts.push(Tap({ on: submit }));
-    return opts;
-  }
-  return [];
+  const field = accountNameField.current;
+  const submit = addAccountSubmit.current;
+  const opts = [];
+  if (field) opts.push(InputText({ into: field, text: accountNames.generate() }));
+  if (submit) opts.push(Tap({ on: submit }));
+  return opts;
 });
 
 const amounts = from(["10", "50", "25", "100", "5"]);
 
-const addTxn = actions(() => {
-  if (!loggedIn.current) return [];
+const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
   if (route.current === "home") {
     const cards = accountCards.current;
     if (cards.length === 0) return [];
@@ -161,15 +157,12 @@ const addTxn = actions(() => {
     const btn = addTxnButton.current;
     return btn ? [Tap({ on: btn })] : [];
   }
-  if (route.current === "add-transaction") {
-    const field = txnAmountField.current;
-    const submit = txnSubmit.current;
-    const opts = [];
-    if (field) opts.push(InputText({ into: field, text: amounts.generate() }));
-    if (submit) opts.push(Tap({ on: submit }));
-    return opts;
-  }
-  return [];
+  const field = txnAmountField.current;
+  const submit = txnSubmit.current;
+  const opts = [];
+  if (field) opts.push(InputText({ into: field, text: amounts.generate() }));
+  if (submit) opts.push(Tap({ on: submit }));
+  return opts;
 });
 
 const back = actions(() => {
