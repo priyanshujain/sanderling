@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dop251/goja"
+
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 	"github.com/priyanshujain/sanderling/internal/ltl"
 )
 
@@ -256,6 +259,70 @@ func TestLoad_AcceptsSpecWithoutPropertiesOrActions(t *testing.T) {
 	}
 	if _, err := verifier.NextAction(); !errors.Is(err, ErrNoAction) {
 		t.Errorf("expected ErrNoAction, got %v", err)
+	}
+}
+
+// TestSelectorPath_ScopedDescent ensures the JS-side `find([{...}, {...}])`
+// shape walks each segment scoped under the previous match.
+func TestSelectorPath_ScopedDescent(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "rootView", "bounds": "[0,0,1080,2340]"},
+	  "children": [
+	    {
+	      "attributes": {"testTag": "HomeScreen", "bounds": "[0,0,540,2340]"},
+	      "children": [
+	        {
+	          "attributes": {"testTag": "AccountCard", "bounds": "[0,0,540,200]"},
+	          "children": [
+	            {"attributes": {"testTag": "AccountName", "text": "Checking", "bounds": "[10,10,200,40]"}, "children": []}
+	          ]
+	        }
+	      ]
+	    },
+	    {
+	      "attributes": {"testTag": "LedgerScreen", "bounds": "[540,0,1080,2340]"},
+	      "children": [
+	        {"attributes": {"testTag": "AccountName", "text": "Other", "bounds": "[600,10,800,40]"}, "children": []}
+	      ]
+	    }
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.found = __sanderling__.extract(state =>
+			state.ax.find([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }, { testTag: "AccountName" }])
+		);
+		globalThis.foundUnreachable = __sanderling__.extract(state =>
+			state.ax.find([{ testTag: "LedgerScreen" }, { testTag: "AccountCard" }])
+		);
+		globalThis.allInHome = __sanderling__.extract(state =>
+			state.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountName" }])
+		);
+	`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	found := verifier.runtime.GlobalObject().Get("found").ToObject(verifier.runtime).Get("current")
+	if found == nil || goja.IsUndefined(found) {
+		t.Fatal("expected path lookup to find AccountName under HomeScreen > AccountCard")
+	}
+	text := found.ToObject(verifier.runtime).Get("text")
+	if text.String() != "Checking" {
+		t.Fatalf("text = %q, want Checking", text.String())
+	}
+	unreachable := verifier.runtime.GlobalObject().Get("foundUnreachable").ToObject(verifier.runtime).Get("current")
+	if !goja.IsUndefined(unreachable) {
+		t.Fatalf("AccountCard is not under LedgerScreen, expected undefined, got %v", unreachable)
+	}
+	allInHome := verifier.runtime.GlobalObject().Get("allInHome").ToObject(verifier.runtime).Get("current")
+	allObject := allInHome.ToObject(verifier.runtime)
+	length := allObject.Get("length").ToInteger()
+	if length != 1 {
+		t.Fatalf("findAll path length = %d, want 1 (Checking only, not Other in LedgerScreen)", length)
 	}
 }
 
