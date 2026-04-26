@@ -15,12 +15,14 @@ flowchart TB
     end
 
     SC["Maestro sidecar (JVM)"]
+    DC["Device / Emulator"]
     CH["Chrome (CDP)"]
     RD[("runs/")]
     IN["sanderling inspect\nHTTP + SSE"]
     UI["Web UI (React)"]
 
     D -->|gRPC| SC
+    SC -->|UIAutomator / XCTest| DC
     D -->|CDP| CH
 
     T --> RD --> IN --> UI
