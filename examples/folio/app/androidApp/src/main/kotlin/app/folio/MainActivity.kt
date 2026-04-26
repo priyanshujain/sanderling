@@ -4,11 +4,17 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import app.folio.core.data.DriverFactory
+import app.folio.db.LedgerDatabase
+import app.folio.di.AppGraph
+import dev.zacsweers.metro.createGraphFactory
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val driverFactory = DriverFactory(applicationContext)
-        setContent { App(driverFactory) }
+        val graphFactory = createGraphFactory<AppGraph.Factory>()
+        setContent {
+            App(graphBuilder = { graphFactory.create(LedgerDatabase(driverFactory.create())) })
+        }
     }
 }
