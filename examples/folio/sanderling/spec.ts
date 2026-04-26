@@ -11,17 +11,16 @@ import {
 } from "@sanderling/spec";
 
 interface Account {
-  id: string;
+  name: string;
   balance: number;
 }
 
 interface LedgerRow {
-  id: string;
+  key: string;
   signed: number;
 }
 
 // Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to integer cents.
-// formatCents always uses $ prefix, . as decimal, , as thousands separator.
 function parseDollarCents(text: string | undefined): number {
   if (!text) return 0;
   const sign = text.startsWith("-") ? -1 : 1;
@@ -29,89 +28,96 @@ function parseDollarCents(text: string | undefined): number {
   return digits ? sign * parseInt(digits, 10) : 0;
 }
 
-// Route and auth state derived from screen root nodes
-const loggedIn = extract(s => s.ax.find({ accessibilityText: "LoginScreen" }) == null);
+// Route detection via testTag (resource-id on Android, accessibilityIdentifier on iOS)
+const loggedIn = extract(s => s.ax.find({ testTag: "LoginScreen" }) == null);
 const route = extract<string | null>(s => {
-  if (s.ax.find({ accessibilityText: "LoginScreen" })) return "login";
-  if (s.ax.find({ accessibilityText: "HomeScreen" })) return "home";
-  if (s.ax.find({ accessibilityText: "AddAccountScreen" })) return "add-account";
-  if (s.ax.find({ accessibilityText: "LedgerScreen" })) return "ledger";
-  if (s.ax.find({ accessibilityText: "AddTransactionScreen" })) return "add-transaction";
+  if (s.ax.find({ testTag: "LoginScreen" })) return "login";
+  if (s.ax.find({ testTag: "AddAccountScreen" })) return "add-account";
+  if (s.ax.find({ testTag: "AddTransactionScreen" })) return "add-transaction";
+  if (s.ax.find({ testTag: "LedgerScreen" })) return "ledger";
+  if (s.ax.find({ testTag: "HomeScreen" })) return "home";
   return null;
 });
 
-// All element lookups scoped through their screen root
-const accounts = extract(s =>
-  s.ax.find({ accessibilityText: "HomeScreen" })?.findAll("descPrefix:account_card:")
-    .map(el => ({
-      id: el.desc?.split(":")[1] ?? "",
-      balance: parseDollarCents(el.find({ accessibilityText: "account_balance" })?.text),
-    })) ?? []);
-const ledgerRows = extract(s =>
-  s.ax.find({ accessibilityText: "LedgerScreen" })?.findAll("descPrefix:ledger_row:")
-    .map(el => ({
-      id: el.desc?.split(":")[1] ?? "",
-      signed: parseDollarCents(el.find({ accessibilityText: "txn_amount" })?.text),
-    })) ?? []);
-const ledgerBalance = extract(s =>
-  parseDollarCents(
-    s.ax.find({ accessibilityText: "LedgerScreen" })?.find({ accessibilityText: "ledger_balance_display" })?.text
-  ));
-const activeAccountId = extract(s => {
-  const desc = s.ax.find("descPrefix:LedgerScreen:")?.desc;
-  return desc ? (desc.split(":")[1] ?? null) : null;
+// Account cards on Home: identified by visible name (the first Text node inside).
+// Each card carries an AccountBalance Text with the formatted dollar value.
+const accounts = extract<Account[]>(s => {
+  const home = s.ax.find({ testTag: "HomeScreen" });
+  if (!home) return [];
+  return home.findAll({ testTag: "AccountCard" }).map(card => {
+    const texts = card.findAll({}).map(c => c.text).filter((t): t is string => !!t);
+    const balance = parseDollarCents(card.find({ testTag: "AccountBalance" })?.text);
+    const name = texts.find(t => !t.startsWith("$") && !/^\d/.test(t) && t !== "transaction" && t !== "transactions") ?? "";
+    return { name, balance };
+  });
 });
 
-// focusedInput lives in the app root (not inside any screen), so unscoped
-const focusedInput = extract(s =>
-  s.ax.find("descPrefix:focused_input:")?.desc?.split(":")[1] ?? null);
+// Ledger rows: identified by the row's text contents joined together.
+const ledgerRows = extract<LedgerRow[]>(s => {
+  const ledger = s.ax.find({ testTag: "LedgerScreen" });
+  if (!ledger) return [];
+  return ledger.findAll({ testTag: "LedgerRow" }).map(row => {
+    const texts = row.findAll({}).map(c => c.text).filter((t): t is string => !!t);
+    const signed = parseDollarCents(row.find({ testTag: "TxnAmount" })?.text);
+    return { key: texts.join("|"), signed };
+  });
+});
+
+const ledgerBalance = extract(s =>
+  parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text));
+
+// Focus uses the native focused="true" attribute. We surface whichever
+// stable identifier the focused element carries (testTag, label, etc).
+const focusedFieldTag = extract(s => {
+  const f = s.ax.find({ focused: "true" });
+  if (!f) return null;
+  return f.attrs?.["resource-id"] ?? f.attrs?.["accessibilityIdentifier"] ?? f.attrs?.["identifier"] ?? null;
+});
 
 const loginEmailField = extract(s =>
-  s.ax.find({ accessibilityText: "LoginScreen" })?.find({ accessibilityText: "login_email" }));
+  s.ax.find({ testTag: "LoginScreen" })?.find({ testTag: "LoginEmail" }));
 const loginPasswordField = extract(s =>
-  s.ax.find({ accessibilityText: "LoginScreen" })?.find({ accessibilityText: "login_password" }));
+  s.ax.find({ testTag: "LoginScreen" })?.find({ testTag: "LoginPassword" }));
 const loginSubmit = extract(s =>
-  s.ax.find({ accessibilityText: "LoginScreen" })?.find({ accessibilityText: "login_submit" }));
+  s.ax.find({ testTag: "LoginScreen" })?.find({ testTag: "LoginSubmit" }));
 const addAccountButton = extract(s =>
-  s.ax.find({ accessibilityText: "HomeScreen" })?.find({ accessibilityText: "add_account_button" }));
+  s.ax.find({ testTag: "HomeScreen" })?.find({ testTag: "AddAccountButton" }));
 const accountNameField = extract(s =>
-  s.ax.find({ accessibilityText: "AddAccountScreen" })?.find({ accessibilityText: "account_name_field" }));
+  s.ax.find({ testTag: "AddAccountScreen" })?.find({ testTag: "AccountNameField" }));
 const addAccountSubmit = extract(s =>
-  s.ax.find({ accessibilityText: "AddAccountScreen" })?.find({ accessibilityText: "add_account_submit" }));
+  s.ax.find({ testTag: "AddAccountScreen" })?.find({ testTag: "AddAccountSubmit" }));
 const addTxnButton = extract(s =>
-  s.ax.find({ accessibilityText: "LedgerScreen" })?.find({ accessibilityText: "add_txn_button" }));
+  s.ax.find({ testTag: "LedgerScreen" })?.find({ testTag: "AddTransactionButton" }));
 const txnAmountField = extract(s =>
-  s.ax.find({ accessibilityText: "AddTransactionScreen" })?.find({ accessibilityText: "txn_amount" }));
+  s.ax.find({ testTag: "AddTransactionScreen" })?.find({ testTag: "TxnAmountField" }));
 const txnSubmit = extract(s =>
-  s.ax.find({ accessibilityText: "AddTransactionScreen" })?.find({ accessibilityText: "txn_submit" }));
+  s.ax.find({ testTag: "AddTransactionScreen" })?.find({ testTag: "TxnSubmit" }));
 const accountCards = extract(s =>
-  s.ax.find({ accessibilityText: "HomeScreen" })?.findAll("descPrefix:account_card:") ?? []);
-const backButton = extract(s => s.ax.find("desc:Back"));
+  s.ax.find({ testTag: "HomeScreen" })?.findAll({ testTag: "AccountCard" }) ?? []);
+const backButton = extract(s => s.ax.find({ testTag: "BackButton" }));
 
-// Property 1: every new account starts with balance === 0
-// Guard: only check when accounts were visible in the previous step too.
-// Without this, navigating away from HomeScreen (accounts=[]) then back
-// makes every account look "new", causing false positives on pre-existing balances.
+// Property 1: every newly-appearing account starts with balance === 0.
+// Identity is by visible name. Guard against navigation transitions where
+// accounts vanish from the visible tree.
 const newAccountBalanceIsZero = always(
   next(() => {
     const prev = accounts.previous ?? [];
     const curr = accounts.current;
     if (prev.length === 0 || curr.length === 0) return true;
-    const prevIds = new Set(prev.map(a => a.id));
-    const newAccounts = curr.filter(a => !prevIds.has(a.id));
-    return newAccounts.every(a => a.balance === 0);
+    const prevNames = new Set(prev.map(a => a.name));
+    return curr.filter(a => !prevNames.has(a.name)).every(a => a.balance === 0);
   })
 );
 
-// Property 2: every new transaction changes the account ledger balance by exactly its signed amount
+// Property 2: a newly-added ledger row changes the ledger balance by exactly its signed amount.
 const newTxnChangesBalance = always(
-  now(() => activeAccountId.current !== null).implies(
+  now(() => route.current === "ledger").implies(
     next(() => {
-      const prevRows = ledgerRows.previous ?? [];
-      const curRows = ledgerRows.current;
-      if (curRows.length !== prevRows.length + 1) return true;
-      const prevIds = new Set(prevRows.map(r => r.id));
-      const added = curRows.find(r => !prevIds.has(r.id));
+      const prev = ledgerRows.previous ?? [];
+      const curr = ledgerRows.current;
+      if (curr.length !== prev.length + 1) return true;
+      const prevKeys = new Set(prev.map(r => r.key));
+      const added = curr.find(r => !prevKeys.has(r.key));
       if (!added) return true;
       const delta = ledgerBalance.current - (ledgerBalance.previous ?? 0);
       return delta === added.signed && delta !== 0;
@@ -122,15 +128,15 @@ const newTxnChangesBalance = always(
 const DEMO_EMAIL = "demo@folio.app";
 const DEMO_PASSWORD = "ledger123";
 
-// Login if not already in - step by step based on which field has focus
+// Login: drive the form via focus state read from the native focused="true" attr.
 const login = actions(() => {
   if (loggedIn.current) return [];
-  const focus = focusedInput.current;
-  if (focus === "login_password") {
+  const focus = focusedFieldTag.current;
+  if (focus === "LoginPassword") {
     const submit = loginSubmit.current;
     return submit ? [Tap({ on: submit })] : [];
   }
-  if (focus === "login_email") {
+  if (focus === "LoginEmail") {
     const pwd = loginPasswordField.current;
     return pwd ? [InputText({ into: pwd, text: DEMO_PASSWORD })] : [];
   }
@@ -140,7 +146,6 @@ const login = actions(() => {
 
 const accountNames = from(["Checking", "Savings", "Travel", "Emergency Fund", "Investments"]);
 
-// Add an account: home -> tap add -> type name -> submit
 const addAccount = actions(() => {
   if (!loggedIn.current) return [];
   if (route.current === "home") {
@@ -160,7 +165,6 @@ const addAccount = actions(() => {
 
 const amounts = from(["10", "50", "25", "100", "5"]);
 
-// Add a transaction: home -> tap account card -> tap add txn -> type amount -> submit
 const addTxn = actions(() => {
   if (!loggedIn.current) return [];
   if (route.current === "home") {
