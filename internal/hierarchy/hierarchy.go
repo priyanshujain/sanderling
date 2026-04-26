@@ -26,6 +26,7 @@ package hierarchy
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
@@ -229,9 +230,7 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	}
 
 	element.Attributes = make(map[string]string, len(attrs)+5)
-	for k, v := range attrs {
-		element.Attributes[k] = v
-	}
+	maps.Copy(element.Attributes, attrs)
 	if node.Clickable != nil {
 		element.Attributes["clickable"] = strconv.FormatBool(*node.Clickable)
 	}
