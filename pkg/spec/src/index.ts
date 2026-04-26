@@ -38,4 +38,5 @@ export {
   taps,
   waitOnce,
   weighted,
+  whenRoute,
 } from "./actions.ts";
