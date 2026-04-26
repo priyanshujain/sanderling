@@ -20,6 +20,7 @@ import {
   taps,
   waitOnce,
   weighted,
+  whenRoute,
 } from "../src/index.ts";
 import type {
   AccessibilityElement,
@@ -321,6 +322,41 @@ test("keyedBy substitutes empty strings for missing children", () => {
     keyedBy(row, ["TxnDate", "TxnNote", "TxnAmount"]),
     "2026-04-26\x1f\x1f",
   );
+});
+
+test("whenRoute returns [] when current route does not match", () => {
+  installFakeRuntime();
+  const route = { current: "home" as string | null };
+  let bodyCalled = false;
+  const generator = whenRoute(route, "ledger", () => {
+    bodyCalled = true;
+    return [Tap({ on: "id:x" })];
+  });
+  assert.deepEqual(generator.generate(), []);
+  assert.equal(bodyCalled, false);
+});
+
+test("whenRoute calls body when current route matches", () => {
+  installFakeRuntime();
+  const route = { current: "ledger" as string | null };
+  const generator = whenRoute(route, "ledger", () => [Tap({ on: "id:x" })]);
+  const result = generator.generate();
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.kind, "Tap");
+});
+
+test("whenRoute accepts an array of allowed routes", () => {
+  installFakeRuntime();
+  const route = { current: "add-account" as string | null };
+  const generator = whenRoute(route, ["home", "add-account"], () => [Tap({ on: "id:x" })]);
+  assert.equal(generator.generate().length, 1);
+});
+
+test("whenRoute returns [] for null route", () => {
+  installFakeRuntime();
+  const route = { current: null as string | null };
+  const generator = whenRoute(route, ["home"], () => [Tap({ on: "id:x" })]);
+  assert.deepEqual(generator.generate(), []);
 });
 
 test("default generators proxy through to the runtime", () => {
