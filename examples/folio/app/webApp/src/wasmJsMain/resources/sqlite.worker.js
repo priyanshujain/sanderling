@@ -64,8 +64,7 @@ self.onmessage = (event) => {
     })
     .catch((err) => {
       const message = err && err.message ? String(err.message) : String(err);
+      console.error('[sqlite worker] error', message, err);
       self.postMessage({ id: data && data.id, error: { message, name: err && err.name } });
     });
 };
-
-self.postMessage({ ready: true, persistent: isPersistent });
