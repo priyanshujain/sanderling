@@ -19,7 +19,7 @@ targets:
     sources:
       - iosApp
     dependencies:
-      - framework: ../composeApp/build/bin/iosSimulatorArm64/debugFramework/ComposeApp.framework
+      - framework: ../app/shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework
         embed: false
       - sdk: libsqlite3.tbd
     settings:
@@ -28,7 +28,7 @@ targets:
         PRODUCT_NAME: iosApp
         INFOPLIST_FILE: iosApp/Info.plist
         FRAMEWORK_SEARCH_PATHS:
-          - $(SRCROOT)/../composeApp/build/bin/$(KOTLIN_FRAMEWORK_DIR)/debugFramework
+          - $(SRCROOT)/../app/shared/build/bin/$(KOTLIN_FRAMEWORK_DIR)/debugFramework
         OTHER_LDFLAGS:
           - -ObjC
         KOTLIN_FRAMEWORK_DIR: iosSimulatorArm64
@@ -37,7 +37,7 @@ targets:
         script: |
           cd "$SRCROOT/.."
           ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}" \
-            ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
+            ./gradlew :app:shared:linkDebugFrameworkIosSimulatorArm64
         outputFiles:
-          - $(SRCROOT)/../composeApp/build/bin/iosSimulatorArm64/debugFramework/ComposeApp.framework/ComposeApp
+          - $(SRCROOT)/../app/shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Shared
         basedOnDependencyAnalysis: false
