@@ -216,6 +216,10 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 	if err := v.runtime.GlobalObject().Set("state", state); err != nil {
 		return fmt.Errorf("set state: %w", err)
 	}
+	// Extractor previous/current advance exactly once per PushSnapshot.
+	// Predicate thunks read these slots but never trigger advancement, so
+	// invoking a thunk multiple times between snapshots is value-stable.
+	// refreshPredicateErrors relies on this to safely re-call predicates.
 	for index, extractor := range v.extractors {
 		previous := extractor.handle.Get("current")
 		_ = extractor.handle.Set("previous", previous)
@@ -317,6 +321,12 @@ func (v *Verifier) formulaThunk(index int) func() bool {
 // violated, so without this refresh the runner's per-step "predicate error"
 // log freezes on whatever the predicate threw at step 1. The refreshed errors
 // have no effect on verdicts.
+//
+// Invariant: predicates may be re-invoked here outside the LTL gate that
+// would normally skip them (e.g. an `implies` consequent whose antecedent is
+// false). They must therefore be side-effect-free reads of extractor state;
+// any spec that asserts internal preconditions inside a predicate could
+// surface a spurious error in the inspect UI without affecting verdicts.
 func (v *Verifier) refreshPredicateErrors() {
 	for _, formula := range v.formulas {
 		result, err := formula.predicate(goja.Undefined())
