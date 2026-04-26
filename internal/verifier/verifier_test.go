@@ -428,6 +428,36 @@ func TestSelectorPath_ScopedDescent(t *testing.T) {
 	}
 }
 
+// TestSelector_BooleanValue ensures a native JS boolean in the selector
+// (e.g. `find({ focused: true })`) matches the "true"/"false" string
+// serialization the hierarchy uses for boolean state attributes.
+func TestSelector_BooleanValue(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"testTag": "EmailField", "bounds": "[0,0,100,40]"}, "focused": true, "children": []},
+	    {"attributes": {"testTag": "PasswordField", "bounds": "[0,40,100,80]"}, "focused": false, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.focusedTag = __sanderling__.extract(state =>
+			state.ax.find({ focused: true })?.attrs?.testTag ?? null
+		);
+	`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	got := verifier.runtime.GlobalObject().Get("focusedTag").ToObject(verifier.runtime).Get("current")
+	if got == nil || got.String() != "EmailField" {
+		t.Fatalf("expected EmailField, got %v", got)
+	}
+}
+
 // TestFrom_SeededReplayIsDeterministic guarantees `from()` over a per-step
 // dynamic array picks the same element under the same seed across runs. The
 // folio spec relies on this to replace Math.random() in account-card taps.
