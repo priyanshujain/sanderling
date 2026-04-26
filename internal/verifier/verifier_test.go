@@ -259,6 +259,49 @@ func TestLoad_AcceptsSpecWithoutPropertiesOrActions(t *testing.T) {
 	}
 }
 
+// TestFrom_SeededReplayIsDeterministic guarantees `from()` over a per-step
+// dynamic array picks the same element under the same seed across runs. The
+// folio spec relies on this to replace Math.random() in account-card taps.
+func TestFrom_SeededReplayIsDeterministic(t *testing.T) {
+	pickedSequence := func(seed uint64) []string {
+		verifier := newVerifier(t, WithRand(rand.New(rand.NewPCG(seed, 0))))
+		mustLoad(t, verifier, `
+			globalThis.actions = __sanderling__.actions(() => {
+				const cards = ["card_a", "card_b", "card_c", "card_d"];
+				return [__sanderling__.tap({ on: __sanderling__.from(cards).generate() })];
+			});
+		`)
+		_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+		var picks []string
+		for range 20 {
+			action, err := verifier.NextAction()
+			if err != nil {
+				t.Fatal(err)
+			}
+			picks = append(picks, action.On)
+		}
+		return picks
+	}
+	first := pickedSequence(1234)
+	second := pickedSequence(1234)
+	for i := range first {
+		if first[i] != second[i] {
+			t.Fatalf("step %d: %q != %q (replay not deterministic)", i, first[i], second[i])
+		}
+	}
+	other := pickedSequence(5678)
+	identical := true
+	for i := range first {
+		if first[i] != other[i] {
+			identical = false
+			break
+		}
+	}
+	if identical {
+		t.Fatal("expected different seeds to produce different pick sequences")
+	}
+}
+
 // PredicateError must reflect the most recent step's predicate result, not a
 // latched first-step error. The runner logs PredicateError once per step; if it
 // stays pinned to step 1 forever, downstream debugging looks frozen even though

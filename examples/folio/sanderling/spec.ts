@@ -162,7 +162,7 @@ const addTxn = actions(() => {
   if (route.current === "home") {
     const cards = accountCards.current;
     if (cards.length === 0) return [];
-    return [Tap({ on: cards[Math.floor(Math.random() * cards.length)] })];
+    return [Tap({ on: from(cards).generate() })];
   }
   if (route.current === "ledger") {
     const btn = addTxnButton.current;
