@@ -20,6 +20,7 @@ type Verifier struct {
 
 	properties      map[string]int // property name -> formula-spec index
 	actionGenerator goja.Value
+	setupGenerator  goja.Value
 
 	evaluators map[string]*ltl.Evaluator
 
@@ -56,8 +57,9 @@ func New(options ...Option) (*Verifier, error) {
 }
 
 // Load executes the bundled spec source. The spec is expected to assign its
-// property formulas to globalThis.properties and its root action generator
-// to globalThis.actions.
+// property formulas to globalThis.properties, its root action generator to
+// globalThis.actions, and optionally a setup (precondition) action generator
+// to globalThis.setup.
 func (v *Verifier) Load(source string) error {
 	if _, err := v.runtime.RunString(source); err != nil {
 		return fmt.Errorf("run spec: %w", err)
@@ -86,6 +88,10 @@ func (v *Verifier) Load(source string) error {
 
 	if actionsValue := v.runtime.GlobalObject().Get("actions"); actionsValue != nil && !goja.IsUndefined(actionsValue) && !goja.IsNull(actionsValue) {
 		v.actionGenerator = actionsValue
+	}
+
+	if setupValue := v.runtime.GlobalObject().Get("setup"); setupValue != nil && !goja.IsUndefined(setupValue) && !goja.IsNull(setupValue) {
+		v.setupGenerator = setupValue
 	}
 
 	return nil
@@ -278,12 +284,22 @@ func (v *Verifier) Residuals() map[string]ltl.Formula {
 	return residuals
 }
 
-// NextAction resolves the root action generator into a single Action.
-// Returns ErrNoAction when no branch of the generator produces one after a
-// small number of retries. Retrying avoids wedging when most branches of a
-// weighted generator produce no action on the current screen (e.g. a gated
-// login-phone generator when the app is already past login).
+// NextAction resolves an action for the current step. The setup generator,
+// when registered, runs first; if it yields an action, that wins. When setup
+// returns ErrNoAction (all branches empty) the call falls through to the
+// root action generator with the existing retry semantics. Setup is consulted
+// every step, so state regression (e.g. a logout under fuzz) automatically
+// re-engages the precondition.
 func (v *Verifier) NextAction() (Action, error) {
+	if v.setupGenerator != nil {
+		action, err := v.resolveGenerator(v.setupGenerator)
+		if err == nil {
+			return action, nil
+		}
+		if !errors.Is(err, ErrNoAction) {
+			return Action{}, err
+		}
+	}
 	if v.actionGenerator == nil {
 		return Action{}, ErrNoAction
 	}

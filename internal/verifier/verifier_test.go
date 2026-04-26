@@ -179,6 +179,108 @@ func TestNextAction_EmptyGeneratorReturnsErrNoAction(t *testing.T) {
 	}
 }
 
+func TestNextAction_SetupTakesPrecedenceWhenYielding(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.setup = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:setup" })]);
+		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	`)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:setup" {
+		t.Errorf("setup precedence: got %q, want id:setup", action.On)
+	}
+}
+
+func TestNextAction_FallsThroughToActionsWhenSetupEmpty(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.setup = __sanderling__.actions(() => []);
+		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	`)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:main" {
+		t.Errorf("fallthrough: got %q, want id:main", action.On)
+	}
+}
+
+func TestNextAction_SetupReengagesAfterRegression(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.loggedIn = __sanderling__.extract(state => state.snapshots["loggedIn"] === true);
+		globalThis.setup = __sanderling__.actions(() => {
+			if (loggedIn.current) return [];
+			return [__sanderling__.tap({ on: "id:login" })];
+		});
+		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	`)
+
+	push := func(loggedIn bool) {
+		raw := json.RawMessage(`false`)
+		if loggedIn {
+			raw = json.RawMessage(`true`)
+		}
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"loggedIn": raw}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	push(false)
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:login" {
+		t.Fatalf("step 1 (logged out): got %q, want id:login", action.On)
+	}
+
+	push(true)
+	action, err = verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:main" {
+		t.Fatalf("step 2 (logged in): got %q, want id:main", action.On)
+	}
+
+	push(false)
+	action, err = verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:login" {
+		t.Fatalf("step 3 (regressed): got %q, want id:login", action.On)
+	}
+}
+
+func TestNextAction_NoSetupRegistered(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	`)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+
+	if verifier.setupGenerator != nil {
+		t.Errorf("setupGenerator should be nil when spec does not export setup")
+	}
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:main" {
+		t.Errorf("got %q, want id:main", action.On)
+	}
+}
+
 func TestInputText_RoundTrip(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, `
