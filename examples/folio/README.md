@@ -35,7 +35,7 @@ just ios                          # default device: iPhone 17 Pro
 IOS_DEVICE="iPhone 15" just ios   # pick a different simulator
 ```
 
-`just ios` regenerates `iosApp/iosApp.xcodeproj` from `iosApp/project.yml`,
+`just ios` regenerates `app/iosApp/iosApp.xcodeproj` from `app/iosApp/project.yml`,
 builds the KMP framework (`Shared.framework` from `:app:shared`), links it
 into the SwiftUI host, installs, and launches.
 

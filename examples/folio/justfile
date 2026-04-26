@@ -55,13 +55,13 @@ clean:
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
     ./gradlew clean
-    rm -rf iosApp/build
+    rm -rf app/iosApp/build
 
 # Regenerate iosApp.xcodeproj from project.yml.
 ios-gen:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd iosApp && xcodegen generate
+    cd app/iosApp && xcodegen generate
 
 # Build + install + launch on a booted iOS simulator (boots IOS_DEVICE if none).
 ios:
@@ -74,11 +74,11 @@ ios:
       sleep 3
     fi
     just ios-gen
-    xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp \
+    xcodebuild -project app/iosApp/iosApp.xcodeproj -scheme iosApp \
       -destination 'platform=iOS Simulator,name={{ios_device}}' \
-      -derivedDataPath iosApp/build \
+      -derivedDataPath app/iosApp/build \
       build | tail -5
-    xcrun simctl install booted iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app
+    xcrun simctl install booted app/iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app
     xcrun simctl launch booted app.folio
 
 # Run 'sanderling test' against the folio app. Uses a connected device if one is
