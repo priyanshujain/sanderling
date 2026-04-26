@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.js.ExperimentalWasmJsInterop::class)
+
 package app.folio.core.data
 
 import app.cash.sqldelight.async.coroutines.awaitCreate
@@ -8,12 +10,11 @@ import org.w3c.dom.Worker
 
 actual class DriverFactory {
     actual suspend fun create(): SqlDriver {
-        val worker = Worker(workerScriptUrl())
-        val driver = WebWorkerDriver(worker)
+        val driver = WebWorkerDriver(createSqliteWorker())
         LedgerDatabase.Schema.awaitCreate(driver)
         return driver
     }
 }
 
-private fun workerScriptUrl(): String =
-    js("""new URL("./sqlite.worker.js", import.meta.url).toString()""")
+private fun createSqliteWorker(): Worker =
+    js("""new Worker(new URL("./sqlite.worker.js", import.meta.url), { type: "module" })""")
