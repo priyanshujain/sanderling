@@ -40,4 +40,28 @@ export const actionsRoot = weighted(
 );
 ```
 
+## Setup actions
+
+Some action generators are not fuzz targets but preconditions: they drive the
+app from a fresh state into the surface you actually want to fuzz (login,
+onboarding, permission grants, seed data). Export them as `setup` instead of
+mixing them into `actionsRoot`. The runner tries `setup` first; if it yields
+no action, it falls through to `actionsRoot`. State regressing back across the
+precondition (e.g. logout under fuzz) automatically re-engages setup.
+
+```ts
+const login = actions(() => {
+  if (loggedIn.current) return [];
+  return [InputText({ into: emailField.current!, text: "demo@app.test" }), Tap({ on: submitButton.current! })];
+});
+
+export const setup = login;
+export const actionsRoot = weighted([60, browse], [40, edit]);
+
+(globalThis as { setup?: unknown }).setup = setup;
+```
+
+Setup is just an `ActionGenerator`; compose with `actions`, `weighted`, or
+`whenRoute` exactly like the main pool.
+
 Works identically across Android, iOS, and web targets.
