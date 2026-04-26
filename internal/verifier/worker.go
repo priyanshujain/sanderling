@@ -254,6 +254,7 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 	for name, evaluator := range v.evaluators {
 		verdicts[name] = evaluator.ObserveAt(stepTime)
 	}
+	v.refreshPredicateErrors()
 	return verdicts
 }
 
@@ -302,12 +303,29 @@ func (v *Verifier) formulaThunk(index int) func() bool {
 		formula := v.formulas[index]
 		result, err := formula.predicate(goja.Undefined())
 		if err != nil {
-			if formula.err == nil {
-				formula.err = err
-			}
+			formula.err = err
 			return false
 		}
+		formula.err = nil
 		return result.ToBoolean()
+	}
+}
+
+// refreshPredicateErrors re-invokes every registered predicate so that
+// formula.err reflects the current step rather than a latched first-step
+// throw. EvaluateProperties short-circuits once a property has latched to
+// violated, so without this refresh the runner's per-step "predicate error"
+// log freezes on whatever the predicate threw at step 1. The refreshed errors
+// have no effect on verdicts.
+func (v *Verifier) refreshPredicateErrors() {
+	for _, formula := range v.formulas {
+		result, err := formula.predicate(goja.Undefined())
+		if err != nil {
+			formula.err = err
+			continue
+		}
+		_ = result
+		formula.err = nil
 	}
 }
 
