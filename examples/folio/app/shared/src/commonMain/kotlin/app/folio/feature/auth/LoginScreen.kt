@@ -15,7 +15,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.folio.LocalAppComponent
+import app.folio.di.LocalAppGraph
 import app.folio.ui.component.AppButton
 import app.folio.ui.component.ButtonStyle
 import app.folio.ui.component.Card
@@ -28,8 +28,8 @@ import app.folio.ui.theme.Type
 
 @Composable
 fun LoginRoute() {
-    val component = LocalAppComponent.current
-    val vm: LoginViewModel = viewModel { LoginViewModel(component.repository, component.navigator) }
+    val graph = LocalAppGraph.current
+    val vm: LoginViewModel = viewModel { graph.loginViewModel }
     val state by vm.state.collectAsState()
     LoginScreen(state = state, onEvent = vm::onEvent)
 }

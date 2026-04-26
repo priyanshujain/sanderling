@@ -23,7 +23,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.folio.LocalAppComponent
+import app.folio.di.LocalAppGraph
 import app.folio.util.balanceOf
 import app.folio.util.formatCents
 import app.folio.util.initialsOf
@@ -41,8 +41,8 @@ import app.folio.ui.theme.Type
 
 @Composable
 fun HomeRoute() {
-    val component = LocalAppComponent.current
-    val vm: HomeViewModel = viewModel { HomeViewModel(component.repository, component.navigator) }
+    val graph = LocalAppGraph.current
+    val vm: HomeViewModel = viewModel { graph.homeViewModel }
     val state by vm.state.collectAsState()
     HomeScreen(state = state, onEvent = vm::onEvent)
 }

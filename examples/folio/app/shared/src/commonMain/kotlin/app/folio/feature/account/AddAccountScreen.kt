@@ -12,7 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.folio.LocalAppComponent
+import app.folio.di.LocalAppGraph
 import app.folio.ui.BackHandler
 import app.folio.ui.component.AppButton
 import app.folio.ui.component.BackButton
@@ -27,8 +27,8 @@ import app.folio.ui.theme.Type
 
 @Composable
 fun AddAccountRoute() {
-    val component = LocalAppComponent.current
-    val vm: AddAccountViewModel = viewModel { AddAccountViewModel(component.repository, component.navigator) }
+    val graph = LocalAppGraph.current
+    val vm: AddAccountViewModel = viewModel { graph.addAccountViewModel }
     val state by vm.state.collectAsState()
     AddAccountScreen(state = state, onEvent = vm::onEvent)
 }

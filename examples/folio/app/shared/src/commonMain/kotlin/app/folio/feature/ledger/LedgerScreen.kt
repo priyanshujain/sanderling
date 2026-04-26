@@ -22,8 +22,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.folio.LocalAppComponent
 import app.folio.core.data.TxnType
+import app.folio.di.LocalAppGraph
 import app.folio.util.balanceOf
 import app.folio.util.formatCents
 import app.folio.util.formatDate
@@ -42,9 +42,9 @@ import app.folio.ui.theme.Type
 
 @Composable
 fun LedgerRoute(accountId: String) {
-    val component = LocalAppComponent.current
+    val graph = LocalAppGraph.current
     val vm: LedgerViewModel = viewModel(key = "ledger:$accountId") {
-        LedgerViewModel(component.repository, component.navigator, accountId)
+        graph.ledgerViewModelFactory.create(accountId)
     }
     val state by vm.state.collectAsState()
     LedgerScreen(state = state, onEvent = vm::onEvent)
