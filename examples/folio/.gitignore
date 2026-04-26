@@ -2,9 +2,9 @@
 build/
 .kotlin/
 local.properties
-iosApp/build/
-iosApp/iosApp.xcodeproj/
-iosApp/iosApp.xcodeproj/**
+app/iosApp/build/
+app/iosApp/iosApp.xcodeproj/
+app/iosApp/iosApp.xcodeproj/**
 .DS_Store
 sanderling/node_modules/
 sanderling/runs/

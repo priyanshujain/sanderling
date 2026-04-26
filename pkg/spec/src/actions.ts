@@ -17,6 +17,19 @@ export function actions(generator: () => Action[]): ActionGenerator {
   return globalThis.__sanderling__.actions(generator);
 }
 
+export function whenRoute(
+  routeExtractor: { readonly current: string | null },
+  routes: string | readonly string[],
+  body: () => Action[],
+): ActionGenerator {
+  const allowed = typeof routes === "string" ? [routes] : routes;
+  return actions(() => {
+    const current = routeExtractor.current;
+    if (current === null || !allowed.includes(current)) return [];
+    return body();
+  });
+}
+
 export function weighted(...entries: WeightedEntry[]): ActionGenerator {
   return globalThis.__sanderling__.weighted(...entries);
 }

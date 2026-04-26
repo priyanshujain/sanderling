@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dop251/goja"
+
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 	"github.com/priyanshujain/sanderling/internal/ltl"
 )
 
@@ -176,6 +179,108 @@ func TestNextAction_EmptyGeneratorReturnsErrNoAction(t *testing.T) {
 	}
 }
 
+func TestNextAction_SetupTakesPrecedenceWhenYielding(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.setup = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:setup" })]);
+		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	`)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:setup" {
+		t.Errorf("setup precedence: got %q, want id:setup", action.On)
+	}
+}
+
+func TestNextAction_FallsThroughToActionsWhenSetupEmpty(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.setup = __sanderling__.actions(() => []);
+		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	`)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:main" {
+		t.Errorf("fallthrough: got %q, want id:main", action.On)
+	}
+}
+
+func TestNextAction_SetupReengagesAfterRegression(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.loggedIn = __sanderling__.extract(state => state.snapshots["loggedIn"] === true);
+		globalThis.setup = __sanderling__.actions(() => {
+			if (loggedIn.current) return [];
+			return [__sanderling__.tap({ on: "id:login" })];
+		});
+		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	`)
+
+	push := func(loggedIn bool) {
+		raw := json.RawMessage(`false`)
+		if loggedIn {
+			raw = json.RawMessage(`true`)
+		}
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"loggedIn": raw}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	push(false)
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:login" {
+		t.Fatalf("step 1 (logged out): got %q, want id:login", action.On)
+	}
+
+	push(true)
+	action, err = verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:main" {
+		t.Fatalf("step 2 (logged in): got %q, want id:main", action.On)
+	}
+
+	push(false)
+	action, err = verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:login" {
+		t.Fatalf("step 3 (regressed): got %q, want id:login", action.On)
+	}
+}
+
+func TestNextAction_NoSetupRegistered(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	`)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+
+	if verifier.setupGenerator != nil {
+		t.Errorf("setupGenerator should be nil when spec does not export setup")
+	}
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.On != "id:main" {
+		t.Errorf("got %q, want id:main", action.On)
+	}
+}
+
 func TestInputText_RoundTrip(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, `
@@ -256,5 +361,144 @@ func TestLoad_AcceptsSpecWithoutPropertiesOrActions(t *testing.T) {
 	}
 	if _, err := verifier.NextAction(); !errors.Is(err, ErrNoAction) {
 		t.Errorf("expected ErrNoAction, got %v", err)
+	}
+}
+
+// TestSelectorPath_ScopedDescent ensures the JS-side `find([{...}, {...}])`
+// shape walks each segment scoped under the previous match.
+func TestSelectorPath_ScopedDescent(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "rootView", "bounds": "[0,0,1080,2340]"},
+	  "children": [
+	    {
+	      "attributes": {"testTag": "HomeScreen", "bounds": "[0,0,540,2340]"},
+	      "children": [
+	        {
+	          "attributes": {"testTag": "AccountCard", "bounds": "[0,0,540,200]"},
+	          "children": [
+	            {"attributes": {"testTag": "AccountName", "text": "Checking", "bounds": "[10,10,200,40]"}, "children": []}
+	          ]
+	        }
+	      ]
+	    },
+	    {
+	      "attributes": {"testTag": "LedgerScreen", "bounds": "[540,0,1080,2340]"},
+	      "children": [
+	        {"attributes": {"testTag": "AccountName", "text": "Other", "bounds": "[600,10,800,40]"}, "children": []}
+	      ]
+	    }
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.found = __sanderling__.extract(state =>
+			state.ax.find([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }, { testTag: "AccountName" }])
+		);
+		globalThis.foundUnreachable = __sanderling__.extract(state =>
+			state.ax.find([{ testTag: "LedgerScreen" }, { testTag: "AccountCard" }])
+		);
+		globalThis.allInHome = __sanderling__.extract(state =>
+			state.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountName" }])
+		);
+	`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	found := verifier.runtime.GlobalObject().Get("found").ToObject(verifier.runtime).Get("current")
+	if found == nil || goja.IsUndefined(found) {
+		t.Fatal("expected path lookup to find AccountName under HomeScreen > AccountCard")
+	}
+	text := found.ToObject(verifier.runtime).Get("text")
+	if text.String() != "Checking" {
+		t.Fatalf("text = %q, want Checking", text.String())
+	}
+	unreachable := verifier.runtime.GlobalObject().Get("foundUnreachable").ToObject(verifier.runtime).Get("current")
+	if !goja.IsUndefined(unreachable) {
+		t.Fatalf("AccountCard is not under LedgerScreen, expected undefined, got %v", unreachable)
+	}
+	allInHome := verifier.runtime.GlobalObject().Get("allInHome").ToObject(verifier.runtime).Get("current")
+	allObject := allInHome.ToObject(verifier.runtime)
+	length := allObject.Get("length").ToInteger()
+	if length != 1 {
+		t.Fatalf("findAll path length = %d, want 1 (Checking only, not Other in LedgerScreen)", length)
+	}
+}
+
+// TestFrom_SeededReplayIsDeterministic guarantees `from()` over a per-step
+// dynamic array picks the same element under the same seed across runs. The
+// folio spec relies on this to replace Math.random() in account-card taps.
+func TestFrom_SeededReplayIsDeterministic(t *testing.T) {
+	pickedSequence := func(seed uint64) []string {
+		verifier := newVerifier(t, WithRand(rand.New(rand.NewPCG(seed, 0))))
+		mustLoad(t, verifier, `
+			globalThis.actions = __sanderling__.actions(() => {
+				const cards = ["card_a", "card_b", "card_c", "card_d"];
+				return [__sanderling__.tap({ on: __sanderling__.from(cards).generate() })];
+			});
+		`)
+		_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+		var picks []string
+		for range 20 {
+			action, err := verifier.NextAction()
+			if err != nil {
+				t.Fatal(err)
+			}
+			picks = append(picks, action.On)
+		}
+		return picks
+	}
+	first := pickedSequence(1234)
+	second := pickedSequence(1234)
+	for i := range first {
+		if first[i] != second[i] {
+			t.Fatalf("step %d: %q != %q (replay not deterministic)", i, first[i], second[i])
+		}
+	}
+	other := pickedSequence(5678)
+	identical := true
+	for i := range first {
+		if first[i] != other[i] {
+			identical = false
+			break
+		}
+	}
+	if identical {
+		t.Fatal("expected different seeds to produce different pick sequences")
+	}
+}
+
+// PredicateError must reflect the most recent step's predicate result, not a
+// latched first-step error. The runner logs PredicateError once per step; if it
+// stays pinned to step 1 forever, downstream debugging looks frozen even though
+// the underlying state is changing.
+func TestPredicateError_ReflectsCurrentStepNotFirstStep(t *testing.T) {
+	const spec = `
+globalThis.counter = __sanderling__.extract(state => state.snapshots["count"]);
+globalThis.properties = {
+  reportsCounter: __sanderling__.always(() => { throw new Error("count=" + counter.current); }),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	for step := 1; step <= 3; step++ {
+		raw := json.RawMessage([]byte{'"', byte('0' + step), '"'})
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"count": raw}}); err != nil {
+			t.Fatal(err)
+		}
+		_ = verifier.EvaluateProperties()
+
+		got := verifier.PredicateError("reportsCounter")
+		if got == nil {
+			t.Fatalf("step %d: PredicateError = nil, want non-nil", step)
+		}
+		want := "count=" + string(rune('0'+step))
+		if !strings.Contains(got.Error(), want) {
+			t.Errorf("step %d: PredicateError = %q, want to contain %q", step, got.Error(), want)
+		}
 	}
 }

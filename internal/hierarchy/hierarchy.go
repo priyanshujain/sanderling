@@ -18,12 +18,15 @@
 //
 // Cross-platform aliases are expanded automatically: "label" / "accessibilityLabel"
 // resolve to accessibilityText; "content-desc" also checks accessibilityText and
-// vice-versa; "identifier" / "accessibilityIdentifier" resolve to resource-id.
+// vice-versa; "identifier" / "accessibilityIdentifier" / "testTag" resolve to
+// resource-id (and to each other) so a Compose testTag matches whether the
+// underlying platform exposes it as resource-id (Android) or accessibilityIdentifier (iOS).
 package hierarchy
 
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
@@ -113,10 +116,12 @@ var attributeAliases = map[string][]string{
 	// accessibilityText is the canonical key; also check content-desc for Android/web
 	"accessibilityText": {"content-desc"},
 	// resource-id canonical key; also check identifier (iOS AXElement raw field)
-	"resource-id": {"identifier"},
+	"resource-id": {"identifier", "accessibilityIdentifier"},
 	// iOS identifier names
-	"identifier":              {"resource-id"},
-	"accessibilityIdentifier": {"resource-id"},
+	"identifier":              {"resource-id", "accessibilityIdentifier"},
+	"accessibilityIdentifier": {"resource-id", "identifier"},
+	// Compose testTag surfaces as resource-id on Android, accessibilityIdentifier on iOS
+	"testTag": {"resource-id", "identifier", "accessibilityIdentifier"},
 	// iOS AXElement raw name for hintText
 	"placeholderValue": {"hintText"},
 	// iOS AXElement raw name for class
@@ -189,6 +194,9 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	if element.ResourceID == "" {
 		element.ResourceID = attrs["identifier"]
 	}
+	if element.ResourceID == "" {
+		element.ResourceID = attrs["accessibilityIdentifier"]
+	}
 	element.Text = attrs["text"]
 	element.Description = attrs["content-desc"]
 	if element.Description == "" {
@@ -222,9 +230,7 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	}
 
 	element.Attributes = make(map[string]string, len(attrs)+5)
-	for k, v := range attrs {
-		element.Attributes[k] = v
-	}
+	maps.Copy(element.Attributes, attrs)
 	if node.Clickable != nil {
 		element.Attributes["clickable"] = strconv.FormatBool(*node.Clickable)
 	}
@@ -291,6 +297,22 @@ func (t *Tree) FindAllNodes(selector string) []*Node {
 	return searchSubtree(t.Root, kind, value)
 }
 
+// FindBySelectorPath walks the selector chain starting from the tree root.
+func (t *Tree) FindBySelectorPath(path []Selector) *Node {
+	if t == nil || t.Root == nil {
+		return nil
+	}
+	return t.Root.FindBySelectorPath(path)
+}
+
+// FindAllBySelectorPath walks the selector chain starting from the tree root.
+func (t *Tree) FindAllBySelectorPath(path []Selector) []*Node {
+	if t == nil || t.Root == nil {
+		return nil
+	}
+	return t.Root.FindAllBySelectorPath(path)
+}
+
 // Find returns the first Node in this node's subtree (descendants only) matching
 // the string selector. Path queries within the selector are not supported here.
 func (n *Node) Find(selector string) *Node {
@@ -335,6 +357,45 @@ func (n *Node) FindAllBySelector(sel Selector) []*Node {
 	var result []*Node
 	for _, child := range n.Children {
 		result = append(result, searchSubtreeBySelector(child, sel)...)
+	}
+	return result
+}
+
+// FindBySelectorPath walks a chain of selectors. The first selector is matched
+// against descendants of the receiver; each subsequent selector is matched
+// against descendants of the previous match. Returns the deepest match or nil.
+func (n *Node) FindBySelectorPath(path []Selector) *Node {
+	if len(path) == 0 {
+		return nil
+	}
+	for _, child := range n.Children {
+		for _, candidate := range searchSubtreeBySelector(child, path[0]) {
+			if len(path) == 1 {
+				return candidate
+			}
+			if deeper := candidate.FindBySelectorPath(path[1:]); deeper != nil {
+				return deeper
+			}
+		}
+	}
+	return nil
+}
+
+// FindAllBySelectorPath returns every deepest match for the selector chain
+// scoped under the receiver.
+func (n *Node) FindAllBySelectorPath(path []Selector) []*Node {
+	if len(path) == 0 {
+		return nil
+	}
+	var result []*Node
+	for _, child := range n.Children {
+		for _, candidate := range searchSubtreeBySelector(child, path[0]) {
+			if len(path) == 1 {
+				result = append(result, candidate)
+				continue
+			}
+			result = append(result, candidate.FindAllBySelectorPath(path[1:])...)
+		}
 	}
 	return result
 }

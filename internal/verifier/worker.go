@@ -20,6 +20,7 @@ type Verifier struct {
 
 	properties      map[string]int // property name -> formula-spec index
 	actionGenerator goja.Value
+	setupGenerator  goja.Value
 
 	evaluators map[string]*ltl.Evaluator
 
@@ -56,8 +57,9 @@ func New(options ...Option) (*Verifier, error) {
 }
 
 // Load executes the bundled spec source. The spec is expected to assign its
-// property formulas to globalThis.properties and its root action generator
-// to globalThis.actions.
+// property formulas to globalThis.properties, its root action generator to
+// globalThis.actions, and optionally a setup (precondition) action generator
+// to globalThis.setup.
 func (v *Verifier) Load(source string) error {
 	if _, err := v.runtime.RunString(source); err != nil {
 		return fmt.Errorf("run spec: %w", err)
@@ -86,6 +88,10 @@ func (v *Verifier) Load(source string) error {
 
 	if actionsValue := v.runtime.GlobalObject().Get("actions"); actionsValue != nil && !goja.IsUndefined(actionsValue) && !goja.IsNull(actionsValue) {
 		v.actionGenerator = actionsValue
+	}
+
+	if setupValue := v.runtime.GlobalObject().Get("setup"); setupValue != nil && !goja.IsUndefined(setupValue) && !goja.IsNull(setupValue) {
+		v.setupGenerator = setupValue
 	}
 
 	return nil
@@ -216,6 +222,10 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 	if err := v.runtime.GlobalObject().Set("state", state); err != nil {
 		return fmt.Errorf("set state: %w", err)
 	}
+	// Extractor previous/current advance exactly once per PushSnapshot.
+	// Predicate thunks read these slots but never trigger advancement, so
+	// invoking a thunk multiple times between snapshots is value-stable.
+	// refreshPredicateErrors relies on this to safely re-call predicates.
 	for index, extractor := range v.extractors {
 		previous := extractor.handle.Get("current")
 		_ = extractor.handle.Set("previous", previous)
@@ -254,6 +264,7 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 	for name, evaluator := range v.evaluators {
 		verdicts[name] = evaluator.ObserveAt(stepTime)
 	}
+	v.refreshPredicateErrors()
 	return verdicts
 }
 
@@ -273,12 +284,22 @@ func (v *Verifier) Residuals() map[string]ltl.Formula {
 	return residuals
 }
 
-// NextAction resolves the root action generator into a single Action.
-// Returns ErrNoAction when no branch of the generator produces one after a
-// small number of retries. Retrying avoids wedging when most branches of a
-// weighted generator produce no action on the current screen (e.g. a gated
-// login-phone generator when the app is already past login).
+// NextAction resolves an action for the current step. The setup generator,
+// when registered, runs first; if it yields an action, that wins. When setup
+// returns ErrNoAction (all branches empty) the call falls through to the
+// root action generator with the existing retry semantics. Setup is consulted
+// every step, so state regression (e.g. a logout under fuzz) automatically
+// re-engages the precondition.
 func (v *Verifier) NextAction() (Action, error) {
+	if v.setupGenerator != nil {
+		action, err := v.resolveGenerator(v.setupGenerator)
+		if err == nil {
+			return action, nil
+		}
+		if !errors.Is(err, ErrNoAction) {
+			return Action{}, err
+		}
+	}
 	if v.actionGenerator == nil {
 		return Action{}, ErrNoAction
 	}
@@ -302,12 +323,35 @@ func (v *Verifier) formulaThunk(index int) func() bool {
 		formula := v.formulas[index]
 		result, err := formula.predicate(goja.Undefined())
 		if err != nil {
-			if formula.err == nil {
-				formula.err = err
-			}
+			formula.err = err
 			return false
 		}
+		formula.err = nil
 		return result.ToBoolean()
+	}
+}
+
+// refreshPredicateErrors re-invokes every registered predicate so that
+// formula.err reflects the current step rather than a latched first-step
+// throw. EvaluateProperties short-circuits once a property has latched to
+// violated, so without this refresh the runner's per-step "predicate error"
+// log freezes on whatever the predicate threw at step 1. The refreshed errors
+// have no effect on verdicts.
+//
+// Invariant: predicates may be re-invoked here outside the LTL gate that
+// would normally skip them (e.g. an `implies` consequent whose antecedent is
+// false). They must therefore be side-effect-free reads of extractor state;
+// any spec that asserts internal preconditions inside a predicate could
+// surface a spurious error in the inspect UI without affecting verdicts.
+func (v *Verifier) refreshPredicateErrors() {
+	for _, formula := range v.formulas {
+		result, err := formula.predicate(goja.Undefined())
+		if err != nil {
+			formula.err = err
+			continue
+		}
+		_ = result
+		formula.err = nil
 	}
 }
 

@@ -136,7 +136,8 @@ func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) go
 	return object
 }
 
-// findNodeFromJS dispatches a JS value (string or object) to Tree-level node lookup.
+// findNodeFromJS dispatches a JS value (string, object, or array of objects)
+// to Tree-level node lookup.
 func findNodeFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Value) *hierarchy.Node {
 	if goja.IsUndefined(arg) || goja.IsNull(arg) {
 		return nil
@@ -146,6 +147,9 @@ func findNodeFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Value)
 	}
 	if s, ok := arg.Export().(string); ok {
 		return tree.FindNode(s)
+	}
+	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		return tree.FindBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
@@ -162,6 +166,9 @@ func findAllNodesFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Va
 	if s, ok := arg.Export().(string); ok {
 		return tree.FindAllNodes(s)
 	}
+	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		return tree.FindAllBySelectorPath(path)
+	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
@@ -177,6 +184,9 @@ func findNodeInSubtreeFromJS(runtime *goja.Runtime, node *hierarchy.Node, arg go
 	if s, ok := arg.Export().(string); ok {
 		return node.Find(s)
 	}
+	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		return node.FindBySelectorPath(path)
+	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
@@ -191,6 +201,9 @@ func findAllNodesInSubtreeFromJS(runtime *goja.Runtime, node *hierarchy.Node, ar
 	}
 	if s, ok := arg.Export().(string); ok {
 		return node.FindAll(s)
+	}
+	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		return node.FindAllBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
@@ -217,6 +230,37 @@ func selectorFromJSObject(runtime *goja.Runtime, arg goja.Value) hierarchy.Selec
 		sel.Filters = append(sel.Filters, hierarchy.AttrFilter{Attr: key, Value: val.String()})
 	}
 	return sel
+}
+
+// selectorPathFromJS recognizes a JS array of selector objects and converts it
+// into a Selector chain. Returns ok=false for non-arrays so callers fall
+// through to single-object dispatch.
+func selectorPathFromJS(runtime *goja.Runtime, arg goja.Value) ([]hierarchy.Selector, bool) {
+	exported := arg.Export()
+	slice, ok := exported.([]any)
+	if !ok {
+		return nil, false
+	}
+	obj := arg.ToObject(runtime)
+	if obj == nil {
+		return nil, false
+	}
+	path := make([]hierarchy.Selector, 0, len(slice))
+	for index := range slice {
+		entry := obj.Get(fmt.Sprintf("%d", index))
+		if entry == nil || goja.IsUndefined(entry) || goja.IsNull(entry) {
+			return nil, false
+		}
+		sel := selectorFromJSObject(runtime, entry)
+		if len(sel.Filters) == 0 {
+			return nil, false
+		}
+		path = append(path, sel)
+	}
+	if len(path) == 0 {
+		return nil, false
+	}
+	return path, true
 }
 
 // selectorStringFromJS returns a string representation of the selector argument

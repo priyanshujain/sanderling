@@ -7,6 +7,58 @@ import (
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
+// TestStateAxObjectSelectorTestTagAlias verifies that an object selector
+// `{ testTag: "X" }` resolves through the testTag alias to match an element
+// whose source attributes carry resource-id="X" (the Compose
+// testTagsAsResourceId=true case on Android).
+func TestStateAxObjectSelectorTestTagAlias(t *testing.T) {
+	src := `{
+		"attributes": {"class": "android.widget.LinearLayout"},
+		"children": [
+			{
+				"attributes": {"resource-id": "LoginScreen", "class": "android.view.View"},
+				"children": [
+					{
+						"attributes": {"resource-id": "LoginEmail", "class": "android.widget.EditText"},
+						"children": []
+					}
+				]
+			}
+		]
+	}`
+	tree, err := hierarchy.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.loginRoot = __sanderling__.extract(state => {
+			const r = state.ax.find({ testTag: "LoginScreen" });
+			return r ? "matched" : "miss";
+		});
+		globalThis.loginEmailViaChain = __sanderling__.extract(state => {
+			const r = state.ax.find({ testTag: "LoginScreen" });
+			if (!r) return "outer-miss";
+			const inner = r.find({ testTag: "LoginEmail" });
+			return inner ? "inner-matched" : "inner-miss";
+		});
+	`)
+
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+
+	root := verifier.runtime.GlobalObject().Get("loginRoot").ToObject(verifier.runtime).Get("current").String()
+	if root != "matched" {
+		t.Fatalf("loginRoot = %q, want matched", root)
+	}
+	chain := verifier.runtime.GlobalObject().Get("loginEmailViaChain").ToObject(verifier.runtime).Get("current").String()
+	if chain != "inner-matched" {
+		t.Fatalf("loginEmailViaChain = %q, want inner-matched", chain)
+	}
+}
+
 // TestStateAxFindWorks verifies that a Parse+PushSnapshot+extract round trip
 // actually lets the spec resolve selectors through state.ax.find.
 // Reads /tmp/live-dump.json (Maestro TreeNode JSON format); skipped if absent.

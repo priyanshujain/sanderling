@@ -15,6 +15,12 @@ dependencyResolutionManagement {
     }
 }
 
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+
 rootProject.name = "folio"
 
-include(":composeApp")
+include(":core")
+include(":app:shared")
+include(":app:ui-components")
+include(":app:androidApp")
+include(":app:webApp")

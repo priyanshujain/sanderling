@@ -13,6 +13,7 @@ export type {
   Point,
   PressKeyAction,
   Sampler,
+  SelectorPath,
   Snapshots,
   State,
   SwipeAction,
@@ -22,7 +23,7 @@ export type {
   WeightedEntry,
 } from "./types.ts";
 
-export { extract } from "./extract.ts";
+export { extract, keyedBy } from "./extract.ts";
 export { always, eventually, next, now } from "./ltl.ts";
 export {
   InputText,
@@ -37,4 +38,5 @@ export {
   taps,
   waitOnce,
   weighted,
+  whenRoute,
 } from "./actions.ts";
