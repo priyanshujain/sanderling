@@ -16,7 +16,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import app.folio.core.data.DriverFactory
 import app.folio.core.data.Repository
 import app.folio.core.data.SqlLedgerStore
@@ -32,6 +35,7 @@ import app.folio.ui.theme.LedgerTheme
 import app.folio.ui.theme.LocalTokens
 import app.folio.ui.theme.Tokens
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun App(driverFactory: DriverFactory) {
     var component by remember { mutableStateOf<AppComponent?>(null) }
@@ -50,7 +54,8 @@ fun App(driverFactory: DriverFactory) {
                 Modifier
                     .fillMaxSize()
                     .background(t.bg)
-                    .windowInsetsPadding(WindowInsets.safeDrawing),
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .semantics { testTagsAsResourceId = true },
                 contentAlignment = Alignment.Center,
             ) {
                 val c = component
