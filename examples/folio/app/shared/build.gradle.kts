@@ -8,6 +8,7 @@ plugins {
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.kotlin.plugin.compose)
     alias(libs.plugins.kotlin.plugin.serialization)
+    alias(libs.plugins.metro)
 }
 
 kotlin {

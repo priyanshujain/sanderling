@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.plugin.compose)
     alias(libs.plugins.compose.multiplatform)
+    alias(libs.plugins.metro)
 }
 
 val sanderlingVersion = findProperty("sanderling.version") as String? ?: "0.0.0-dev"
