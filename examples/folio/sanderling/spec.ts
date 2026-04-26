@@ -58,7 +58,7 @@ const ledgerRows = extract<LedgerRow[]>(s =>
 const ledgerBalance = extract(s =>
   parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text));
 
-const focusedFieldTag = extract(s => s.ax.find({ focused: "true" })?.id ?? null);
+const focusedFieldTag = extract(s => s.ax.find({ focused: true })?.id ?? null);
 
 const loginEmailField = extract(s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginEmail" }]));

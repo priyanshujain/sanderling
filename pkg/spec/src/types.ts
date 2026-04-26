@@ -1,7 +1,57 @@
 export type Snapshots = Record<string, unknown>;
-export type AttrSelector = Record<string, string>;
+
+/**
+ * Attribute names with known canonical types. Cross-platform aliases (e.g.
+ * `testTag` -> resource-id / accessibilityIdentifier) are listed so authors
+ * get autocomplete on whichever name they prefer.
+ *
+ * Boolean state attributes accept a native boolean; the runtime stringifies
+ * to "true"/"false" before matching.
+ */
+export interface KnownAttrSelectors {
+  testTag?: string;
+  identifier?: string;
+  accessibilityIdentifier?: string;
+  "resource-id"?: string;
+
+  "content-desc"?: string;
+  accessibilityText?: string;
+  accessibilityLabel?: string;
+  label?: string;
+
+  text?: string;
+  class?: string;
+  elementType?: string;
+  package?: string;
+  placeholderValue?: string;
+  hintText?: string;
+
+  clickable?: boolean;
+  enabled?: boolean;
+  focused?: boolean;
+  checked?: boolean;
+  selected?: boolean;
+}
+
+/**
+ * Object-form selector for `find` / `findAll`. Known attributes are typed
+ * via `KnownAttrSelectors`; arbitrary string keys are still allowed for
+ * raw driver attributes the typed surface doesn't yet cover.
+ */
+export type AttrSelector = KnownAttrSelectors & {
+  [key: string]: string | boolean | undefined;
+};
 
 export type SelectorPath = readonly AttrSelector[];
+
+/** String-valued attribute names with known canonical keys. */
+export type RawAttrs = {
+  [K in keyof KnownAttrSelectors]?: KnownAttrSelectors[K] extends boolean | undefined
+    ? "true" | "false"
+    : string;
+} & {
+  [key: string]: string | undefined;
+};
 
 export interface AccessibilityElement {
   id?: string;
@@ -16,7 +66,7 @@ export interface AccessibilityElement {
   bounds?: { left: number; top: number; right: number; bottom: number };
   x?: number;
   y?: number;
-  attrs?: Record<string, string>;
+  attrs?: RawAttrs;
   find(selector: string | AttrSelector | SelectorPath): AccessibilityElement | undefined;
   findAll(selector: string | AttrSelector | SelectorPath): AccessibilityElement[];
 }

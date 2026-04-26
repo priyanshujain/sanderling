@@ -64,10 +64,12 @@ Pass an object to apply multiple attribute filters with AND semantics:
 
 ```ts
 s.ax.find({ accessibilityText: "LoginScreen" })
-s.ax.find({ accessibilityText: "account_card", clickable: "true" })
+s.ax.find({ testTag: "AccountCard", clickable: true })
 ```
 
 Every key-value pair must match. Substring and boolean rules apply per attribute.
+
+Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
 
 ### Path queries
 

@@ -32,6 +32,23 @@ func TestParseTestArgs_Defaults(t *testing.T) {
 	if options.seed != 0 {
 		t.Errorf("seed default: got %d, want 0", options.seed)
 	}
+	if options.clearData {
+		t.Errorf("clearData default: got true, want false")
+	}
+}
+
+func TestParseTestArgs_ClearDataFlag(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--clear-data",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !options.clearData {
+		t.Errorf("expected clearData=true, got false")
+	}
 }
 
 func TestParseTestArgs_AllFlags(t *testing.T) {
