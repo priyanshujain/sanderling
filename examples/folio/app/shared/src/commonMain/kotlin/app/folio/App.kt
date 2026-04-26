@@ -16,36 +16,25 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.testTagsAsResourceId
-import app.folio.core.data.DriverFactory
-import app.folio.core.data.Repository
-import app.folio.core.data.SqlLedgerStore
-import app.folio.db.LedgerDatabase
+import app.folio.di.AppGraph
+import app.folio.di.LocalAppGraph
 import app.folio.feature.account.AddAccountRoute
 import app.folio.feature.auth.LoginRoute
 import app.folio.feature.home.HomeRoute
 import app.folio.feature.ledger.AddTransactionRoute
 import app.folio.feature.ledger.LedgerRoute
-import app.folio.navigation.Navigator
 import app.folio.navigation.Route
+import app.folio.ui.testTagsAsResourceId
 import app.folio.ui.theme.LedgerTheme
 import app.folio.ui.theme.LocalTokens
 import app.folio.ui.theme.Tokens
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun App(driverFactory: DriverFactory) {
-    var component by remember { mutableStateOf<AppComponent?>(null) }
+fun App(graphBuilder: suspend () -> AppGraph) {
+    var graph by remember { mutableStateOf<AppGraph?>(null) }
 
-    LaunchedEffect(Unit) {
-        val driver = driverFactory.create()
-        val db = LedgerDatabase(driver)
-        val store = SqlLedgerStore(db)
-        component = AppComponent(repository = Repository(store), navigator = Navigator(initial = Route.Home))
-    }
+    LaunchedEffect(Unit) { graph = graphBuilder() }
 
     LedgerTheme {
         val t = Tokens()
@@ -55,14 +44,12 @@ fun App(driverFactory: DriverFactory) {
                     .fillMaxSize()
                     .background(t.bg)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .semantics { testTagsAsResourceId = true },
+                    .testTagsAsResourceId(),
                 contentAlignment = Alignment.Center,
             ) {
-                val c = component
-                if (c == null) {
-                    // Loading: keep blank to avoid surprising the spec runner.
-                } else {
-                    CompositionLocalProvider(LocalAppComponent provides c) {
+                val g = graph
+                if (g != null) {
+                    CompositionLocalProvider(LocalAppGraph provides g) {
                         AppContent()
                     }
                 }
@@ -73,15 +60,15 @@ fun App(driverFactory: DriverFactory) {
 
 @Composable
 private fun AppContent() {
-    val component = LocalAppComponent.current
-    val session by component.repository.session.collectAsState()
-    val route by component.navigator.current.collectAsState()
+    val graph = LocalAppGraph.current
+    val session by graph.repository.session.collectAsState()
+    val route by graph.navigator.current.collectAsState()
 
     LaunchedEffect(session, route) {
         if (session == null && route !is Route.Login) {
-            component.navigator.replace(Route.Login)
+            graph.navigator.replace(Route.Login)
         } else if (session != null && route is Route.Login) {
-            component.navigator.replace(Route.Home)
+            graph.navigator.replace(Route.Home)
         }
     }
 
