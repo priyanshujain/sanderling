@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.folio.core.data.Repository
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
+import dev.zacsweers.metro.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +27,7 @@ sealed interface LoginEvent {
     data object Submit : LoginEvent
 }
 
+@Inject
 class LoginViewModel(
     private val repository: Repository,
     private val navigator: Navigator,

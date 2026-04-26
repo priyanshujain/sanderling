@@ -7,6 +7,7 @@ import app.folio.core.data.Repository
 import app.folio.core.data.Transaction
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
+import dev.zacsweers.metro.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -25,6 +26,7 @@ sealed interface HomeEvent {
     data class OpenAccount(val accountId: String) : HomeEvent
 }
 
+@Inject
 class HomeViewModel(
     private val repository: Repository,
     private val navigator: Navigator,

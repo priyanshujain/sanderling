@@ -8,6 +8,9 @@ import app.folio.core.data.TxnType
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
 import app.folio.util.parseCents
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -36,10 +39,11 @@ sealed interface AddTransactionEvent {
     data object BackToHome : AddTransactionEvent
 }
 
+@AssistedInject
 class AddTransactionViewModel(
     private val repository: Repository,
     private val navigator: Navigator,
-    private val accountId: String,
+    @Assisted private val accountId: String,
 ) : ViewModel() {
     private val form = MutableStateFlow(AddTransactionUiState())
 
@@ -84,5 +88,10 @@ class AddTransactionViewModel(
                 form.update { it.copy(error = e.message ?: "Could not save transaction") }
             }
         }
+    }
+
+    @AssistedFactory
+    fun interface Factory {
+        fun create(accountId: String): AddTransactionViewModel
     }
 }

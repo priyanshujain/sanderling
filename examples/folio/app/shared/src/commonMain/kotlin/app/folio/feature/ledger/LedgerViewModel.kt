@@ -7,6 +7,9 @@ import app.folio.core.data.Repository
 import app.folio.core.data.Transaction
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -24,10 +27,11 @@ sealed interface LedgerEvent {
     data object BackToHome : LedgerEvent
 }
 
+@AssistedInject
 class LedgerViewModel(
     private val repository: Repository,
     private val navigator: Navigator,
-    private val accountId: String,
+    @Assisted private val accountId: String,
 ) : ViewModel() {
     val state: StateFlow<LedgerUiState> = combine(
         repository.accounts,
@@ -48,5 +52,10 @@ class LedgerViewModel(
             LedgerEvent.AddTransaction -> navigator.push(Route.AddTransaction(accountId))
             LedgerEvent.BackToHome -> navigator.replace(Route.Home)
         }
+    }
+
+    @AssistedFactory
+    fun interface Factory {
+        fun create(accountId: String): LedgerViewModel
     }
 }
