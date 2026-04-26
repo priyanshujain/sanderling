@@ -13,10 +13,12 @@ npm install --save-dev @sanderling/spec
 ## Usage
 
 ```ts
-import { extract, always, eventually, now, actions, weighted, taps, swipes, InputText, Tap } from "@sanderling/spec";
+import { extract, always, eventually, actions, weighted, taps, swipes, InputText, Tap } from "@sanderling/spec";
 
 const loggedIn = extract((s) => !!s.ax.find("id:home-tab-bar"));
 const balance = extract<number>((s) => (s.snapshots.balance as number) ?? 0);
+const emailField = extract((s) => s.ax.find("id:email-field"));
+const submitButton = extract((s) => s.ax.find("id:sign-in-button"));
 
 export const properties = {
   balanceNeverNegative: always(() => balance.current >= 0),
@@ -25,13 +27,13 @@ export const properties = {
 
 const doLogin = actions(() => {
   if (loggedIn.current) return [];
-  const email = state.ax.find("id:email-field");
-  const submit = state.ax.find("id:sign-in-button");
+  const email = emailField.current;
+  const submit = submitButton.current;
   if (!email || !submit) return [];
   return [InputText({ into: email, text: "test@example.com" }), Tap({ on: submit })];
 });
 
-export const actions = weighted(
+export const actionsRoot = weighted(
   [50, doLogin],
   [10, taps],
   [2,  swipes],
