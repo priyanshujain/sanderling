@@ -193,6 +193,9 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	if element.ResourceID == "" {
 		element.ResourceID = attrs["identifier"]
 	}
+	if element.ResourceID == "" {
+		element.ResourceID = attrs["accessibilityIdentifier"]
+	}
 	element.Text = attrs["text"]
 	element.Description = attrs["content-desc"]
 	if element.Description == "" {

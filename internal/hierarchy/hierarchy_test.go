@@ -514,6 +514,20 @@ func TestResourceIDFallsBackToAccessibilityIdentifier(t *testing.T) {
 	}
 }
 
+func TestElementResourceIDPopulatesFromAccessibilityIdentifier(t *testing.T) {
+	input := `{
+	  "attributes": {"accessibilityIdentifier": "LoginEmail", "bounds": "[0,0,100,100]"},
+	  "children": []
+	}`
+	tree, _ := Parse(input)
+	if len(tree.Elements) == 0 {
+		t.Fatal("no elements parsed")
+	}
+	if got := tree.Elements[0].ResourceID; got != "LoginEmail" {
+		t.Fatalf("ResourceID = %q, want LoginEmail (iOS Compose accessibilityIdentifier path)", got)
+	}
+}
+
 func TestNodeFindDoesNotReturnSiblings(t *testing.T) {
 	tree, _ := Parse(pathDump)
 	a2Node := tree.FindNode("id:A2")
