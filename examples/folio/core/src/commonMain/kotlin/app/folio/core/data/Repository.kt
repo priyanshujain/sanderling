@@ -1,8 +1,10 @@
 package app.folio.core.data
 
 import app.folio.core.platform.Platform
+import dev.zacsweers.metro.Inject
 import kotlinx.coroutines.flow.StateFlow
 
+@Inject
 class Repository(private val store: LedgerStore) {
     val accounts: StateFlow<List<Account>> = store.accounts
     val transactions: StateFlow<List<Transaction>> = store.transactions
