@@ -5,6 +5,7 @@ import {
   always,
   extract,
   from,
+  keyedBy,
   next,
   now,
   weighted,
@@ -48,12 +49,10 @@ const accounts = extract<Account[]>(s =>
 
 // Ledger rows: identity composed from the row's stable testTag'd cells.
 const ledgerRows = extract<LedgerRow[]>(s =>
-  s.ax.findAll([{ testTag: "LedgerScreen" }, { testTag: "LedgerRow" }]).map(row => {
-    const note = row.find({ testTag: "TxnNote" })?.text ?? "";
-    const date = row.find({ testTag: "TxnDate" })?.text ?? "";
-    const amount = row.find({ testTag: "TxnAmount" })?.text ?? "";
-    return { key: `${date}|${note}|${amount}`, signed: parseDollarCents(amount) };
-  }));
+  s.ax.findAll([{ testTag: "LedgerScreen" }, { testTag: "LedgerRow" }]).map(row => ({
+    key: keyedBy(row, ["TxnDate", "TxnNote", "TxnAmount"]),
+    signed: parseDollarCents(row.find({ testTag: "TxnAmount" })?.text),
+  })));
 
 const ledgerBalance = extract(s =>
   parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text));
