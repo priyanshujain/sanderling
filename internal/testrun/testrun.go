@@ -29,6 +29,7 @@ type Options struct {
 	Duration  time.Duration
 	Seed      int64
 	Output    string
+	ClearData bool
 }
 
 // Execute runs the full test pipeline: bundle, launch app, verify properties.
@@ -68,7 +69,7 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	}
 	defer cleanup()
 
-	if err := activeDriver.Launch(ctx, options.BundleID, false, nil); err != nil {
+	if err := activeDriver.Launch(ctx, options.BundleID, options.ClearData, nil); err != nil {
 		return fmt.Errorf("launch app: %w", err)
 	}
 

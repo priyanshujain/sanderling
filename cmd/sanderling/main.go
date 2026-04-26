@@ -23,6 +23,7 @@ type testOptions struct {
 	duration  time.Duration
 	seed      int64
 	output    string
+	clearData bool
 }
 
 const topUsage = `sanderling is a property-based UI fuzzer for mobile apps.
@@ -51,6 +52,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.DurationVar(&options.duration, "duration", 5*time.Minute, "total test duration")
 	flagSet.Int64Var(&options.seed, "seed", 0, "RNG seed (0 = random)")
 	flagSet.StringVar(&options.output, "output", "./runs", "output directory for traces")
+	flagSet.BoolVar(&options.clearData, "clear-data", false, "clear app data before launching so the run starts from a fresh install")
 	if err := flagSet.Parse(args); err != nil {
 		return testOptions{}, err
 	}
