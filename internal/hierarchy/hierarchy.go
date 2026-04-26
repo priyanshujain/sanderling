@@ -298,6 +298,22 @@ func (t *Tree) FindAllNodes(selector string) []*Node {
 	return searchSubtree(t.Root, kind, value)
 }
 
+// FindBySelectorPath walks the selector chain starting from the tree root.
+func (t *Tree) FindBySelectorPath(path []Selector) *Node {
+	if t == nil || t.Root == nil {
+		return nil
+	}
+	return t.Root.FindBySelectorPath(path)
+}
+
+// FindAllBySelectorPath walks the selector chain starting from the tree root.
+func (t *Tree) FindAllBySelectorPath(path []Selector) []*Node {
+	if t == nil || t.Root == nil {
+		return nil
+	}
+	return t.Root.FindAllBySelectorPath(path)
+}
+
 // Find returns the first Node in this node's subtree (descendants only) matching
 // the string selector. Path queries within the selector are not supported here.
 func (n *Node) Find(selector string) *Node {
@@ -342,6 +358,45 @@ func (n *Node) FindAllBySelector(sel Selector) []*Node {
 	var result []*Node
 	for _, child := range n.Children {
 		result = append(result, searchSubtreeBySelector(child, sel)...)
+	}
+	return result
+}
+
+// FindBySelectorPath walks a chain of selectors. The first selector is matched
+// against descendants of the receiver; each subsequent selector is matched
+// against descendants of the previous match. Returns the deepest match or nil.
+func (n *Node) FindBySelectorPath(path []Selector) *Node {
+	if len(path) == 0 {
+		return nil
+	}
+	for _, child := range n.Children {
+		for _, candidate := range searchSubtreeBySelector(child, path[0]) {
+			if len(path) == 1 {
+				return candidate
+			}
+			if deeper := candidate.FindBySelectorPath(path[1:]); deeper != nil {
+				return deeper
+			}
+		}
+	}
+	return nil
+}
+
+// FindAllBySelectorPath returns every deepest match for the selector chain
+// scoped under the receiver.
+func (n *Node) FindAllBySelectorPath(path []Selector) []*Node {
+	if len(path) == 0 {
+		return nil
+	}
+	var result []*Node
+	for _, child := range n.Children {
+		for _, candidate := range searchSubtreeBySelector(child, path[0]) {
+			if len(path) == 1 {
+				result = append(result, candidate)
+				continue
+			}
+			result = append(result, candidate.FindAllBySelectorPath(path[1:])...)
+		}
 	}
 	return result
 }

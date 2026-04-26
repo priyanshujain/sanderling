@@ -528,6 +528,93 @@ func TestElementResourceIDPopulatesFromAccessibilityIdentifier(t *testing.T) {
 	}
 }
 
+const selectorPathDump = `{
+  "attributes": {"resource-id": "rootView", "bounds": "[0,0,1080,2340]"},
+  "children": [
+    {
+      "attributes": {"testTag": "HomeScreen", "bounds": "[0,0,540,2340]"},
+      "children": [
+        {
+          "attributes": {"testTag": "AccountCard", "bounds": "[0,0,540,200]"},
+          "children": [
+            {"attributes": {"testTag": "AccountName", "text": "Checking", "bounds": "[10,10,200,40]"}, "children": []}
+          ]
+        },
+        {
+          "attributes": {"testTag": "AccountCard", "bounds": "[0,200,540,400]"},
+          "children": [
+            {"attributes": {"testTag": "AccountName", "text": "Savings", "bounds": "[10,210,200,240]"}, "children": []}
+          ]
+        }
+      ]
+    },
+    {
+      "attributes": {"testTag": "LedgerScreen", "bounds": "[540,0,1080,2340]"},
+      "children": [
+        {"attributes": {"testTag": "AccountName", "text": "Travel", "bounds": "[600,10,800,40]"}, "children": []}
+      ]
+    }
+  ]
+}`
+
+func TestFindBySelectorPathSingleSegment(t *testing.T) {
+	tree, _ := Parse(selectorPathDump)
+	path := []Selector{{Filters: []AttrFilter{{Attr: "testTag", Value: "HomeScreen"}}}}
+	node := tree.FindBySelectorPath(path)
+	if node == nil {
+		t.Fatal("expected match for HomeScreen")
+	}
+	if got := node.Element.Attributes["testTag"]; got != "HomeScreen" {
+		t.Fatalf("testTag = %q, want HomeScreen", got)
+	}
+}
+
+func TestFindBySelectorPathScopedDescent(t *testing.T) {
+	tree, _ := Parse(selectorPathDump)
+	path := []Selector{
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "HomeScreen"}}},
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "AccountCard"}}},
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "AccountName"}}},
+	}
+	node := tree.FindBySelectorPath(path)
+	if node == nil {
+		t.Fatal("expected match for HomeScreen > AccountCard > AccountName")
+	}
+	if node.Element.Text != "Checking" {
+		t.Fatalf("text = %q, want Checking", node.Element.Text)
+	}
+}
+
+func TestFindBySelectorPathRespectsScope(t *testing.T) {
+	tree, _ := Parse(selectorPathDump)
+	path := []Selector{
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "LedgerScreen"}}},
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "AccountCard"}}},
+	}
+	if node := tree.FindBySelectorPath(path); node != nil {
+		t.Fatalf("AccountCard is under HomeScreen only, expected nil, got %+v", node.Element)
+	}
+}
+
+func TestFindAllBySelectorPathReturnsAllDeepestMatches(t *testing.T) {
+	tree, _ := Parse(selectorPathDump)
+	path := []Selector{
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "HomeScreen"}}},
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "AccountName"}}},
+	}
+	matches := tree.FindAllBySelectorPath(path)
+	if len(matches) != 2 {
+		t.Fatalf("want 2 matches (Checking, Savings), got %d", len(matches))
+	}
+}
+
+func TestFindBySelectorPathEmptyPathReturnsNil(t *testing.T) {
+	tree, _ := Parse(selectorPathDump)
+	if tree.FindBySelectorPath(nil) != nil {
+		t.Fatal("empty path should return nil")
+	}
+}
+
 func TestNodeFindDoesNotReturnSiblings(t *testing.T) {
 	tree, _ := Parse(pathDump)
 	a2Node := tree.FindNode("id:A2")
