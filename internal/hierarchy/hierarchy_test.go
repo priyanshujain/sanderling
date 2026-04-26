@@ -464,6 +464,56 @@ func TestNodeFindScopedSearch(t *testing.T) {
 	}
 }
 
+func TestTestTagAliasMatchesResourceIDAndroid(t *testing.T) {
+	input := `{
+	  "attributes": {"resource-id": "AccountCard", "bounds": "[0,0,100,100]"},
+	  "children": []
+	}`
+	tree, _ := Parse(input)
+	sel := Selector{Filters: []AttrFilter{{Attr: "testTag", Value: "AccountCard"}}}
+	if len(searchSubtreeBySelector(tree.Root, sel)) == 0 {
+		t.Fatal("expected testTag selector to match resource-id on Android")
+	}
+}
+
+func TestTestTagAliasMatchesAccessibilityIdentifierIOS(t *testing.T) {
+	input := `{
+	  "attributes": {"accessibilityIdentifier": "AccountCard", "bounds": "[0,0,100,100]"},
+	  "children": []
+	}`
+	tree, _ := Parse(input)
+	sel := Selector{Filters: []AttrFilter{{Attr: "testTag", Value: "AccountCard"}}}
+	matches := searchSubtreeBySelector(tree.Root, sel)
+	if len(matches) == 0 {
+		t.Fatal("expected testTag selector to match accessibilityIdentifier on iOS")
+	}
+}
+
+func TestTestTagAliasMatchesIdentifierIOSRaw(t *testing.T) {
+	input := `{
+	  "attributes": {"identifier": "AccountCard", "bounds": "[0,0,100,100]"},
+	  "children": []
+	}`
+	tree, _ := Parse(input)
+	sel := Selector{Filters: []AttrFilter{{Attr: "testTag", Value: "AccountCard"}}}
+	matches := searchSubtreeBySelector(tree.Root, sel)
+	if len(matches) == 0 {
+		t.Fatal("expected testTag selector to match identifier on iOS raw AXElement")
+	}
+}
+
+func TestResourceIDFallsBackToAccessibilityIdentifier(t *testing.T) {
+	input := `{
+	  "attributes": {"accessibilityIdentifier": "MyButton", "bounds": "[0,0,100,100]"},
+	  "children": []
+	}`
+	tree, _ := Parse(input)
+	sel := Selector{Filters: []AttrFilter{{Attr: "resource-id", Value: "MyButton"}}}
+	if len(searchSubtreeBySelector(tree.Root, sel)) == 0 {
+		t.Fatal("expected resource-id selector to fall back to accessibilityIdentifier")
+	}
+}
+
 func TestNodeFindDoesNotReturnSiblings(t *testing.T) {
 	tree, _ := Parse(pathDump)
 	a2Node := tree.FindNode("id:A2")

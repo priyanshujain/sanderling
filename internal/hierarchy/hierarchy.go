@@ -18,7 +18,9 @@
 //
 // Cross-platform aliases are expanded automatically: "label" / "accessibilityLabel"
 // resolve to accessibilityText; "content-desc" also checks accessibilityText and
-// vice-versa; "identifier" / "accessibilityIdentifier" resolve to resource-id.
+// vice-versa; "identifier" / "accessibilityIdentifier" / "testTag" resolve to
+// resource-id (and to each other) so a Compose testTag matches whether the
+// underlying platform exposes it as resource-id (Android) or accessibilityIdentifier (iOS).
 package hierarchy
 
 import (
@@ -113,10 +115,12 @@ var attributeAliases = map[string][]string{
 	// accessibilityText is the canonical key; also check content-desc for Android/web
 	"accessibilityText": {"content-desc"},
 	// resource-id canonical key; also check identifier (iOS AXElement raw field)
-	"resource-id": {"identifier"},
+	"resource-id": {"identifier", "accessibilityIdentifier"},
 	// iOS identifier names
-	"identifier":              {"resource-id"},
-	"accessibilityIdentifier": {"resource-id"},
+	"identifier":              {"resource-id", "accessibilityIdentifier"},
+	"accessibilityIdentifier": {"resource-id", "identifier"},
+	// Compose testTag surfaces as resource-id on Android, accessibilityIdentifier on iOS
+	"testTag": {"resource-id", "identifier", "accessibilityIdentifier"},
 	// iOS AXElement raw name for hintText
 	"placeholderValue": {"hintText"},
 	// iOS AXElement raw name for class
