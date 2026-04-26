@@ -13,6 +13,7 @@ export type {
   Point,
   PressKeyAction,
   Sampler,
+  SelectorPath,
   Snapshots,
   State,
   SwipeAction,
