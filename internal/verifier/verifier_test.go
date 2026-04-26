@@ -258,3 +258,35 @@ func TestLoad_AcceptsSpecWithoutPropertiesOrActions(t *testing.T) {
 		t.Errorf("expected ErrNoAction, got %v", err)
 	}
 }
+
+// PredicateError must reflect the most recent step's predicate result, not a
+// latched first-step error. The runner logs PredicateError once per step; if it
+// stays pinned to step 1 forever, downstream debugging looks frozen even though
+// the underlying state is changing.
+func TestPredicateError_ReflectsCurrentStepNotFirstStep(t *testing.T) {
+	const spec = `
+globalThis.counter = __sanderling__.extract(state => state.snapshots["count"]);
+globalThis.properties = {
+  reportsCounter: __sanderling__.always(() => { throw new Error("count=" + counter.current); }),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	for step := 1; step <= 3; step++ {
+		raw := json.RawMessage([]byte{'"', byte('0' + step), '"'})
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"count": raw}}); err != nil {
+			t.Fatal(err)
+		}
+		_ = verifier.EvaluateProperties()
+
+		got := verifier.PredicateError("reportsCounter")
+		if got == nil {
+			t.Fatalf("step %d: PredicateError = nil, want non-nil", step)
+		}
+		want := "count=" + string(rune('0'+step))
+		if !strings.Contains(got.Error(), want) {
+			t.Errorf("step %d: PredicateError = %q, want to contain %q", step, got.Error(), want)
+		}
+	}
+}
