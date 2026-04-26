@@ -217,7 +217,11 @@ test("Tap returns a TapAction with the supplied selector", () => {
 
 test("Tap accepts an AccessibilityElement", () => {
   installFakeRuntime();
-  const element: AccessibilityElement = { id: "login_continue" };
+  const element: AccessibilityElement = {
+    id: "login_continue",
+    find: () => undefined,
+    findAll: () => [],
+  };
   const action = Tap({ on: element });
   assert.equal(action.kind, "Tap");
   assert.equal(action.on, element);
