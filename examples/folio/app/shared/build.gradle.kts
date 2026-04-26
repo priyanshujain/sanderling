@@ -47,6 +47,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.lifecycle.viewmodel.compose)
+            implementation(libs.navigation.compose)
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
