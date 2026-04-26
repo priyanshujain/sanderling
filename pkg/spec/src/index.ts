@@ -23,7 +23,7 @@ export type {
   WeightedEntry,
 } from "./types.ts";
 
-export { extract } from "./extract.ts";
+export { extract, keyedBy } from "./extract.ts";
 export { always, eventually, next, now } from "./ltl.ts";
 export {
   InputText,

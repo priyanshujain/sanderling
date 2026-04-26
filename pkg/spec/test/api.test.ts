@@ -12,6 +12,7 @@ import {
   eventually,
   extract,
   from,
+  keyedBy,
   next,
   now,
   pressKey,
@@ -279,6 +280,47 @@ test("from forwards items to the runtime", () => {
   const sampler = from(["a", "b", "c"]);
   assert.deepEqual(runtime.fromCalls[0], ["a", "b", "c"]);
   assert.equal(sampler.generate(), "a");
+});
+
+function elementWithChildren(
+  cells: Record<string, string>,
+): AccessibilityElement {
+  return {
+    find: selector => {
+      if (typeof selector === "string" || Array.isArray(selector)) return undefined;
+      const tag = (selector as Record<string, string>).testTag;
+      if (!tag) return undefined;
+      const text = cells[tag];
+      if (text === undefined) return undefined;
+      return { text, find: () => undefined, findAll: () => [] };
+    },
+    findAll: () => [],
+  };
+}
+
+test("keyedBy joins testTag-resolved texts with a stable delimiter", () => {
+  installFakeRuntime();
+  const row = elementWithChildren({
+    TxnDate: "2026-04-26",
+    TxnNote: "Coffee",
+    TxnAmount: "$5.00",
+  });
+  const key = keyedBy(row, ["TxnDate", "TxnNote", "TxnAmount"]);
+  assert.equal(key, "2026-04-26\x1fCoffee\x1f$5.00");
+});
+
+test("keyedBy returns empty string for an undefined element", () => {
+  installFakeRuntime();
+  assert.equal(keyedBy(undefined, ["TxnDate"]), "");
+});
+
+test("keyedBy substitutes empty strings for missing children", () => {
+  installFakeRuntime();
+  const row = elementWithChildren({ TxnDate: "2026-04-26" });
+  assert.equal(
+    keyedBy(row, ["TxnDate", "TxnNote", "TxnAmount"]),
+    "2026-04-26\x1f\x1f",
+  );
 });
 
 test("default generators proxy through to the runtime", () => {
