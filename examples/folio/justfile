@@ -98,6 +98,20 @@ test:
       --seed "{{seed}}" \
       --output "{{output}}"
 
+# Serve the wasmJs web app from a webpack dev server with COOP/COEP headers.
+web:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ANDROID_HOME="$(just _android-home)"
+    ./gradlew :app:webApp:wasmJsBrowserDevelopmentRun --continuous
+
+# Produce a webpack distributable bundle for the web app.
+web-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ANDROID_HOME="$(just _android-home)"
+    ./gradlew :app:webApp:wasmJsBrowserDevelopmentExecutableDistribution
+
 # Build + install + run sanderling spec on iOS simulator.
 test-ios:
     #!/usr/bin/env bash
