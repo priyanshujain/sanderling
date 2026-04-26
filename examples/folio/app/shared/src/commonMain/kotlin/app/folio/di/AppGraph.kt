@@ -10,7 +10,6 @@ import app.folio.feature.home.HomeViewModel
 import app.folio.feature.ledger.AddTransactionViewModel
 import app.folio.feature.ledger.LedgerViewModel
 import app.folio.navigation.Navigator
-import app.folio.navigation.Route
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Binds
 import dev.zacsweers.metro.DependencyGraph
@@ -33,7 +32,7 @@ interface AppGraph {
 
     @SingleIn(AppScope::class)
     @Provides
-    fun provideNavigator(): Navigator = Navigator(initial = Route.Home)
+    fun provideNavigator(): Navigator = Navigator()
 
     @DependencyGraph.Factory
     fun interface Factory {

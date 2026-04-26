@@ -2,7 +2,6 @@ package app.folio
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawing
@@ -17,6 +16,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import app.folio.di.AppGraph
 import app.folio.di.LocalAppGraph
 import app.folio.feature.account.AddAccountRoute
@@ -61,24 +66,35 @@ fun App(graphBuilder: suspend () -> AppGraph) {
 @Composable
 private fun AppContent() {
     val graph = LocalAppGraph.current
-    val session by graph.repository.session.collectAsState()
-    val route by graph.navigator.current.collectAsState()
+    val navController = rememberNavController()
 
-    LaunchedEffect(session, route) {
-        if (session == null && route !is Route.Login) {
+    LaunchedEffect(navController) { graph.navigator.attach(navController) }
+
+    val session by graph.repository.session.collectAsState()
+    val currentEntry by navController.currentBackStackEntryAsState()
+    val onLogin = currentEntry?.destination?.hasRoute(Route.Login::class) == true
+
+    LaunchedEffect(session, onLogin) {
+        if (session == null && !onLogin) {
             graph.navigator.replace(Route.Login)
-        } else if (session != null && route is Route.Login) {
+        } else if (session != null && onLogin) {
             graph.navigator.replace(Route.Home)
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        when (val r = route) {
-            Route.Login -> LoginRoute()
-            Route.Home -> HomeRoute()
-            Route.AddAccount -> AddAccountRoute()
-            is Route.Ledger -> LedgerRoute(accountId = r.accountId)
-            is Route.AddTransaction -> AddTransactionRoute(accountId = r.accountId)
+    NavHost(
+        navController = navController,
+        startDestination = Route.Home,
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        composable<Route.Login> { LoginRoute() }
+        composable<Route.Home> { HomeRoute() }
+        composable<Route.AddAccount> { AddAccountRoute() }
+        composable<Route.Ledger> { entry ->
+            LedgerRoute(accountId = entry.toRoute<Route.Ledger>().accountId)
+        }
+        composable<Route.AddTransaction> { entry ->
+            AddTransactionRoute(accountId = entry.toRoute<Route.AddTransaction>().accountId)
         }
     }
 }

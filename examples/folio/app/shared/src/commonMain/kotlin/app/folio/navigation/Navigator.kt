@@ -1,30 +1,31 @@
 package app.folio.navigation
 
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import androidx.navigation.NavHostController
 
-class Navigator(initial: Route = Route.Home) {
-    private val stack = ArrayDeque<Route>().apply { addLast(initial) }
-    private val _current = MutableStateFlow<Route>(initial)
-    val current: StateFlow<Route> = _current.asStateFlow()
+class Navigator {
+    private var controller: NavHostController? = null
+
+    fun attach(controller: NavHostController) {
+        this.controller = controller
+    }
 
     fun push(route: Route) {
-        stack.addLast(route)
-        _current.value = route
+        controller?.navigate(route) {
+            launchSingleTop = true
+        }
     }
 
     fun replace(route: Route) {
-        stack.clear()
-        stack.addLast(route)
-        _current.value = route
+        val nav = controller ?: return
+        nav.navigate(route) {
+            popUpTo(nav.graph.id) { inclusive = true }
+            launchSingleTop = true
+        }
     }
 
     fun back(fallback: Route) {
-        if (stack.size > 1) {
-            stack.removeLast()
-            _current.value = stack.last()
-        } else {
+        val nav = controller ?: return
+        if (!nav.popBackStack()) {
             replace(fallback)
         }
     }
