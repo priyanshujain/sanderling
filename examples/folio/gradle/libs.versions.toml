@@ -5,9 +5,6 @@ compose-multiplatform = "1.10.3"
 sqldelight = "2.3.2"
 kotlinx-coroutines = "1.10.2"
 kotlinx-serialization = "1.9.0"
-navigation3 = "1.1.1"
-metro = "0.13.2"
-ksp = "2.3.20-2.0.5"
 lifecycle-viewmodel-compose = "2.10.0"
 activity-compose = "1.13.0"
 
@@ -22,11 +19,6 @@ sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", ver
 sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", version.ref = "sqldelight" }
 sqldelight-web-worker-driver = { module = "app.cash.sqldelight:web-worker-driver", version.ref = "sqldelight" }
 
-navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "navigation3" }
-navigation3-ui = { module = "androidx.navigation3:navigation3-ui", version.ref = "navigation3" }
-
-metro-runtime = { module = "dev.zacsweers.metro:runtime", version.ref = "metro" }
-
 lifecycle-viewmodel-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle-viewmodel-compose" }
 
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
@@ -40,5 +32,3 @@ kotlin-plugin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.re
 kotlin-plugin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
 sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
-ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
-metro = { id = "dev.zacsweers.metro", version.ref = "metro" }
