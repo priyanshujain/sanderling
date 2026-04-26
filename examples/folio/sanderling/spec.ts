@@ -175,12 +175,14 @@ export const properties = {
   newTxnChangesBalance,
 };
 
+export const setup = login;
+
 export const actionsRoot = weighted(
-  [50, login],
-  [30, addAccount],
-  [30, addTxn],
-  [5, back],
+  [50, addAccount],
+  [40, addTxn],
+  [10, back],
 );
 
-(globalThis as { actions?: unknown; properties?: unknown }).actions = actionsRoot;
+(globalThis as { actions?: unknown; properties?: unknown; setup?: unknown }).actions = actionsRoot;
 (globalThis as { properties?: unknown }).properties = properties;
+(globalThis as { setup?: unknown }).setup = setup;
