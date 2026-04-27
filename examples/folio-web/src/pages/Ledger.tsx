@@ -93,13 +93,11 @@ export function LedgerPage(props: {
         data-account-id={props.accountId}
         data-account-name={account?.name ?? ''}
         data-txn-count={txns?.length ?? 0}
-        title={String(txns?.length ?? 0)}
       >
         <div
           id="ledger-balance"
           className="balance-display"
-          data-value={balance}
-          title={String(balance)}
+          data-cents={balance}
         >
           <span className="balance-label">Balance</span>
           <span
