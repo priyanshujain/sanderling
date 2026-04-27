@@ -269,65 +269,6 @@ func TestWriteAfterClose_Errors(t *testing.T) {
 	}
 }
 
-func TestWriteHTML_WritesToHTMLDir(t *testing.T) {
-	directory := t.TempDir()
-	writer, _ := NewWriter(directory)
-	defer writer.Close()
-
-	html := []byte("<!doctype html><html><body>hi</body></html>")
-	if err := writer.WriteHTML(3, html); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.WriteHTMLAfter(3, html); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := os.ReadFile(filepath.Join(directory, "html", "step-00003.html"))
-	if err != nil {
-		t.Fatalf("step-00003 missing: %v", err)
-	}
-	if string(got) != string(html) {
-		t.Errorf("html bytes wrong: %q", got)
-	}
-	if _, err := os.Stat(filepath.Join(directory, "html", "step-00003-after.html")); err != nil {
-		t.Errorf("step-00003-after missing: %v", err)
-	}
-}
-
-func TestWriteHTML_EmptyByteSliceIsNoop(t *testing.T) {
-	directory := t.TempDir()
-	writer, _ := NewWriter(directory)
-	defer writer.Close()
-
-	if err := writer.WriteHTML(1, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(directory, "html")); !os.IsNotExist(err) {
-		t.Errorf("html dir should not exist after empty write")
-	}
-}
-
-func TestStep_HTMLAvailableRoundTrip(t *testing.T) {
-	directory := t.TempDir()
-	writer, _ := NewWriter(directory)
-	defer writer.Close()
-
-	if err := writer.WriteStep(Step{Index: 1, HTMLAvailable: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.WriteStep(Step{Index: 2}); err != nil {
-		t.Fatal(err)
-	}
-	body, _ := os.ReadFile(filepath.Join(directory, "trace.jsonl"))
-	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-	if !strings.Contains(lines[0], `"html_available":true`) {
-		t.Errorf("html_available missing in step 1: %s", lines[0])
-	}
-	if strings.Contains(lines[1], "html_available") {
-		t.Errorf("html_available should be omitted when false: %s", lines[1])
-	}
-}
-
 func TestNewWriter_CreatesNestedDirectory(t *testing.T) {
 	parent := t.TempDir()
 	target := filepath.Join(parent, "runs", "2026-04-17T22-30-00")

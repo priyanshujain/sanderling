@@ -20,10 +20,9 @@ type Step struct {
 	Action        *Action                    `json:"action,omitempty"`
 	Exceptions    []Exception                `json:"exceptions,omitempty"`
 	Violations    []string                   `json:"violations,omitempty"`
-	Hierarchy     *hierarchy.Tree            `json:"hierarchy,omitempty"`
-	Residuals     map[string]json.RawMessage `json:"residuals,omitempty"`
-	Metrics       *Metrics                   `json:"metrics,omitempty"`
-	HTMLAvailable bool                       `json:"html_available,omitempty"`
+	Hierarchy  *hierarchy.Tree            `json:"hierarchy,omitempty"`
+	Residuals  map[string]json.RawMessage `json:"residuals,omitempty"`
+	Metrics    *Metrics                   `json:"metrics,omitempty"`
 }
 
 type Metrics struct {
@@ -142,30 +141,6 @@ func (w *Writer) writePNG(name string, png []byte) error {
 		return fmt.Errorf("mkdir screenshots: %w", err)
 	}
 	return os.WriteFile(filepath.Join(directory, name), png, 0o644)
-}
-
-// WriteHTML stores the page HTML for `stepIndex` under `<dir>/html/`. Empty
-// payloads are skipped so the directory only exists when there is real
-// content to render in the inspect UI.
-func (w *Writer) WriteHTML(stepIndex int, html []byte) error {
-	return w.writeHTML(fmt.Sprintf("step-%05d.html", stepIndex), html)
-}
-
-// WriteHTMLAfter writes the post-action HTML, paired with the post-action
-// screenshot.
-func (w *Writer) WriteHTMLAfter(stepIndex int, html []byte) error {
-	return w.writeHTML(fmt.Sprintf("step-%05d-after.html", stepIndex), html)
-}
-
-func (w *Writer) writeHTML(name string, html []byte) error {
-	if len(html) == 0 {
-		return nil
-	}
-	directory := filepath.Join(w.directory, "html")
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return fmt.Errorf("mkdir html: %w", err)
-	}
-	return os.WriteFile(filepath.Join(directory, name), html, 0o644)
 }
 
 func (w *Writer) Close() error {
