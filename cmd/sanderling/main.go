@@ -76,8 +76,16 @@ func runTest(options testOptions, stdout io.Writer) error {
 	return runTestPipeline(ctx, options, stdout)
 }
 
-func runDoctor(stdout io.Writer) error {
-	return runDoctorChecks(context.Background(), defaultDoctorChecks(), stdout)
+func runDoctor(args []string, stdout io.Writer) error {
+	options, err := parseDoctorArgs(args)
+	if err != nil {
+		return err
+	}
+	checks := doctorChecksFor(options.platform)
+	if checks == nil {
+		return fmt.Errorf("no checks for platform %q", options.platform)
+	}
+	return runDoctorChecks(context.Background(), checks, stdout)
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
@@ -99,7 +107,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		return runInspect(options, stdout)
 	case "doctor":
-		return runDoctor(stdout)
+		return runDoctor(args[2:], stdout)
 	case "version", "-v", "--version":
 		fmt.Fprintln(stdout, Version)
 		return nil

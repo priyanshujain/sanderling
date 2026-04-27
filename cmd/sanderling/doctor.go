@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/chromedp/chromedp"
+
 	"github.com/priyanshujain/sanderling/internal/sidecar"
 )
 
@@ -19,13 +21,80 @@ type doctorCheck struct {
 	Run  func(ctx context.Context) error
 }
 
-func defaultDoctorChecks() []doctorCheck {
+// doctorChecksFor returns the host-readiness checks for a target platform.
+// "all" returns the union (deduped by name) so the legacy zero-arg `doctor`
+// behaviour keeps surfacing every platform's prerequisites.
+func doctorChecksFor(platform string) []doctorCheck {
+	switch platform {
+	case "web":
+		return webChecks()
+	case "android":
+		return androidChecks()
+	case "ios":
+		return iosChecks()
+	case "all":
+		return allChecks()
+	default:
+		return nil
+	}
+}
+
+func webChecks() []doctorCheck {
+	return []doctorCheck{
+		{Name: "headless chromium can launch", Run: checkChromiumLaunch},
+	}
+}
+
+func androidChecks() []doctorCheck {
 	return []doctorCheck{
 		{Name: "adb on PATH", Run: checkExecutableOnPath("adb")},
 		{Name: "emulator on PATH or under ANDROID_HOME", Run: checkEmulator},
 		{Name: "java 17+ on PATH", Run: checkJavaVersion},
 		{Name: "sidecar JAR is real (not placeholder)", Run: checkSidecarJAR},
 	}
+}
+
+func iosChecks() []doctorCheck {
+	return []doctorCheck{
+		{Name: "xcrun on PATH", Run: checkExecutableOnPath("xcrun")},
+		{Name: "simctl on PATH", Run: checkExecutableOnPath("simctl")},
+		{Name: "java 17+ on PATH", Run: checkJavaVersion},
+		{Name: "sidecar JAR is real (not placeholder)", Run: checkSidecarJAR},
+	}
+}
+
+func allChecks() []doctorCheck {
+	seen := map[string]bool{}
+	var combined []doctorCheck
+	for _, group := range [][]doctorCheck{webChecks(), androidChecks(), iosChecks()} {
+		for _, c := range group {
+			if seen[c.Name] {
+				continue
+			}
+			seen[c.Name] = true
+			combined = append(combined, c)
+		}
+	}
+	return combined
+}
+
+// checkChromiumLaunch boots a headless chromium under chromedp's default
+// allocator, opens a blank tab, and tears down. Confirms the bundled CDP
+// surface plus a working Chromium binary path.
+func checkChromiumLaunch(ctx context.Context) error {
+	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx,
+		append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.Flag("headless", true),
+			chromedp.Flag("disable-gpu", true),
+		)...,
+	)
+	defer allocCancel()
+	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
+	defer tabCancel()
+	if err := chromedp.Run(tabCtx, chromedp.Navigate("about:blank")); err != nil {
+		return fmt.Errorf("chromium launch: %w", err)
+	}
+	return nil
 }
 
 func checkSidecarJAR(_ context.Context) error {
@@ -36,6 +105,37 @@ func checkSidecarJAR(_ context.Context) error {
 		return fmt.Errorf("embedded JAR is empty")
 	}
 	return nil
+}
+
+type doctorOptions struct {
+	platform string
+}
+
+func parseDoctorArgs(args []string) (doctorOptions, error) {
+	options := doctorOptions{platform: "all"}
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--platform":
+			index++
+			if index >= len(args) {
+				return doctorOptions{}, fmt.Errorf("--platform requires a value")
+			}
+			options.platform = args[index]
+		case len(argument) > len("--platform=") && argument[:len("--platform=")] == "--platform=":
+			options.platform = argument[len("--platform="):]
+		case argument == "-h" || argument == "--help":
+			return doctorOptions{}, fmt.Errorf("doctor [--platform=web|android|ios|all]")
+		default:
+			return doctorOptions{}, fmt.Errorf("unknown doctor argument: %q", argument)
+		}
+	}
+	switch options.platform {
+	case "web", "android", "ios", "all":
+		return options, nil
+	default:
+		return doctorOptions{}, fmt.Errorf("unsupported platform: %q (web, android, ios, all)", options.platform)
+	}
 }
 
 func runDoctorChecks(ctx context.Context, checks []doctorCheck, stdout io.Writer) error {

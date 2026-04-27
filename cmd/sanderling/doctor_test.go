@@ -81,3 +81,93 @@ func TestCheckExecutableOnPath_MissingCommand(t *testing.T) {
 		t.Errorf("expected error for missing command")
 	}
 }
+
+func TestDoctorChecksFor_Web_OmitsJava(t *testing.T) {
+	for _, c := range doctorChecksFor("web") {
+		if strings.Contains(c.Name, "java") || strings.Contains(c.Name, "sidecar") || strings.Contains(c.Name, "adb") {
+			t.Errorf("web checks should not include %q", c.Name)
+		}
+	}
+	if len(doctorChecksFor("web")) == 0 {
+		t.Error("web checks empty")
+	}
+}
+
+func TestDoctorChecksFor_Android_IncludesADB(t *testing.T) {
+	checks := doctorChecksFor("android")
+	found := false
+	for _, c := range checks {
+		if strings.Contains(c.Name, "adb") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("android checks missing adb: %+v", checks)
+	}
+}
+
+func TestDoctorChecksFor_iOS_IncludesXcrun(t *testing.T) {
+	checks := doctorChecksFor("ios")
+	found := false
+	for _, c := range checks {
+		if strings.Contains(c.Name, "xcrun") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ios checks missing xcrun: %+v", checks)
+	}
+}
+
+func TestDoctorChecksFor_All_IsUnion(t *testing.T) {
+	all := doctorChecksFor("all")
+	names := map[string]int{}
+	for _, c := range all {
+		names[c.Name]++
+	}
+	for _, name := range []string{"adb on PATH", "xcrun on PATH", "headless chromium can launch"} {
+		if names[name] != 1 {
+			t.Errorf("expected %q in 'all' exactly once, got %d", name, names[name])
+		}
+	}
+}
+
+func TestDoctorChecksFor_UnknownPlatform(t *testing.T) {
+	if got := doctorChecksFor("fuchsia"); got != nil {
+		t.Errorf("expected nil for unknown platform, got %+v", got)
+	}
+}
+
+func TestParseDoctorArgs_DefaultAll(t *testing.T) {
+	options, err := parseDoctorArgs(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.platform != "all" {
+		t.Errorf("default platform: got %q, want all", options.platform)
+	}
+}
+
+func TestParseDoctorArgs_ExplicitPlatform(t *testing.T) {
+	for _, form := range [][]string{
+		{"--platform", "web"},
+		{"--platform=web"},
+	} {
+		options, err := parseDoctorArgs(form)
+		if err != nil {
+			t.Fatalf("%v: %v", form, err)
+		}
+		if options.platform != "web" {
+			t.Errorf("%v: got platform=%q, want web", form, options.platform)
+		}
+	}
+}
+
+func TestParseDoctorArgs_RejectsUnknown(t *testing.T) {
+	if _, err := parseDoctorArgs([]string{"--platform=fuchsia"}); err == nil {
+		t.Error("expected error for unsupported platform")
+	}
+	if _, err := parseDoctorArgs([]string{"--bogus"}); err == nil {
+		t.Error("expected error for unknown argument")
+	}
+}
