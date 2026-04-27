@@ -21,6 +21,9 @@ import (
 // a cleanup function. For web, ChromeDriver is used directly; for android/ios
 // the JVM sidecar is extracted, spawned, and dialed.
 func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver.DeviceDriver, func(), error) {
+	if err := Preflight(ctx, options.Platform); err != nil {
+		return nil, nil, err
+	}
 	if options.Platform == "web" {
 		d := chrome.New()
 		return d, func() { _ = d.Terminate(context.Background()) }, nil
