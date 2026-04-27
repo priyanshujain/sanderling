@@ -1,0 +1,83 @@
+.hierarchy-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.hierarchy-filter {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+
+.hierarchy-table-wrap {
+  overflow: auto;
+  max-height: 480px;
+  border: 1px solid var(--border);
+}
+
+.hierarchy-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.hierarchy-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+  text-align: left;
+  padding: 4px 8px;
+  font-weight: normal;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.hierarchy-table td {
+  padding: 2px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+}
+
+.hierarchy-table tr:hover td {
+  background: var(--surface-2, transparent);
+}
+
+.hierarchy-tag {
+  color: var(--text-secondary);
+  max-width: 140px;
+}
+
+.hierarchy-id {
+  color: var(--text-primary);
+  max-width: 160px;
+}
+
+.hierarchy-text {
+  max-width: 320px;
+  color: var(--text-primary);
+}
+
+.hierarchy-bounds {
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.hierarchy-empty {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 16px;
+}
+
+.hierarchy-count {
+  color: var(--text-secondary);
+  font-size: 11px;
+}

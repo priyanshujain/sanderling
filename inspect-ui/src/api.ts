@@ -23,3 +23,7 @@ export function getStep(runId: string, index: number): Promise<Step> {
 export function screenshotUrl(runId: string, name: string): string {
   return `/api/runs/${encodeURIComponent(runId)}/screenshots/${encodeURIComponent(name)}`;
 }
+
+export function htmlUrl(runId: string, name: string): string {
+  return `/api/runs/${encodeURIComponent(runId)}/html/${encodeURIComponent(name)}`;
+}

@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { getRun, getStep, screenshotUrl } from "../api";
 import type { Run, Step } from "../types";
 import ActionList from "../panels/ActionList";
+import HierarchyPanel from "../panels/HierarchyPanel";
+import HtmlPanel from "../panels/HtmlPanel";
 import Screenshot from "../panels/Screenshot";
 import SnapshotTable from "../panels/SnapshotTable";
 import ViolationsPanel from "../panels/ViolationsPanel";
@@ -136,6 +138,26 @@ export default function RunDetail() {
       ),
     },
     {
+      id: "hierarchy",
+      label: "Hierarchy",
+      content: <HierarchyPanel hierarchy={currentStep?.hierarchy} />,
+    },
+    ...(runId && currentStep?.html_available
+      ? [
+          {
+            id: "html",
+            label: "HTML",
+            content: (
+              <HtmlPanel
+                runId={runId}
+                fileName={`step-${String(currentStep.step).padStart(5, "0")}.html`}
+                available
+              />
+            ),
+          } satisfies TabDefinition,
+        ]
+      : []),
+    {
       id: "properties",
       label: "Properties",
       content: (
@@ -186,6 +208,26 @@ export default function RunDetail() {
         />
       ),
     },
+    {
+      id: "hierarchy",
+      label: "Hierarchy",
+      content: <HierarchyPanel hierarchy={nextStep?.hierarchy ?? currentStep?.hierarchy} />,
+    },
+    ...(runId && currentStep?.html_available
+      ? [
+          {
+            id: "html",
+            label: "HTML",
+            content: (
+              <HtmlPanel
+                runId={runId}
+                fileName={`step-${String(currentStep.step).padStart(5, "0")}-after.html`}
+                available
+              />
+            ),
+          } satisfies TabDefinition,
+        ]
+      : []),
     {
       id: "properties",
       label: "Properties",
