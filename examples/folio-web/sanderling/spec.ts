@@ -8,7 +8,6 @@ import {
   from,
   next,
   now,
-  swipes,
   taps,
   waitOnce,
   weighted,
@@ -291,7 +290,6 @@ export const actionsRoot = weighted(
   [6, goBack],
   [1, logoutAction],
   [4, taps],
-  [2, swipes],
   [2, waitOnce],
 );
 
