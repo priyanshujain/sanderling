@@ -90,9 +90,19 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			logs = collectLogs(ctx, options.Driver, logSince)
 			return nil
 		})
+		var v8Overrides map[int]json.RawMessage
 		if web, ok := options.Driver.(driver.WebDriver); ok {
 			g.Go(func() error {
 				htmlCaptured = captureHTML(ctx, web, options.TraceWriter, logger, si, false)
+				return nil
+			})
+			g.Go(func() error {
+				overrides, err := web.EvaluateExtractors(ctx)
+				if err != nil {
+					logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
+					return nil
+				}
+				v8Overrides = overrides
 				return nil
 			})
 		}
@@ -133,6 +143,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}); err != nil {
 			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 		}
+		if err := options.Verifier.OverrideExtractorValues(v8Overrides); err != nil {
+			logger.Warn("v8 override apply failed", "step", stepIndex, "err", err)
+		}
 
 		screen := ""
 		if tree != nil && len(tree.Elements) > 0 {
@@ -147,7 +160,13 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			}
 		}
 
-		nextAction, nextErr := options.Verifier.NextAction()
+		var nextAction verifier.Action
+		var nextErr error
+		if web, ok := options.Driver.(driver.WebDriver); ok {
+			nextAction, nextErr = nextActionFromV8(ctx, web)
+		} else {
+			nextAction, nextErr = options.Verifier.NextAction()
+		}
 		var traceAction *trace.Action
 		if nextErr == nil {
 			traceAction = traceActionFor(nextAction, tree)
@@ -411,6 +430,62 @@ func captureMetrics(ctx context.Context, options Options, logger *slog.Logger, s
 		CPUPercent:       sample.CPUPercent,
 		HeapBytes:        sample.HeapBytes,
 		TotalMemoryBytes: sample.TotalMemoryBytes,
+	}
+}
+
+// nextActionFromV8 invokes the V8-side action generator and decodes the
+// resulting JSON into a verifier.Action. ErrNoAction is returned when the
+// generator declined to act this tick.
+func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Action, error) {
+	raw, err := web.NextActionFromV8(ctx)
+	if err != nil {
+		return verifier.Action{}, fmt.Errorf("v8 next action: %w", err)
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return verifier.Action{}, verifier.ErrNoAction
+	}
+	var decoded struct {
+		Kind           string `json:"kind"`
+		X              int    `json:"x"`
+		Y              int    `json:"y"`
+		FromX          int    `json:"from_x"`
+		FromY          int    `json:"from_y"`
+		ToX            int    `json:"to_x"`
+		ToY            int    `json:"to_y"`
+		Key            string `json:"key"`
+		Text           string `json:"text"`
+		DurationMillis int    `json:"duration_millis"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return verifier.Action{}, fmt.Errorf("decode v8 action: %w", err)
+	}
+	switch decoded.Kind {
+	case "Tap":
+		if decoded.X == 0 && decoded.Y == 0 {
+			return verifier.Action{}, verifier.ErrNoAction
+		}
+		return verifier.Action{Kind: verifier.ActionKindTap, X: decoded.X, Y: decoded.Y}, nil
+	case "InputText":
+		return verifier.Action{
+			Kind: verifier.ActionKindInputText,
+			X:    decoded.X, Y: decoded.Y,
+			Text: decoded.Text,
+		}, nil
+	case "Swipe":
+		return verifier.Action{
+			Kind:           verifier.ActionKindSwipe,
+			FromX:          decoded.FromX,
+			FromY:          decoded.FromY,
+			ToX:            decoded.ToX,
+			ToY:            decoded.ToY,
+			DurationMillis: decoded.DurationMillis,
+		}, nil
+	case "PressKey":
+		return verifier.Action{Kind: verifier.ActionKindPressKey, Key: decoded.Key}, nil
+	case "Wait":
+		return verifier.Action{Kind: verifier.ActionKindWait, DurationMillis: decoded.DurationMillis}, nil
+	default:
+		return verifier.Action{}, verifier.ErrNoAction
 	}
 }
 
