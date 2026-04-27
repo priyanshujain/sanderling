@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -57,4 +58,30 @@ type Metrics struct {
 	CPUPercent       float64
 	HeapBytes        int64
 	TotalMemoryBytes int64
+}
+
+// WebDriver is the optional capability surface exposed by the chrome driver
+// for the V8-native tick path. The runner type-asserts on this interface;
+// mobile drivers stay binary-compatible by simply not implementing it.
+//
+// Element references never cross V8/host. V8 serializes targets as {x, y}
+// (or bounds) into the returned WebAction JSON; the host dispatches via the
+// normal DeviceDriver methods (Tap, InputText, etc.).
+type WebDriver interface {
+	// InstallBundle injects the given JS source so it runs once per
+	// freshly-navigated document, plus immediately in the current page.
+	// The bundle is expected to register globals
+	// `__sanderlingExtractors__` and `__sanderlingNextAction__` on
+	// `window`.
+	InstallBundle(ctx context.Context, source []byte) error
+	// EvaluateExtractors invokes the extractor table installed by the
+	// bundle and returns each extractor's JSON-encoded current value
+	// keyed by its registration index.
+	EvaluateExtractors(ctx context.Context) (map[int]json.RawMessage, error)
+	// NextActionFromV8 invokes the action generator installed by the
+	// bundle and returns the resulting Action JSON for the host to
+	// dispatch. The shape mirrors verifier.Action's JSON form.
+	NextActionFromV8(ctx context.Context) (json.RawMessage, error)
+	// Document returns the current page outerHTML for trace capture.
+	Document(ctx context.Context) (string, error)
 }

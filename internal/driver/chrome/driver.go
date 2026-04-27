@@ -10,6 +10,7 @@ import (
 
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 
@@ -25,6 +26,9 @@ type Driver struct {
 
 	logsMu sync.Mutex
 	logs   []driver.LogEntry
+
+	bundleMu     sync.Mutex
+	bundleSource string
 }
 
 // New creates a new ChromeDriver. Call Terminate when done.
@@ -320,4 +324,82 @@ func pngDimensions(png []byte) (int, int) {
 	return w, h
 }
 
-var _ driver.DeviceDriver = (*Driver)(nil)
+var (
+	_ driver.DeviceDriver = (*Driver)(nil)
+	_ driver.WebDriver    = (*Driver)(nil)
+)
+
+// InstallBundle registers the source so it runs at every freshly-navigated
+// document context, then immediately evaluates it against the current page so
+// the very first tick has access to the registered globals.
+func (d *Driver) InstallBundle(_ context.Context, source []byte) error {
+	d.bundleMu.Lock()
+	d.bundleSource = string(source)
+	d.bundleMu.Unlock()
+
+	return chromedp.Run(d.tabCtx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			if _, err := page.AddScriptToEvaluateOnNewDocument(string(source)).Do(ctx); err != nil {
+				return fmt.Errorf("addScriptToEvaluateOnNewDocument: %w", err)
+			}
+			_, exception, err := runtime.Evaluate(string(source)).Do(ctx)
+			if err != nil {
+				return fmt.Errorf("evaluate bundle: %w", err)
+			}
+			if exception != nil {
+				return fmt.Errorf("bundle threw: %s", exception.Text)
+			}
+			return nil
+		}),
+	)
+}
+
+// EvaluateExtractors invokes the bundle-installed extractor table and returns
+// each extractor's JSON-encoded current value keyed by its registration index.
+func (d *Driver) EvaluateExtractors(_ context.Context) (map[int]json.RawMessage, error) {
+	const script = `JSON.stringify(window.__sanderlingExtractors__ ? window.__sanderlingExtractors__() : {})`
+	var encoded string
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+		return nil, fmt.Errorf("evaluate extractors: %w", err)
+	}
+	if encoded == "" || encoded == "{}" {
+		return map[int]json.RawMessage{}, nil
+	}
+	stringMap := map[string]json.RawMessage{}
+	if err := json.Unmarshal([]byte(encoded), &stringMap); err != nil {
+		return nil, fmt.Errorf("decode extractor map: %w", err)
+	}
+	result := make(map[int]json.RawMessage, len(stringMap))
+	for key, value := range stringMap {
+		index := 0
+		if _, err := fmt.Sscanf(key, "%d", &index); err != nil {
+			return nil, fmt.Errorf("non-integer extractor key %q", key)
+		}
+		result[index] = value
+	}
+	return result, nil
+}
+
+// NextActionFromV8 invokes the bundle-installed action generator and returns
+// the resulting Action JSON. Returns an empty json.RawMessage when the
+// generator declines to act this tick.
+func (d *Driver) NextActionFromV8(_ context.Context) (json.RawMessage, error) {
+	const script = `JSON.stringify(window.__sanderlingNextAction__ ? window.__sanderlingNextAction__() : null)`
+	var encoded string
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+		return nil, fmt.Errorf("evaluate next action: %w", err)
+	}
+	if encoded == "" || encoded == "null" {
+		return nil, nil
+	}
+	return json.RawMessage(encoded), nil
+}
+
+// Document returns the current page's outer HTML for trace capture.
+func (d *Driver) Document(_ context.Context) (string, error) {
+	var html string
+	if err := chromedp.Run(d.tabCtx, chromedp.OuterHTML("html", &html, chromedp.ByQuery)); err != nil {
+		return "", fmt.Errorf("document: %w", err)
+	}
+	return html, nil
+}
