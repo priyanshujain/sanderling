@@ -308,8 +308,9 @@ const runtime = {
   inputText(p: { into: unknown; text: string }): unknown {
     return { kind: "InputText", into: p.into, text: p.text };
   },
-  swipe(p: { from: unknown; to: unknown; durationMillis?: number }): unknown {
-    return { kind: "Swipe", from: p.from, to: p.to, durationMillis: p.durationMillis };
+  swipe(_p: { from: unknown; to: unknown; durationMillis?: number }): unknown {
+    // Why: web has no swipe gesture; the factory returns null so Swipe() calls in specs no-op.
+    return null;
   },
   pressKey(p: { key: string }): unknown {
     return { kind: "PressKey", key: p.key };
@@ -392,7 +393,7 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
     case "waitOnce":
       return { kind: "Wait", durationMillis: 500 };
     case "pressKey":
-      return { kind: "PressKey", key: "back" };
+      return randomPressKey();
     default:
       return null;
   }
@@ -422,24 +423,16 @@ function randomTap(): unknown {
 }
 
 function randomSwipe(): unknown {
-  const width = window.innerWidth || 320;
-  const height = window.innerHeight || 480;
-  const cx = Math.round(width / 2);
-  const cy = Math.round(height / 2);
-  const magnitude = 200 + Math.floor(Math.random() * 401);
-  const direction = Math.floor(Math.random() * 4);
-  let toX = cx;
-  let toY = cy;
-  if (direction === 0) toY = Math.max(0, cy - magnitude);
-  else if (direction === 1) toY = cy + magnitude;
-  else if (direction === 2) toX = Math.max(0, cx - magnitude);
-  else toX = cx + magnitude;
-  return {
-    kind: "Swipe",
-    from: { x: cx, y: cy },
-    to: { x: toX, y: toY },
-    durationMillis: 250,
-  };
+  // Why: web has no swipe gesture; pointer drags into empty divs are noise.
+  return null;
+}
+
+const WEB_PRESS_KEYS = ["enter", "tab", "escape", "up", "down", "left", "right"];
+
+function randomPressKey(): unknown {
+  // Why: only emit keys with meaningful browser semantics; "back"/"home" don't navigate.
+  const key = WEB_PRESS_KEYS[Math.floor(Math.random() * WEB_PRESS_KEYS.length)];
+  return { kind: "PressKey", key };
 }
 
 function pickFromArray(value: unknown): unknown {
