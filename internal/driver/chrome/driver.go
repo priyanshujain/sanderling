@@ -126,9 +126,16 @@ func (d *Driver) Tap(_ context.Context, x, y int) error {
 }
 
 func (d *Driver) TapSelector(_ context.Context, selector string) error {
-	return chromedp.Run(d.tabCtx,
-		chromedp.Click(selector, chromedp.NodeVisible),
-	)
+	target, isXPath, err := TranslateStringSelector(selector)
+	if err != nil {
+		// Fall back to passing the string straight through; chromedp will
+		// reject it loudly if it isn't a valid CSS selector.
+		target = selector
+	}
+	if isXPath {
+		return chromedp.Run(d.tabCtx, chromedp.Click(target, chromedp.NodeVisible, chromedp.BySearch))
+	}
+	return chromedp.Run(d.tabCtx, chromedp.Click(target, chromedp.NodeVisible))
 }
 
 func (d *Driver) InputText(_ context.Context, text string) error {
