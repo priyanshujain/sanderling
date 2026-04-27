@@ -82,6 +82,4 @@ type WebDriver interface {
 	// bundle and returns the resulting Action JSON for the host to
 	// dispatch. The shape mirrors verifier.Action's JSON form.
 	NextActionFromV8(ctx context.Context) (json.RawMessage, error)
-	// Document returns the current page outerHTML for trace capture.
-	Document(ctx context.Context) (string, error)
 }

@@ -394,12 +394,3 @@ func (d *Driver) NextActionFromV8(_ context.Context) (json.RawMessage, error) {
 	}
 	return json.RawMessage(encoded), nil
 }
-
-// Document returns the current page's outer HTML for trace capture.
-func (d *Driver) Document(_ context.Context) (string, error) {
-	var html string
-	if err := chromedp.Run(d.tabCtx, chromedp.OuterHTML("html", &html, chromedp.ByQuery)); err != nil {
-		return "", fmt.Errorf("document: %w", err)
-	}
-	return html, nil
-}
