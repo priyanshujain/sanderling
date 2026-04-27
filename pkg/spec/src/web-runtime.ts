@@ -386,9 +386,9 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
       return resolveGenerator(inner);
     }
     case "taps":
-      return null; // host-side fallback handles random taps using hierarchy
+      return randomTap();
     case "swipes":
-      return null;
+      return randomSwipe();
     case "waitOnce":
       return { kind: "Wait", durationMillis: 500 };
     case "pressKey":
@@ -396,6 +396,50 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
     default:
       return null;
   }
+}
+
+function randomTap(): unknown {
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      'a, button, input, select, textarea, [role="button"], [onclick]',
+    ),
+  ).filter((element) => {
+    if ((element as HTMLButtonElement).disabled) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+  if (candidates.length === 0) return null;
+  const picked = candidates[Math.floor(Math.random() * candidates.length)];
+  if (!picked) return null;
+  const rect = picked.getBoundingClientRect();
+  return {
+    kind: "Tap",
+    on: {
+      x: Math.round(rect.left + rect.width / 2),
+      y: Math.round(rect.top + rect.height / 2),
+    },
+  };
+}
+
+function randomSwipe(): unknown {
+  const width = window.innerWidth || 320;
+  const height = window.innerHeight || 480;
+  const cx = Math.round(width / 2);
+  const cy = Math.round(height / 2);
+  const magnitude = 200 + Math.floor(Math.random() * 401);
+  const direction = Math.floor(Math.random() * 4);
+  let toX = cx;
+  let toY = cy;
+  if (direction === 0) toY = Math.max(0, cy - magnitude);
+  else if (direction === 1) toY = cy + magnitude;
+  else if (direction === 2) toX = Math.max(0, cx - magnitude);
+  else toX = cx + magnitude;
+  return {
+    kind: "Swipe",
+    from: { x: cx, y: cy },
+    to: { x: toX, y: toY },
+    durationMillis: 250,
+  };
 }
 
 function pickFromArray(value: unknown): unknown {
@@ -458,7 +502,14 @@ function pointOf(value: unknown): { x: number; y: number } | undefined {
 
 (globalThis as Record<string, unknown>).__sanderlingNextAction__ = function (): unknown {
   if (!actionsRoot) return null;
-  return serializeAction(resolveGenerator(actionsRoot));
+  // Match the goja runtime: retry up to 16 times when a weighted entry's
+  // generator returns []. Otherwise on routes where most generators are
+  // gated to other pages, ~80% of ticks would emit no action.
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const action = serializeAction(resolveGenerator(actionsRoot));
+    if (action !== null) return action;
+  }
+  return null;
 };
 
 export {};
