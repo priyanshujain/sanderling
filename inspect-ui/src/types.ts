@@ -126,5 +126,4 @@ export interface Step {
   hierarchy?: Hierarchy;
   residuals?: Record<string, ResidualNode>;
   metrics?: Metrics;
-  html_available?: boolean;
 }
