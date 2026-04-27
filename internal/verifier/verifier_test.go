@@ -532,3 +532,58 @@ globalThis.properties = {
 		}
 	}
 }
+
+func TestOverrideExtractorValues_PreservesPrevious(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, helloSpec)
+
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": json.RawMessage(`100`)}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.OverrideExtractorValues(map[int]json.RawMessage{1: json.RawMessage(`777`)}); err != nil {
+		t.Fatal(err)
+	}
+	balance := verifier.runtime.GlobalObject().Get("balance").ToObject(verifier.runtime)
+	if balance.Get("current").ToInteger() != 777 {
+		t.Errorf("override didn't take: current=%v", balance.Get("current"))
+	}
+
+	// Next push: previous mirrors the *override*, not the snapshot value.
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": json.RawMessage(`200`)}}); err != nil {
+		t.Fatal(err)
+	}
+	balance = verifier.runtime.GlobalObject().Get("balance").ToObject(verifier.runtime)
+	if balance.Get("previous").ToInteger() != 777 {
+		t.Errorf("previous should reflect override, got %v", balance.Get("previous"))
+	}
+}
+
+func TestOverrideExtractorValues_NilIsNoop(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, helloSpec)
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": json.RawMessage(`42`)}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.OverrideExtractorValues(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.OverrideExtractorValues(map[int]json.RawMessage{}); err != nil {
+		t.Fatal(err)
+	}
+	balance := verifier.runtime.GlobalObject().Get("balance").ToObject(verifier.runtime)
+	if balance.Get("current").ToInteger() != 42 {
+		t.Errorf("expected snapshot-driven current to remain 42, got %v", balance.Get("current"))
+	}
+}
+
+func TestOverrideExtractorValues_UnknownIndexErrors(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, helloSpec)
+	if err := verifier.PushSnapshot(SnapshotInput{}); err != nil {
+		t.Fatal(err)
+	}
+	err := verifier.OverrideExtractorValues(map[int]json.RawMessage{99: json.RawMessage(`1`)})
+	if err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Errorf("expected out-of-range error, got %v", err)
+	}
+}
