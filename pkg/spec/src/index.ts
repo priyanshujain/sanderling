@@ -23,6 +23,7 @@ export type {
   TapAction,
   SanderlingRuntime,
   WaitAction,
+  WebState,
   WeightedEntry,
 } from "./types.ts";
 
