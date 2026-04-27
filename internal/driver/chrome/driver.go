@@ -206,7 +206,10 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
     if (el.id) attrs['resource-id'] = el.id;
     const label = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '';
     if (label) attrs['content-desc'] = label;
-    if (el.tagName) attrs['class'] = el.tagName.toLowerCase();
+    if (el.tagName) attrs['tag'] = el.tagName.toLowerCase();
+    if (el.className && typeof el.className === 'string' && el.className.trim()) {
+      attrs['class'] = el.className.trim();
+    }
     if (isRoot) attrs['sanderling-screen'] = route;
     const isClickable = !!(el.onclick || el.tagName === 'A' || el.tagName === 'BUTTON' ||
       el.tagName === 'INPUT' || el.tagName === 'SELECT' ||
