@@ -73,7 +73,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var hierarchyErr error
 		var metrics *trace.Metrics
 		var logs []verifier.LogEntry
-		var htmlCaptured bool
 
 		g, _ := errgroup.WithContext(ctx)
 		g.Go(func() error {
@@ -93,10 +92,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var v8Overrides map[int]json.RawMessage
 		if web, ok := options.Driver.(driver.WebDriver); ok {
 			g.Go(func() error {
-				htmlCaptured = captureHTML(ctx, web, options.TraceWriter, logger, si, false)
-				return nil
-			})
-			g.Go(func() error {
 				overrides, err := web.EvaluateExtractors(ctx)
 				if err != nil {
 					logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
@@ -112,12 +107,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				captureScreenshot(ctx, options, logger, postStep, true)
 				return nil
 			})
-			if web, ok := options.Driver.(driver.WebDriver); ok {
-				g.Go(func() error {
-					captureHTML(ctx, web, options.TraceWriter, logger, postStep, true)
-					return nil
-				})
-			}
 			pendingPostScreenshot = false
 		}
 		g.Wait()
@@ -180,15 +169,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		step := trace.Step{
-			Index:         stepIndex,
-			Timestamp:     stepStart,
-			Screen:        screen,
-			Action:        traceAction,
-			Violations:    violations,
-			Hierarchy:     tree,
-			Residuals:     residuals,
-			Metrics:       metrics,
-			HTMLAvailable: htmlCaptured,
+			Index:      stepIndex,
+			Timestamp:  stepStart,
+			Screen:     screen,
+			Action:     traceAction,
+			Violations: violations,
+			Hierarchy:  tree,
+			Residuals:  residuals,
+			Metrics:    metrics,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
@@ -229,9 +217,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 
 	if pendingPostScreenshot {
 		captureScreenshot(ctx, options, logger, pendingPostScreenshotStep, true)
-		if web, ok := options.Driver.(driver.WebDriver); ok {
-			captureHTML(ctx, web, options.TraceWriter, logger, pendingPostScreenshotStep, true)
-		}
 	}
 
 	summary.EndTime = time.Now()
@@ -487,32 +472,6 @@ func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Actio
 	default:
 		return verifier.Action{}, verifier.ErrNoAction
 	}
-}
-
-// captureHTML pulls the current document HTML from a WebDriver-capable
-// driver and stamps it into the trace under html/. Returns true on a
-// successful non-empty write so the Step.HTMLAvailable flag advertises the
-// payload to the inspect UI.
-func captureHTML(ctx context.Context, web driver.WebDriver, writer *trace.Writer, logger *slog.Logger, stepIndex int, after bool) bool {
-	html, err := web.Document(ctx)
-	if err != nil {
-		logger.Warn("html capture failed", "step", stepIndex, "after", after, "err", err)
-		return false
-	}
-	if html == "" {
-		return false
-	}
-	var writeErr error
-	if after {
-		writeErr = writer.WriteHTMLAfter(stepIndex, []byte(html))
-	} else {
-		writeErr = writer.WriteHTML(stepIndex, []byte(html))
-	}
-	if writeErr != nil {
-		logger.Warn("html write failed", "step", stepIndex, "after", after, "err", writeErr)
-		return false
-	}
-	return true
 }
 
 func captureScreenshot(ctx context.Context, options Options, logger *slog.Logger, stepIndex int, after bool) {
