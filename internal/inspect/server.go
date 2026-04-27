@@ -84,7 +84,6 @@ func (s *Server) handleRunsList(responseWriter http.ResponseWriter, request *htt
 
 var stepPathPattern = regexp.MustCompile(`^([a-zA-Z0-9._-]+)/steps/([^/]+)$`)
 var screenshotPathPattern = regexp.MustCompile(`^([a-zA-Z0-9._-]+)/screenshots/([a-zA-Z0-9._-]+\.png)$`)
-var htmlPathPattern = regexp.MustCompile(`^([a-zA-Z0-9._-]+)/html/([a-zA-Z0-9._-]+\.html)$`)
 var runDetailPathPattern = regexp.MustCompile(`^([a-zA-Z0-9._-]+)/?$`)
 
 func (s *Server) handleRunsTree(responseWriter http.ResponseWriter, request *http.Request) {
@@ -103,10 +102,6 @@ func (s *Server) handleRunsTree(responseWriter http.ResponseWriter, request *htt
 	}
 	if match := screenshotPathPattern.FindStringSubmatch(rest); match != nil {
 		s.serveScreenshot(responseWriter, request, match[1], match[2])
-		return
-	}
-	if match := htmlPathPattern.FindStringSubmatch(rest); match != nil {
-		s.serveHTML(responseWriter, request, match[1], match[2])
 		return
 	}
 	if match := runDetailPathPattern.FindStringSubmatch(rest); match != nil {
@@ -162,20 +157,6 @@ func (s *Server) serveScreenshot(responseWriter http.ResponseWriter, request *ht
 		return
 	}
 	full := filepath.Join(s.options.RunsDirectory, id, "screenshots", name)
-	http.ServeFile(responseWriter, request, full)
-}
-
-func (s *Server) serveHTML(responseWriter http.ResponseWriter, request *http.Request, id, name string) {
-	if !validRunID(id) || strings.Contains(name, "..") {
-		http.Error(responseWriter, "run not found", http.StatusNotFound)
-		return
-	}
-	full := filepath.Join(s.options.RunsDirectory, id, "html", name)
-	if _, err := http.Dir(filepath.Join(s.options.RunsDirectory, id, "html")).Open(name); err != nil {
-		http.NotFound(responseWriter, request)
-		return
-	}
-	responseWriter.Header().Set("Content-Type", "text/html; charset=utf-8")
 	http.ServeFile(responseWriter, request, full)
 }
 
