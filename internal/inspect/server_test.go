@@ -171,6 +171,51 @@ func TestScreenshot_ServesWhitelistedPNG(t *testing.T) {
 	}
 }
 
+func TestServeHTML_Returns200(t *testing.T) {
+	server, root := newFixtureServer(t)
+	htmlDirectory := filepath.Join(root, "run-a", "html")
+	if err := os.MkdirAll(htmlDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("<!doctype html><html><body>hi</body></html>")
+	if err := os.WriteFile(filepath.Join(htmlDirectory, "step-00001.html"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/runs/run-a/html/step-00001.html", nil)
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Body.String() != string(body) {
+		t.Errorf("body mismatch")
+	}
+	if !strings.Contains(recorder.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("content-type = %q", recorder.Header().Get("Content-Type"))
+	}
+}
+
+func TestServeHTML_RejectsTraversalAndMissing(t *testing.T) {
+	server, _ := newFixtureServer(t)
+	cases := []string{
+		"/api/runs/run-a/html/../meta.json",
+		"/api/runs/run-a/html/..%2Fmeta.json",
+		"/api/runs/run-a/html/missing.html",
+		"/api/runs/run-a/html/step-00001.txt",
+	}
+	for _, path := range cases {
+		t.Run(path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			server.Handler().ServeHTTP(recorder, request)
+			if recorder.Code == http.StatusOK {
+				t.Errorf("status = %d (should not be 200) body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestScreenshot_RejectsTraversalAndBadNames(t *testing.T) {
 	server, _ := newFixtureServer(t)
 	cases := []string{
