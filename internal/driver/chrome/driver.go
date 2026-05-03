@@ -27,9 +27,6 @@ type Driver struct {
 
 	logsMu sync.Mutex
 	logs   []driver.LogEntry
-
-	bundleMu     sync.Mutex
-	bundleSource string
 }
 
 // New creates a new ChromeDriver. Call Terminate when done.
@@ -355,10 +352,6 @@ func (d *Driver) runCtx(ctx context.Context) (context.Context, context.CancelFun
 // document context, then immediately evaluates it against the current page so
 // the very first tick has access to the registered globals.
 func (d *Driver) InstallBundle(ctx context.Context, source []byte) error {
-	d.bundleMu.Lock()
-	d.bundleSource = string(source)
-	d.bundleMu.Unlock()
-
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
 	return chromedp.Run(runCtx,
