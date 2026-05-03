@@ -74,25 +74,29 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var metrics *trace.Metrics
 		var logs []verifier.LogEntry
 
-		g, _ := errgroup.WithContext(ctx)
+		// gctx is bound to the errgroup so a returned error (or outer
+		// cancellation) propagates to siblings - notably the V8 extractor
+		// goroutine, whose CDP round-trip can otherwise outrun the step
+		// budget on a hung tab.
+		g, gctx := errgroup.WithContext(ctx)
 		g.Go(func() error {
-			tree, hierarchyErr = fetchHierarchy(ctx, options.Driver)
+			tree, hierarchyErr = fetchHierarchy(gctx, options.Driver)
 			return nil
 		})
 		si := stepIndex
 		g.Go(func() error {
-			metrics = captureMetrics(ctx, options, logger, si)
+			metrics = captureMetrics(gctx, options, logger, si)
 			return nil
 		})
 		logSince := lastLogTime
 		g.Go(func() error {
-			logs = collectLogs(ctx, options.Driver, logSince)
+			logs = collectLogs(gctx, options.Driver, logSince)
 			return nil
 		})
 		var v8Overrides map[int]json.RawMessage
 		if web, ok := options.Driver.(driver.WebDriver); ok {
 			g.Go(func() error {
-				overrides, err := web.EvaluateExtractors(ctx)
+				overrides, err := web.EvaluateExtractors(gctx)
 				if err != nil {
 					logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
 					return nil
@@ -104,12 +108,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if pendingPostScreenshot {
 			postStep := pendingPostScreenshotStep
 			g.Go(func() error {
-				captureScreenshot(ctx, options, logger, postStep, true)
+				captureScreenshot(gctx, options, logger, postStep, true)
 				return nil
 			})
 			pendingPostScreenshot = false
 		}
-		g.Wait()
+		// All goroutines write to local variables and return nil, so the Wait
+		// error is always nil; ignored intentionally.
+		_ = g.Wait()
 
 		if hierarchyErr != nil {
 			if isWDADrop(hierarchyErr) {
