@@ -1,3 +1,5 @@
+/// <reference lib="dom" />
+
 export type Snapshots = Record<string, unknown>;
 
 /**
@@ -10,20 +12,28 @@ export type Snapshots = Record<string, unknown>;
  */
 export interface KnownAttrSelectors {
   testTag?: string;
+  testID?: string;
   identifier?: string;
   accessibilityIdentifier?: string;
   "resource-id"?: string;
+  id?: string;
 
   "content-desc"?: string;
+  contentDescription?: string;
   accessibilityText?: string;
   accessibilityLabel?: string;
+  ariaLabel?: string;
+  "aria-label"?: string;
   label?: string;
 
   text?: string;
+  tag?: string;
   class?: string;
+  className?: string;
   elementType?: string;
   package?: string;
   placeholderValue?: string;
+  placeholder?: string;
   hintText?: string;
 
   clickable?: boolean;
@@ -97,6 +107,17 @@ export interface State {
   time: number;
   logs: readonly LogEntry[];
   exceptions: readonly ExceptionRecord[];
+}
+
+/**
+ * State as observed inside a web (V8/browser) extractor. Adds the live
+ * `document` and `window` handles. `state.document` is V8-only — goja-side
+ * predicates do not see it; if you need DOM data in a predicate, surface it
+ * via an `extract()`.
+ */
+export interface WebState extends State {
+  readonly document: Document;
+  readonly window: Window;
 }
 
 export interface Extracted<T> {

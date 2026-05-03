@@ -86,8 +86,7 @@ export function HomePage(props: {
             <div
               id="total-balance"
               className="balance-display"
-              data-value={totalBalance}
-              title={String(totalBalance)}
+              data-cents={totalBalance}
             >
               <span className="balance-label">Total balance</span>
               <span
@@ -164,7 +163,7 @@ export function HomePage(props: {
                 data-name={a.name}
                 data-balance={bal}
                 data-txn-count={countTxns(txns, a.id)}
-                aria-label={'account:' + a.id + ':' + bal}
+                aria-label={`${a.name}, ${formatCents(bal)}`}
                 onClick={() => navigate(`/accounts/${a.id}`)}
               >
                 <span className="account-avatar" aria-hidden="true">

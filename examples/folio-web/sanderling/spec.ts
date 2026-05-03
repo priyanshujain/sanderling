@@ -8,81 +8,79 @@ import {
   from,
   next,
   now,
-  swipes,
   taps,
   waitOnce,
   weighted,
 } from "@sanderling/spec";
 import { noUncaughtExceptions } from "@sanderling/spec/defaults/properties";
 
-// Route detection via stable DOM ids
-const onLoginPage = extract((s) => !!s.ax.find("id:email"));
-const onHomePage = extract((s) => !!s.ax.find("id:add-account"));
-const onAddAccountPage = extract((s) => !!s.ax.find("id:account-name"));
-const onLedgerPage = extract((s) => !!s.ax.find("id:ledger"));
-const onAddTxnPage = extract((s) => !!s.ax.find("id:txn-amount"));
+// Page-presence checks via stable element ids.
+const onLoginPage = extract((s) => !!s.ax.find({ id: "email" }));
+const onHomePage = extract((s) => !!s.ax.find({ id: "add-account" }));
+const onAddAccountPage = extract((s) => !!s.ax.find({ id: "account-name" }));
+const onLedgerPage = extract((s) => !!s.ax.find({ id: "ledger" }));
+const onAddTxnPage = extract((s) => !!s.ax.find({ id: "txn-amount" }));
 
-// Auth state: true on any authenticated page, false only on login page
+// Auth state: true on any authenticated page, false only on login page.
 const loggedIn = extract((s) => {
-  if (s.ax.find("id:email")) return false;
+  if (s.ax.find({ id: "email" })) return false;
   return !!(
-    s.ax.find("id:logout") ||
-    s.ax.find("id:add-account") ||
-    s.ax.find("id:ledger") ||
-    s.ax.find("id:account-name") ||
-    s.ax.find("id:txn-amount") ||
-    s.ax.find("id:add-txn")
+    s.ax.find({ id: "logout" }) ||
+    s.ax.find({ id: "add-account" }) ||
+    s.ax.find({ id: "ledger" }) ||
+    s.ax.find({ id: "account-name" }) ||
+    s.ax.find({ id: "txn-amount" }) ||
+    s.ax.find({ id: "add-txn" })
   );
 });
 
-// Total balance from title attribute on id:total-balance (set to raw cents integer)
+// Read raw cents off explicit data-cents attributes; no aria-label parsing.
+function readCents(value: string | undefined): number {
+  if (!value) return 0;
+  const parsed = parseInt(value, 10);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
 const totalBalance = extract((s) => {
-  const el = s.ax.find("id:total-balance");
-  if (!el) return 0;
-  const v = parseInt((el as { desc?: string }).desc ?? "", 10);
-  return isNaN(v) ? 0 : v;
+  const el = s.ax.find({ id: "total-balance" });
+  return readCents(el?.attrs?.["data-cents"]);
 });
 
-// Account cards expose "account:{id}:{balance}" via aria-label -> content-desc
+// Account cards expose `data-account-id` + `data-balance` so the spec reads
+// structured data without parsing aria-label.
 const accountCards = extract((s) => {
-  return s.ax.findAll("descPrefix:account:").map((el) => {
-    const parts = ((el as { desc?: string }).desc ?? "").split(":");
-    const balance = parseInt(parts[2] ?? "0", 10);
-    return { element: el, id: parts[1] ?? "", balance: isNaN(balance) ? 0 : balance };
-  });
+  return s.ax.findAll({ "data-testid": "account-card" }).map((el) => ({
+    element: el,
+    id: el.attrs?.["data-account-id"] ?? "",
+    balance: readCents(el.attrs?.["data-balance"]),
+  }));
 });
 
-// Ledger txn count from title on id:ledger
 const ledgerTxnCount = extract((s) => {
-  const el = s.ax.find("id:ledger");
-  if (!el) return 0;
-  const v = parseInt((el as { desc?: string }).desc ?? "", 10);
-  return isNaN(v) ? 0 : v;
+  const el = s.ax.find({ id: "ledger" });
+  return readCents(el?.attrs?.["data-txn-count"]);
 });
 
-// Ledger balance from title on id:ledger-balance
 const ledgerBalance = extract((s) => {
-  const el = s.ax.find("id:ledger-balance");
-  if (!el) return 0;
-  const v = parseInt((el as { desc?: string }).desc ?? "", 10);
-  return isNaN(v) ? 0 : v;
+  const el = s.ax.find({ id: "ledger-balance" });
+  return readCents(el?.attrs?.["data-cents"]);
 });
 
-// UI element handles
-const emailField = extract((s) => s.ax.find("id:email"));
-const passwordField = extract((s) => s.ax.find("id:password"));
-const loginSubmit = extract((s) => s.ax.find("id:login-submit"));
-const logoutButton = extract((s) => s.ax.find("id:logout"));
-const addAccountButton = extract((s) => s.ax.find("id:add-account"));
-const accountNameField = extract((s) => s.ax.find("id:account-name"));
-const addAccountSubmit = extract((s) => s.ax.find("id:add-account-submit"));
-const addTxnButton = extract((s) => s.ax.find("id:add-txn"));
-const txnAmountField = extract((s) => s.ax.find("id:txn-amount"));
-const txnNoteField = extract((s) => s.ax.find("id:txn-note"));
-const txnCreditButton = extract((s) => s.ax.find("id:txn-credit"));
-const txnDebitButton = extract((s) => s.ax.find("id:txn-debit"));
-const txnSubmit = extract((s) => s.ax.find("id:txn-submit"));
-const backButton = extract((s) => s.ax.find("id:back"));
+// UI element handles.
+const emailField = extract((s) => s.ax.find({ id: "email" }));
+const passwordField = extract((s) => s.ax.find({ id: "password" }));
+const loginSubmit = extract((s) => s.ax.find({ id: "login-submit" }));
+const logoutButton = extract((s) => s.ax.find({ id: "logout" }));
+const addAccountButton = extract((s) => s.ax.find({ id: "add-account" }));
+const accountNameField = extract((s) => s.ax.find({ id: "account-name" }));
+const addAccountSubmit = extract((s) => s.ax.find({ id: "add-account-submit" }));
+const addTxnButton = extract((s) => s.ax.find({ id: "add-txn" }));
+const txnAmountField = extract((s) => s.ax.find({ id: "txn-amount" }));
+const txnNoteField = extract((s) => s.ax.find({ id: "txn-note" }));
+const txnCreditButton = extract((s) => s.ax.find({ id: "txn-credit" }));
+const txnDebitButton = extract((s) => s.ax.find({ id: "txn-debit" }));
+const txnSubmit = extract((s) => s.ax.find({ id: "txn-submit" }));
+const backButton = extract((s) => s.ax.find({ id: "back" }));
 
 // -- Properties --
 
@@ -98,8 +96,6 @@ const loggedOutReachesLogin = always(
   ),
 );
 
-// Total balance must equal the sum of all account balances visible on home page.
-// Only checked when home page is active and account cards are loaded.
 const totalBalanceMatchesAccounts = always(() => {
   if (!onHomePage.current) return true;
   const cards = accountCards.current;
@@ -108,8 +104,6 @@ const totalBalanceMatchesAccounts = always(() => {
   return sum === totalBalance.current;
 });
 
-// When a transaction is added (ledger txn count increases by 1 on the same
-// account), the ledger balance delta matches what was actually stored.
 const balanceMatchesTransactionDelta = always(
   now(() => onLedgerPage.current && ledgerTxnCount.current > 0).implies(
     next(() => {
@@ -119,7 +113,6 @@ const balanceMatchesTransactionDelta = always(
       if (curCount !== prevCount + 1) return true;
       const prevBal = ledgerBalance.previous ?? 0;
       const curBal = ledgerBalance.current;
-      // Delta must be non-zero (a valid transaction was added)
       return curBal !== prevBal;
     }),
   ),
@@ -149,25 +142,25 @@ export const properties = {
 const DEMO_EMAIL = "demo@ledger.app";
 const DEMO_PASSWORD = "ledger123";
 
-const loginHelper = actions(() => {
-  if (loggedIn.current) return [];
-  const email = emailField.current;
-  const password = passwordField.current;
-  const submit = loginSubmit.current;
-  if (!email || !password || !submit) return [];
-  const focused = s_focused();
-  if (focused === "password") return [Tap({ on: submit })];
-  if (focused === "email") return [InputText({ into: password, text: DEMO_PASSWORD })];
-  return [InputText({ into: email, text: DEMO_EMAIL })];
-});
-
-function s_focused(): string | null {
+function focusedField(): string | null {
   const email = emailField.current;
   const password = passwordField.current;
   if (email && (email as { focused?: boolean }).focused) return "email";
   if (password && (password as { focused?: boolean }).focused) return "password";
   return null;
 }
+
+const loginHelper = actions(() => {
+  if (loggedIn.current) return [];
+  const email = emailField.current;
+  const password = passwordField.current;
+  const submit = loginSubmit.current;
+  if (!email || !password || !submit) return [];
+  const focused = focusedField();
+  if (focused === "password") return [Tap({ on: submit })];
+  if (focused === "email") return [InputText({ into: password, text: DEMO_PASSWORD })];
+  return [InputText({ into: email, text: DEMO_EMAIL })];
+});
 
 const adversarialLogin = actions(() => {
   if (loggedIn.current) return [];
@@ -297,7 +290,6 @@ export const actionsRoot = weighted(
   [6, goBack],
   [1, logoutAction],
   [4, taps],
-  [2, swipes],
   [2, waitOnce],
 );
 

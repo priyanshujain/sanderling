@@ -11,6 +11,7 @@ import (
 
 	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/bundler"
+	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/ios"
 	"github.com/priyanshujain/sanderling/internal/runner"
 	"github.com/priyanshujain/sanderling/internal/trace"
@@ -45,23 +46,43 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		}
 	}
 	aliases := map[string]string{}
-	if specAPIPath := resolveSpecAPIPath(options.Spec); specAPIPath != "" {
+	specAPIPath := resolveSpecAPIPath(options.Spec)
+	if specAPIPath != "" {
 		aliases["@sanderling/spec"] = specAPIPath
 		base := filepath.Dir(specAPIPath)
 		aliases["@sanderling/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
 	}
+	defines := map[string]string{
+		"SANDERLING_TEST_PHONE": os.Getenv("SANDERLING_TEST_PHONE"),
+		"SANDERLING_TEST_OTP":   os.Getenv("SANDERLING_TEST_OTP"),
+	}
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile: options.Spec,
-		Defines: map[string]string{
-			"SANDERLING_TEST_PHONE": os.Getenv("SANDERLING_TEST_PHONE"),
-			"SANDERLING_TEST_OTP":   os.Getenv("SANDERLING_TEST_OTP"),
-		},
-		Aliases: aliases,
+		Defines:   defines,
+		Aliases:   aliases,
 	})
 	if err != nil {
 		return fmt.Errorf("bundle spec: %w", err)
 	}
 	fmt.Fprintf(stdout, "bundled spec: %d bytes (sha256=%s)\n", len(bundle.JavaScript), bundle.SHA256[:12])
+
+	var webBundle bundler.Result
+	if options.Platform == "web" {
+		runtimePath := resolveWebRuntimePath(specAPIPath, options.Spec)
+		if runtimePath == "" {
+			return fmt.Errorf("web-runtime.ts not found near %s; checkout pkg/spec or set @sanderling/spec alias", options.Spec)
+		}
+		webBundle, err = bundler.BundleWeb(bundler.WebOptions{
+			EntryFile:      options.Spec,
+			WebRuntimeFile: runtimePath,
+			Defines:        defines,
+			Aliases:        aliases,
+		})
+		if err != nil {
+			return fmt.Errorf("bundle web spec: %w", err)
+		}
+		fmt.Fprintf(stdout, "bundled web spec: %d bytes (sha256=%s)\n", len(webBundle.JavaScript), webBundle.SHA256[:12])
+	}
 
 	activeDriver, cleanup, err := buildDriver(ctx, options, stdout)
 	if err != nil {
@@ -71,6 +92,12 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 
 	if err := activeDriver.Launch(ctx, options.BundleID, options.ClearData, nil); err != nil {
 		return fmt.Errorf("launch app: %w", err)
+	}
+
+	if web, ok := activeDriver.(driver.WebDriver); ok && len(webBundle.JavaScript) > 0 {
+		if err := web.InstallBundle(ctx, webBundle.JavaScript); err != nil {
+			return fmt.Errorf("install web bundle: %w", err)
+		}
 	}
 
 	seed := options.Seed
@@ -140,6 +167,34 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// resolveWebRuntimePath returns the path to pkg/spec/src/web-runtime.ts.
+// Tries the spec-API checkout first (so monorepo development works without
+// publishing the package), then falls back to a sibling of the resolved
+// @sanderling/spec entry, and finally to a node_modules path.
+func resolveWebRuntimePath(specAPIPath, userSpecPath string) string {
+	if specAPIPath != "" {
+		candidate := filepath.Join(filepath.Dir(specAPIPath), "web-runtime.ts")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	if absoluteSpec, err := filepath.Abs(userSpecPath); err == nil {
+		directory := filepath.Dir(absoluteSpec)
+		for {
+			candidate := filepath.Join(directory, "node_modules", "@sanderling", "spec", "src", "web-runtime.ts")
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+			parent := filepath.Dir(directory)
+			if parent == directory {
+				break
+			}
+			directory = parent
+		}
+	}
+	return ""
 }
 
 // resolveSpecAPIPath returns the path to pkg/spec/src/index.ts inside

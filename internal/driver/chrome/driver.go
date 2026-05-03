@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 )
@@ -126,9 +129,16 @@ func (d *Driver) Tap(_ context.Context, x, y int) error {
 }
 
 func (d *Driver) TapSelector(_ context.Context, selector string) error {
-	return chromedp.Run(d.tabCtx,
-		chromedp.Click(selector, chromedp.NodeVisible),
-	)
+	target, isXPath, err := TranslateStringSelector(selector)
+	if err != nil {
+		// Fall back to passing the string straight through; chromedp will
+		// reject it loudly if it isn't a valid CSS selector.
+		target = selector
+	}
+	if isXPath {
+		return chromedp.Run(d.tabCtx, chromedp.Click(target, chromedp.NodeVisible, chromedp.BySearch))
+	}
+	return chromedp.Run(d.tabCtx, chromedp.Click(target, chromedp.NodeVisible))
 }
 
 func (d *Driver) InputText(_ context.Context, text string) error {
@@ -180,15 +190,17 @@ func (d *Driver) PressKey(_ context.Context, key string) error {
 	return chromedp.Run(d.tabCtx, chromedp.KeyEvent(k))
 }
 
+// keyMap covers the keys web specs may emit (enter/tab/escape/arrows).
+// "back"/"home" are intentionally absent: backspace/NUL have no navigation
+// semantics in a browser, and the V8 action mix already excludes them.
 var keyMap = map[string]string{
-	"back":  "\b",
-	"home":  "\x00",
-	"enter": "\r",
-	"tab":   "\t",
-	"up":    "\x26",
-	"down":  "\x28",
-	"left":  "\x25",
-	"right": "\x27",
+	"enter":  kb.Enter,
+	"tab":    kb.Tab,
+	"escape": kb.Escape,
+	"up":     kb.ArrowUp,
+	"down":   kb.ArrowDown,
+	"left":   kb.ArrowLeft,
+	"right":  kb.ArrowRight,
 }
 
 func (d *Driver) Hierarchy(_ context.Context) (string, error) {
@@ -206,7 +218,10 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
     if (el.id) attrs['resource-id'] = el.id;
     const label = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '';
     if (label) attrs['content-desc'] = label;
-    if (el.tagName) attrs['class'] = el.tagName.toLowerCase();
+    if (el.tagName) attrs['tag'] = el.tagName.toLowerCase();
+    if (el.className && typeof el.className === 'string' && el.className.trim()) {
+      attrs['class'] = el.className.trim();
+    }
     if (isRoot) attrs['sanderling-screen'] = route;
     const isClickable = !!(el.onclick || el.tagName === 'A' || el.tagName === 'BUTTON' ||
       el.tagName === 'INPUT' || el.tagName === 'SELECT' ||
@@ -310,4 +325,94 @@ func pngDimensions(png []byte) (int, int) {
 	return w, h
 }
 
-var _ driver.DeviceDriver = (*Driver)(nil)
+var (
+	_ driver.DeviceDriver = (*Driver)(nil)
+	_ driver.WebDriver    = (*Driver)(nil)
+)
+
+// runCtx returns a chromedp-bound context that is also cancelled when the
+// caller's ctx is cancelled. This is how step deadlines and Ctrl-C propagate
+// into a CDP round-trip - chromedp.Run only honors the ctx it is given, and
+// d.tabCtx alone has no link to the caller.
+func (d *Driver) runCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	derived, cancel := context.WithCancel(d.tabCtx)
+	if ctx == nil || ctx.Done() == nil {
+		return derived, cancel
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			cancel()
+		case <-derived.Done():
+		}
+	}()
+	return derived, cancel
+}
+
+// InstallBundle registers the source so it runs at every freshly-navigated
+// document context, then immediately evaluates it against the current page so
+// the very first tick has access to the registered globals.
+func (d *Driver) InstallBundle(ctx context.Context, source []byte) error {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	return chromedp.Run(runCtx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			if _, err := page.AddScriptToEvaluateOnNewDocument(string(source)).Do(ctx); err != nil {
+				return fmt.Errorf("addScriptToEvaluateOnNewDocument: %w", err)
+			}
+			_, exception, err := runtime.Evaluate(string(source)).Do(ctx)
+			if err != nil {
+				return fmt.Errorf("evaluate bundle: %w", err)
+			}
+			if exception != nil {
+				return fmt.Errorf("bundle threw: %s", exception.Text)
+			}
+			return nil
+		}),
+	)
+}
+
+// EvaluateExtractors invokes the bundle-installed extractor table and returns
+// each extractor's JSON-encoded current value keyed by its registration index.
+func (d *Driver) EvaluateExtractors(ctx context.Context) (map[int]json.RawMessage, error) {
+	const script = `JSON.stringify(window.__sanderlingExtractors__ ? window.__sanderlingExtractors__() : {})`
+	var encoded string
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+		return nil, fmt.Errorf("evaluate extractors: %w", err)
+	}
+	if encoded == "" || encoded == "{}" {
+		return map[int]json.RawMessage{}, nil
+	}
+	stringMap := map[string]json.RawMessage{}
+	if err := json.Unmarshal([]byte(encoded), &stringMap); err != nil {
+		return nil, fmt.Errorf("decode extractor map: %w", err)
+	}
+	result := make(map[int]json.RawMessage, len(stringMap))
+	for key, value := range stringMap {
+		index, err := strconv.Atoi(key)
+		if err != nil {
+			return nil, fmt.Errorf("non-integer extractor key %q", key)
+		}
+		result[index] = value
+	}
+	return result, nil
+}
+
+// NextActionFromV8 invokes the bundle-installed action generator and returns
+// the resulting Action JSON. Returns an empty json.RawMessage when the
+// generator declines to act this tick.
+func (d *Driver) NextActionFromV8(ctx context.Context) (json.RawMessage, error) {
+	const script = `JSON.stringify(window.__sanderlingNextAction__ ? window.__sanderlingNextAction__() : null)`
+	var encoded string
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+		return nil, fmt.Errorf("evaluate next action: %w", err)
+	}
+	if encoded == "" || encoded == "null" {
+		return nil, nil
+	}
+	return json.RawMessage(encoded), nil
+}

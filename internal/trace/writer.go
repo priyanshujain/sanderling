@@ -13,13 +13,13 @@ import (
 )
 
 type Step struct {
-	Index      int                        `json:"step"`
-	Timestamp  time.Time                  `json:"timestamp"`
-	Screen     string                     `json:"screen,omitempty"`
-	Snapshots  map[string]json.RawMessage `json:"snapshots,omitempty"`
-	Action     *Action                    `json:"action,omitempty"`
-	Exceptions []Exception                `json:"exceptions,omitempty"`
-	Violations []string                   `json:"violations,omitempty"`
+	Index         int                        `json:"step"`
+	Timestamp     time.Time                  `json:"timestamp"`
+	Screen        string                     `json:"screen,omitempty"`
+	Snapshots     map[string]json.RawMessage `json:"snapshots,omitempty"`
+	Action        *Action                    `json:"action,omitempty"`
+	Exceptions    []Exception                `json:"exceptions,omitempty"`
+	Violations    []string                   `json:"violations,omitempty"`
 	Hierarchy  *hierarchy.Tree            `json:"hierarchy,omitempty"`
 	Residuals  map[string]json.RawMessage `json:"residuals,omitempty"`
 	Metrics    *Metrics                   `json:"metrics,omitempty"`

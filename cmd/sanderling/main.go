@@ -76,8 +76,13 @@ func runTest(options testOptions, stdout io.Writer) error {
 	return runTestPipeline(ctx, options, stdout)
 }
 
-func runDoctor(stdout io.Writer) error {
-	return runDoctorChecks(context.Background(), defaultDoctorChecks(), stdout)
+func runDoctor(args []string, stdout, stderr io.Writer) error {
+	options, err := parseDoctorArgs(args, stderr)
+	if err != nil {
+		return err
+	}
+	checks := doctorChecksFor(options.platform)
+	return runDoctorChecks(context.Background(), checks, stdout)
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
@@ -99,7 +104,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		return runInspect(options, stdout)
 	case "doctor":
-		return runDoctor(stdout)
+		return runDoctor(args[2:], stdout, stderr)
 	case "version", "-v", "--version":
 		fmt.Fprintln(stdout, Version)
 		return nil
@@ -110,6 +115,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func main() {
 	if err := run(os.Args, os.Stdout, os.Stderr); err != nil {
+		// flag.ErrHelp means -h/--help was requested; flag already printed
+		// usage to stderr, so exit 0 rather than treating it as a failure.
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

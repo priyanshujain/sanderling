@@ -74,30 +74,48 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var metrics *trace.Metrics
 		var logs []verifier.LogEntry
 
-		g, _ := errgroup.WithContext(ctx)
+		// gctx is bound to the errgroup so a returned error (or outer
+		// cancellation) propagates to siblings - notably the V8 extractor
+		// goroutine, whose CDP round-trip can otherwise outrun the step
+		// budget on a hung tab.
+		g, gctx := errgroup.WithContext(ctx)
 		g.Go(func() error {
-			tree, hierarchyErr = fetchHierarchy(ctx, options.Driver)
+			tree, hierarchyErr = fetchHierarchy(gctx, options.Driver)
 			return nil
 		})
 		si := stepIndex
 		g.Go(func() error {
-			metrics = captureMetrics(ctx, options, logger, si)
+			metrics = captureMetrics(gctx, options, logger, si)
 			return nil
 		})
 		logSince := lastLogTime
 		g.Go(func() error {
-			logs = collectLogs(ctx, options.Driver, logSince)
+			logs = collectLogs(gctx, options.Driver, logSince)
 			return nil
 		})
+		var v8Overrides map[int]json.RawMessage
+		if web, ok := options.Driver.(driver.WebDriver); ok {
+			g.Go(func() error {
+				overrides, err := web.EvaluateExtractors(gctx)
+				if err != nil {
+					logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
+					return nil
+				}
+				v8Overrides = overrides
+				return nil
+			})
+		}
 		if pendingPostScreenshot {
 			postStep := pendingPostScreenshotStep
 			g.Go(func() error {
-				captureScreenshot(ctx, options, logger, postStep, true)
+				captureScreenshot(gctx, options, logger, postStep, true)
 				return nil
 			})
 			pendingPostScreenshot = false
 		}
-		g.Wait()
+		// All goroutines write to local variables and return nil, so the Wait
+		// error is always nil; ignored intentionally.
+		_ = g.Wait()
 
 		if hierarchyErr != nil {
 			if isWDADrop(hierarchyErr) {
@@ -120,6 +138,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}); err != nil {
 			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 		}
+		skipped, overrideErr := options.Verifier.OverrideExtractorValues(v8Overrides)
+		if overrideErr != nil {
+			logger.Warn("v8 override apply failed", "step", stepIndex, "err", overrideErr)
+		}
+		if skipped > 0 {
+			logger.Warn("v8 override skipped out-of-range entries",
+				"step", stepIndex, "skipped", skipped, "have", len(v8Overrides))
+		}
 
 		screen := ""
 		if tree != nil && len(tree.Elements) > 0 {
@@ -134,7 +160,13 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			}
 		}
 
-		nextAction, nextErr := options.Verifier.NextAction()
+		var nextAction verifier.Action
+		var nextErr error
+		if web, ok := options.Driver.(driver.WebDriver); ok {
+			nextAction, nextErr = nextActionFromV8(ctx, web)
+		} else {
+			nextAction, nextErr = options.Verifier.NextAction()
+		}
 		var traceAction *trace.Action
 		if nextErr == nil {
 			traceAction = traceActionFor(nextAction, tree)
@@ -148,14 +180,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		step := trace.Step{
-			Index:     stepIndex,
-			Timestamp: stepStart,
-			Screen:    screen,
-			Action:    traceAction,
+			Index:      stepIndex,
+			Timestamp:  stepStart,
+			Screen:     screen,
+			Action:     traceAction,
 			Violations: violations,
-			Hierarchy: tree,
-			Residuals: residuals,
-			Metrics:   metrics,
+			Hierarchy:  tree,
+			Residuals:  residuals,
+			Metrics:    metrics,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
@@ -303,16 +335,27 @@ func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) 
 }
 
 func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int, bool) {
-	if action.X > 0 && action.Y > 0 {
-		return action.X, action.Y, true
+	// When On is empty, X/Y are authoritative (web V8 path emits coordinates
+	// directly from getBoundingClientRect; the runtime nullifies unresolved
+	// actions upstream so a non-null InputText here always has real coords,
+	// even at (0,0)). When On is set, prefer the tree lookup so stale coords
+	// don't leak from earlier ticks.
+	if action.On == "" {
+		if action.X >= 0 && action.Y >= 0 {
+			return action.X, action.Y, true
+		}
+		return 0, 0, false
 	}
-	if tree != nil && action.On != "" {
+	if tree != nil {
 		if element := tree.Find(action.On); element != nil {
 			x, y := element.Bounds.Center()
 			if x > 0 && y > 0 {
 				return x, y, true
 			}
 		}
+	}
+	if action.X > 0 && action.Y > 0 {
+		return action.X, action.Y, true
 	}
 	return 0, 0, false
 }
@@ -394,6 +437,59 @@ func captureMetrics(ctx context.Context, options Options, logger *slog.Logger, s
 		CPUPercent:       sample.CPUPercent,
 		HeapBytes:        sample.HeapBytes,
 		TotalMemoryBytes: sample.TotalMemoryBytes,
+	}
+}
+
+// nextActionFromV8 invokes the V8-side action generator and decodes the
+// resulting JSON into a verifier.Action. ErrNoAction is returned when the
+// generator declined to act this tick.
+func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Action, error) {
+	raw, err := web.NextActionFromV8(ctx)
+	if err != nil {
+		return verifier.Action{}, fmt.Errorf("v8 next action: %w", err)
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return verifier.Action{}, verifier.ErrNoAction
+	}
+	var decoded struct {
+		Kind           string `json:"kind"`
+		X              int    `json:"x"`
+		Y              int    `json:"y"`
+		FromX          int    `json:"from_x"`
+		FromY          int    `json:"from_y"`
+		ToX            int    `json:"to_x"`
+		ToY            int    `json:"to_y"`
+		Key            string `json:"key"`
+		Text           string `json:"text"`
+		DurationMillis int    `json:"duration_millis"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return verifier.Action{}, fmt.Errorf("decode v8 action: %w", err)
+	}
+	switch decoded.Kind {
+	case "Tap":
+		return verifier.Action{Kind: verifier.ActionKindTap, X: decoded.X, Y: decoded.Y}, nil
+	case "InputText":
+		return verifier.Action{
+			Kind: verifier.ActionKindInputText,
+			X:    decoded.X, Y: decoded.Y,
+			Text: decoded.Text,
+		}, nil
+	case "Swipe":
+		return verifier.Action{
+			Kind:           verifier.ActionKindSwipe,
+			FromX:          decoded.FromX,
+			FromY:          decoded.FromY,
+			ToX:            decoded.ToX,
+			ToY:            decoded.ToY,
+			DurationMillis: decoded.DurationMillis,
+		}, nil
+	case "PressKey":
+		return verifier.Action{Kind: verifier.ActionKindPressKey, Key: decoded.Key}, nil
+	case "Wait":
+		return verifier.Action{Kind: verifier.ActionKindWait, DurationMillis: decoded.DurationMillis}, nil
+	default:
+		return verifier.Action{}, verifier.ErrNoAction
 	}
 }
 

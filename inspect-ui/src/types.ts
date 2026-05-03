@@ -50,6 +50,7 @@ export interface HierarchyElement {
   text?: string;
   description?: string;
   class?: string;
+  tag?: string;
   package?: string;
   clickable?: boolean;
   enabled?: boolean;
@@ -57,6 +58,7 @@ export interface HierarchyElement {
   focused?: boolean;
   selected?: boolean;
   bounds: BoundsRect;
+  attributes?: Record<string, string>;
 }
 
 export interface Hierarchy {

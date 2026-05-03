@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { getRun, getStep, screenshotUrl } from "../api";
 import type { Run, Step } from "../types";
 import ActionList from "../panels/ActionList";
+import HierarchyPanel from "../panels/HierarchyPanel";
 import Screenshot from "../panels/Screenshot";
 import SnapshotTable from "../panels/SnapshotTable";
 import ViolationsPanel from "../panels/ViolationsPanel";
@@ -136,6 +137,11 @@ export default function RunDetail() {
       ),
     },
     {
+      id: "hierarchy",
+      label: "Hierarchy",
+      content: <HierarchyPanel hierarchy={currentStep?.hierarchy} />,
+    },
+    {
       id: "properties",
       label: "Properties",
       content: (
@@ -185,6 +191,11 @@ export default function RunDetail() {
           previousSnapshots={currentStep?.snapshots ?? undefined}
         />
       ),
+    },
+    {
+      id: "hierarchy",
+      label: "Hierarchy",
+      content: <HierarchyPanel hierarchy={nextStep?.hierarchy ?? currentStep?.hierarchy} />,
     },
     {
       id: "properties",

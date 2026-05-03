@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -236,6 +237,37 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 		_ = extractor.handle.Set("current", newValue)
 	}
 	return nil
+}
+
+// OverrideExtractorValues replaces each extractor's `current` slot with a
+// caller-supplied value, keyed by registration index. Used by the web tick
+// path so extractor bodies that ran in V8 (against the real DOM) drive the
+// goja-side LTL predicates without re-running the getter against an empty
+// state.ax shim. Passing a nil/empty map is a no-op so the mobile path can
+// call this unconditionally. The override must run *after* PushSnapshot
+// (which advanced `previous`) and *before* EvaluateProperties.
+//
+// Out-of-range indices are tolerated (skipped) rather than fatal: V8 and goja
+// register extractors from the same spec bundle so counts should always
+// match, but a stale or partial override map should not block valid overrides
+// from applying. The number of skipped entries is reported so the caller can
+// surface a mismatch.
+func (v *Verifier) OverrideExtractorValues(overrides map[int]json.RawMessage) (skipped int, err error) {
+	if len(overrides) == 0 {
+		return 0, nil
+	}
+	for index, raw := range overrides {
+		if index < 0 || index >= len(v.extractors) {
+			skipped++
+			continue
+		}
+		value, conversionErr := jsonToJSValue(v.runtime, raw)
+		if conversionErr != nil {
+			return skipped, fmt.Errorf("extractor override %d: %w", index, conversionErr)
+		}
+		_ = v.extractors[index].handle.Set("current", value)
+	}
+	return skipped, nil
 }
 
 // SnapshotInput bundles everything a step feeds into the verifier. Fields
