@@ -10,7 +10,7 @@ func TestTranslateStringSelector_KnownKeys(t *testing.T) {
 	}{
 		{"id:email", `[id="email"]`, false},
 		{"resource-id:account-name", `[id="account-name"]`, false},
-		{"class:btn-primary", `.btn-primary`, false},
+		{"class:btn-primary", `[class~="btn-primary"]`, false},
 		{"tag:button", `button`, false},
 		{"text:Sign in", `//*[normalize-space(text())="Sign in"]`, true},
 		{"desc:logout", `[aria-label="logout"]`, false},
@@ -61,5 +61,30 @@ func TestTranslateStringSelector_RejectsMissingPrefix(t *testing.T) {
 	}
 	if _, _, err := TranslateStringSelector(""); err == nil {
 		t.Error("expected error for empty selector")
+	}
+}
+
+func TestCSSEscape_ControlCharactersAndNUL(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain ascii", "hello", "hello"},
+		{"double quote", `say "hi"`, `say \"hi\"`},
+		{"backslash", `a\b`, `a\\b`},
+		{"newline", "a\nb", `a\A b`},
+		{"carriage return", "a\rb", `a\D b`},
+		{"form feed", "a\fb", `a\C b`},
+		{"NUL replaced", "a\x00b", "a�b"},
+		{"DEL", "a\x7Fb", `a\7F b`},
+		{"non-ascii passes through", "café", "café"},
+	}
+	for _, testCase := range cases {
+		got := cssEscape(testCase.input)
+		if got != testCase.want {
+			t.Errorf("%s: cssEscape(%q) = %q, want %q",
+				testCase.name, testCase.input, got, testCase.want)
+		}
 	}
 }

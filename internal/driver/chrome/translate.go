@@ -2,7 +2,9 @@ package chrome
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // TranslateStringSelector converts a legacy string selector ("id:foo",
@@ -25,7 +27,7 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 	case "id", "resource-id":
 		return `[id="` + cssEscape(value) + `"]`, false, nil
 	case "class":
-		return "." + cssEscape(value), false, nil
+		return `[class~="` + cssEscape(value) + `"]`, false, nil
 	case "tag":
 		return cssEscape(value), false, nil
 	case "text":
@@ -43,20 +45,29 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 	}
 }
 
-// cssEscape escapes the subset of characters that break a CSS string literal
-// inside `[attr="..."]`. Quotes and backslashes are escaped per CSSOM's
-// CSS.escape rules; other printable bytes pass through.
+// cssEscape escapes a value for use inside a CSS double-quoted string
+// (`[attr="VALUE"]`). Per the CSSOM spec for serializing strings:
+//   - U+0000 becomes U+FFFD (REPLACEMENT CHARACTER)
+//   - control characters (U+0001-U+001F, U+007F) become \HEX escapes
+//   - " and \ are escaped with a leading backslash
+//   - everything else passes through, including non-ASCII
+//
+// Callers should not pass this output into identifier contexts (class names,
+// tag names) — use an attribute selector form (`[class~="..."]`) instead.
 func cssEscape(value string) string {
 	var builder strings.Builder
 	builder.Grow(len(value))
-	for index := 0; index < len(value); index++ {
-		c := value[index]
-		switch c {
-		case '\\', '"':
+	for _, r := range value {
+		switch {
+		case r == 0:
+			builder.WriteRune(utf8.RuneError)
+		case (r >= 0x01 && r <= 0x1F) || r == 0x7F:
+			fmt.Fprintf(&builder, "\\%X ", r)
+		case r == '\\' || r == '"':
 			builder.WriteByte('\\')
-			builder.WriteByte(c)
+			builder.WriteRune(r)
 		default:
-			builder.WriteByte(c)
+			builder.WriteRune(r)
 		}
 	}
 	return builder.String()
