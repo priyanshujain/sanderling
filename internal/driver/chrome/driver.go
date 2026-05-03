@@ -13,6 +13,7 @@ import (
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 )
@@ -191,15 +192,17 @@ func (d *Driver) PressKey(_ context.Context, key string) error {
 	return chromedp.Run(d.tabCtx, chromedp.KeyEvent(k))
 }
 
+// keyMap covers the keys web specs may emit (enter/tab/escape/arrows).
+// "back"/"home" are intentionally absent: backspace/NUL have no navigation
+// semantics in a browser, and the V8 action mix already excludes them.
 var keyMap = map[string]string{
-	"back":  "\b",
-	"home":  "\x00",
-	"enter": "\r",
-	"tab":   "\t",
-	"up":    "\x26",
-	"down":  "\x28",
-	"left":  "\x25",
-	"right": "\x27",
+	"enter":  kb.Enter,
+	"tab":    kb.Tab,
+	"escape": kb.Escape,
+	"up":     kb.ArrowUp,
+	"down":   kb.ArrowDown,
+	"left":   kb.ArrowLeft,
+	"right":  kb.ArrowRight,
 }
 
 func (d *Driver) Hierarchy(_ context.Context) (string, error) {
