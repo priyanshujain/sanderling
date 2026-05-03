@@ -111,10 +111,20 @@ function selectorFromObject(selector: Record<string, string | boolean | undefine
   }
   if (textValue !== undefined && parts.length === 0) {
     return {
-      xpath: `//*[normalize-space(text())="${textValue.replace(/"/g, '\\"')}"]`,
+      xpath: `//*[normalize-space(text())=${xpathStringLiteral(textValue)}]`,
     };
   }
   return { css: parts.join("") };
+}
+
+// xpathStringLiteral wraps the value in a valid XPath 1.0 string literal.
+// XPath 1.0 has no escape syntax, so a value containing both ' and " must be
+// composed via concat().
+function xpathStringLiteral(value: string): string {
+  if (!value.includes('"')) return `"${value}"`;
+  if (!value.includes("'")) return `'${value}'`;
+  const parts = value.split('"');
+  return `concat(${parts.map((p) => `"${p}"`).join(`, '"', `)})`;
 }
 
 function selectorFromString(selector: string): { css?: string; xpath?: string } {
@@ -125,7 +135,7 @@ function selectorFromString(selector: string): { css?: string; xpath?: string } 
   const kind = selector.slice(0, colon);
   const value = selector.slice(colon + 1);
   if (kind === "text") {
-    return { xpath: `//*[normalize-space(text())="${value.replace(/"/g, '\\"')}"]` };
+    return { xpath: `//*[normalize-space(text())=${xpathStringLiteral(value)}]` };
   }
   if (kind === "descPrefix") {
     return { css: `[aria-label^="${cssEscape(value)}"]` };

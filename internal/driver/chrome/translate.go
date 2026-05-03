@@ -37,7 +37,7 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 	case "tag":
 		return cssEscape(value), false, nil
 	case "text":
-		return `//*[normalize-space(text())="` + xpathEscape(value) + `"]`, true, nil
+		return `//*[normalize-space(text())=` + xpathStringLiteral(value) + `]`, true, nil
 	case "desc", "label", "content-desc", "accessibilityLabel", "accessibilityText", "ariaLabel", "aria-label":
 		return `[aria-label="` + cssEscape(value) + `"]`, false, nil
 	case "descPrefix":
@@ -82,6 +82,28 @@ func cssEscape(value string) string {
 	return builder.String()
 }
 
-func xpathEscape(value string) string {
-	return strings.ReplaceAll(value, `"`, `\"`)
+// xpathStringLiteral wraps the value in a valid XPath 1.0 string literal.
+// XPath 1.0 has no escape syntax, so a value containing both ' and " must be
+// composed via concat(). The output already includes the surrounding quotes
+// (or concat() call), so callers don't quote it again.
+func xpathStringLiteral(value string) string {
+	if !strings.ContainsRune(value, '"') {
+		return `"` + value + `"`
+	}
+	if !strings.ContainsRune(value, '\'') {
+		return `'` + value + `'`
+	}
+	parts := strings.Split(value, `"`)
+	var builder strings.Builder
+	builder.WriteString(`concat(`)
+	for index, part := range parts {
+		if index > 0 {
+			builder.WriteString(`, '"', `)
+		}
+		builder.WriteByte('"')
+		builder.WriteString(part)
+		builder.WriteByte('"')
+	}
+	builder.WriteByte(')')
+	return builder.String()
 }
