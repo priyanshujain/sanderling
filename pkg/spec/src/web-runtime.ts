@@ -434,16 +434,23 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
   }
 }
 
+// Per-tick cache so the 16-attempt retry loop in __sanderlingNextAction__
+// doesn't re-walk the DOM and re-flush layout on every iteration.
+let randomTapCandidates: HTMLElement[] | null = null;
+
 function randomTap(): unknown {
-  const candidates = Array.from(
-    document.querySelectorAll<HTMLElement>(
-      'a, button, input, select, textarea, [role="button"], [onclick]',
-    ),
-  ).filter((element) => {
-    if ((element as HTMLButtonElement).disabled) return false;
-    const rect = element.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-  });
+  if (!randomTapCandidates) {
+    randomTapCandidates = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'a, button, input, select, textarea, [role="button"], [onclick]',
+      ),
+    ).filter((element) => {
+      if ((element as HTMLButtonElement).disabled) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+  }
+  const candidates = randomTapCandidates;
   if (candidates.length === 0) return null;
   const picked = candidates[Math.floor(Math.random() * candidates.length)];
   if (!picked) return null;
@@ -542,6 +549,8 @@ defineLockedGlobal("__sanderlingExtractors__", function (): Record<number, unkno
 
 defineLockedGlobal("__sanderlingNextAction__", function (): unknown {
   if (!actionsRoot) return null;
+  // Reset per-tick caches so each invocation gets a fresh DOM scan.
+  randomTapCandidates = null;
   // Match the goja runtime: retry up to 16 times when a weighted entry's
   // generator returns []. Otherwise on routes where most generators are
   // gated to other pages, ~80% of ticks would emit no action.
