@@ -332,15 +332,36 @@ var (
 	_ driver.WebDriver    = (*Driver)(nil)
 )
 
+// runCtx returns a chromedp-bound context that is also cancelled when the
+// caller's ctx is cancelled. This is how step deadlines and Ctrl-C propagate
+// into a CDP round-trip - chromedp.Run only honors the ctx it is given, and
+// d.tabCtx alone has no link to the caller.
+func (d *Driver) runCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	derived, cancel := context.WithCancel(d.tabCtx)
+	if ctx == nil || ctx.Done() == nil {
+		return derived, cancel
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			cancel()
+		case <-derived.Done():
+		}
+	}()
+	return derived, cancel
+}
+
 // InstallBundle registers the source so it runs at every freshly-navigated
 // document context, then immediately evaluates it against the current page so
 // the very first tick has access to the registered globals.
-func (d *Driver) InstallBundle(_ context.Context, source []byte) error {
+func (d *Driver) InstallBundle(ctx context.Context, source []byte) error {
 	d.bundleMu.Lock()
 	d.bundleSource = string(source)
 	d.bundleMu.Unlock()
 
-	return chromedp.Run(d.tabCtx,
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	return chromedp.Run(runCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			if _, err := page.AddScriptToEvaluateOnNewDocument(string(source)).Do(ctx); err != nil {
 				return fmt.Errorf("addScriptToEvaluateOnNewDocument: %w", err)
@@ -359,10 +380,12 @@ func (d *Driver) InstallBundle(_ context.Context, source []byte) error {
 
 // EvaluateExtractors invokes the bundle-installed extractor table and returns
 // each extractor's JSON-encoded current value keyed by its registration index.
-func (d *Driver) EvaluateExtractors(_ context.Context) (map[int]json.RawMessage, error) {
+func (d *Driver) EvaluateExtractors(ctx context.Context) (map[int]json.RawMessage, error) {
 	const script = `JSON.stringify(window.__sanderlingExtractors__ ? window.__sanderlingExtractors__() : {})`
 	var encoded string
-	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
 		return nil, fmt.Errorf("evaluate extractors: %w", err)
 	}
 	if encoded == "" || encoded == "{}" {
@@ -386,10 +409,12 @@ func (d *Driver) EvaluateExtractors(_ context.Context) (map[int]json.RawMessage,
 // NextActionFromV8 invokes the bundle-installed action generator and returns
 // the resulting Action JSON. Returns an empty json.RawMessage when the
 // generator declines to act this tick.
-func (d *Driver) NextActionFromV8(_ context.Context) (json.RawMessage, error) {
+func (d *Driver) NextActionFromV8(ctx context.Context) (json.RawMessage, error) {
 	const script = `JSON.stringify(window.__sanderlingNextAction__ ? window.__sanderlingNextAction__() : null)`
 	var encoded string
-	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
 		return nil, fmt.Errorf("evaluate next action: %w", err)
 	}
 	if encoded == "" || encoded == "null" {
