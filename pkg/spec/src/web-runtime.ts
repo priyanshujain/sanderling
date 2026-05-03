@@ -471,20 +471,32 @@ function serializeAction(action: unknown): unknown {
   switch (obj.kind) {
     case "Tap": {
       const point = pointOf(obj.on);
-      return { kind: "Tap", x: point?.x ?? 0, y: point?.y ?? 0 };
+      if (!point) {
+        console.warn("[sanderling] Tap target did not resolve to coordinates");
+        return null;
+      }
+      return { kind: "Tap", x: point.x, y: point.y };
     }
     case "InputText": {
       const point = pointOf(obj.into);
+      if (!point) {
+        console.warn("[sanderling] InputText target did not resolve to coordinates");
+        return null;
+      }
       return {
         kind: "InputText",
-        x: point?.x ?? 0,
-        y: point?.y ?? 0,
+        x: point.x,
+        y: point.y,
         text: obj.text ?? "",
       };
     }
     case "Swipe": {
-      const from = pointOf(obj.from) ?? { x: 0, y: 0 };
-      const to = pointOf(obj.to) ?? { x: 0, y: 0 };
+      const from = pointOf(obj.from);
+      const to = pointOf(obj.to);
+      if (!from || !to) {
+        console.warn("[sanderling] Swipe endpoints did not resolve to coordinates");
+        return null;
+      }
       return {
         kind: "Swipe",
         from_x: from.x,

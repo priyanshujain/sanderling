@@ -446,9 +446,6 @@ func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Actio
 	}
 	switch decoded.Kind {
 	case "Tap":
-		if decoded.X == 0 && decoded.Y == 0 {
-			return verifier.Action{}, verifier.ErrNoAction
-		}
 		return verifier.Action{Kind: verifier.ActionKindTap, X: decoded.X, Y: decoded.Y}, nil
 	case "InputText":
 		return verifier.Action{
