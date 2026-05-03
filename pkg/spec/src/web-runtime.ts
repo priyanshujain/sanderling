@@ -347,7 +347,19 @@ const runtime = {
   pressKeys: { __sanderlingActionGenerator: true, __sanderlingKind: "pressKey" } as ActionGeneratorHandle,
 };
 
-(globalThis as Record<string, unknown>).__sanderling__ = runtime;
+// Lock the runtime globals so a misbehaving (or malicious) page script can't
+// shadow or replace them between AddScriptToEvaluateOnNewDocument running and
+// the host invoking the extractor/next-action callbacks.
+defineLockedGlobal("__sanderling__", runtime);
+
+function defineLockedGlobal(name: string, value: unknown): void {
+  Object.defineProperty(globalThis, name, {
+    value,
+    writable: false,
+    configurable: false,
+    enumerable: false,
+  });
+}
 
 function evaluateExtractors(): Record<number, unknown> {
   const state = buildState();
@@ -524,11 +536,11 @@ function pointOf(value: unknown): { x: number; y: number } | undefined {
   return undefined;
 }
 
-(globalThis as Record<string, unknown>).__sanderlingExtractors__ = function (): Record<number, unknown> {
+defineLockedGlobal("__sanderlingExtractors__", function (): Record<number, unknown> {
   return evaluateExtractors();
-};
+});
 
-(globalThis as Record<string, unknown>).__sanderlingNextAction__ = function (): unknown {
+defineLockedGlobal("__sanderlingNextAction__", function (): unknown {
   if (!actionsRoot) return null;
   // Match the goja runtime: retry up to 16 times when a weighted entry's
   // generator returns []. Otherwise on routes where most generators are
@@ -538,6 +550,6 @@ function pointOf(value: unknown): { x: number; y: number } | undefined {
     if (action !== null) return action;
   }
   return null;
-};
+});
 
 export {};
