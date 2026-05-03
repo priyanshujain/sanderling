@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -111,24 +112,13 @@ type doctorOptions struct {
 	platform string
 }
 
-func parseDoctorArgs(args []string) (doctorOptions, error) {
-	options := doctorOptions{platform: "all"}
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		switch {
-		case argument == "--platform":
-			index++
-			if index >= len(args) {
-				return doctorOptions{}, fmt.Errorf("--platform requires a value")
-			}
-			options.platform = args[index]
-		case len(argument) > len("--platform=") && argument[:len("--platform=")] == "--platform=":
-			options.platform = argument[len("--platform="):]
-		case argument == "-h" || argument == "--help":
-			return doctorOptions{}, fmt.Errorf("doctor [--platform=web|android|ios|all]")
-		default:
-			return doctorOptions{}, fmt.Errorf("unknown doctor argument: %q", argument)
-		}
+func parseDoctorArgs(args []string, stderr io.Writer) (doctorOptions, error) {
+	flagSet := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	flagSet.SetOutput(stderr)
+	var options doctorOptions
+	flagSet.StringVar(&options.platform, "platform", "all", "target platform: web, android, ios, all")
+	if err := flagSet.Parse(args); err != nil {
+		return doctorOptions{}, err
 	}
 	switch options.platform {
 	case "web", "android", "ios", "all":

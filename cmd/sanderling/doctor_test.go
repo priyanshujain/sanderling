@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
+	"io"
 	"strings"
 	"testing"
 )
@@ -139,7 +141,7 @@ func TestDoctorChecksFor_UnknownPlatform(t *testing.T) {
 }
 
 func TestParseDoctorArgs_DefaultAll(t *testing.T) {
-	options, err := parseDoctorArgs(nil)
+	options, err := parseDoctorArgs(nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +155,7 @@ func TestParseDoctorArgs_ExplicitPlatform(t *testing.T) {
 		{"--platform", "web"},
 		{"--platform=web"},
 	} {
-		options, err := parseDoctorArgs(form)
+		options, err := parseDoctorArgs(form, io.Discard)
 		if err != nil {
 			t.Fatalf("%v: %v", form, err)
 		}
@@ -164,10 +166,19 @@ func TestParseDoctorArgs_ExplicitPlatform(t *testing.T) {
 }
 
 func TestParseDoctorArgs_RejectsUnknown(t *testing.T) {
-	if _, err := parseDoctorArgs([]string{"--platform=fuchsia"}); err == nil {
+	if _, err := parseDoctorArgs([]string{"--platform=fuchsia"}, io.Discard); err == nil {
 		t.Error("expected error for unsupported platform")
 	}
-	if _, err := parseDoctorArgs([]string{"--bogus"}); err == nil {
+	if _, err := parseDoctorArgs([]string{"--bogus"}, io.Discard); err == nil {
 		t.Error("expected error for unknown argument")
+	}
+}
+
+func TestParseDoctorArgs_HelpReturnsErrHelp(t *testing.T) {
+	if _, err := parseDoctorArgs([]string{"-h"}, io.Discard); !errors.Is(err, flag.ErrHelp) {
+		t.Errorf("expected flag.ErrHelp for -h, got %v", err)
+	}
+	if _, err := parseDoctorArgs([]string{"--help"}, io.Discard); !errors.Is(err, flag.ErrHelp) {
+		t.Errorf("expected flag.ErrHelp for --help, got %v", err)
 	}
 }
