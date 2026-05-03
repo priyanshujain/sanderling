@@ -336,6 +336,11 @@ const runtime = {
     return null;
   },
   pressKey(p: { key: string }): unknown {
+    if (!WEB_PRESS_KEYS.includes(p.key)) {
+      throw new Error(
+        `pressKey: unsupported key ${JSON.stringify(p.key)} (allowed: ${WEB_PRESS_KEYS.join(", ")})`,
+      );
+    }
     return { kind: "PressKey", key: p.key };
   },
   wait(p: { durationMillis: number }): unknown {
