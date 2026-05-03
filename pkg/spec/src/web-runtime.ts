@@ -48,10 +48,9 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   testTag: (v) => `[data-testid="${cssEscape(v)}"]`,
   testID: (v) => `[data-testid="${cssEscape(v)}"]`,
   "data-testid": (v) => `[data-testid="${cssEscape(v)}"]`,
-  className: (v) => `.${cssEscape(v)}`,
-  class: (v) => `.${cssEscape(v)}`,
-  tag: (v) => cssEscape(v),
-  text: (v) => `:scope :is(*[contains-text="${cssEscape(v)}"])`, // unused; text uses XPath
+  className: (v) => `[class~="${cssEscape(v)}"]`,
+  class: (v) => `[class~="${cssEscape(v)}"]`,
+  tag: tagSelector,
   "aria-label": (v) => `[aria-label="${cssEscape(v)}"]`,
   ariaLabel: (v) => `[aria-label="${cssEscape(v)}"]`,
   accessibilityLabel: (v) => `[aria-label="${cssEscape(v)}"]`,
@@ -63,8 +62,22 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   hintText: (v) => `[placeholder="${cssEscape(v)}"]`,
 };
 
+// cssEscape delegates to the platform CSS.escape (per CSSOM spec). It produces
+// output safe for both identifier and string contexts, since CSS string
+// literals accept the same `\HEX ` and `\X` escape sequences as identifiers.
 function cssEscape(value: string): string {
-  return value.replace(/(["\\])/g, "\\$1");
+  return CSS.escape(value);
+}
+
+const TAG_NAME = /^[a-zA-Z][a-zA-Z0-9-]*$/;
+
+// tagSelector accepts only valid HTML tag-name characters. Anything else (a
+// pseudo-class like `*:hover`, a comma, whitespace) would inject CSS into the
+// surrounding selector. Returning a never-matching selector rather than
+// throwing keeps the spec running while making the typo visible in logs.
+function tagSelector(value: string): string {
+  if (!TAG_NAME.test(value)) return ":not(*)";
+  return value;
 }
 
 function selectorFromObject(selector: Record<string, string | boolean | undefined>): {
