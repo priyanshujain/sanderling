@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -390,8 +391,8 @@ func (d *Driver) EvaluateExtractors(ctx context.Context) (map[int]json.RawMessag
 	}
 	result := make(map[int]json.RawMessage, len(stringMap))
 	for key, value := range stringMap {
-		index := 0
-		if _, err := fmt.Sscanf(key, "%d", &index); err != nil {
+		index, err := strconv.Atoi(key)
+		if err != nil {
 			return nil, fmt.Errorf("non-integer extractor key %q", key)
 		}
 		result[index] = value
