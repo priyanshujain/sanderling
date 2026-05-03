@@ -597,3 +597,41 @@ func TestOverrideExtractorValues_UnknownIndexSkipped(t *testing.T) {
 		t.Errorf("valid override should still apply alongside skipped one, got current=%v", balance.Get("current"))
 	}
 }
+
+const objectExtractorSpec = `
+const card = __sanderling__.extract(state => ({attrs: {testTag: "default"}, balance: 0}));
+globalThis.card = card;
+
+globalThis.properties = {
+  hasTestTag: __sanderling__.always(() => typeof card.current.attrs.testTag === "string"),
+};
+
+globalThis.actions = __sanderling__.actions(() => []);
+`
+
+func TestOverrideExtractorValues_PropagatesNestedObjectFields(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, objectExtractorSpec)
+
+	if err := verifier.PushSnapshot(SnapshotInput{}); err != nil {
+		t.Fatal(err)
+	}
+	override := json.RawMessage(`{"attrs": {"testTag": "account-card"}, "balance": 12345}`)
+	skipped, err := verifier.OverrideExtractorValues(map[int]json.RawMessage{0: override})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped != 0 {
+		t.Errorf("unexpected skipped count: %d", skipped)
+	}
+
+	card := verifier.runtime.GlobalObject().Get("card").ToObject(verifier.runtime)
+	current := card.Get("current").ToObject(verifier.runtime)
+	attrs := current.Get("attrs").ToObject(verifier.runtime)
+	if got := attrs.Get("testTag").String(); got != "account-card" {
+		t.Errorf("nested override missing: card.current.attrs.testTag = %q, want %q", got, "account-card")
+	}
+	if got := current.Get("balance").ToInteger(); got != 12345 {
+		t.Errorf("scalar field missing: card.current.balance = %d, want 12345", got)
+	}
+}
