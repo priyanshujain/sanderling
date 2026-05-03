@@ -335,16 +335,27 @@ func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) 
 }
 
 func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int, bool) {
-	if action.X > 0 && action.Y > 0 {
-		return action.X, action.Y, true
+	// When On is empty, X/Y are authoritative (web V8 path emits coordinates
+	// directly from getBoundingClientRect; the runtime nullifies unresolved
+	// actions upstream so a non-null InputText here always has real coords,
+	// even at (0,0)). When On is set, prefer the tree lookup so stale coords
+	// don't leak from earlier ticks.
+	if action.On == "" {
+		if action.X >= 0 && action.Y >= 0 {
+			return action.X, action.Y, true
+		}
+		return 0, 0, false
 	}
-	if tree != nil && action.On != "" {
+	if tree != nil {
 		if element := tree.Find(action.On); element != nil {
 			x, y := element.Bounds.Center()
 			if x > 0 && y > 0 {
 				return x, y, true
 			}
 		}
+	}
+	if action.X > 0 && action.Y > 0 {
+		return action.X, action.Y, true
 	}
 	return 0, 0, false
 }

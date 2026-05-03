@@ -263,6 +263,37 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 	})
 }
 
+func TestApplyAction_V8InputTextTapsAtCoordinates(t *testing.T) {
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 50, Y: 100, Text: "alice"}
+
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	actions := driverMock.Actions()
+	if !containsAction(actions, mockdriver.ActionTap, "") {
+		t.Errorf("expected focus Tap before InputText, got %v", actions)
+	}
+	if !containsAction(actions, mockdriver.ActionInputText, "") {
+		t.Errorf("expected InputText after focus Tap, got %v", actions)
+	}
+}
+
+func TestApplyAction_V8InputTextAtOriginStillTaps(t *testing.T) {
+	driverMock := mockdriver.New()
+	// V8 emits real (0,0) coordinates for an element at viewport top-left
+	// (post-#15 the runtime nullifies unresolved actions, so a non-null
+	// InputText with (0,0) is a deliberate edge tap, not a sentinel).
+	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 0, Y: 0, Text: "alice"}
+
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	if !containsAction(driverMock.Actions(), mockdriver.ActionTap, "") {
+		t.Errorf("expected focus Tap at (0,0), got %v", driverMock.Actions())
+	}
+}
+
 func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
 	state := newHarness(t)
 	state.mock.MetricsData = driver.Metrics{CPUPercent: 5.0, HeapBytes: 1024, TotalMemoryBytes: 4096}
