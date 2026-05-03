@@ -138,8 +138,13 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}); err != nil {
 			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 		}
-		if err := options.Verifier.OverrideExtractorValues(v8Overrides); err != nil {
-			logger.Warn("v8 override apply failed", "step", stepIndex, "err", err)
+		skipped, overrideErr := options.Verifier.OverrideExtractorValues(v8Overrides)
+		if overrideErr != nil {
+			logger.Warn("v8 override apply failed", "step", stepIndex, "err", overrideErr)
+		}
+		if skipped > 0 {
+			logger.Warn("v8 override skipped out-of-range entries",
+				"step", stepIndex, "skipped", skipped, "have", len(v8Overrides))
 		}
 
 		screen := ""

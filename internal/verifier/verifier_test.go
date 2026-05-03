@@ -540,7 +540,7 @@ func TestOverrideExtractorValues_PreservesPrevious(t *testing.T) {
 	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": json.RawMessage(`100`)}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifier.OverrideExtractorValues(map[int]json.RawMessage{1: json.RawMessage(`777`)}); err != nil {
+	if _, err := verifier.OverrideExtractorValues(map[int]json.RawMessage{1: json.RawMessage(`777`)}); err != nil {
 		t.Fatal(err)
 	}
 	balance := verifier.runtime.GlobalObject().Get("balance").ToObject(verifier.runtime)
@@ -564,10 +564,10 @@ func TestOverrideExtractorValues_NilIsNoop(t *testing.T) {
 	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": json.RawMessage(`42`)}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifier.OverrideExtractorValues(nil); err != nil {
+	if _, err := verifier.OverrideExtractorValues(nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifier.OverrideExtractorValues(map[int]json.RawMessage{}); err != nil {
+	if _, err := verifier.OverrideExtractorValues(map[int]json.RawMessage{}); err != nil {
 		t.Fatal(err)
 	}
 	balance := verifier.runtime.GlobalObject().Get("balance").ToObject(verifier.runtime)
@@ -576,14 +576,24 @@ func TestOverrideExtractorValues_NilIsNoop(t *testing.T) {
 	}
 }
 
-func TestOverrideExtractorValues_UnknownIndexErrors(t *testing.T) {
+func TestOverrideExtractorValues_UnknownIndexSkipped(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, helloSpec)
-	if err := verifier.PushSnapshot(SnapshotInput{}); err != nil {
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": json.RawMessage(`42`)}}); err != nil {
 		t.Fatal(err)
 	}
-	err := verifier.OverrideExtractorValues(map[int]json.RawMessage{99: json.RawMessage(`1`)})
-	if err == nil || !strings.Contains(err.Error(), "out of range") {
-		t.Errorf("expected out-of-range error, got %v", err)
+	skipped, err := verifier.OverrideExtractorValues(map[int]json.RawMessage{
+		1:  json.RawMessage(`777`),
+		99: json.RawMessage(`1`),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if skipped != 1 {
+		t.Errorf("expected 1 skipped entry, got %d", skipped)
+	}
+	balance := verifier.runtime.GlobalObject().Get("balance").ToObject(verifier.runtime)
+	if balance.Get("current").ToInteger() != 777 {
+		t.Errorf("valid override should still apply alongside skipped one, got current=%v", balance.Get("current"))
 	}
 }
