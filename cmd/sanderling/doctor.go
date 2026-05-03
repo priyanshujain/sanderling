@@ -128,10 +128,16 @@ func parseDoctorArgs(args []string, stderr io.Writer) (doctorOptions, error) {
 	}
 }
 
+// doctorCheckTimeout bounds a single host-readiness check. Most checks (exec
+// lookups, file stats, java -version) finish in milliseconds, but
+// checkChromiumLaunch boots a real browser and can exceed 5s on a cold CI
+// host - 15s leaves headroom without making real failures feel hung.
+const doctorCheckTimeout = 15 * time.Second
+
 func runDoctorChecks(ctx context.Context, checks []doctorCheck, stdout io.Writer) error {
 	failures := 0
 	for _, check := range checks {
-		callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		callCtx, cancel := context.WithTimeout(ctx, doctorCheckTimeout)
 		err := check.Run(callCtx)
 		cancel()
 		if err != nil {
