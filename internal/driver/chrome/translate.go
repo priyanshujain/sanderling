@@ -3,9 +3,15 @@ package chrome
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
+
+// attrNamePattern matches HTML attribute names that are safe to drop into a
+// CSS attribute selector without escaping. This avoids selectors like
+// `foo]:has(*),body[x="..."]` that would escape the intended match.
+var attrNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 
 // TranslateStringSelector converts a legacy string selector ("id:foo",
 // "descPrefix:bar") into a CSS selector or XPath expression usable from the
@@ -41,6 +47,9 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 	case "placeholder", "placeholderValue", "hintText":
 		return `[placeholder="` + cssEscape(value) + `"]`, false, nil
 	default:
+		if !attrNamePattern.MatchString(kind) {
+			return "", false, fmt.Errorf("unsafe selector prefix %q", kind)
+		}
 		return `[` + kind + `="` + cssEscape(value) + `"]`, false, nil
 	}
 }

@@ -64,6 +64,21 @@ func TestTranslateStringSelector_RejectsMissingPrefix(t *testing.T) {
 	}
 }
 
+func TestTranslateStringSelector_RejectsUnsafePrefix(t *testing.T) {
+	cases := []string{
+		`foo]:has(*),body[x:value`,
+		`x y:value`,
+		`x"y:value`,
+		`*:value`,
+		`(:value`,
+	}
+	for _, selector := range cases {
+		if _, _, err := TranslateStringSelector(selector); err == nil {
+			t.Errorf("%q: expected error for unsafe prefix", selector)
+		}
+	}
+}
+
 func TestCSSEscape_ControlCharactersAndNUL(t *testing.T) {
 	cases := []struct {
 		name  string
