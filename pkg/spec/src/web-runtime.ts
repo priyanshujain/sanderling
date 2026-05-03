@@ -380,20 +380,33 @@ function evaluateExtractors(): Record<number, unknown> {
   return result;
 }
 
+// SANITIZE_MAX_DEPTH bounds how far sanitize will recurse. State exposes
+// `document` and `window`, both of which contain cycles; without a depth or
+// seen-set guard a user extractor returning either crashes the runtime via
+// stack overflow.
+const SANITIZE_MAX_DEPTH = 32;
+
 function sanitize(value: unknown): unknown {
+  return sanitizeAt(value, 0, new WeakSet());
+}
+
+function sanitizeAt(value: unknown, depth: number, seen: WeakSet<object>): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "function") return undefined;
-  if (Array.isArray(value)) return value.map(sanitize);
-  if (typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>)) {
-      const sub = (value as Record<string, unknown>)[key];
-      if (typeof sub === "function") continue;
-      out[key] = sanitize(sub);
-    }
-    return out;
+  if (typeof value !== "object") return value;
+  if (depth >= SANITIZE_MAX_DEPTH) return null;
+  if (seen.has(value as object)) return null;
+  seen.add(value as object);
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeAt(item, depth + 1, seen));
   }
-  return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    const sub = (value as Record<string, unknown>)[key];
+    if (typeof sub === "function") continue;
+    out[key] = sanitizeAt(sub, depth + 1, seen);
+  }
+  return out;
 }
 
 function pickWeighted(handle: ActionGeneratorHandle): ActionGeneratorHandle | null {
