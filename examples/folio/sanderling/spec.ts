@@ -11,6 +11,7 @@ import {
   weighted,
   whenRoute,
 } from "@sanderling/spec";
+import { defaultActions } from "@sanderling/spec/defaults";
 
 interface Account {
   name: string;
@@ -80,7 +81,6 @@ const txnSubmit = extract(s =>
   s.ax.find([{ testTag: "AddTransactionScreen" }, { testTag: "TxnSubmit" }]));
 const accountCards = extract(s =>
   s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]));
-const backButton = extract(s => s.ax.find({ testTag: "BackButton" }));
 
 // Property 1: every newly-appearing account starts with balance === 0.
 // Identity is by visible name. Guard against navigation transitions where
@@ -165,11 +165,6 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
   return opts;
 });
 
-const back = actions(() => {
-  const btn = backButton.current;
-  return btn ? [Tap({ on: btn })] : [];
-});
-
 export const properties = {
   newAccountBalanceIsZero,
   newTxnChangesBalance,
@@ -177,10 +172,13 @@ export const properties = {
 
 export const setup = login;
 
+// Targeted depth (addAccount / addTxn) drives the deep flows; defaultActions
+// adds breadth so the fuzzer wanders the whole app and types edge-case values
+// into every field, stressing the balance invariants above.
 export const actionsRoot = weighted(
   [50, addAccount],
   [40, addTxn],
-  [10, back],
+  [20, defaultActions],
 );
 
 (globalThis as { actions?: unknown; properties?: unknown; setup?: unknown }).actions = actionsRoot;
