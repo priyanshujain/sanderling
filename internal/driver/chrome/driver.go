@@ -218,7 +218,8 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
     if (el.id) attrs['resource-id'] = el.id;
     const label = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '';
     if (label) attrs['content-desc'] = label;
-    if (el.tagName) attrs['tag'] = el.tagName.toLowerCase();
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag) attrs['tag'] = tag;
     if (el.className && typeof el.className === 'string' && el.className.trim()) {
       attrs['class'] = el.className.trim();
     }
@@ -226,6 +227,9 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
     const isClickable = !!(el.onclick || el.tagName === 'A' || el.tagName === 'BUTTON' ||
       el.tagName === 'INPUT' || el.tagName === 'SELECT' ||
       el.getAttribute('role') === 'button' || el.getAttribute('onclick'));
+    const isEditable = el.isContentEditable || tag === 'textarea' ||
+      (tag === 'input' && !['button','submit','checkbox','radio','range','color','file','image','reset']
+        .includes((el.type || '').toLowerCase()));
     const children = [];
     for (const child of el.children) {
       children.push(buildTree(child, false));
@@ -238,6 +242,7 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
       focused: document.activeElement === el || null,
       checked: el.checked || null,
       selected: el.selected || null,
+      editable: isEditable || null,
     };
   }
   return buildTree(document.body, true);
