@@ -50,6 +50,7 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	if specAPIPath != "" {
 		aliases["@sanderling/spec"] = specAPIPath
 		base := filepath.Dir(specAPIPath)
+		aliases["@sanderling/spec/defaults"] = filepath.Join(base, "defaults/index.ts")
 		aliases["@sanderling/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
 	}
 	defines := map[string]string{
