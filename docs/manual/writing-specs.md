@@ -183,9 +183,11 @@ import { noUncaughtExceptions, noLogcatErrors } from "@sanderling/spec/defaults/
 
 export const properties = {
   noUncaughtExceptions,  // fails if the app throws an uncaught exception
-  noLogcatErrors,        // fails if logcat emits any error-level lines
+  noLogcatErrors,        // android-only; reads logcat, no-ops on ios/web
 };
 ```
+
+`noLogcatErrors` reads from logcat and only applies on Android. Including it in a spec that targets iOS or web is harmless; it silently holds.
 
 ## Pattern: preconditions
 
@@ -220,6 +222,25 @@ export const actionsRoot = weighted(
 ```
 
 Once `onLoginScreen.current` is false, `doLogin` returns `[]` and drops out of the eligible set automatically.
+
+## Pattern: setup export
+
+Preconditions that drive the app from a fresh state into the surface you actually want to fuzz (login, onboarding, permission grants, seed data) can be exported as `setup` instead of mixing into `actionsRoot`. The runner tries `setup` first; if it yields no action, it falls through to `actionsRoot`. State regressing back across the precondition (logout under fuzz) automatically re-engages setup.
+
+```ts
+const login = actions(() => {
+  if (loggedIn.current) return [];
+  const email = loginEmailField.current;
+  const submit = loginSubmit.current;
+  if (!email || !submit) return [];
+  return [InputText({ into: email, text: "demo@app.test" }), Tap({ on: submit })];
+});
+
+export const setup = login;
+export const actionsRoot = weighted([60, browse], [40, edit]);
+```
+
+`setup` is just an `ActionGenerator`; compose with `actions`, `weighted`, or `whenRoute` exactly like the main pool. Works identically across Android, iOS, and web.
 
 ## Pattern: conditional properties
 

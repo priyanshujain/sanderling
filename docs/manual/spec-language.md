@@ -125,7 +125,7 @@ Fields available on every element returned by `find` / `findAll`:
 ### iOS
 
 - `id` maps to the `accessibilityIdentifier` set via `.accessibilityIdentifier` in SwiftUI/UIKit.
-- `desc` maps to `accessibilityText`, which Maestro builds by merging `accessibilityLabel` and the element's value (e.g., `"Close, icon description"`). The `desc:<value>` selector handles this by also matching when the description starts with `<value>, `.
+- `desc` maps to `accessibilityText`, which the iOS sidecar builds by merging `accessibilityLabel` and the element's value (e.g., `"Close, icon description"`). The `desc:<value>` selector handles this by also matching when the description starts with `<value>, `.
 - `class` is the XCUITest element type (e.g., `XCUIElementTypeButton`).
 - `attrs` contains raw XCUITest attributes: `title`, `placeholderValue`, `hasFocus`, etc.
 

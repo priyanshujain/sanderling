@@ -14,7 +14,7 @@ flowchart TB
         R --> T["Trace writer\nJSONL + PNG"]
     end
 
-    SC["Maestro sidecar (JVM)"]
+    SC["Native sidecar (JVM)"]
     DC["Device / Emulator"]
     CH["Chrome (CDP)"]
     RD[("runs/")]
@@ -32,7 +32,7 @@ flowchart TB
 
 **sanderling (Go).** The top-level binary. Bundles the spec with esbuild, evaluates it in goja, runs the main loop, dispatches actions through the `DeviceDriver` interface, writes the trace.
 
-**Maestro sidecar (JVM).** A Kotlin process that wraps `maestro-client` and exposes a gRPC surface matching the `DeviceDriver` interface. Handles UI input, screenshots, the system accessibility tree, and OS-level alerts. Native platforms only.
+**Native sidecar (JVM).** A Kotlin process that exposes a gRPC surface matching the `DeviceDriver` interface. Handles UI input, screenshots, the system accessibility tree, and OS-level alerts. Native platforms only.
 
 **Chrome (CDP).** For web targets, the Go binary drives Chrome directly over the Chrome DevTools Protocol. No sidecar is involved.
 
@@ -40,7 +40,7 @@ flowchart TB
 
 | Channel | Platform | Transport | Purpose |
 |---|---|---|---|
-| Go to Maestro sidecar | Native | gRPC (localhost TCP) | UI input, screenshots, system alerts |
+| Go to native sidecar | Native | gRPC (localhost TCP) | UI input, screenshots, system alerts |
 | Go to Chrome | Web | Chrome DevTools Protocol | UI input, screenshots, DOM hierarchy, console logs |
 
 On native, the transport split exists because only real UI events need to cross process and OS-API boundaries. Introspection is cheap, frequent, and lives on a fast local socket directly to the app. On web, CDP handles both.
@@ -63,7 +63,7 @@ fetch state  ─►  evaluate properties  ─►  pick action  ─►  dispatch
 2. The runner fetches the UI hierarchy and logs from the sidecar.
 3. The runner feeds state into goja. Extractors re-read; properties re-evaluate; the action generator returns a weighted tree.
 4. The runner writes the trace entry for this step.
-5. The runner picks an action by weight and dispatches it through the driver (gRPC to sidecar -> Maestro -> UIAutomator or XCTest).
+5. The runner picks an action by weight and dispatches it through the driver (gRPC to sidecar -> UIAutomator or XCTest).
 6. Loop.
 
 **Web (Chrome):**

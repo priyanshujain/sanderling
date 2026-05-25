@@ -14,6 +14,19 @@ The positional argument can be a runs directory or a single run directory (auto-
 
 ![sanderling inspect](../../_assets/inspect-ui.png)
 
+## Panels
+
+| Panel | What it shows |
+|---|---|
+| Screenshot | Device screenshot for the focused step, with the dispatched action's target spotlit. |
+| ActionList | Ordered list of steps with the verb and target for each action. |
+| Timeline | Per-property lane chart over the run; cells coloured by violated, pending, or holds. |
+| ViolationsPanel | Property statuses at the focused step with residual formulas for any that failed. |
+| HierarchyPanel | Filterable table of every UI element captured at the focused step; mirrors the selectors documented in [Spec language reference](./spec-language/). |
+| SnapshotTable | Flattened `snapshots` map for the focused step, with diffs against the previous step. |
+| MetricsChart | Heap and other host-side metrics sampled per step. |
+| ExceptionsPanel | Uncaught exceptions captured during the run, with a jump-to-first control. |
+
 ## Keyboard shortcuts
 
 | Key | Action |

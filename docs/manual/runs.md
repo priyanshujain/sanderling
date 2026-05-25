@@ -13,7 +13,7 @@ A run is not analogous to a unit test. A closer framing is: boot a fuzzer for an
 ```
 sanderling test --spec spec.ts --bundle-id com.example.app --duration 30m
   │
-  ├── uninstall and reinstall the app (clean slate, every run)
+  ├── launch the app under test (pass --clear-data to wipe app data first)
   ├── boot the sidecar, connect the agent socket
   ├── bundle the spec, load it into goja
   │
@@ -25,6 +25,10 @@ sanderling test --spec spec.ts --bundle-id com.example.app --duration 30m
               ├── screenshots/
               └── meta.json
 ```
+
+## App state across runs
+
+By default the installed app is left in place between runs. Whatever state the previous run left behind (account, cached responses, onboarding completion) carries over. Pass `--clear-data` to wipe app data before launch and start cold every run. See [CLI reference](./cli/#sanderling-test) for the flag.
 
 ## Why runs are long and linear
 

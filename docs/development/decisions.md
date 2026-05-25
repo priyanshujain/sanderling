@@ -20,7 +20,7 @@ Go's `internal/` directory restriction prevents any code outside this module fro
 
 ### `internal/driver/` is an interface + subdirectory implementations
 
-The `driver.go` file defines the `DeviceDriver` interface. Concrete implementations live in subdirectories: `sidecar/` (Maestro gRPC), `chrome/` (CDP), `mock/` (tests). This pattern keeps the runner and verifier decoupled from any specific platform.
+The `driver.go` file defines the `DeviceDriver` interface. Concrete implementations live in subdirectories: `sidecar/` (gRPC to the native sidecar), `chrome/` (CDP), `mock/` (tests). This pattern keeps the runner and verifier decoupled from any specific platform.
 
 ### `internal/verifier/marshal.go` moves to `internal/inspect/`
 

@@ -2,8 +2,8 @@
 
 A minimal Kotlin Multiplatform personal-ledger app: login with demo
 credentials, create accounts, add credits and debits. Shared UI across
-Android and iOS via Compose Multiplatform. Doubles as the example
-sanderling runs its property-based specs against.
+Android, iOS, and web (wasmJs via Compose for Web). Doubles as the
+example sanderling runs its property-based specs against.
 
 ## Stack
 
@@ -39,6 +39,16 @@ IOS_DEVICE="iPhone 15" just ios   # pick a different simulator
 builds the KMP framework (`Shared.framework` from `:app:shared`), links it
 into the SwiftUI host, installs, and launches.
 
+## Web
+
+```sh
+just web         # webpack dev server with COOP/COEP headers
+just web-build   # produce a webpack distributable bundle
+```
+
+`just web` runs `:app:webApp:wasmJsBrowserDevelopmentRun --continuous`, so
+edits to shared code reload in the browser.
+
 ## Demo credentials
 
 ```
@@ -67,6 +77,17 @@ DURATION=5m
 ```
 
 Traces land in `./sanderling/runs/<timestamp>/`.
+
+## Run a sanderling test (iOS)
+
+```sh
+just test-ios                          # default simulator: iPhone 17 Pro
+IOS_DEVICE="iPhone 15" just test-ios   # pick a different simulator
+```
+
+`just test-ios` boots the simulator if needed, runs `just ios` to install
+and launch the app, then invokes `sanderling test --platform ios`. Same
+`DURATION`, `SEED`, and `OUTPUT` env vars as the Android target.
 
 ## How it connects to sanderling
 

@@ -35,9 +35,11 @@ npm install --save-dev @sanderling/spec
 
 ## Your first run
 
+The repo ships two sample apps. `examples/folio` is a Kotlin Multiplatform personal-ledger app that covers Android, iOS, and web (wasmJs) from one shared codebase. `examples/folio-web` is a smaller React + Vite app that covers only the web path. Both carry a TypeScript spec under `sanderling/spec.ts`. Install `just`, then pick a target below.
+
 ### Android
 
-The repo ships a working sample at `examples/folio`, a Kotlin Multiplatform app with a TypeScript spec under `sanderling/spec.ts`. Install `just`, then from `examples/folio`:
+From `examples/folio`:
 
 ```sh
 just install   # build and install the folio APK on a booted emulator or device
@@ -52,15 +54,32 @@ AVD=Pixel_7 just test
 
 Persistent settings can live in a `.env` alongside the justfile (`AVD=Pixel_7`, `DURATION=5m`, and so on).
 
-### Web
+### iOS
 
-The repo also ships a web sample at `examples/folio-web`, a React/Vite app with the same domain logic. From `examples/folio-web`:
+From `examples/folio` (requires Xcode 16+ and `xcodegen`):
 
 ```sh
-just test      # starts Chrome, runs the spec
+just test-ios                          # default simulator: iPhone 17 Pro
+IOS_DEVICE="iPhone 15" just test-ios   # pick a different simulator
 ```
 
-No emulator or SDK setup needed.
+`just test-ios` boots the simulator if needed, builds and installs the app, then runs `sanderling test --platform ios`.
+
+### Web
+
+From either example. For the KMP wasmJs build, use `examples/folio`:
+
+```sh
+just web       # serve the wasmJs app on a webpack dev server
+```
+
+For the React + Vite build, use `examples/folio-web`:
+
+```sh
+just test      # starts the Vite dev server, then sanderling drives Chrome via CDP
+```
+
+No emulator or SDK setup needed for either web path.
 
 ### Trace output
 
