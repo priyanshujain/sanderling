@@ -41,6 +41,7 @@ export interface KnownAttrSelectors {
   focused?: boolean;
   checked?: boolean;
   selected?: boolean;
+  editable?: boolean;
 }
 
 /**
@@ -73,6 +74,7 @@ export interface AccessibilityElement {
   checked?: boolean;
   focused?: boolean;
   selected?: boolean;
+  editable?: boolean;
   bounds?: { left: number; top: number; right: number; bottom: number };
   x?: number;
   y?: number;
