@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/dop251/goja"
@@ -451,6 +452,8 @@ func (v *Verifier) resolveGenerator(generator goja.Value) (Action, error) {
 		return v.resolveGenerator(picked)
 	case internalKindBuiltinTaps:
 		return v.generateRandomTap()
+	case internalKindBuiltinTyping:
+		return v.generateRandomInput()
 	case internalKindBuiltinSwipes:
 		return v.generateRandomSwipe()
 	case internalKindBuiltinWaitOnce:
@@ -484,6 +487,54 @@ func (v *Verifier) generateRandomTap() (Action, error) {
 	picked := candidates[v.rng.IntN(len(candidates))]
 	x, y := picked.Bounds.Center()
 	return Action{Kind: ActionKindTap, X: x, Y: y}, nil
+}
+
+// inputCorpus is the edge-case string pool the typing builtin draws from to
+// stress field parsing: empty, whitespace, overflow length, unicode, numeric
+// boundaries, and common injection payloads.
+var inputCorpus = []string{
+	"",
+	"a",
+	strings.Repeat("a", 4096),
+	"🙂🔥💸",
+	"  ",
+	"\t\n",
+	"-1",
+	"999999999999999999999",
+	"0.0000001",
+	"1e10",
+	"'; DROP TABLE--",
+	"<script>alert(1)</script>",
+	"../../etc/passwd",
+	"%s%n",
+	"NaN",
+}
+
+// generateRandomInput picks a visible, editable, enabled element from the last
+// hierarchy snapshot and types a random edge-case value into it. The runner
+// taps the target coordinates to focus before typing, so this works on both
+// native and web with no driver-side dispatch change.
+func (v *Verifier) generateRandomInput() (Action, error) {
+	if v.lastTree == nil {
+		return Action{}, ErrNoAction
+	}
+	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
+	for _, element := range v.lastTree.Elements {
+		if !element.Editable || !element.Enabled {
+			continue
+		}
+		if element.Bounds.Right-element.Bounds.Left <= 0 || element.Bounds.Bottom-element.Bounds.Top <= 0 {
+			continue
+		}
+		candidates = append(candidates, element)
+	}
+	if len(candidates) == 0 {
+		return Action{}, ErrNoAction
+	}
+	picked := candidates[v.rng.IntN(len(candidates))]
+	x, y := picked.Bounds.Center()
+	value := inputCorpus[v.rng.IntN(len(inputCorpus))]
+	return Action{Kind: ActionKindInputText, X: x, Y: y, Text: value}, nil
 }
 
 // generateRandomSwipe emits a swipe over a random enabled element or the
