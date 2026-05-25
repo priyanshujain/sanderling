@@ -63,6 +63,7 @@ const (
 	internalKindActions         = "actions"
 	internalKindWeighted        = "weighted"
 	internalKindBuiltinTaps     = "taps"
+	internalKindBuiltinTyping   = "typing"
 	internalKindBuiltinSwipes   = "swipes"
 	internalKindBuiltinWaitOnce = "waitOnce"
 	internalKindBuiltinPressKey = "pressKey"
@@ -112,6 +113,9 @@ func (v *Verifier) installRuntimeBindings() error {
 		return err
 	}
 	if err := sanderling.Set("taps", v.builtinGenerator(internalKindBuiltinTaps)); err != nil {
+		return err
+	}
+	if err := sanderling.Set("typing", v.builtinGenerator(internalKindBuiltinTyping)); err != nil {
 		return err
 	}
 	if err := sanderling.Set("swipes", v.builtinGenerator(internalKindBuiltinSwipes)); err != nil {
