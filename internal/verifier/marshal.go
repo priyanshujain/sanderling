@@ -100,6 +100,7 @@ func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) go
 	_ = object.Set("checked", element.Checked)
 	_ = object.Set("focused", element.Focused)
 	_ = object.Set("selected", element.Selected)
+	_ = object.Set("editable", element.Editable)
 	_ = object.Set("x", centerX)
 	_ = object.Set("y", centerY)
 	_ = object.Set(tagSelector, selector)
