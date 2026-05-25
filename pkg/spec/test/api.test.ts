@@ -148,6 +148,7 @@ function installFakeRuntime(): RecordedRuntime {
     pressKey: ({ key }) => ({ kind: "PressKey", key }),
     wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
     taps: { __sanderlingActionGenerator: true, generate: () => [] },
+    typing: { __sanderlingActionGenerator: true, generate: () => [] },
     swipes: { __sanderlingActionGenerator: true, generate: () => [] },
     waitOnce: { __sanderlingActionGenerator: true, generate: () => [] },
     pressKeys: { __sanderlingActionGenerator: true, generate: () => [] },

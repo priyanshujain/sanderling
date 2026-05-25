@@ -65,7 +65,9 @@ export function Wait(parameters: { durationMillis: number }): WaitAction {
   return globalThis.__sanderling__.wait(parameters);
 }
 
-function builtinGenerator(name: "taps" | "swipes" | "waitOnce" | "pressKeys"): ActionGenerator {
+function builtinGenerator(
+  name: "taps" | "typing" | "swipes" | "waitOnce" | "pressKeys",
+): ActionGenerator {
   return new Proxy({} as ActionGenerator, {
     get(_target, property) {
       const runtime = globalThis.__sanderling__[name] as unknown as Record<
@@ -78,6 +80,7 @@ function builtinGenerator(name: "taps" | "swipes" | "waitOnce" | "pressKeys"): A
 }
 
 export const taps: ActionGenerator = builtinGenerator("taps");
+export const typing: ActionGenerator = builtinGenerator("typing");
 export const swipes: ActionGenerator = builtinGenerator("swipes");
 export const waitOnce: ActionGenerator = builtinGenerator("waitOnce");
 export const pressKey: ActionGenerator = builtinGenerator("pressKeys");

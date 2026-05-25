@@ -40,6 +40,7 @@ export {
   pressKey,
   swipes,
   taps,
+  typing,
   waitOnce,
   weighted,
   whenRoute,

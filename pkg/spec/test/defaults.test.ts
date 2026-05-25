@@ -63,6 +63,7 @@ function installRuntime(initialState: State): RecordedRuntime {
     pressKey: ({ key }) => ({ kind: "PressKey", key }),
     wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
     taps: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    typing: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     swipes: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     waitOnce: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     pressKeys: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
