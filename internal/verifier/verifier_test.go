@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
 
@@ -299,6 +300,65 @@ func TestInputText_RoundTrip(t *testing.T) {
 	}
 	if action.On != "id:phone" || action.Text != "+919876543210" {
 		t.Errorf("payload wrong: %+v", action)
+	}
+}
+
+// TestTypingBuiltin_TargetsEditableField verifies the typing generator emits an
+// InputText action aimed at an editable, enabled element's center and fills it
+// with a corpus value, ignoring clickable-but-not-editable elements.
+func TestTypingBuiltin_TargetsEditableField(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"testTag": "EmailField", "bounds": "[0,0,100,40]"}, "editable": true, "enabled": true, "children": []},
+	    {"attributes": {"testTag": "SubmitButton", "bounds": "[0,40,100,80]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `globalThis.actions = __sanderling__.typing;`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.Kind != ActionKindInputText {
+		t.Fatalf("kind = %v, want InputText", action.Kind)
+	}
+	if action.X != 50 || action.Y != 20 {
+		t.Errorf("coords = (%d,%d), want (50,20) at EmailField center", action.X, action.Y)
+	}
+	if !slices.Contains(inputCorpus, action.Text) {
+		t.Errorf("text %q not drawn from inputCorpus", action.Text)
+	}
+}
+
+// TestTypingBuiltin_NoEditableYieldsErrNoAction verifies the typing generator
+// declines (ErrNoAction) when no editable element is present, so a weighted
+// layer falls through to another generator.
+func TestTypingBuiltin_NoEditableYieldsErrNoAction(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"testTag": "SubmitButton", "bounds": "[0,0,100,40]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `globalThis.actions = __sanderling__.typing;`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifier.NextAction(); !errors.Is(err, ErrNoAction) {
+		t.Fatalf("err = %v, want ErrNoAction", err)
 	}
 }
 
