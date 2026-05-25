@@ -66,6 +66,7 @@ type Element struct {
 	Checked    bool              `json:"checked,omitempty"`
 	Focused    bool              `json:"focused,omitempty"`
 	Selected   bool              `json:"selected,omitempty"`
+	Editable   bool              `json:"editable,omitempty"`
 	Bounds     Bounds            `json:"bounds"`
 	Attributes map[string]string `json:"attrs,omitempty"`
 }
@@ -91,6 +92,7 @@ type treeNodeJSON struct {
 	Focused    *bool             `json:"focused"`
 	Checked    *bool             `json:"checked"`
 	Selected   *bool             `json:"selected"`
+	Editable   *bool             `json:"editable"`
 }
 
 // Selector describes a multi-attribute AND match.
@@ -221,6 +223,11 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	if node.Selected != nil {
 		element.Selected = *node.Selected
 	}
+	if node.Editable != nil {
+		element.Editable = *node.Editable
+	} else {
+		element.Editable = strings.Contains(element.Class, "EditText") || attrs["hintText"] != ""
+	}
 
 	if b, ok := attrs["bounds"]; ok && b != "" {
 		bounds, err := parseBounds(b)
@@ -246,6 +253,7 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	if node.Selected != nil {
 		element.Attributes["selected"] = strconv.FormatBool(*node.Selected)
 	}
+	element.Attributes["editable"] = strconv.FormatBool(element.Editable)
 
 	return element
 }
