@@ -109,3 +109,23 @@ test("defaults bundle exports formulas tagged as LTL properties", async () => {
   assert.equal(defaults.noUncaughtExceptions.__sanderlingFormula, true);
   assert.equal(defaults.noLogcatErrors.__sanderlingFormula, true);
 });
+
+test("defaults bundle exports defaultActions as a valid ActionGenerator", async () => {
+  installRuntime(emptyState);
+  const defaults = await import("../src/defaults/actions.ts");
+  assert.equal(defaults.defaultActions.__sanderlingActionGenerator, true);
+  assert.equal(typeof defaults.defaultActions.generate, "function");
+});
+
+test("typing resolves as a valid ActionGenerator", async () => {
+  installRuntime(emptyState);
+  const { typing } = await import("../src/defaults/actions.ts");
+  assert.equal(typing.__sanderlingActionGenerator, true);
+});
+
+test("defaults barrel re-exports both properties and actions", async () => {
+  installRuntime(emptyState);
+  const barrel = await import("../src/defaults/index.ts");
+  assert.equal(barrel.defaultActions.__sanderlingActionGenerator, true);
+  assert.equal(barrel.noUncaughtExceptions.__sanderlingFormula, true);
+});
