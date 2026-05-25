@@ -347,6 +347,7 @@ const runtime = {
     return { kind: "Wait", durationMillis: p.durationMillis };
   },
   taps: { __sanderlingActionGenerator: true, __sanderlingKind: "taps" } as ActionGeneratorHandle,
+  typing: { __sanderlingActionGenerator: true, __sanderlingKind: "typing" } as ActionGeneratorHandle,
   swipes: { __sanderlingActionGenerator: true, __sanderlingKind: "swipes" } as ActionGeneratorHandle,
   waitOnce: { __sanderlingActionGenerator: true, __sanderlingKind: "waitOnce" } as ActionGeneratorHandle,
   pressKeys: { __sanderlingActionGenerator: true, __sanderlingKind: "pressKey" } as ActionGeneratorHandle,
@@ -441,6 +442,8 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
     }
     case "taps":
       return randomTap();
+    case "typing":
+      return randomInput();
     case "swipes":
       return randomSwipe();
     case "waitOnce":
@@ -479,6 +482,59 @@ function randomTap(): unknown {
       x: Math.round(rect.left + rect.width / 2),
       y: Math.round(rect.top + rect.height / 2),
     },
+  };
+}
+
+// Per-tick cache mirroring randomTapCandidates, reset each NextAction tick.
+let randomInputCandidates: HTMLElement[] | null = null;
+
+const NON_TEXT_INPUT_TYPES = [
+  "button", "submit", "checkbox", "radio", "range", "color", "file", "image", "reset",
+];
+
+// Edge-case input pool mirroring the goja-side inputCorpus: empty, whitespace,
+// overflow length, unicode, numeric boundaries, and common injection payloads.
+const WEB_INPUT_CORPUS = [
+  "", "a", "a".repeat(4096), "🙂🔥💸", "  ", "\t\n", "-1",
+  "999999999999999999999", "0.0000001", "1e10", "'; DROP TABLE--",
+  "<script>alert(1)</script>", "../../etc/passwd", "%s%n", "NaN",
+];
+
+function isEditableElement(element: HTMLElement): boolean {
+  if (element.isContentEditable) return true;
+  const tag = element.tagName.toLowerCase();
+  if (tag === "textarea") return true;
+  if (tag === "input") {
+    const type = ((element as HTMLInputElement).type || "").toLowerCase();
+    return !NON_TEXT_INPUT_TYPES.includes(type);
+  }
+  return false;
+}
+
+function randomInput(): unknown {
+  if (!randomInputCandidates) {
+    randomInputCandidates = Array.from(
+      document.querySelectorAll<HTMLElement>("input, textarea, [contenteditable]"),
+    ).filter((element) => {
+      if (!isEditableElement(element)) return false;
+      if ((element as HTMLInputElement).disabled) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+  }
+  const candidates = randomInputCandidates;
+  if (candidates.length === 0) return null;
+  const picked = candidates[Math.floor(Math.random() * candidates.length)];
+  if (!picked) return null;
+  const rect = picked.getBoundingClientRect();
+  const text = WEB_INPUT_CORPUS[Math.floor(Math.random() * WEB_INPUT_CORPUS.length)];
+  return {
+    kind: "InputText",
+    into: {
+      x: Math.round(rect.left + rect.width / 2),
+      y: Math.round(rect.top + rect.height / 2),
+    },
+    text,
   };
 }
 
@@ -569,6 +625,7 @@ defineLockedGlobal("__sanderlingNextAction__", function (): unknown {
   if (!actionsRoot) return null;
   // Reset per-tick caches so each invocation gets a fresh DOM scan.
   randomTapCandidates = null;
+  randomInputCandidates = null;
   // Match the goja runtime: retry up to 16 times when a weighted entry's
   // generator returns []. Otherwise on routes where most generators are
   // gated to other pages, ~80% of ticks would emit no action.
