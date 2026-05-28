@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	driverpb "github.com/priyanshujain/sanderling/proto/driverpb"
 )
@@ -15,6 +16,21 @@ import (
 type Client struct {
 	connection *grpc.ClientConn
 	stub       driverpb.DriverClient
+	platform   string
+}
+
+// SetPlatform records the target platform so capability methods (e.g.
+// ForegroundApp) can pick the right backend. The caller sets this right after
+// Dial.
+func (c *Client) SetPlatform(platform string) { c.platform = platform }
+
+// ForegroundApp reports the foreground package. Only Android is supported (via
+// adb); other platforms return "" so the runner skips app-scope enforcement.
+func (c *Client) ForegroundApp(ctx context.Context) (string, error) {
+	if c.platform != "android" {
+		return "", nil
+	}
+	return android.ForegroundPackage(ctx)
 }
 
 // Dial connects to the sidecar gRPC server at the given address.
