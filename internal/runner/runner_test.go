@@ -426,3 +426,56 @@ func containsProperty(records []ViolationRecord, property string) bool {
 	}
 	return false
 }
+
+func TestRunner_RelaunchesWhenAppLeavesForeground(t *testing.T) {
+	state := newHarness(t)
+	// Always report a foreign app, so every step's guard must relaunch.
+	state.mock.ForegroundResults = []string{"com.android.chrome"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Run(ctx, Options{
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		BundleID:    "app.folio",
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	relaunches := 0
+	for _, a := range state.mock.Actions() {
+		if a.Kind == mockdriver.ActionLaunch && a.BundleID == "app.folio" && !a.ClearState {
+			relaunches++
+		}
+	}
+	if relaunches == 0 {
+		t.Fatal("expected runner to relaunch app.folio when foreground escaped, got none")
+	}
+}
+
+func TestRunner_NoRelaunchWhenAppInForeground(t *testing.T) {
+	state := newHarness(t)
+	state.mock.ForegroundResults = []string{"app.folio"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Run(ctx, Options{
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		BundleID:    "app.folio",
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, a := range state.mock.Actions() {
+		if a.Kind == mockdriver.ActionLaunch {
+			t.Fatalf("expected no relaunch while app in foreground, got %v", a)
+		}
+	}
+}

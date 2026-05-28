@@ -55,6 +55,12 @@ type Driver struct {
 	LogEntries    []driver.LogEntry
 	MetricsData   driver.Metrics
 	Failures      map[ActionKind]error
+
+	// ForegroundResults is consumed one entry per ForegroundApp call (the
+	// last entry repeats). Empty yields "", which disables the runner's
+	// app-scope guard so tests that don't care are unaffected.
+	ForegroundResults []string
+	foregroundIndex   int
 }
 
 func New() *Driver {
@@ -94,6 +100,20 @@ func (d *Driver) Launch(_ context.Context, bundleID string, clearState bool, _ m
 	}
 	d.record(Action{Kind: ActionLaunch, BundleID: bundleID, ClearState: clearState})
 	return nil
+}
+
+func (d *Driver) ForegroundApp(_ context.Context) (string, error) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	if len(d.ForegroundResults) == 0 {
+		return "", nil
+	}
+	index := d.foregroundIndex
+	if index >= len(d.ForegroundResults) {
+		index = len(d.ForegroundResults) - 1
+	}
+	d.foregroundIndex++
+	return d.ForegroundResults[index], nil
 }
 
 func (d *Driver) Terminate(ctx context.Context) error {

@@ -67,6 +67,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		stepIndex++
 		stepStart := time.Now()
 
+		// Keep exploration scoped to the app under test. If a prior action
+		// backed out of (or otherwise left) the app, relaunch it before we
+		// observe or act, so properties never evaluate against a foreign app
+		// and actions never land outside the app.
+		if ensureForeground(ctx, options, logger, stepIndex) {
+			lastAction = nil
+		}
+
 		// Hierarchy, metrics, and logs are independent device reads — run
 		// them concurrently so metrics+logs hide behind the hierarchy fetch.
 		var tree *hierarchy.Tree
@@ -261,6 +269,36 @@ func violationNames(verdicts map[string]ltl.Verdict) []string {
 		}
 	}
 	return names
+}
+
+// ensureForeground keeps the app under test in the foreground. When the driver
+// can report the foreground app and it no longer matches the bundle under test,
+// the app is relaunched. Returns true when a relaunch happened so the caller
+// can drop the now-stale lastAction. Drivers without ForegroundChecker (web,
+// iOS) are a no-op.
+func ensureForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) bool {
+	checker, ok := options.Driver.(driver.ForegroundChecker)
+	if !ok || options.BundleID == "" {
+		return false
+	}
+	foreground, err := checker.ForegroundApp(ctx)
+	if err != nil {
+		logger.Warn("foreground check failed", "step", stepIndex, "err", err)
+		return false
+	}
+	if foreground == "" || foreground == options.BundleID {
+		return false
+	}
+	logger.Warn("app left foreground; relaunching",
+		"step", stepIndex, "foreground", foreground, "want", options.BundleID)
+	if err := options.Driver.Launch(ctx, options.BundleID, false, nil); err != nil {
+		logger.Warn("relaunch failed", "step", stepIndex, "err", err)
+		return false
+	}
+	idleCtx, cancel := context.WithTimeout(ctx, options.IdleTimeout)
+	_ = options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
+	cancel()
+	return true
 }
 
 func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
