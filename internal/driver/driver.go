@@ -35,6 +35,18 @@ type DeviceDriver interface {
 	Metrics(ctx context.Context, bundleID string) (Metrics, error)
 }
 
+// ForegroundChecker is the optional capability for reporting which app is
+// currently in the foreground. The runner uses it to keep exploration scoped
+// to the app under test: when an action backs out of (or otherwise leaves) the
+// app, the runner relaunches it before acting again. Drivers that cannot
+// determine the foreground app simply do not implement this interface.
+type ForegroundChecker interface {
+	// ForegroundApp returns the bundle id / package of the app currently in
+	// the foreground. An empty string means "unknown" and the runner skips
+	// enforcement for that step rather than relaunching blindly.
+	ForegroundApp(ctx context.Context) (string, error)
+}
+
 type LogEntry struct {
 	UnixMillis int64
 	Level      string
