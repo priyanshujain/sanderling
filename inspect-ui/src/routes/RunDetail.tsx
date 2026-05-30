@@ -92,15 +92,18 @@ export default function RunDetail() {
     onJumpNextViolation: jumpToNextViolation,
   });
 
+  // One screenshot per step depicts the UI at observation time (post-prior-
+  // action, post-settle). The "after" view for step N is therefore step
+  // (N+1)'s screenshot: the same moment, observed from the next iteration.
   const beforeScreenshot = useMemo(() => {
     if (!runId || !currentStep) return undefined;
     return screenshotUrl(runId, `step-${String(currentStep.step).padStart(5, "0")}.png`);
   }, [runId, currentStep]);
 
   const afterScreenshot = useMemo(() => {
-    if (!runId || !currentStep) return undefined;
-    return screenshotUrl(runId, `step-${String(currentStep.step).padStart(5, "0")}-after.png`);
-  }, [runId, currentStep]);
+    if (!runId || !nextStep) return undefined;
+    return screenshotUrl(runId, `step-${String(nextStep.step).padStart(5, "0")}.png`);
+  }, [runId, nextStep]);
 
   const runStartMillis = useMemo(() => {
     if (!run?.steps.length) return 0;
