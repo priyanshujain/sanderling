@@ -187,7 +187,7 @@ export interface Sampler<T> {
 }
 
 export interface SanderlingRuntime {
-  extract: <T>(getter: (state: State) => T) => Extracted<T>;
+  extract: <T>(getter: (state: State) => T, name?: string) => Extracted<T>;
   always: (predicateOrFormula: (() => boolean) | Formula) => Formula;
   now: (predicate: () => boolean) => Formula;
   next: (predicate: () => boolean) => Formula;

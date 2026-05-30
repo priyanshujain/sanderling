@@ -20,6 +20,7 @@ interface Handle {
 interface ExtractorEntry {
   getter: (state: unknown) => unknown;
   handle: Handle;
+  name: string;
 }
 
 interface ActionGeneratorHandle {
@@ -290,9 +291,14 @@ function buildState(): unknown {
 }
 
 const runtime = {
-  extract<T>(getter: (state: unknown) => T): Handle {
+  extract<T>(getter: (state: unknown) => T, name?: string): Handle {
     const handle: Handle = { current: undefined, previous: undefined };
-    extractors.push({ getter: getter as (s: unknown) => unknown, handle });
+    const resolvedName = name && name.length > 0 ? name : `extractor_${extractors.length}`;
+    extractors.push({
+      getter: getter as (s: unknown) => unknown,
+      handle,
+      name: resolvedName,
+    });
     return handle;
   },
   always: noopFormula,
