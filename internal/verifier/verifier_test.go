@@ -282,6 +282,36 @@ func TestNextAction_NoSetupRegistered(t *testing.T) {
 	}
 }
 
+// TestDoubleTapsBuiltin_TargetsClickable verifies the doubleTaps builtin emits
+// a DoubleTap action targeting a clickable, enabled element's center.
+func TestDoubleTapsBuiltin_TargetsClickable(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"testTag": "SubmitButton", "bounds": "[0,40,100,80]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `globalThis.actions = __sanderling__.doubleTaps;`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.Kind != ActionKindDoubleTap {
+		t.Fatalf("kind = %v, want DoubleTap", action.Kind)
+	}
+	if action.X != 50 || action.Y != 60 {
+		t.Errorf("coords = (%d,%d), want (50,60) at SubmitButton center", action.X, action.Y)
+	}
+}
+
 func TestDoubleTap_RoundTrip(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, `

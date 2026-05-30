@@ -62,11 +62,12 @@ const (
 
 	internalKindActions         = "actions"
 	internalKindWeighted        = "weighted"
-	internalKindBuiltinTaps     = "taps"
-	internalKindBuiltinTyping   = "typing"
-	internalKindBuiltinSwipes   = "swipes"
-	internalKindBuiltinWaitOnce = "waitOnce"
-	internalKindBuiltinPressKey = "pressKey"
+	internalKindBuiltinTaps       = "taps"
+	internalKindBuiltinDoubleTaps = "doubleTaps"
+	internalKindBuiltinTyping     = "typing"
+	internalKindBuiltinSwipes     = "swipes"
+	internalKindBuiltinWaitOnce   = "waitOnce"
+	internalKindBuiltinPressKey   = "pressKey"
 )
 
 // installRuntimeBindings exposes globalThis.__sanderling__ to the loaded spec.
@@ -116,6 +117,9 @@ func (v *Verifier) installRuntimeBindings() error {
 		return err
 	}
 	if err := sanderling.Set("taps", v.builtinGenerator(internalKindBuiltinTaps)); err != nil {
+		return err
+	}
+	if err := sanderling.Set("doubleTaps", v.builtinGenerator(internalKindBuiltinDoubleTaps)); err != nil {
 		return err
 	}
 	if err := sanderling.Set("typing", v.builtinGenerator(internalKindBuiltinTyping)); err != nil {

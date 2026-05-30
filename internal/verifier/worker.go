@@ -452,6 +452,8 @@ func (v *Verifier) resolveGenerator(generator goja.Value) (Action, error) {
 		return v.resolveGenerator(picked)
 	case internalKindBuiltinTaps:
 		return v.generateRandomTap()
+	case internalKindBuiltinDoubleTaps:
+		return v.generateRandomDoubleTap()
 	case internalKindBuiltinTyping:
 		return v.generateRandomInput()
 	case internalKindBuiltinSwipes:
@@ -468,6 +470,18 @@ func (v *Verifier) resolveGenerator(generator goja.Value) (Action, error) {
 // generateRandomTap picks a visible, tappable element from the last
 // hierarchy snapshot and returns a Tap action targeting its center.
 func (v *Verifier) generateRandomTap() (Action, error) {
+	return v.generateRandomTapKind(ActionKindTap)
+}
+
+// generateRandomDoubleTap is the DoubleTap counterpart of generateRandomTap.
+// Real user gestures include double-tap (image zoom, like-to-favorite,
+// play/pause); a fuzzer that never emits one cannot exercise either those
+// features or the sub-100ms race windows that single-step Tap cadence misses.
+func (v *Verifier) generateRandomDoubleTap() (Action, error) {
+	return v.generateRandomTapKind(ActionKindDoubleTap)
+}
+
+func (v *Verifier) generateRandomTapKind(kind ActionKind) (Action, error) {
 	if v.lastTree == nil {
 		return Action{}, ErrNoAction
 	}
@@ -486,7 +500,7 @@ func (v *Verifier) generateRandomTap() (Action, error) {
 	}
 	picked := candidates[v.rng.IntN(len(candidates))]
 	x, y := picked.Bounds.Center()
-	return Action{Kind: ActionKindTap, X: x, Y: y}, nil
+	return Action{Kind: kind, X: x, Y: y}, nil
 }
 
 // inputCorpus is the edge-case string pool the typing builtin draws from to
