@@ -115,6 +115,11 @@ export interface Metrics {
   total_memory_bytes?: number;
 }
 
+export interface ExtractorChange {
+  prev: unknown;
+  curr: unknown;
+}
+
 export interface Step {
   step: number;
   timestamp: string;
@@ -126,4 +131,5 @@ export interface Step {
   hierarchy?: Hierarchy;
   residuals?: Record<string, ResidualNode>;
   metrics?: Metrics;
+  extractor_changes?: Record<string, ExtractorChange>;
 }
