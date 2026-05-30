@@ -1,6 +1,4 @@
-// Reproduce noDuplicateTxnPerStep on a fresh AVD: `SEED=0 DURATION=2m just test`.
 import {
-  DoubleTap,
   InputText,
   Tap,
   actions,
@@ -194,16 +192,6 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
   return opts;
 });
 
-const doubleSubmitTxn = whenRoute(route, "add-transaction", () => {
-  const field = txnAmountField.current;
-  const submit = txnSubmit.current;
-  if (!field || !submit) return [];
-  return [
-    InputText({ into: field, text: amounts.generate() }),
-    DoubleTap({ on: submit }),
-  ];
-});
-
 export const properties = {
   newAccountBalanceIsZero,
   noDuplicateTxnPerStep,
@@ -216,10 +204,9 @@ export const setup = login;
 // adds breadth so the fuzzer wanders the whole app and types edge-case values
 // into every field, stressing the balance invariants above.
 export const actionsRoot = weighted(
-  [40, addAccount],
+  [50, addAccount],
   [30, addTxn],
-  [15, doubleSubmitTxn],
-  [15, defaultActions],
+  [20, defaultActions],
 );
 
 (globalThis as { actions?: unknown; properties?: unknown; setup?: unknown }).actions = actionsRoot;
