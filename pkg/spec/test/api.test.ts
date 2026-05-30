@@ -38,6 +38,7 @@ import type {
 
 interface RecordedRuntime extends SanderlingRuntime {
   extracts: Array<(state: State) => unknown>;
+  extractNames: Array<string | undefined>;
   alwaysArgs: Array<(() => boolean) | Formula>;
   nowPredicates: Array<() => boolean>;
   nextPredicates: Array<() => boolean>;
@@ -92,6 +93,7 @@ function makeChainableEventually(record: RecordedRuntime): EventuallyFormula {
 function installFakeRuntime(): RecordedRuntime {
   const calls = {
     extracts: [] as Array<(state: State) => unknown>,
+    extractNames: [] as Array<string | undefined>,
     alwaysArgs: [] as Array<(() => boolean) | Formula>,
     nowPredicates: [] as Array<() => boolean>,
     nextPredicates: [] as Array<() => boolean>,
@@ -106,8 +108,9 @@ function installFakeRuntime(): RecordedRuntime {
     fromCalls: [] as unknown[][],
   };
   const runtime = {
-    extract: <T>(getter: (state: State) => T): Extracted<T> => {
+    extract: <T>(getter: (state: State) => T, name?: string): Extracted<T> => {
       calls.extracts.push(getter as (state: State) => unknown);
+      calls.extractNames.push(name);
       return { current: undefined as unknown as T, previous: undefined };
     },
     always: (predicateOrFormula: (() => boolean) | Formula): Formula => {
@@ -167,6 +170,24 @@ test("extract forwards the getter to the runtime", () => {
   extract<unknown>(getter);
   assert.equal(runtime.extracts.length, 1);
   assert.equal(runtime.extracts[0], getter);
+  assert.equal(runtime.extractNames[0], undefined);
+});
+
+test("extract accepts an explicit name", () => {
+  const runtime = installFakeRuntime();
+  const getter = (state: State) => state.snapshots["balance"];
+  extract<unknown>("ledgerBalance", getter);
+  assert.equal(runtime.extracts.length, 1);
+  assert.equal(runtime.extracts[0], getter);
+  assert.equal(runtime.extractNames[0], "ledgerBalance");
+});
+
+test("extract throws when given a name with no getter", () => {
+  installFakeRuntime();
+  assert.throws(
+    () => (extract as unknown as (n: string) => unknown)("orphan"),
+    /getter is required/,
+  );
 });
 
 test("always wraps a predicate into a formula via the runtime", () => {
