@@ -894,6 +894,26 @@ func TestSelectorStringFromJS_CanonicalGrammar(t *testing.T) {
 	}
 }
 
+// TestExtract_DefaultsAndNamedNames verifies bindExtract assigns a fallback
+// `extractor_N` name when no name is supplied and respects an explicit one.
+func TestExtract_DefaultsAndNamedNames(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		__sanderling__.extract(state => 1);
+		__sanderling__.extract(state => 2, "ledgerRows");
+		__sanderling__.extract(state => 3);
+	`)
+	if len(verifier.extractors) != 3 {
+		t.Fatalf("extractors registered: got %d, want 3", len(verifier.extractors))
+	}
+	want := []string{"extractor_0", "ledgerRows", "extractor_2"}
+	for i, name := range want {
+		if got := verifier.extractors[i].name; got != name {
+			t.Errorf("extractor %d name: got %q, want %q", i, got, name)
+		}
+	}
+}
+
 // TestSelectorStringFromJS_NullEmpty verifies that nil/undefined args produce
 // an empty string instead of "null"/"undefined" garbage.
 func TestSelectorStringFromJS_NullEmpty(t *testing.T) {

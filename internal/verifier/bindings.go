@@ -10,6 +10,12 @@ import (
 type extractorState struct {
 	getter goja.Callable
 	handle *goja.Object
+	name   string
+	// prev/curr cache the JSON-encoded extractor values from the prior and
+	// current PushSnapshot, used by ChangedExtractors to surface per-step
+	// diffs in the trace.
+	prev []byte
+	curr []byte
 }
 
 type formulaState struct {
@@ -139,19 +145,29 @@ func (v *Verifier) installRuntimeBindings() error {
 }
 
 func (v *Verifier) bindExtract(call goja.FunctionCall) goja.Value {
-	if len(call.Arguments) != 1 {
-		panic(v.runtime.NewTypeError("extract requires exactly one argument"))
+	if len(call.Arguments) < 1 || len(call.Arguments) > 2 {
+		panic(v.runtime.NewTypeError("extract requires (getter) or (getter, name)"))
 	}
 	getter, ok := goja.AssertFunction(call.Arguments[0])
 	if !ok {
 		panic(v.runtime.NewTypeError("extract argument must be a function"))
+	}
+	name := ""
+	if len(call.Arguments) == 2 {
+		arg := call.Arguments[1]
+		if !goja.IsUndefined(arg) && !goja.IsNull(arg) {
+			name = arg.String()
+		}
+	}
+	if name == "" {
+		name = fmt.Sprintf("extractor_%d", len(v.extractors))
 	}
 
 	handle := v.runtime.NewObject()
 	_ = handle.Set("current", goja.Undefined())
 	_ = handle.Set("previous", goja.Undefined())
 
-	v.extractors = append(v.extractors, &extractorState{getter: getter, handle: handle})
+	v.extractors = append(v.extractors, &extractorState{getter: getter, handle: handle, name: name})
 	return handle
 }
 
