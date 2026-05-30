@@ -328,6 +328,9 @@ const runtime = {
   tap(p: { on: unknown }): unknown {
     return { kind: "Tap", on: p.on };
   },
+  doubleTap(p: { on: unknown }): unknown {
+    return { kind: "DoubleTap", on: p.on };
+  },
   inputText(p: { into: unknown; text: string }): unknown {
     return { kind: "InputText", into: p.into, text: p.text };
   },
@@ -569,6 +572,14 @@ function serializeAction(action: unknown): unknown {
         return null;
       }
       return { kind: "Tap", x: point.x, y: point.y };
+    }
+    case "DoubleTap": {
+      const point = pointOf(obj.on);
+      if (!point) {
+        console.warn("[sanderling] DoubleTap target did not resolve to coordinates");
+        return null;
+      }
+      return { kind: "DoubleTap", x: point.x, y: point.y };
     }
     case "InputText": {
       const point = pointOf(obj.into);
