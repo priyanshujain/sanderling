@@ -119,6 +119,117 @@ func TestEvaluateProperties_HoldsThenViolates(t *testing.T) {
 	}
 }
 
+func TestNewlyViolatedProperties_OnsetOnly(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, helloSpec)
+
+	// Balance trajectory: holds, holds, violates, stays violated, stays violated.
+	// Onset must appear only on step 3 even though the residual stays false
+	// through steps 4 and 5 (LTL `always` sticky semantics).
+	balances := []int{1500, 1500, -1, 500, 500}
+	for index, balance := range balances {
+		raw, _ := json.Marshal(balance)
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": raw}}); err != nil {
+			t.Fatal(err)
+		}
+		_ = verifier.EvaluateProperties()
+		got := verifier.NewlyViolatedProperties()
+		step := index + 1
+		if step == 3 {
+			want := []string{"balanceNonNegative"}
+			if !slices.Equal(got, want) {
+				t.Errorf("step %d (onset): got %v, want %v", step, got, want)
+			}
+		} else if len(got) != 0 {
+			t.Errorf("step %d: expected empty onset set, got %v", step, got)
+		}
+	}
+}
+
+func TestNewlyViolatedProperties_FirstStepViolation(t *testing.T) {
+	const spec = `
+globalThis.properties = {
+  alwaysFalse: __sanderling__.always(() => false),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	for step := 1; step <= 3; step++ {
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}}); err != nil {
+			t.Fatal(err)
+		}
+		_ = verifier.EvaluateProperties()
+		got := verifier.NewlyViolatedProperties()
+		if step == 1 {
+			want := []string{"alwaysFalse"}
+			if !slices.Equal(got, want) {
+				t.Errorf("step 1 (onset): got %v, want %v", got, want)
+			}
+		} else if len(got) != 0 {
+			t.Errorf("step %d: expected empty onset set after first-step violation, got %v", step, got)
+		}
+	}
+}
+
+func TestNewlyViolatedProperties_MultipleProperties(t *testing.T) {
+	const spec = `
+const a = __sanderling__.extract(state => state.snapshots["a"] ?? 0);
+const b = __sanderling__.extract(state => state.snapshots["b"] ?? 0);
+globalThis.properties = {
+  propA: __sanderling__.always(() => a.current >= 0),
+  propB: __sanderling__.always(() => b.current >= 0),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	// propA violates at step 2, propB violates at step 4. Each must surface
+	// only on its own onset step.
+	aValues := []int{1, -1, -1, -1}
+	bValues := []int{1, 1, 1, -1}
+	expectOnset := map[int][]string{
+		2: {"propA"},
+		4: {"propB"},
+	}
+	for index := range aValues {
+		aRaw, _ := json.Marshal(aValues[index])
+		bRaw, _ := json.Marshal(bValues[index])
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"a": aRaw, "b": bRaw}}); err != nil {
+			t.Fatal(err)
+		}
+		_ = verifier.EvaluateProperties()
+		got := verifier.NewlyViolatedProperties()
+		step := index + 1
+		want := expectOnset[step]
+		if !slices.Equal(got, want) {
+			t.Errorf("step %d: got %v, want %v", step, got, want)
+		}
+	}
+}
+
+func TestNewlyViolatedProperties_DeterministicOrder(t *testing.T) {
+	const spec = `
+globalThis.properties = {
+  zebra:  __sanderling__.always(() => false),
+  apple:  __sanderling__.always(() => false),
+  mango:  __sanderling__.always(() => false),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = verifier.EvaluateProperties()
+	got := verifier.NewlyViolatedProperties()
+	want := []string{"apple", "mango", "zebra"}
+	if !slices.Equal(got, want) {
+		t.Errorf("onset order: got %v, want %v (sorted lexicographically)", got, want)
+	}
+}
+
 func TestNextAction_FromActionsGenerator(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, helloSpec)

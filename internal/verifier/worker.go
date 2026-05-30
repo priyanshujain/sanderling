@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +27,9 @@ type Verifier struct {
 
 	evaluators map[string]*ltl.Evaluator
 
+	priorVerdicts map[string]ltl.Verdict
+	newlyViolated []string
+
 	lastTree       *hierarchy.Tree
 	lastAction     *Action
 	lastLogs       []LogEntry
@@ -44,10 +48,11 @@ func WithRand(rng *rand.Rand) Option {
 
 func New(options ...Option) (*Verifier, error) {
 	verifier := &Verifier{
-		runtime:    goja.New(),
-		properties: map[string]int{},
-		evaluators: map[string]*ltl.Evaluator{},
-		rng:        rand.New(rand.NewPCG(0, 0)),
+		runtime:       goja.New(),
+		properties:    map[string]int{},
+		evaluators:    map[string]*ltl.Evaluator{},
+		priorVerdicts: map[string]ltl.Verdict{},
+		rng:           rand.New(rand.NewPCG(0, 0)),
 	}
 	for _, option := range options {
 		option(verifier)
@@ -288,6 +293,9 @@ type SnapshotInput struct {
 // after the most recent PushSnapshot. The step time passed in PushSnapshot is
 // forwarded to each evaluator so deadline-bound operators see the snapshot's
 // wall clock rather than time.Now().
+//
+// As a side effect, the set of properties that newly transitioned to violated
+// on this call is recorded; see NewlyViolatedProperties.
 func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 	verdicts := map[string]ltl.Verdict{}
 	stepTime := v.stepTime
@@ -298,7 +306,38 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 		verdicts[name] = evaluator.ObserveAt(stepTime)
 	}
 	v.refreshPredicateErrors()
+
+	var onset []string
+	for name, verdict := range verdicts {
+		if verdict == ltl.VerdictViolated && v.priorVerdicts[name] != ltl.VerdictViolated {
+			onset = append(onset, name)
+		}
+	}
+	sort.Strings(onset)
+	v.newlyViolated = onset
+
+	next := make(map[string]ltl.Verdict, len(verdicts))
+	for name, verdict := range verdicts {
+		next[name] = verdict
+	}
+	v.priorVerdicts = next
+
 	return verdicts
+}
+
+// NewlyViolatedProperties returns the names of properties whose verdict
+// transitioned from non-Violated to Violated on the most recent
+// EvaluateProperties call, sorted lexicographically. Returns nil if no
+// transition occurred or EvaluateProperties has not been called.
+//
+// This is the onset set: each property name appears at most once across a
+// run's traces, at the step where the violation first fired. Subsequent
+// steps where the property remains violated (LTL `always` sticky semantics)
+// will not list it. Use this for trace emission and summary reporting so the
+// onset is the only step that surfaces the violation event; use
+// EvaluateProperties for residual / current-verdict needs.
+func (v *Verifier) NewlyViolatedProperties() []string {
+	return append([]string(nil), v.newlyViolated...)
 }
 
 // Residuals returns the residual formula for each registered property after
