@@ -16,7 +16,8 @@ interface DriverBackend {
     fun metrics(bundleId: String): MetricsSample
 }
 
-internal const val STABILITY_POLL_INTERVAL_MILLIS = 80L
+internal const val STABILITY_POLL_INTERVAL_MILLIS = 120L
+internal const val STABILITY_POLL_CAP_MILLIS = 600L
 
 // pollUntilStable returns as soon as two consecutive snapshot() results are
 // structurally identical, capped at timeoutMillis. snapshot must omit
@@ -424,17 +425,17 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
 
     override fun waitForIdle(durationMillis: Long) {
         // Two-stage settle: an mAnimating poll catches View-system animations,
-        // then a structural-hash poll catches Compose cross-fades where two
-        // composables are simultaneously alive but mAnimating is already false.
+        // then a short structural-hash poll catches Compose cross-fades where
+        // two composables are simultaneously alive but mAnimating is already
+        // false. The structural poll is hard-capped so we don't hammer the
+        // device with repeat hierarchy fetches when the UI never stabilizes.
         if (durationMillis <= 0) return
-        val animationBudget = durationMillis / 2
-        val animationDeadline = System.currentTimeMillis() + animationBudget
+        val animationDeadline = System.currentTimeMillis() + durationMillis
         while (System.currentTimeMillis() < animationDeadline) {
             if (isDeviceIdle()) break
             Thread.sleep(IDLE_POLL_INTERVAL_MILLIS)
         }
-        val structuralBudget = durationMillis - animationBudget
-        pollUntilStable(structuralBudget) { structuralHash(hierarchy()) }
+        pollUntilStable(STABILITY_POLL_CAP_MILLIS) { structuralHash(hierarchy()) }
     }
 
     private fun isDeviceIdle(): Boolean {
@@ -504,12 +505,13 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     override fun waitForIdle(durationMillis: Long) {
         // waitForAppToSettle returns early on Compose cross-fade transitions
         // where both source and destination composables are semantically
-        // alive; a follow-up structural-hash poll lands on a single stable
-        // frame before the runner reads hierarchy + screenshot concurrently.
-        val maestroBudget = durationMillis / 2
-        val stabilityBudget = durationMillis - maestroBudget
-        driver.waitForAppToSettle(null, null, maestroBudget.toInt())
-        pollUntilStable(stabilityBudget) {
+        // alive; a follow-up short structural-hash poll lands on a single
+        // stable frame before the runner reads hierarchy + screenshot
+        // concurrently. The structural poll is hard-capped independently of
+        // durationMillis so we don't pile on hierarchy fetches when settle
+        // never converges.
+        driver.waitForAppToSettle(null, null, durationMillis.toInt())
+        pollUntilStable(STABILITY_POLL_CAP_MILLIS) {
             structuralHash(
                 com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
                     .writeValueAsString(driver.contentDescriptor(false)),
@@ -701,10 +703,8 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> = emptyList()
 
     override fun waitForIdle(durationMillis: Long) = withReconnect {
-        val maestroBudget = durationMillis / 2
-        val stabilityBudget = durationMillis - maestroBudget
-        driver.waitForAppToSettle(null, null, maestroBudget.toInt())
-        pollUntilStable(stabilityBudget) {
+        driver.waitForAppToSettle(null, null, durationMillis.toInt())
+        pollUntilStable(STABILITY_POLL_CAP_MILLIS) {
             structuralHash(
                 com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
                     .writeValueAsString(driver.contentDescriptor(false)),
