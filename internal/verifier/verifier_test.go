@@ -894,6 +894,55 @@ func TestSelectorStringFromJS_CanonicalGrammar(t *testing.T) {
 	}
 }
 
+// TestChangedExtractors_DiffsBetweenSnapshots verifies the per-step diff
+// surfaces only extractors whose value actually changed, keyed by name (or
+// extractor_N fallback when unnamed).
+func TestChangedExtractors_DiffsBetweenSnapshots(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		__sanderling__.extract(state => state.snapshots["a"] ?? 0, "alpha");
+		__sanderling__.extract(state => state.snapshots["b"] ?? 0);
+	`)
+
+	push := func(a, b int) {
+		raw := func(n int) json.RawMessage {
+			body, _ := json.Marshal(n)
+			return body
+		}
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"a": raw(a), "b": raw(b)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	push(1, 1)
+	first := verifier.ChangedExtractors()
+	if _, ok := first["alpha"]; !ok {
+		t.Errorf("step 1: expected alpha in diff (initial value), got %+v", first)
+	}
+	if _, ok := first["extractor_1"]; !ok {
+		t.Errorf("step 1: expected extractor_1 fallback name in diff, got %+v", first)
+	}
+
+	push(1, 2)
+	second := verifier.ChangedExtractors()
+	if _, ok := second["alpha"]; ok {
+		t.Errorf("step 2: alpha did not change, should not appear: %+v", second)
+	}
+	change, ok := second["extractor_1"]
+	if !ok {
+		t.Fatalf("step 2: expected extractor_1 in diff, got %+v", second)
+	}
+	if string(change.Prev) != "1" || string(change.Curr) != "2" {
+		t.Errorf("step 2: extractor_1 diff prev=%s curr=%s, want 1 -> 2", change.Prev, change.Curr)
+	}
+
+	push(1, 2)
+	third := verifier.ChangedExtractors()
+	if len(third) != 0 {
+		t.Errorf("step 3: nothing changed, diff should be empty, got %+v", third)
+	}
+}
+
 // TestExtract_DefaultsAndNamedNames verifies bindExtract assigns a fallback
 // `extractor_N` name when no name is supplied and respects an explicit one.
 func TestExtract_DefaultsAndNamedNames(t *testing.T) {
