@@ -18,6 +18,11 @@ import (
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
+// doubleTapGap is the inter-tap delay for ActionKindDoubleTap: short enough to
+// land both events inside a sub-100 ms race window, long enough for adb
+// `input tap` to serialize two MotionEvent streams.
+const doubleTapGap = 50 * time.Millisecond
+
 type Options struct {
 	Duration    time.Duration
 	IdleTimeout time.Duration
@@ -312,6 +317,28 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 			return drv.TapSelector(ctx, action.On)
 		}
 		return drv.Tap(ctx, x, y)
+	case verifier.ActionKindDoubleTap:
+		x, y, ok := resolveCoordinates(action, tree)
+		tap := func() error {
+			if !ok {
+				if action.On == "" {
+					return nil
+				}
+				return drv.TapSelector(ctx, action.On)
+			}
+			return drv.Tap(ctx, x, y)
+		}
+		if err := tap(); err != nil {
+			return err
+		}
+		timer := time.NewTimer(doubleTapGap)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+		return tap()
 	case verifier.ActionKindInputText:
 		if x, y, ok := resolveCoordinates(action, tree); ok {
 			if err := drv.Tap(ctx, x, y); err != nil {
@@ -409,7 +436,7 @@ func fetchHierarchy(ctx context.Context, drv driver.DeviceDriver) (*hierarchy.Tr
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {
 	traceAction := &trace.Action{Kind: string(action.Kind), X: action.X, Y: action.Y}
 	switch action.Kind {
-	case verifier.ActionKindTap:
+	case verifier.ActionKindTap, verifier.ActionKindDoubleTap:
 		traceAction.Selector = action.On
 		stampSelectorTarget(traceAction, action, tree)
 	case verifier.ActionKindInputText:
@@ -507,6 +534,8 @@ func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Actio
 	switch decoded.Kind {
 	case "Tap":
 		return verifier.Action{Kind: verifier.ActionKindTap, X: decoded.X, Y: decoded.Y}, nil
+	case "DoubleTap":
+		return verifier.Action{Kind: verifier.ActionKindDoubleTap, X: decoded.X, Y: decoded.Y}, nil
 	case "InputText":
 		return verifier.Action{
 			Kind: verifier.ActionKindInputText,

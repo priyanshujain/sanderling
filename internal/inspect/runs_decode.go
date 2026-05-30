@@ -90,7 +90,7 @@ func decodeStepSummary(line []byte) (StepSummary, int, error) {
 	if partial.Action != nil {
 		summary.ActionKind = partial.Action.Kind
 		switch partial.Action.Kind {
-		case "Tap":
+		case "Tap", "DoubleTap":
 			if partial.Action.Selector != "" {
 				summary.ActionLabel = partial.Action.Selector
 			} else if partial.Action.Text != "" {
