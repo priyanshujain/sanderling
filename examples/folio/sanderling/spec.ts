@@ -1,3 +1,4 @@
+// Reproduce noDuplicateTxnPerStep on a fresh AVD: `SEED=0 DURATION=2m just test`.
 import {
   DoubleTap,
   InputText,
@@ -60,7 +61,11 @@ const ledgerRows = extract<LedgerRow[]>(s =>
 const ledgerBalance = extract(s =>
   parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text));
 
-const focusedFieldTag = extract(s => s.ax.find({ focused: true })?.id ?? null);
+// Android's IME (soft keyboard) ships a focused FrameLayout in its own window
+// that traverses ahead of the app's EditText; constrain to editable so the
+// login flow sees LoginEmail / LoginPassword, not the keyboard chrome.
+const focusedFieldTag = extract(s =>
+  s.ax.findAll({ focused: true }).find(n => n.editable)?.id ?? null);
 
 const loginEmailField = extract(s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginEmail" }]));
@@ -97,11 +102,24 @@ const newAccountBalanceIsZero = always(
 );
 
 // Property 2: no single user action grows the ledger by more than one row.
-// Reuses the existing ledgerRows extractor.
+// The ledger is only observable on LedgerScreen, so carry the last seen count
+// across non-ledger steps. Otherwise a plain home -> ledger navigation would
+// look like a delta of N from 0 and false-trigger the property.
+const ledgerRowsSeen = extract<number>((s): number => {
+  // Only refresh when the ledger screen owns the foreground; transitional
+  // states (AddTransaction overlay during navigation) hide LedgerRow nodes
+  // and would falsely zero the count.
+  const onLedgerOnly =
+    s.ax.find({ testTag: "LedgerScreen" }) != null &&
+    s.ax.find({ testTag: "AddTransactionScreen" }) == null;
+  if (!onLedgerOnly) return ledgerRowsSeen.previous ?? 0;
+  return s.ax.findAll([{ testTag: "LedgerScreen" }, { testTag: "LedgerRow" }]).length;
+});
+
 const noDuplicateTxnPerStep = always(
   next(() => {
-    const prev = ledgerRows.previous?.length ?? 0;
-    const curr = ledgerRows.current.length;
+    const prev = ledgerRowsSeen.previous ?? 0;
+    const curr = ledgerRowsSeen.current;
     return curr - prev <= 1;
   })
 );
