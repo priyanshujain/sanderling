@@ -45,3 +45,11 @@ type Exception struct {
 	StackTrace string
 	UnixMillis int64
 }
+
+// ExtractorChange records a single extractor's value transition across one
+// step. Used to surface "what changed at this step" breadcrumbs at violation
+// markers in the inspect UI.
+type ExtractorChange struct {
+	Prev []byte
+	Curr []byte
+}

@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -242,8 +243,53 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 			return fmt.Errorf("extractor %d: %w", index, err)
 		}
 		_ = extractor.handle.Set("current", newValue)
+		extractor.prev = extractor.curr
+		extractor.curr = encodeExtractorValue(newValue)
 	}
 	return nil
+}
+
+// encodeExtractorValue produces a stable JSON encoding of an extractor's
+// current value for diff comparison. goja values that don't survive Export
+// (e.g. wrapped host functions) yield nil; callers treat nil as "unknown" and
+// emit no diff entry.
+func encodeExtractorValue(value goja.Value) []byte {
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return []byte("null")
+	}
+	exported := value.Export()
+	body, err := json.Marshal(exported)
+	if err != nil {
+		return nil
+	}
+	return body
+}
+
+// ChangedExtractors returns the named extractors whose value changed between
+// the prior PushSnapshot and the current one. The map is keyed by extractor
+// name; unnamed extractors (extractor_N fallback) are included so the inspect
+// UI can still display them under a numeric label. The very first snapshot
+// emits every non-null extractor as a change (Prev=null, Curr=current) since
+// the runner can otherwise misread "no diff yet" as "nothing initialized".
+func (v *Verifier) ChangedExtractors() map[string]ExtractorChange {
+	changes := map[string]ExtractorChange{}
+	for _, extractor := range v.extractors {
+		if extractor.curr == nil {
+			continue
+		}
+		prev := extractor.prev
+		if prev == nil {
+			prev = []byte("null")
+		}
+		if bytes.Equal(prev, extractor.curr) {
+			continue
+		}
+		changes[extractor.name] = ExtractorChange{
+			Prev: append([]byte(nil), prev...),
+			Curr: append([]byte(nil), extractor.curr...),
+		}
+	}
+	return changes
 }
 
 // OverrideExtractorValues replaces each extractor's `current` slot with a
