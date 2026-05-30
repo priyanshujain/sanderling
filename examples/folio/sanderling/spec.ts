@@ -100,18 +100,19 @@ const newAccountBalanceIsZero = always(
 );
 
 // Property 2: no single user action grows the ledger by more than one row.
-// The ledger is only observable on LedgerScreen, so carry the last seen count
-// across non-ledger steps. Otherwise a plain home -> ledger navigation would
-// look like a delta of N from 0 and false-trigger the property.
+// The ledger is only observable on LedgerScreen, so carry the largest count
+// ever seen forward. Folio has no delete-transaction; the row count never
+// legitimately shrinks, so transient renders that show 0 (newly-navigated,
+// pre-layout) or N-1 (partial repaint) get suppressed and only true growth
+// drives the comparison.
 const ledgerRowsSeen = extract<number>((s): number => {
-  // Only refresh when the ledger screen owns the foreground; transitional
-  // states (AddTransaction overlay during navigation) hide LedgerRow nodes
-  // and would falsely zero the count.
+  const prev = ledgerRowsSeen.previous ?? 0;
   const onLedgerOnly =
     s.ax.find({ testTag: "LedgerScreen" }) != null &&
     s.ax.find({ testTag: "AddTransactionScreen" }) == null;
-  if (!onLedgerOnly) return ledgerRowsSeen.previous ?? 0;
-  return s.ax.findAll([{ testTag: "LedgerScreen" }, { testTag: "LedgerRow" }]).length;
+  if (!onLedgerOnly) return prev;
+  const cur = s.ax.findAll([{ testTag: "LedgerScreen" }, { testTag: "LedgerRow" }]).length;
+  return cur > prev ? cur : prev;
 });
 
 const noDuplicateTxnPerStep = always(
