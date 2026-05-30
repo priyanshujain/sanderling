@@ -58,6 +58,7 @@ function installRuntime(initialState: State): RecordedRuntime {
     }),
     from: <T>(_items: readonly T[]): Sampler<T> => ({ generate: () => _items[0] as T }),
     tap: ({ on }) => ({ kind: "Tap", on }),
+    doubleTap: ({ on }) => ({ kind: "DoubleTap", on }),
     inputText: ({ into, text }) => ({ kind: "InputText", into, text }),
     swipe: (p) => ({ kind: "Swipe", from: p.from, to: p.to, durationMillis: p.durationMillis }),
     pressKey: ({ key }) => ({ kind: "PressKey", key }),

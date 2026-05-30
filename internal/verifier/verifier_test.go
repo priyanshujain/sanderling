@@ -282,6 +282,27 @@ func TestNextAction_NoSetupRegistered(t *testing.T) {
 	}
 }
 
+func TestDoubleTap_RoundTrip(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.actions = __sanderling__.actions(() => [
+			__sanderling__.doubleTap({ on: "id:save" }),
+		]);
+	`)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.Kind != ActionKindDoubleTap {
+		t.Errorf("kind: got %v, want DoubleTap", action.Kind)
+	}
+	if action.On != "id:save" {
+		t.Errorf("selector: got %q, want id:save", action.On)
+	}
+}
+
 func TestInputText_RoundTrip(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, `

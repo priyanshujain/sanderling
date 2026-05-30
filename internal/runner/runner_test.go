@@ -294,6 +294,47 @@ func TestApplyAction_V8InputTextAtOriginStillTaps(t *testing.T) {
 	}
 }
 
+func TestApplyAction_DoubleTapDispatchesTwoTapsAtCoordinates(t *testing.T) {
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, X: 100, Y: 200}
+
+	start := time.Now()
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed < 40*time.Millisecond {
+		t.Errorf("expected >= 40ms gap between taps, elapsed %v", elapsed)
+	}
+	taps := 0
+	for _, a := range driverMock.Actions() {
+		if a.Kind == mockdriver.ActionTap && a.X == 100 && a.Y == 200 {
+			taps++
+		}
+	}
+	if taps != 2 {
+		t.Errorf("expected 2 Tap calls at (100,200), got %d in %v", taps, driverMock.Actions())
+	}
+}
+
+func TestApplyAction_DoubleTapDispatchesTwoSelectorTaps(t *testing.T) {
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, On: "id:save"}
+
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	taps := 0
+	for _, a := range driverMock.Actions() {
+		if a.Kind == mockdriver.ActionTapSelector && a.Selector == "id:save" {
+			taps++
+		}
+	}
+	if taps != 2 {
+		t.Errorf("expected 2 TapSelector calls with id:save, got %d in %v", taps, driverMock.Actions())
+	}
+}
+
 func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
 	state := newHarness(t)
 	state.mock.MetricsData = driver.Metrics{CPUPercent: 5.0, HeapBytes: 1024, TotalMemoryBytes: 4096}

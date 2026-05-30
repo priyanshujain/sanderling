@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  DoubleTap,
   InputText,
   PressKey,
   Swipe,
@@ -138,6 +139,7 @@ function installFakeRuntime(): RecordedRuntime {
       return { generate: () => items[0] as T };
     },
     tap: ({ on }) => ({ kind: "Tap", on }),
+    doubleTap: ({ on }) => ({ kind: "DoubleTap", on }),
     inputText: ({ into, text }) => ({ kind: "InputText", into, text }),
     swipe: ({ from: fromPoint, to, durationMillis }) => ({
       kind: "Swipe",
@@ -216,6 +218,12 @@ test("Tap returns a TapAction with the supplied selector", () => {
   installFakeRuntime();
   const action = Tap({ on: "id:login_continue" });
   assert.deepEqual(action, { kind: "Tap", on: "id:login_continue" });
+});
+
+test("DoubleTap returns a DoubleTapAction with the supplied selector", () => {
+  installFakeRuntime();
+  const action = DoubleTap({ on: "id:save" });
+  assert.deepEqual(action, { kind: "DoubleTap", on: "id:save" });
 });
 
 test("Tap accepts an AccessibilityElement", () => {
