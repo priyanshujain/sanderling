@@ -63,8 +63,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	stepIndex := 0
 	var lastAction *verifier.Action
 	var lastLogTime time.Time
-	var pendingPostScreenshotStep int
-	pendingPostScreenshot := false
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			break
@@ -118,14 +116,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				return nil
 			})
 		}
-		if pendingPostScreenshot {
-			postStep := pendingPostScreenshotStep
-			g.Go(func() error {
-				captureScreenshot(gctx, options, logger, postStep, true)
-				return nil
-			})
-			pendingPostScreenshot = false
-		}
+		g.Go(func() error {
+			captureScreenshot(gctx, options, logger, si)
+			return nil
+		})
 		// All goroutines write to local variables and return nil, so the Wait
 		// error is always nil; ignored intentionally.
 		_ = g.Wait()
@@ -205,7 +199,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
 		}
-		captureScreenshot(ctx, options, logger, stepIndex, false)
 		summary.Steps = stepIndex
 		if len(violations) > 0 {
 			summary.Violations = append(summary.Violations, ViolationRecord{
@@ -227,20 +220,17 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			lastAction = nil
 		}
 
-		idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
-		idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
-		if nextErr == nil {
-			pendingPostScreenshot = true
-			pendingPostScreenshotStep = stepIndex
+		// Wait actions are themselves a settling: skip the idle poll. Actions
+		// that mutate the UI fall through to WaitForIdle so the next step's
+		// concurrent fetches observe a stable post-action state.
+		if nextErr == nil && nextAction.Kind != verifier.ActionKindWait {
+			idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
+			idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
+			if idleErr != nil && idleCtx.Err() == nil {
+				logger.Warn("wait_for_idle failed", "step", stepIndex, "err", idleErr)
+			}
+			idleCancel()
 		}
-		if idleErr != nil && idleCtx.Err() == nil {
-			logger.Warn("wait_for_idle failed", "step", stepIndex, "err", idleErr)
-		}
-		idleCancel()
-	}
-
-	if pendingPostScreenshot {
-		captureScreenshot(ctx, options, logger, pendingPostScreenshotStep, true)
 	}
 
 	summary.EndTime = time.Now()
@@ -550,23 +540,17 @@ func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Actio
 	}
 }
 
-func captureScreenshot(ctx context.Context, options Options, logger *slog.Logger, stepIndex int, after bool) {
+func captureScreenshot(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
 	image, err := options.Driver.Screenshot(ctx)
 	if err != nil {
-		logger.Warn("screenshot capture failed", "step", stepIndex, "after", after, "err", err)
+		logger.Warn("screenshot capture failed", "step", stepIndex, "err", err)
 		return
 	}
 	if len(image.PNG) == 0 {
 		return
 	}
-	var writeErr error
-	if after {
-		writeErr = options.TraceWriter.WriteScreenshotAfter(stepIndex, image.PNG)
-	} else {
-		writeErr = options.TraceWriter.WriteScreenshot(stepIndex, image.PNG)
-	}
-	if writeErr != nil {
-		logger.Warn("screenshot write failed", "step", stepIndex, "after", after, "err", writeErr)
+	if writeErr := options.TraceWriter.WriteScreenshot(stepIndex, image.PNG); writeErr != nil {
+		logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
 	}
 }
 

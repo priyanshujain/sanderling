@@ -451,7 +451,10 @@ func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
 	}
 }
 
-func TestRunner_PipelinedPostScreenshotWritten(t *testing.T) {
+// TestRunner_OneScreenshotPerStep verifies the runner writes a single
+// screenshot per step, captured concurrently with hierarchy so the two
+// observations describe the same UI moment.
+func TestRunner_OneScreenshotPerStep(t *testing.T) {
 	state := newHarness(t)
 	state.mock.ImageData = driver.Image{PNG: []byte("fakepng"), Width: 100, Height: 200}
 
@@ -468,24 +471,51 @@ func TestRunner_PipelinedPostScreenshotWritten(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if summary.Steps < 2 {
-		t.Fatalf("need at least 2 steps for pipelining test, got %d", summary.Steps)
+		t.Fatalf("need at least 2 steps for screenshot test, got %d", summary.Steps)
 	}
 
 	screenshotDir := filepath.Join(state.writer.Directory(), "screenshots")
-
-	preFile := filepath.Join(screenshotDir, "step-00001.png")
-	if _, err := os.Stat(preFile); os.IsNotExist(err) {
-		t.Errorf("expected pre-screenshot for step 1: %s", preFile)
+	for step := 1; step <= summary.Steps; step++ {
+		path := filepath.Join(screenshotDir, fmt.Sprintf("step-%05d.png", step))
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("expected screenshot for step %d at %s", step, path)
+		}
 	}
 
-	postFile := filepath.Join(screenshotDir, "step-00001-after.png")
-	if _, err := os.Stat(postFile); os.IsNotExist(err) {
-		t.Errorf("expected pipelined post-screenshot for step 1: %s", postFile)
+	entries, err := os.ReadDir(screenshotDir)
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), "-after") {
+			t.Errorf("unexpected -after screenshot remains: %s", entry.Name())
+		}
+	}
+}
 
-	lastAfter := filepath.Join(screenshotDir, fmt.Sprintf("step-%05d-after.png", summary.Steps))
-	if _, err := os.Stat(lastAfter); os.IsNotExist(err) {
-		t.Errorf("expected flushed post-screenshot for last step %d: %s", summary.Steps, lastAfter)
+// TestRunner_WaitActionSkipsIdle ensures the runner does not call WaitForIdle
+// after a Wait action - the action already provides settling time.
+func TestRunner_WaitActionSkipsIdle(t *testing.T) {
+	const waitSpec = `
+globalThis.actions = __sanderling__.actions(() => [__sanderling__.wait({ durationMillis: 5 })]);
+`
+	state := newHarnessWithSpec(t, waitSpec)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Run(ctx, Options{
+		Duration:    150 * time.Millisecond,
+		IdleTimeout: 50 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, action := range state.mock.Actions() {
+		if action.Kind == mockdriver.ActionWaitForIdle {
+			t.Fatalf("Wait action must skip WaitForIdle, got: %v", action)
+		}
 	}
 }
 
