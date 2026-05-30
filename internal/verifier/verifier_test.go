@@ -831,6 +831,81 @@ globalThis.properties = {
 globalThis.actions = __sanderling__.actions(() => []);
 `
 
+// TestSelectorStringFromJS_CanonicalGrammar guarantees the selector tag stamped
+// on returned AX nodes round-trips back to a parseable selector string when the
+// node is later used as an action target. Without this, an action emitted from
+// `tap({ on: state.ax.find({ testTag: "LoginEmail" }) })` ends up with
+// `action.selector = "[object Object]"` in the trace.
+func TestSelectorStringFromJS_CanonicalGrammar(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"testTag": "LoginScreen", "bounds": "[0,0,100,40]"},
+	     "children": [
+	       {"attributes": {"testTag": "LoginEmail", "bounds": "[0,0,100,20]"}, "editable": true, "enabled": true, "children": []}
+	     ]}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.objectSelector = __sanderling__.extract(state =>
+			state.ax.find({ testTag: "LoginScreen" })
+		);
+		globalThis.chainSelector = __sanderling__.extract(state =>
+			state.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginEmail" }])
+		);
+		globalThis.stringSelector = __sanderling__.extract(state =>
+			state.ax.find("testTag:LoginScreen")
+		);
+	`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+
+	read := func(name string) string {
+		handle := verifier.runtime.GlobalObject().Get(name).ToObject(verifier.runtime)
+		current := handle.Get("current")
+		if goja.IsUndefined(current) || goja.IsNull(current) {
+			return ""
+		}
+		object := current.ToObject(verifier.runtime)
+		return object.Get(tagSelector).String()
+	}
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"objectSelector", "testTag:LoginScreen"},
+		{"chainSelector", "testTag:LoginScreen > testTag:LoginEmail"},
+		{"stringSelector", "testTag:LoginScreen"},
+	}
+	for _, testCase := range cases {
+		got := read(testCase.name)
+		if got != testCase.want {
+			t.Errorf("%s: got %q, want %q", testCase.name, got, testCase.want)
+		}
+		if strings.Contains(got, "[object") {
+			t.Errorf("%s: selector contains garbage %q", testCase.name, got)
+		}
+	}
+}
+
+// TestSelectorStringFromJS_NullEmpty verifies that nil/undefined args produce
+// an empty string instead of "null"/"undefined" garbage.
+func TestSelectorStringFromJS_NullEmpty(t *testing.T) {
+	verifier := newVerifier(t)
+	if got := selectorStringFromJS(verifier.runtime, goja.Undefined()); got != "" {
+		t.Errorf("undefined: got %q, want empty", got)
+	}
+	if got := selectorStringFromJS(verifier.runtime, goja.Null()); got != "" {
+		t.Errorf("null: got %q, want empty", got)
+	}
+}
+
 func TestOverrideExtractorValues_PropagatesNestedObjectFields(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, objectExtractorSpec)
