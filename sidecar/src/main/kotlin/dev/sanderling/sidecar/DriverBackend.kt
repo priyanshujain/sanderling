@@ -16,6 +16,75 @@ interface DriverBackend {
     fun metrics(bundleId: String): MetricsSample
 }
 
+internal const val STABILITY_POLL_INTERVAL_MILLIS = 80L
+
+// pollUntilStable returns as soon as two consecutive snapshot() results are
+// structurally identical, capped at timeoutMillis. snapshot must omit
+// transient attributes (e.g. measure-pass bounds) so layout-only flicker
+// during a cross-fade doesn't extend the wait.
+internal fun pollUntilStable(timeoutMillis: Long, snapshot: () -> String?) {
+    if (timeoutMillis <= 0) return
+    val deadline = System.currentTimeMillis() + timeoutMillis
+    var prior = try {
+        snapshot()
+    } catch (_: Exception) {
+        null
+    }
+    while (System.currentTimeMillis() < deadline) {
+        Thread.sleep(STABILITY_POLL_INTERVAL_MILLIS)
+        val current = try {
+            snapshot()
+        } catch (_: Exception) {
+            null
+        }
+        if (prior != null && current != null && prior == current) return
+        prior = current
+    }
+}
+
+// structuralHash hashes a Maestro TreeNode-shaped JSON string by walking it
+// and concatenating only the stable identity attributes (resource-id, class,
+// content-desc, text), in tree order. The transient `bounds` and per-frame
+// layout coordinates are excluded so a measure-pass that shifts pixels
+// without changing what's on screen does not extend the wait.
+internal fun structuralHash(treeJson: String): String {
+    if (treeJson.isBlank()) return ""
+    return try {
+        val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+        val root = mapper.readTree(treeJson)
+        val builder = StringBuilder()
+        walkForStructuralHash(root, builder)
+        builder.toString()
+    } catch (_: Exception) {
+        treeJson
+    }
+}
+
+private val STABLE_ATTRIBUTE_KEYS = listOf(
+    "resource-id", "resourceId",
+    "class", "className",
+    "content-desc", "contentDescription", "accessibilityText",
+    "text",
+    "testTag", "identifier", "accessibilityIdentifier",
+)
+
+private fun walkForStructuralHash(node: com.fasterxml.jackson.databind.JsonNode, out: StringBuilder) {
+    out.append('(')
+    val attributes = node.get("attributes")
+    if (attributes != null && attributes.isObject) {
+        for (key in STABLE_ATTRIBUTE_KEYS) {
+            val value = attributes.get(key) ?: continue
+            if (value.isNull) continue
+            out.append(key).append(':').append(value.asText()).append('|')
+        }
+    }
+    val children = node.get("children")
+    if (children != null && children.isArray) {
+        for (child in children) walkForStructuralHash(child, out)
+    }
+    out.append(')')
+}
+
 data class MetricsSample(
     val cpuPercent: Double,
     val heapBytes: Long,
@@ -354,12 +423,18 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
     }
 
     override fun waitForIdle(durationMillis: Long) {
+        // Two-stage settle: an mAnimating poll catches View-system animations,
+        // then a structural-hash poll catches Compose cross-fades where two
+        // composables are simultaneously alive but mAnimating is already false.
         if (durationMillis <= 0) return
-        val deadline = System.currentTimeMillis() + durationMillis
-        while (System.currentTimeMillis() < deadline) {
-            if (isDeviceIdle()) return
+        val animationBudget = durationMillis / 2
+        val animationDeadline = System.currentTimeMillis() + animationBudget
+        while (System.currentTimeMillis() < animationDeadline) {
+            if (isDeviceIdle()) break
             Thread.sleep(IDLE_POLL_INTERVAL_MILLIS)
         }
+        val structuralBudget = durationMillis - animationBudget
+        pollUntilStable(structuralBudget) { structuralHash(hierarchy()) }
     }
 
     private fun isDeviceIdle(): Boolean {
@@ -427,7 +502,19 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         readLogcat(serial, sinceUnixMillis, minLevel)
 
     override fun waitForIdle(durationMillis: Long) {
-        driver.waitForAppToSettle(null, null, durationMillis.toInt())
+        // waitForAppToSettle returns early on Compose cross-fade transitions
+        // where both source and destination composables are semantically
+        // alive; a follow-up structural-hash poll lands on a single stable
+        // frame before the runner reads hierarchy + screenshot concurrently.
+        val maestroBudget = durationMillis / 2
+        val stabilityBudget = durationMillis - maestroBudget
+        driver.waitForAppToSettle(null, null, maestroBudget.toInt())
+        pollUntilStable(stabilityBudget) {
+            structuralHash(
+                com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+                    .writeValueAsString(driver.contentDescriptor(false)),
+            )
+        }
     }
 
     override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
@@ -614,7 +701,15 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> = emptyList()
 
     override fun waitForIdle(durationMillis: Long) = withReconnect {
-        driver.waitForAppToSettle(null, null, durationMillis.toInt())
+        val maestroBudget = durationMillis / 2
+        val stabilityBudget = durationMillis - maestroBudget
+        driver.waitForAppToSettle(null, null, maestroBudget.toInt())
+        pollUntilStable(stabilityBudget) {
+            structuralHash(
+                com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+                    .writeValueAsString(driver.contentDescriptor(false)),
+            )
+        }
         Unit
     }
 
