@@ -59,12 +59,6 @@ const ledgerRows = extract<LedgerRow[]>(s =>
 const ledgerBalance = extract(s =>
   parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text));
 
-// Android's IME (soft keyboard) ships a focused FrameLayout in its own window
-// that traverses ahead of the app's EditText; constrain to editable so the
-// login flow sees LoginEmail / LoginPassword, not the keyboard chrome.
-const focusedFieldTag = extract(s =>
-  s.ax.findAll({ focused: true }).find(n => n.editable)?.id ?? null);
-
 const loginEmailField = extract(s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginEmail" }]));
 const loginPasswordField = extract(s =>
@@ -142,20 +136,20 @@ const newTxnChangesBalance = always(
 const DEMO_EMAIL = "demo@folio.app";
 const DEMO_PASSWORD = "ledger123";
 
-// Login: drive the form via focus state read from the native focused="true" attr.
+// Login: drive the form by reading what's currently in each field, not by
+// inferring intent from which one happens to be focused. A focus-driven
+// approach loops forever if we re-enter the login screen with the password
+// field already focused (e.g. after an exception bounces us back from
+// another screen): it would type the password then tap submit with an
+// empty email field, see no progress, and repeat indefinitely.
 const login = actions(() => {
   if (loggedIn.current) return [];
-  const focus = focusedFieldTag.current;
-  if (focus === "LoginPassword") {
-    const submit = loginSubmit.current;
-    return submit ? [Tap({ on: submit })] : [];
-  }
-  if (focus === "LoginEmail") {
-    const pwd = loginPasswordField.current;
-    return pwd ? [InputText({ into: pwd, text: DEMO_PASSWORD })] : [];
-  }
   const email = loginEmailField.current;
-  return email ? [InputText({ into: email, text: DEMO_EMAIL })] : [];
+  const pwd = loginPasswordField.current;
+  if (email && !email.text) return [InputText({ into: email, text: DEMO_EMAIL })];
+  if (pwd && !pwd.text) return [InputText({ into: pwd, text: DEMO_PASSWORD })];
+  const submit = loginSubmit.current;
+  return submit ? [Tap({ on: submit })] : [];
 });
 
 const accountNames = from(["Checking", "Savings", "Travel", "Emergency Fund", "Investments"]);
