@@ -125,13 +125,6 @@ func (w *Writer) WriteScreenshot(stepIndex int, png []byte) error {
 	return w.writePNG(fmt.Sprintf("step-%05d.png", stepIndex), png)
 }
 
-// WriteScreenshotAfter writes the post-action screenshot for a step.
-// Callers use this after applyAction + waitForIdle so the UI can show a
-// before/after pair.
-func (w *Writer) WriteScreenshotAfter(stepIndex int, png []byte) error {
-	return w.writePNG(fmt.Sprintf("step-%05d-after.png", stepIndex), png)
-}
-
 func (w *Writer) writePNG(name string, png []byte) error {
 	if len(png) == 0 {
 		return nil
