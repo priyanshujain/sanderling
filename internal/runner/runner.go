@@ -165,8 +165,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			screen = tree.Elements[0].Screen
 		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
-		verdicts := options.Verifier.EvaluateProperties()
-		violations := violationNames(verdicts)
+		options.Verifier.EvaluateProperties()
+		violations := options.Verifier.NewlyViolatedProperties()
 		for _, name := range violations {
 			if predicateErr := options.Verifier.PredicateError(name); predicateErr != nil {
 				logger.Warn("predicate error", "step", stepIndex, "property", name, "err", predicateErr)
@@ -264,16 +264,6 @@ func validate(options Options) error {
 		options.IdleTimeout = 2 * time.Second
 	}
 	return nil
-}
-
-func violationNames(verdicts map[string]ltl.Verdict) []string {
-	var names []string
-	for name, verdict := range verdicts {
-		if verdict == ltl.VerdictViolated {
-			names = append(names, name)
-		}
-	}
-	return names
 }
 
 // ensureForeground keeps the app under test in the foreground. When the driver

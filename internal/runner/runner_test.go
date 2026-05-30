@@ -1,8 +1,10 @@
 package runner
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -115,6 +117,76 @@ func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
 	}
 	if !containsProperty(summary.Violations, "balanceNonNegative") {
 		t.Errorf("expected balanceNonNegative in violations: %v", summary.Violations)
+	}
+}
+
+func TestRunner_ViolationSurfacesOnlyOnOnsetStep(t *testing.T) {
+	// violationSpec uses always(() => false): onset fires on step 1 and the
+	// residual stays violated forever. The runner must record the violation
+	// exactly once (at the onset step) in both summary.Violations and trace
+	// lines, not on every subsequent step.
+	state := newHarnessWithSpec(t, violationSpec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    200 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps < 2 {
+		t.Fatalf("need at least 2 steps to prove onset-only behavior, got %d", summary.Steps)
+	}
+	if len(summary.Violations) != 1 {
+		t.Fatalf("expected exactly one ViolationRecord (onset only), got %d: %v",
+			len(summary.Violations), summary.Violations)
+	}
+	if summary.Violations[0].StepIndex != 1 {
+		t.Errorf("onset step: got %d, want 1 (always(()=>false) violates immediately)",
+			summary.Violations[0].StepIndex)
+	}
+	if !slices.Equal(summary.Violations[0].Properties, []string{"balanceNonNegative"}) {
+		t.Errorf("onset properties: got %v, want [balanceNonNegative]",
+			summary.Violations[0].Properties)
+	}
+
+	file, err := os.Open(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	type traceLine struct {
+		Step       int      `json:"step"`
+		Violations []string `json:"violations"`
+	}
+	linesWithViolations := 0
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var line traceLine
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			t.Fatalf("trace line decode: %v", err)
+		}
+		if len(line.Violations) == 0 {
+			continue
+		}
+		linesWithViolations++
+		if line.Step != 1 {
+			t.Errorf("step %d unexpectedly emitted violations %v (should be onset-only at step 1)",
+				line.Step, line.Violations)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan trace: %v", err)
+	}
+	if linesWithViolations != 1 {
+		t.Errorf("expected exactly 1 trace line with violations, got %d", linesWithViolations)
 	}
 }
 
