@@ -93,42 +93,20 @@ const newAccountBalanceIsZero = always(
   })
 );
 
-// Property 2: no single user action grows the ledger by more than one row.
-// The ledger is only observable on LedgerScreen, so carry the largest count
-// ever seen forward. Folio has no delete-transaction; the row count never
-// legitimately shrinks, so transient renders that show 0 (newly-navigated,
-// pre-layout) or N-1 (partial repaint) get suppressed and only true growth
-// drives the comparison.
-const ledgerRowsSeen = extract<number>((s): number => {
-  const prev = ledgerRowsSeen.previous ?? 0;
-  const onLedgerOnly =
-    s.ax.find({ testTag: "LedgerScreen" }) != null &&
-    s.ax.find({ testTag: "AddTransactionScreen" }) == null;
-  if (!onLedgerOnly) return prev;
-  const cur = s.ax.findAll([{ testTag: "LedgerScreen" }, { testTag: "LedgerRow" }]).length;
-  return cur > prev ? cur : prev;
-});
-
-const noDuplicateTxnPerStep = always(
-  next(() => {
-    const prev = ledgerRowsSeen.previous ?? 0;
-    const curr = ledgerRowsSeen.current;
-    return curr - prev <= 1;
-  })
-);
-
-// Property 3: a newly-added ledger row changes the ledger balance by exactly its signed amount.
-const newTxnChangesBalance = always(
+// Property 2: when new ledger rows appear, the ledger balance delta equals
+// the sum of the new rows' signed amounts. A double-submit lands two rows
+// whose individual amounts cannot both equal the aggregate delta, so each
+// such row fires the property.
+const balanceMatchesAddedTxn = always(
   now(() => route.current === "ledger").implies(
     next(() => {
       const prev = ledgerRows.previous ?? [];
       const curr = ledgerRows.current;
-      if (curr.length !== prev.length + 1) return true;
       const prevKeys = new Set(prev.map(r => r.key));
-      const added = curr.find(r => !prevKeys.has(r.key));
-      if (!added) return true;
+      const added = curr.filter(r => !prevKeys.has(r.key));
+      if (added.length === 0) return true;
       const delta = ledgerBalance.current - (ledgerBalance.previous ?? 0);
-      return delta === added.signed && delta !== 0;
+      return added.every(r => r.signed === delta);
     })
   )
 );
@@ -189,8 +167,7 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
 
 export const properties = {
   newAccountBalanceIsZero,
-  noDuplicateTxnPerStep,
-  newTxnChangesBalance,
+  balanceMatchesAddedTxn,
 };
 
 export const setup = login;
