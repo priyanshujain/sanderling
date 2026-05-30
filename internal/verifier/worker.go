@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"sort"
 	"strings"
@@ -317,9 +318,7 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 	v.newlyViolated = onset
 
 	next := make(map[string]ltl.Verdict, len(verdicts))
-	for name, verdict := range verdicts {
-		next[name] = verdict
-	}
+	maps.Copy(next, verdicts)
 	v.priorVerdicts = next
 
 	return verdicts
