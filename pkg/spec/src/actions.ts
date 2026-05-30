@@ -2,6 +2,7 @@ import type {
   AccessibilityElement,
   Action,
   ActionGenerator,
+  DoubleTapAction,
   InputTextAction,
   Key,
   Point,
@@ -40,6 +41,10 @@ export function from<T>(items: readonly T[]): Sampler<T> {
 
 export function Tap(parameters: { on: string | AccessibilityElement }): TapAction {
   return globalThis.__sanderling__.tap(parameters);
+}
+
+export function DoubleTap(parameters: { on: string | AccessibilityElement }): DoubleTapAction {
+  return globalThis.__sanderling__.doubleTap(parameters);
 }
 
 export function InputText(parameters: {

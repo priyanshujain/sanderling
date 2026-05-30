@@ -133,6 +133,7 @@ export interface Point {
 }
 
 export type TapAction = { kind: "Tap"; on: string | AccessibilityElement };
+export type DoubleTapAction = { kind: "DoubleTap"; on: string | AccessibilityElement };
 export type InputTextAction = {
   kind: "InputText";
   into: string | AccessibilityElement;
@@ -148,6 +149,7 @@ export type PressKeyAction = { kind: "PressKey"; key: Key };
 export type WaitAction = { kind: "Wait"; durationMillis: number };
 export type Action =
   | TapAction
+  | DoubleTapAction
   | InputTextAction
   | SwipeAction
   | PressKeyAction
@@ -194,6 +196,7 @@ export interface SanderlingRuntime {
   weighted: (...entries: WeightedEntry[]) => ActionGenerator;
   from: <T>(items: readonly T[]) => Sampler<T>;
   tap: (parameters: { on: string | AccessibilityElement }) => TapAction;
+  doubleTap: (parameters: { on: string | AccessibilityElement }) => DoubleTapAction;
   inputText: (parameters: {
     into: string | AccessibilityElement;
     text: string;
