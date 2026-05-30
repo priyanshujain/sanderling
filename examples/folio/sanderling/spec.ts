@@ -1,4 +1,5 @@
 import {
+  DoubleTap,
   InputText,
   Tap,
   actions,
@@ -95,7 +96,17 @@ const newAccountBalanceIsZero = always(
   })
 );
 
-// Property 2: a newly-added ledger row changes the ledger balance by exactly its signed amount.
+// Property 2: no single user action grows the ledger by more than one row.
+// Reuses the existing ledgerRows extractor.
+const noDuplicateTxnPerStep = always(
+  next(() => {
+    const prev = ledgerRows.previous?.length ?? 0;
+    const curr = ledgerRows.current.length;
+    return curr - prev <= 1;
+  })
+);
+
+// Property 3: a newly-added ledger row changes the ledger balance by exactly its signed amount.
 const newTxnChangesBalance = always(
   now(() => route.current === "ledger").implies(
     next(() => {
@@ -165,8 +176,19 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
   return opts;
 });
 
+const doubleSubmitTxn = whenRoute(route, "add-transaction", () => {
+  const field = txnAmountField.current;
+  const submit = txnSubmit.current;
+  if (!field || !submit) return [];
+  return [
+    InputText({ into: field, text: amounts.generate() }),
+    DoubleTap({ on: submit }),
+  ];
+});
+
 export const properties = {
   newAccountBalanceIsZero,
+  noDuplicateTxnPerStep,
   newTxnChangesBalance,
 };
 
@@ -176,9 +198,10 @@ export const setup = login;
 // adds breadth so the fuzzer wanders the whole app and types edge-case values
 // into every field, stressing the balance invariants above.
 export const actionsRoot = weighted(
-  [50, addAccount],
-  [40, addTxn],
-  [20, defaultActions],
+  [40, addAccount],
+  [30, addTxn],
+  [15, doubleSubmitTxn],
+  [15, defaultActions],
 );
 
 (globalThis as { actions?: unknown; properties?: unknown; setup?: unknown }).actions = actionsRoot;
