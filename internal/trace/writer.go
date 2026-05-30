@@ -13,16 +13,26 @@ import (
 )
 
 type Step struct {
-	Index         int                        `json:"step"`
-	Timestamp     time.Time                  `json:"timestamp"`
-	Screen        string                     `json:"screen,omitempty"`
-	Snapshots     map[string]json.RawMessage `json:"snapshots,omitempty"`
-	Action        *Action                    `json:"action,omitempty"`
-	Exceptions    []Exception                `json:"exceptions,omitempty"`
-	Violations    []string                   `json:"violations,omitempty"`
-	Hierarchy  *hierarchy.Tree            `json:"hierarchy,omitempty"`
-	Residuals  map[string]json.RawMessage `json:"residuals,omitempty"`
-	Metrics    *Metrics                   `json:"metrics,omitempty"`
+	Index             int                        `json:"step"`
+	Timestamp         time.Time                  `json:"timestamp"`
+	Screen            string                     `json:"screen,omitempty"`
+	Snapshots         map[string]json.RawMessage `json:"snapshots,omitempty"`
+	Action            *Action                    `json:"action,omitempty"`
+	Exceptions        []Exception                `json:"exceptions,omitempty"`
+	Violations        []string                   `json:"violations,omitempty"`
+	Hierarchy         *hierarchy.Tree            `json:"hierarchy,omitempty"`
+	Residuals         map[string]json.RawMessage `json:"residuals,omitempty"`
+	Metrics           *Metrics                   `json:"metrics,omitempty"`
+	ExtractorChanges  map[string]ExtractorChange `json:"extractor_changes,omitempty"`
+}
+
+// ExtractorChange records the prev/curr JSON values of an extractor whose
+// observation differed between two consecutive steps. Surfaced under
+// violation rows in the inspect UI as a "what changed at this step"
+// breadcrumb.
+type ExtractorChange struct {
+	Prev json.RawMessage `json:"prev"`
+	Curr json.RawMessage `json:"curr"`
 }
 
 type Metrics struct {

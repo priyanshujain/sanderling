@@ -187,14 +187,15 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		step := trace.Step{
-			Index:      stepIndex,
-			Timestamp:  stepStart,
-			Screen:     screen,
-			Action:     traceAction,
-			Violations: violations,
-			Hierarchy:  tree,
-			Residuals:  residuals,
-			Metrics:    metrics,
+			Index:            stepIndex,
+			Timestamp:        stepStart,
+			Screen:           screen,
+			Action:           traceAction,
+			Violations:       violations,
+			Hierarchy:        tree,
+			Residuals:        residuals,
+			Metrics:          metrics,
+			ExtractorChanges: encodeExtractorChanges(options.Verifier.ChangedExtractors()),
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
@@ -552,6 +553,20 @@ func captureScreenshot(ctx context.Context, options Options, logger *slog.Logger
 	if writeErr := options.TraceWriter.WriteScreenshot(stepIndex, image.PNG); writeErr != nil {
 		logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
 	}
+}
+
+func encodeExtractorChanges(changes map[string]verifier.ExtractorChange) map[string]trace.ExtractorChange {
+	if len(changes) == 0 {
+		return nil
+	}
+	out := make(map[string]trace.ExtractorChange, len(changes))
+	for name, change := range changes {
+		out[name] = trace.ExtractorChange{
+			Prev: json.RawMessage(change.Prev),
+			Curr: json.RawMessage(change.Curr),
+		}
+	}
+	return out
 }
 
 func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessage, error) {
