@@ -32,8 +32,8 @@ function parseDollarCents(text: string | undefined): number {
 }
 
 // Route detection via testTag (resource-id on Android, accessibilityIdentifier on iOS)
-const loggedIn = extract(s => s.ax.find({ testTag: "LoginScreen" }) == null);
-const route = extract<string | null>(s => {
+const loggedIn = extract("loggedIn", s => s.ax.find({ testTag: "LoginScreen" }) == null);
+const route = extract<string | null>("route", s => {
   if (s.ax.find({ testTag: "LoginScreen" })) return "login";
   if (s.ax.find({ testTag: "AddAccountScreen" })) return "add-account";
   if (s.ax.find({ testTag: "AddTransactionScreen" })) return "add-transaction";
@@ -43,41 +43,41 @@ const route = extract<string | null>(s => {
 });
 
 // Account cards on Home: identity is the AccountName text; balance comes from AccountBalance.
-const accounts = extract<Account[]>(s =>
+const accounts = extract<Account[]>("accounts", s =>
   s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]).map(card => ({
     name: card.find({ testTag: "AccountName" })?.text ?? "",
     balance: parseDollarCents(card.find({ testTag: "AccountBalance" })?.text),
   })));
 
 // Ledger rows: identity composed from the row's stable testTag'd cells.
-const ledgerRows = extract<LedgerRow[]>(s =>
+const ledgerRows = extract<LedgerRow[]>("ledgerRows", s =>
   s.ax.findAll([{ testTag: "LedgerScreen" }, { testTag: "LedgerRow" }]).map(row => ({
     key: keyedBy(row, ["TxnDate", "TxnNote", "TxnAmount"]),
     signed: parseDollarCents(row.find({ testTag: "TxnAmount" })?.text),
   })));
 
-const ledgerBalance = extract(s =>
+const ledgerBalance = extract("ledgerBalance", s =>
   parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text));
 
-const loginEmailField = extract(s =>
+const loginEmailField = extract("loginEmailField", s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginEmail" }]));
-const loginPasswordField = extract(s =>
+const loginPasswordField = extract("loginPasswordField", s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginPassword" }]));
-const loginSubmit = extract(s =>
+const loginSubmit = extract("loginSubmit", s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginSubmit" }]));
-const addAccountButton = extract(s =>
+const addAccountButton = extract("addAccountButton", s =>
   s.ax.find([{ testTag: "HomeScreen" }, { testTag: "AddAccountButton" }]));
-const accountNameField = extract(s =>
+const accountNameField = extract("accountNameField", s =>
   s.ax.find([{ testTag: "AddAccountScreen" }, { testTag: "AccountNameField" }]));
-const addAccountSubmit = extract(s =>
+const addAccountSubmit = extract("addAccountSubmit", s =>
   s.ax.find([{ testTag: "AddAccountScreen" }, { testTag: "AddAccountSubmit" }]));
-const addTxnButton = extract(s =>
+const addTxnButton = extract("addTxnButton", s =>
   s.ax.find([{ testTag: "LedgerScreen" }, { testTag: "AddTransactionButton" }]));
-const txnAmountField = extract(s =>
+const txnAmountField = extract("txnAmountField", s =>
   s.ax.find([{ testTag: "AddTransactionScreen" }, { testTag: "TxnAmountField" }]));
-const txnSubmit = extract(s =>
+const txnSubmit = extract("txnSubmit", s =>
   s.ax.find([{ testTag: "AddTransactionScreen" }, { testTag: "TxnSubmit" }]));
-const accountCards = extract(s =>
+const accountCards = extract("accountCards", s =>
   s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]));
 
 // Property 1: every newly-appearing account starts with balance === 0.
