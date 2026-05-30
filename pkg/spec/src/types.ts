@@ -209,6 +209,7 @@ export interface SanderlingRuntime {
   pressKey: (parameters: { key: Key }) => PressKeyAction;
   wait: (parameters: { durationMillis: number }) => WaitAction;
   taps: ActionGenerator;
+  doubleTaps: ActionGenerator;
   typing: ActionGenerator;
   swipes: ActionGenerator;
   waitOnce: ActionGenerator;

@@ -350,6 +350,7 @@ const runtime = {
     return { kind: "Wait", durationMillis: p.durationMillis };
   },
   taps: { __sanderlingActionGenerator: true, __sanderlingKind: "taps" } as ActionGeneratorHandle,
+  doubleTaps: { __sanderlingActionGenerator: true, __sanderlingKind: "doubleTaps" } as ActionGeneratorHandle,
   typing: { __sanderlingActionGenerator: true, __sanderlingKind: "typing" } as ActionGeneratorHandle,
   swipes: { __sanderlingActionGenerator: true, __sanderlingKind: "swipes" } as ActionGeneratorHandle,
   waitOnce: { __sanderlingActionGenerator: true, __sanderlingKind: "waitOnce" } as ActionGeneratorHandle,
@@ -444,7 +445,9 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
       return resolveGenerator(inner);
     }
     case "taps":
-      return randomTap();
+      return randomTap("Tap");
+    case "doubleTaps":
+      return randomTap("DoubleTap");
     case "typing":
       return randomInput();
     case "swipes":
@@ -462,7 +465,7 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
 // doesn't re-walk the DOM and re-flush layout on every iteration.
 let randomTapCandidates: HTMLElement[] | null = null;
 
-function randomTap(): unknown {
+function randomTap(kind: "Tap" | "DoubleTap"): unknown {
   if (!randomTapCandidates) {
     randomTapCandidates = Array.from(
       document.querySelectorAll<HTMLElement>(
@@ -480,7 +483,7 @@ function randomTap(): unknown {
   if (!picked) return null;
   const rect = picked.getBoundingClientRect();
   return {
-    kind: "Tap",
+    kind,
     on: {
       x: Math.round(rect.left + rect.width / 2),
       y: Math.round(rect.top + rect.height / 2),

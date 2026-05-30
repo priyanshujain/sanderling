@@ -38,6 +38,7 @@ export {
   Tap,
   Wait,
   actions,
+  doubleTaps,
   from,
   pressKey,
   swipes,

@@ -71,7 +71,7 @@ export function Wait(parameters: { durationMillis: number }): WaitAction {
 }
 
 function builtinGenerator(
-  name: "taps" | "typing" | "swipes" | "waitOnce" | "pressKeys",
+  name: "taps" | "doubleTaps" | "typing" | "swipes" | "waitOnce" | "pressKeys",
 ): ActionGenerator {
   return new Proxy({} as ActionGenerator, {
     get(_target, property) {
@@ -85,6 +85,7 @@ function builtinGenerator(
 }
 
 export const taps: ActionGenerator = builtinGenerator("taps");
+export const doubleTaps: ActionGenerator = builtinGenerator("doubleTaps");
 export const typing: ActionGenerator = builtinGenerator("typing");
 export const swipes: ActionGenerator = builtinGenerator("swipes");
 export const waitOnce: ActionGenerator = builtinGenerator("waitOnce");
