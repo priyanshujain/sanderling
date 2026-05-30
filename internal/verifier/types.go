@@ -5,6 +5,7 @@ type ActionKind string
 
 const (
 	ActionKindTap       ActionKind = "Tap"
+	ActionKindDoubleTap ActionKind = "DoubleTap"
 	ActionKindInputText ActionKind = "InputText"
 	ActionKindSwipe     ActionKind = "Swipe"
 	ActionKindPressKey  ActionKind = "PressKey"

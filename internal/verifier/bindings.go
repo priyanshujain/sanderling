@@ -100,6 +100,9 @@ func (v *Verifier) installRuntimeBindings() error {
 	if err := sanderling.Set("tap", v.bindTap); err != nil {
 		return err
 	}
+	if err := sanderling.Set("doubleTap", v.bindDoubleTap); err != nil {
+		return err
+	}
 	if err := sanderling.Set("inputText", v.bindInputText); err != nil {
 		return err
 	}
@@ -387,6 +390,17 @@ func (v *Verifier) bindTap(call goja.FunctionCall) goja.Value {
 	}
 	handle := v.runtime.NewObject()
 	_ = handle.Set("kind", "Tap")
+	_ = handle.Set("on", parameters.Get("on"))
+	return handle
+}
+
+func (v *Verifier) bindDoubleTap(call goja.FunctionCall) goja.Value {
+	parameters := call.Argument(0).ToObject(v.runtime)
+	if parameters == nil {
+		panic(v.runtime.NewTypeError("DoubleTap requires {on}"))
+	}
+	handle := v.runtime.NewObject()
+	_ = handle.Set("kind", "DoubleTap")
 	_ = handle.Set("on", parameters.Get("on"))
 	return handle
 }

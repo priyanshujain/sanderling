@@ -372,6 +372,10 @@ func jsValueToAction(runtime *goja.Runtime, value goja.Value) (Action, error) {
 		on := object.Get("on")
 		x, y := coordinatesOf(runtime, on)
 		return Action{Kind: ActionKindTap, On: selectorOf(runtime, on), X: x, Y: y}, nil
+	case "DoubleTap":
+		on := object.Get("on")
+		x, y := coordinatesOf(runtime, on)
+		return Action{Kind: ActionKindDoubleTap, On: selectorOf(runtime, on), X: x, Y: y}, nil
 	case "InputText":
 		into := object.Get("into")
 		text := object.Get("text")
