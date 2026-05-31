@@ -98,10 +98,12 @@ const newAccountBalanceIsZero = always(
 
 // Property 2: a tap on TxnSubmit must move the total balance by exactly the
 // typed amount. A double-submit lands two transactions, so the balance shifts
-// by twice the typed amount and the check fires.
+// by twice the typed amount and the check fires. The route gate inside the
+// predicate skips off-Home landings where totalBalance.current is the carrier.
 const submitMovesBalanceByTypedAmount = always(
   next(() =>
     submitChangesBalanceByTypedAmount({
+      route: route.current,
       lastAction: lastAction.current,
       typedAmount: parseTypedAmount(txnAmountField.previous?.text),
       prevTotalBalance: totalBalance.previous ?? 0,

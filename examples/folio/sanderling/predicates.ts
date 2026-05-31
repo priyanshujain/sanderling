@@ -39,14 +39,19 @@ export function parseTypedAmount(text: string | undefined | null): number {
 // When the last action is a tap (or double-tap) on the transaction Submit
 // button, the absolute change in total balance must equal the amount the
 // user typed. A double-submit lands two transactions and shifts the balance
-// by 2x the typed amount, tripping this check.
+// by 2x the typed amount, tripping this check. The route gate skips steps
+// whose landing screen is not Home: totalBalance is only freshly computed
+// from visible AccountCards on Home, so off-Home comparisons would read a
+// stale carrier value and false-fire.
 export function submitChangesBalanceByTypedAmount(args: {
+  route: string | null;
   lastAction: { kind?: string; on?: string | object } | null;
   typedAmount: number;
   prevTotalBalance: number;
   currTotalBalance: number;
 }): boolean {
-  const { lastAction, typedAmount, prevTotalBalance, currTotalBalance } = args;
+  const { route, lastAction, typedAmount, prevTotalBalance, currTotalBalance } = args;
+  if (route !== "home") return true;
   if (lastAction == null) return true;
   if (lastAction.kind !== "Tap" && lastAction.kind !== "DoubleTap") return true;
   const on = lastAction.on;
