@@ -568,6 +568,107 @@ func TestIsTransitionalHierarchy_DetectsMultipleScreens(t *testing.T) {
 	}
 }
 
+// TestRunner_TransitionalSkipsVerifier feeds a driver whose hierarchy stays
+// transitional (multiple route-level *Screen ids) on every Snapshot call.
+// Every step must be marked transitional in the trace, no violations may be
+// emitted (the verifier never ran), and the summary must stay clean even
+// though the spec is a guaranteed always-false predicate.
+func TestRunner_TransitionalSkipsVerifier(t *testing.T) {
+	state := newHarnessWithSpec(t, violationSpec)
+	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"root"},"children":[
+	  {"attributes":{"resource-id":"AddAccountScreen"},"children":[]},
+	  {"attributes":{"resource-id":"HomeScreen"},"children":[]}
+	]}`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    200 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps == 0 {
+		t.Fatal("expected at least one step")
+	}
+	if len(summary.Violations) != 0 {
+		t.Fatalf("verifier must be skipped on transitional steps; got %v", summary.Violations)
+	}
+
+	type traceLine struct {
+		Step         int      `json:"step"`
+		Transitional bool     `json:"transitional"`
+		Violations   []string `json:"violations"`
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := 0
+	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var line traceLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		lines++
+		if !line.Transitional {
+			t.Errorf("step %d: expected transitional=true on every step, got false", line.Step)
+		}
+		if len(line.Violations) != 0 {
+			t.Errorf("step %d: verifier must be skipped, got violations %v", line.Step, line.Violations)
+		}
+	}
+	if lines == 0 {
+		t.Fatal("expected trace lines, got none")
+	}
+}
+
+// TestRunner_CleanTreeStillVerified is the control: a single-screen hierarchy
+// must not be marked transitional and the verifier must still run, surfacing
+// the always-false predicate's violation on the onset step.
+func TestRunner_CleanTreeStillVerified(t *testing.T) {
+	state := newHarnessWithSpec(t, violationSpec)
+	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"HomeScreen"},"children":[]}`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    200 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !containsProperty(summary.Violations, "balanceNonNegative") {
+		t.Fatalf("expected verifier to surface balanceNonNegative on a clean tree, got %v", summary.Violations)
+	}
+
+	type traceLine struct {
+		Step         int  `json:"step"`
+		Transitional bool `json:"transitional"`
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var line traceLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		if line.Transitional {
+			t.Errorf("step %d: clean tree must not be marked transitional", line.Step)
+		}
+	}
+}
+
 // TestRunner_WaitActionSkipsIdle ensures the runner does not call WaitForIdle
 // after a Wait action - the action already provides settling time.
 func TestRunner_WaitActionSkipsIdle(t *testing.T) {
