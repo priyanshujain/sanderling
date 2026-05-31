@@ -350,6 +350,16 @@ func lastActionObject(runtime *goja.Runtime, action *Action) goja.Value {
 		if action.DurationMillis > 0 {
 			_ = object.Set("durationMillis", action.DurationMillis)
 		}
+	case ActionKindScroll:
+		_ = object.Set("direction", action.Direction)
+		from := runtime.NewObject()
+		_ = from.Set("x", action.FromX)
+		_ = from.Set("y", action.FromY)
+		to := runtime.NewObject()
+		_ = to.Set("x", action.ToX)
+		_ = to.Set("y", action.ToY)
+		_ = object.Set("from", from)
+		_ = object.Set("to", to)
 	case ActionKindPressKey:
 		_ = object.Set("key", action.Key)
 	case ActionKindWait:
@@ -447,6 +457,20 @@ func jsValueToAction(runtime *goja.Runtime, value goja.Value) (Action, error) {
 			ToX:            toX,
 			ToY:            toY,
 			DurationMillis: intField(object, "durationMillis"),
+		}, nil
+	case "LongPress":
+		on := object.Get("on")
+		x, y := coordinatesOf(runtime, on)
+		return Action{Kind: ActionKindLongPress, On: selectorOf(runtime, on), X: x, Y: y}, nil
+	case "Scroll":
+		in := object.Get("in")
+		x, y := coordinatesOf(runtime, in)
+		return Action{
+			Kind:      ActionKindScroll,
+			Direction: stringOf(object.Get("direction")),
+			On:        selectorOf(runtime, in),
+			X:         x,
+			Y:         y,
 		}, nil
 	case "PressKey":
 		return Action{Kind: ActionKindPressKey, Key: stringOf(object.Get("key"))}, nil
