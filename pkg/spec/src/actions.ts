@@ -2,12 +2,15 @@ import type {
   AccessibilityElement,
   Action,
   ActionGenerator,
+  Direction,
   DoubleTapAction,
   InputTextAction,
   Key,
+  LongPressAction,
   Point,
   PressKeyAction,
   Sampler,
+  ScrollAction,
   SwipeAction,
   TapAction,
   WaitAction,
@@ -47,6 +50,17 @@ export function DoubleTap(parameters: { on: string | AccessibilityElement }): Do
   return globalThis.__sanderling__.doubleTap(parameters);
 }
 
+export function LongPress(parameters: { on: string | AccessibilityElement }): LongPressAction {
+  return globalThis.__sanderling__.longPress(parameters);
+}
+
+export function Scroll(parameters: {
+  direction: Direction;
+  in?: string | AccessibilityElement;
+}): ScrollAction {
+  return globalThis.__sanderling__.scroll(parameters);
+}
+
 export function InputText(parameters: {
   into: string | AccessibilityElement;
   text: string;
@@ -71,7 +85,15 @@ export function Wait(parameters: { durationMillis: number }): WaitAction {
 }
 
 function builtinGenerator(
-  name: "taps" | "doubleTaps" | "typing" | "swipes" | "waitOnce" | "pressKeys",
+  name:
+    | "taps"
+    | "doubleTaps"
+    | "longPresses"
+    | "scrolls"
+    | "typing"
+    | "swipes"
+    | "waitOnce"
+    | "pressKeys",
 ): ActionGenerator {
   return new Proxy({} as ActionGenerator, {
     get(_target, property) {
@@ -86,6 +108,8 @@ function builtinGenerator(
 
 export const taps: ActionGenerator = builtinGenerator("taps");
 export const doubleTaps: ActionGenerator = builtinGenerator("doubleTaps");
+export const longPresses: ActionGenerator = builtinGenerator("longPresses");
+export const scrolls: ActionGenerator = builtinGenerator("scrolls");
 export const typing: ActionGenerator = builtinGenerator("typing");
 export const swipes: ActionGenerator = builtinGenerator("swipes");
 export const waitOnce: ActionGenerator = builtinGenerator("waitOnce");

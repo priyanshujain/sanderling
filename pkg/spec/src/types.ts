@@ -132,8 +132,16 @@ export interface Point {
   y: number;
 }
 
+export type Direction = "up" | "down" | "left" | "right";
+
 export type TapAction = { kind: "Tap"; on: string | AccessibilityElement };
 export type DoubleTapAction = { kind: "DoubleTap"; on: string | AccessibilityElement };
+export type LongPressAction = { kind: "LongPress"; on: string | AccessibilityElement };
+export type ScrollAction = {
+  kind: "Scroll";
+  direction: Direction;
+  in?: string | AccessibilityElement;
+};
 export type InputTextAction = {
   kind: "InputText";
   into: string | AccessibilityElement;
@@ -150,6 +158,8 @@ export type WaitAction = { kind: "Wait"; durationMillis: number };
 export type Action =
   | TapAction
   | DoubleTapAction
+  | LongPressAction
+  | ScrollAction
   | InputTextAction
   | SwipeAction
   | PressKeyAction
@@ -197,6 +207,11 @@ export interface SanderlingRuntime {
   from: <T>(items: readonly T[]) => Sampler<T>;
   tap: (parameters: { on: string | AccessibilityElement }) => TapAction;
   doubleTap: (parameters: { on: string | AccessibilityElement }) => DoubleTapAction;
+  longPress: (parameters: { on: string | AccessibilityElement }) => LongPressAction;
+  scroll: (parameters: {
+    direction: Direction;
+    in?: string | AccessibilityElement;
+  }) => ScrollAction;
   inputText: (parameters: {
     into: string | AccessibilityElement;
     text: string;
@@ -210,6 +225,8 @@ export interface SanderlingRuntime {
   wait: (parameters: { durationMillis: number }) => WaitAction;
   taps: ActionGenerator;
   doubleTaps: ActionGenerator;
+  longPresses: ActionGenerator;
+  scrolls: ActionGenerator;
   typing: ActionGenerator;
   swipes: ActionGenerator;
   waitOnce: ActionGenerator;
