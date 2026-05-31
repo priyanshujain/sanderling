@@ -19,6 +19,7 @@ type DeviceDriver interface {
 	InputText(ctx context.Context, text string) error
 	Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error
 	PressKey(ctx context.Context, key string) error
+	LongPress(ctx context.Context, x, y int) error
 
 	Hierarchy(ctx context.Context) (string, error)
 	Screenshot(ctx context.Context) (Image, error)
