@@ -8,6 +8,7 @@ interface DriverBackend {
     fun inputText(text: String)
     fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long)
     fun pressKey(key: String)
+    fun longPress(x: Int, y: Int)
     fun screenshot(): Triple<ByteArray, Int, Int>
     fun hierarchy(): String
     fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine>
@@ -405,6 +406,8 @@ class StubDriverBackend(
         private set
     @Volatile var lastKey: String? = null
         private set
+    @Volatile var lastLongPress: Pair<Int, Int>? = null
+        private set
 
     override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {
         lastSwipe = SwipeRecord(fromX, fromY, toX, toY, durationMillis)
@@ -424,6 +427,11 @@ class StubDriverBackend(
         val keyCode = KEY_MAP[key.lowercase()]
             ?: throw IllegalArgumentException("unsupported pressKey value: $key")
         runAdb(listOf("shell", "input", "keyevent", keyCode))
+    }
+
+    override fun longPress(x: Int, y: Int) {
+        lastLongPress = x to y
+        runAdb(listOf("shell", "input", "swipe", x.toString(), y.toString(), x.toString(), y.toString(), "600"))
     }
 
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> =
@@ -512,6 +520,8 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     override fun terminate(bundleId: String) = driver.stopApp(bundleId)
 
     override fun tap(x: Int, y: Int) = driver.tap(maestro.Point(x, y))
+
+    override fun longPress(x: Int, y: Int) = driver.longPress(maestro.Point(x, y))
 
     override fun tapSelector(selector: String) {
         val root = driver.contentDescriptor(false)
@@ -709,6 +719,8 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     override fun terminate(bundleId: String) = withReconnect { driver.stopApp(bundleId) }
 
     override fun tap(x: Int, y: Int) = withReconnect { driver.tap(maestro.Point(x, y)) }
+
+    override fun longPress(x: Int, y: Int) = withReconnect { driver.longPress(maestro.Point(x, y)) }
 
     override fun tapSelector(selector: String) = withReconnect {
         val root = driver.contentDescriptor(false)
