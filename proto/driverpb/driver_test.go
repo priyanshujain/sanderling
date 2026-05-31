@@ -22,6 +22,7 @@ func TestDriverServiceDescriptor(t *testing.T) {
 		"PressKey":    true,
 		"Screenshot":  true,
 		"Hierarchy":   true,
+		"Snapshot":    true,
 		"RecentLogs":  true,
 		"WaitForIdle": true,
 		"Health":      true,

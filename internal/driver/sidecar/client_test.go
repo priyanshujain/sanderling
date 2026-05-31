@@ -105,6 +105,15 @@ func (s *fakeServer) Screenshot(_ context.Context, _ *driverpb.Empty) (*driverpb
 	return &driverpb.Image{Png: s.imagePNG, Width: s.imageWidth, Height: s.imageHeight}, nil
 }
 
+func (s *fakeServer) Snapshot(_ context.Context, _ *driverpb.Empty) (*driverpb.SnapshotResponse, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return &driverpb.SnapshotResponse{
+		Hierarchy:  &driverpb.HierarchyJSON{Json: s.hierarchy},
+		Screenshot: &driverpb.Image{Png: s.imagePNG, Width: s.imageWidth, Height: s.imageHeight},
+	}, nil
+}
+
 type harness struct {
 	server  *grpc.Server
 	fake    *fakeServer
@@ -254,6 +263,23 @@ func TestClient_HierarchyAndScreenshot(t *testing.T) {
 	image, err := client.Screenshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if image.Width != 1080 || image.Height != 2340 || len(image.PNG) != 1 {
+		t.Errorf("image wrong: %+v", image)
+	}
+}
+
+func TestClient_SnapshotPairsHierarchyAndScreenshot(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+
+	hierarchyJSON, image, err := client.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hierarchyJSON != `{"x":1}` {
+		t.Errorf("hierarchy wrong: %q", hierarchyJSON)
 	}
 	if image.Width != 1080 || image.Height != 2340 || len(image.PNG) != 1 {
 		t.Errorf("image wrong: %+v", image)
