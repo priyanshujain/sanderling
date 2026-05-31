@@ -10,7 +10,11 @@ import {
   whenRoute,
 } from "@sanderling/spec";
 import { defaultActions } from "@sanderling/spec/defaults";
-import { parseTypedAmount, submitChangesBalanceByTypedAmount } from "./predicates";
+import {
+  computeHomeTotalBalance,
+  parseTypedAmount,
+  submitChangesBalanceByTypedAmount,
+} from "./predicates";
 
 interface Account {
   name: string;
@@ -43,22 +47,17 @@ const accounts = extract<Account[]>("accounts", s =>
     balance: parseDollarCents(card.find({ testTag: "AccountBalance" })?.text),
   })));
 
-// Total balance: sum of AccountCard balances visible on Home plus the
-// LedgerBalance shown on Ledger. Both screens read the same DB, so summing
-// across whichever screen is visible gives the same authoritative number.
-// Screens that show neither signal (e.g. AddTransactionScreen) carry forward
-// the last-seen sum so `previous` and `current` stay on the same scale.
-let lastSeenTotalBalance = 0;
+// Total balance: sum of AccountCard balances visible on Home. The carrier
+// deliberately tracks only the Home multi-account total. Ledger's
+// LedgerBalance is a single-account number on a different scale and would
+// corrupt cross-screen comparisons if mixed in. Off-Home steps carry forward
+// the last-seen Home sum so `previous` and `current` stay on the same scale.
+let lastHomeTotal = 0;
 const totalBalance = extract("totalBalance", s => {
   const cards = s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]);
-  const cardSum = cards.reduce(
-    (sum, c) => sum + parseDollarCents(c.find({ testTag: "AccountBalance" })?.text),
-    0,
-  );
-  const ledgerBalText = s.ax.find({ testTag: "LedgerBalance" })?.text;
-  if (cards.length === 0 && !ledgerBalText) return lastSeenTotalBalance;
-  lastSeenTotalBalance = cardSum + parseDollarCents(ledgerBalText);
-  return lastSeenTotalBalance;
+  const cardBalanceTexts = cards.map(c => c.find({ testTag: "AccountBalance" })?.text);
+  lastHomeTotal = computeHomeTotalBalance({ cardBalanceTexts, previousCarrier: lastHomeTotal });
+  return lastHomeTotal;
 });
 
 const lastAction = extract("lastAction", s => s.lastAction);
