@@ -651,3 +651,49 @@ func TestRunner_NoRelaunchWhenAppInForeground(t *testing.T) {
 		}
 	}
 }
+
+// TestRunner_WaitsForForegroundBeforeFirstAction verifies the startup gate
+// brings the app forward (back-press + relaunch) before any tap fires when the
+// device boots showing a system dialog.
+func TestRunner_WaitsForForegroundBeforeFirstAction(t *testing.T) {
+	state := newHarness(t)
+	// First the device shows a system setup screen, then the app is on top.
+	state.mock.ForegroundResults = []string{"com.google.android.setupwizard", "app.folio"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Run(ctx, Options{
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		BundleID:    "app.folio",
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	actions := state.mock.Actions()
+	firstLaunch, firstTap := -1, -1
+	backPressed := false
+	for i, a := range actions {
+		switch {
+		case a.Kind == mockdriver.ActionLaunch && firstLaunch < 0:
+			firstLaunch = i
+		case a.Kind == mockdriver.ActionTap && firstTap < 0:
+			firstTap = i
+		case a.Kind == mockdriver.ActionPressKey && a.Key == "back":
+			backPressed = true
+		}
+	}
+	if firstLaunch < 0 {
+		t.Fatal("expected a relaunch to bring the app forward, got none")
+	}
+	if !backPressed {
+		t.Fatal("expected a back-press to dismiss the system dialog, got none")
+	}
+	if firstTap >= 0 && firstLaunch > firstTap {
+		t.Fatalf("expected the foreground gate (launch at %d) before the first tap (at %d)", firstLaunch, firstTap)
+	}
+}
