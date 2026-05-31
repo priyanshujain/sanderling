@@ -133,6 +133,81 @@ func TestTaps_UnsetAppPackageKeepsAllNodes(t *testing.T) {
 	}
 }
 
+// TestLongPresses_TargetsClickableElement proves the longPresses generator
+// mirrors taps: it yields a LongPress on the only clickable in-app node.
+func TestLongPresses_TargetsClickableElement(t *testing.T) {
+	verifier := newVerifier(t, WithAppPackage("com.folio"))
+	mustLoad(t, verifier, `globalThis.actions = __sanderling__.longPresses;`)
+	pushTree(t, verifier, scopedTreeJSON)
+
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.Kind != ActionKindLongPress {
+		t.Fatalf("kind = %v, want LongPress", action.Kind)
+	}
+	if action.X != 50 || action.Y != 60 {
+		t.Errorf("coords = (%d,%d), want (50,60) at SubmitButton", action.X, action.Y)
+	}
+}
+
+// TestScrolls_TargetsScrollableContainer proves the scrolls generator anchors on
+// a scrollable container and pre-computes swipe endpoints inside its bounds.
+func TestScrolls_TargetsScrollableContainer(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,500]", "package": "com.folio"},
+	  "children": [
+	    {"attributes": {"testTag": "Feed", "bounds": "[0,0,100,400]", "scrollable": "true", "package": "com.folio"}, "enabled": true, "children": []},
+	    {"attributes": {"testTag": "Header", "bounds": "[0,400,100,440]", "package": "com.folio"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t, WithAppPackage("com.folio"))
+	mustLoad(t, verifier, `globalThis.actions = __sanderling__.scrolls;`)
+	pushTree(t, verifier, treeJSON)
+
+	for range 50 {
+		action, err := verifier.NextAction()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if action.Kind != ActionKindScroll {
+			t.Fatalf("kind = %v, want Scroll", action.Kind)
+		}
+		// Feed center is (50,200); both endpoints must stay anchored there.
+		if action.FromX != 50 || action.FromY != 200 {
+			t.Fatalf("from = (%d,%d), want (50,200) at Feed center", action.FromX, action.FromY)
+		}
+		switch action.Direction {
+		case "up", "down":
+			if action.ToX != 50 {
+				t.Fatalf("vertical scroll moved x: to = (%d,%d)", action.ToX, action.ToY)
+			}
+		case "left", "right":
+			if action.ToY != 200 {
+				t.Fatalf("horizontal scroll moved y: to = (%d,%d)", action.ToX, action.ToY)
+			}
+		default:
+			t.Fatalf("unexpected direction %q", action.Direction)
+		}
+		if action.DurationMillis != 300 {
+			t.Fatalf("durationMillis = %d, want 300", action.DurationMillis)
+		}
+	}
+}
+
+// TestScrolls_NoScrollableYieldsErrNoAction proves the generator declines when
+// no scrollable container is present.
+func TestScrolls_NoScrollableYieldsErrNoAction(t *testing.T) {
+	verifier := newVerifier(t, WithAppPackage("com.folio"))
+	mustLoad(t, verifier, `globalThis.actions = __sanderling__.scrolls;`)
+	pushTree(t, verifier, scopedTreeJSON)
+
+	if _, err := verifier.NextAction(); !errors.Is(err, ErrNoAction) {
+		t.Fatalf("err = %v, want ErrNoAction", err)
+	}
+}
+
 // TestTaps_EmptyPackageNodeStaysInScope proves nodes that omit the package
 // attribute (e.g. iOS, decor views) are kept, so the filter never empties a
 // legitimate app screen.
