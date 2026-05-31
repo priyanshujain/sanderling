@@ -612,7 +612,48 @@ func (v *Verifier) generateRandomTapKind(kind ActionKind) (Action, error) {
 	}
 	picked := candidates[v.rng.IntN(len(candidates))]
 	x, y := picked.Bounds.Center()
-	return Action{Kind: kind, X: x, Y: y}, nil
+	return Action{Kind: kind, On: selectorForElement(v.lastTree, picked), X: x, Y: y}, nil
+}
+
+// selectorForElement builds a canonical "key:value" selector that resolves
+// back to the given element via hierarchy.Tree.Find. Prefers resource-id (the
+// testTag carrier on Android / accessibilityIdentifier on iOS), falling back
+// to text and content-description so action-gated properties can still tell
+// what was tapped even on legacy nodes without a testTag. Returns "" when no
+// candidate selector uniquely resolves to the picked element so the runner
+// keeps using the action's coordinates without re-routing to a sibling that
+// shares the same id/text.
+func selectorForElement(tree *hierarchy.Tree, element *hierarchy.Element) string {
+	if element == nil || tree == nil {
+		return ""
+	}
+	candidates := make([]string, 0, 4)
+	if element.ResourceID != "" {
+		candidates = append(candidates, "id:"+element.ResourceID)
+	}
+	// Some platforms surface the Compose testTag only in the attributes map
+	// (the sidecar doesn't always promote it to resource-id). Try the raw
+	// attribute keys before falling back to text-based selectors so an
+	// element with a unique testTag still gets identified.
+	for _, key := range []string{"testTag", "identifier", "accessibilityIdentifier"} {
+		if value := element.Attributes[key]; value != "" {
+			candidates = append(candidates, key+":"+value)
+		}
+	}
+	if element.Text != "" {
+		candidates = append(candidates, "text:"+element.Text)
+	}
+	if element.Description != "" {
+		candidates = append(candidates, "desc:"+element.Description)
+	}
+	for _, selector := range candidates {
+		resolved := tree.Find(selector)
+		if resolved == nil || resolved != element {
+			continue
+		}
+		return selector
+	}
+	return ""
 }
 
 // inputCorpus is the edge-case string pool the typing builtin draws from to

@@ -421,6 +421,24 @@ func TestDoubleTapsBuiltin_TargetsClickable(t *testing.T) {
 	if action.X != 50 || action.Y != 60 {
 		t.Errorf("coords = (%d,%d), want (50,60) at SubmitButton center", action.X, action.Y)
 	}
+	// Action-gated properties read lastAction.on to tell which target the
+	// chooser hit. An empty On reduces those properties to vacuously-true and
+	// they never fire on the real tap event.
+	if action.On == "" {
+		t.Fatal("On must be populated so action-gated properties can identify the target")
+	}
+	if !strings.Contains(action.On, "SubmitButton") {
+		t.Errorf("On = %q, want a selector containing SubmitButton", action.On)
+	}
+	resolved := tree.Find(action.On)
+	if resolved == nil {
+		t.Fatalf("On = %q does not resolve in the same tree", action.On)
+	}
+	rx, ry := resolved.Bounds.Center()
+	if rx != action.X || ry != action.Y {
+		t.Errorf("On %q resolves to (%d,%d), want the picked element's center (%d,%d)",
+			action.On, rx, ry, action.X, action.Y)
+	}
 }
 
 func TestDoubleTap_RoundTrip(t *testing.T) {
