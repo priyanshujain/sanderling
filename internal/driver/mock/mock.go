@@ -61,6 +61,15 @@ type Driver struct {
 	// app-scope guard so tests that don't care are unaffected.
 	ForegroundResults []string
 	foregroundIndex   int
+
+	// FocusedWindowResults is consumed one entry per FocusedWindowApp call
+	// (the last entry repeats). When empty, FocusedWindowApp mirrors the
+	// last ForegroundApp result, so the startup gate treats the window as
+	// already drawn and tests that don't care are unaffected.
+	FocusedWindowResults []string
+	focusedWindowIndex   int
+	focusedWindowCalls   int
+	lastForeground       string
 }
 
 func New() *Driver {
@@ -106,6 +115,7 @@ func (d *Driver) ForegroundApp(_ context.Context) (string, error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 	if len(d.ForegroundResults) == 0 {
+		d.lastForeground = ""
 		return "", nil
 	}
 	index := d.foregroundIndex
@@ -113,7 +123,30 @@ func (d *Driver) ForegroundApp(_ context.Context) (string, error) {
 		index = len(d.ForegroundResults) - 1
 	}
 	d.foregroundIndex++
-	return d.ForegroundResults[index], nil
+	d.lastForeground = d.ForegroundResults[index]
+	return d.lastForeground, nil
+}
+
+func (d *Driver) FocusedWindowApp(_ context.Context) (string, error) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	d.focusedWindowCalls++
+	if len(d.FocusedWindowResults) == 0 {
+		return d.lastForeground, nil
+	}
+	index := d.focusedWindowIndex
+	if index >= len(d.FocusedWindowResults) {
+		index = len(d.FocusedWindowResults) - 1
+	}
+	d.focusedWindowIndex++
+	return d.FocusedWindowResults[index], nil
+}
+
+// FocusedWindowCalls reports how many times FocusedWindowApp has been called.
+func (d *Driver) FocusedWindowCalls() int {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	return d.focusedWindowCalls
 }
 
 func (d *Driver) Terminate(ctx context.Context) error {
