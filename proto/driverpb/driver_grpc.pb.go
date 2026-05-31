@@ -26,6 +26,7 @@ const (
 	Driver_InputText_FullMethodName   = "/sanderling.driver.v1.Driver/InputText"
 	Driver_Swipe_FullMethodName       = "/sanderling.driver.v1.Driver/Swipe"
 	Driver_PressKey_FullMethodName    = "/sanderling.driver.v1.Driver/PressKey"
+	Driver_LongPress_FullMethodName   = "/sanderling.driver.v1.Driver/LongPress"
 	Driver_Screenshot_FullMethodName  = "/sanderling.driver.v1.Driver/Screenshot"
 	Driver_Hierarchy_FullMethodName   = "/sanderling.driver.v1.Driver/Hierarchy"
 	Driver_Snapshot_FullMethodName    = "/sanderling.driver.v1.Driver/Snapshot"
@@ -46,6 +47,7 @@ type DriverClient interface {
 	InputText(ctx context.Context, in *Text, opts ...grpc.CallOption) (*Empty, error)
 	Swipe(ctx context.Context, in *SwipeRequest, opts ...grpc.CallOption) (*Empty, error)
 	PressKey(ctx context.Context, in *PressKeyRequest, opts ...grpc.CallOption) (*Empty, error)
+	LongPress(ctx context.Context, in *Point, opts ...grpc.CallOption) (*Empty, error)
 	Screenshot(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Image, error)
 	Hierarchy(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HierarchyJSON, error)
 	// Snapshot captures hierarchy and screenshot back-to-back under a
@@ -136,6 +138,16 @@ func (c *driverClient) PressKey(ctx context.Context, in *PressKeyRequest, opts .
 	return out, nil
 }
 
+func (c *driverClient) LongPress(ctx context.Context, in *Point, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Driver_LongPress_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *driverClient) Screenshot(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Image, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Image)
@@ -217,6 +229,7 @@ type DriverServer interface {
 	InputText(context.Context, *Text) (*Empty, error)
 	Swipe(context.Context, *SwipeRequest) (*Empty, error)
 	PressKey(context.Context, *PressKeyRequest) (*Empty, error)
+	LongPress(context.Context, *Point) (*Empty, error)
 	Screenshot(context.Context, *Empty) (*Image, error)
 	Hierarchy(context.Context, *Empty) (*HierarchyJSON, error)
 	// Snapshot captures hierarchy and screenshot back-to-back under a
@@ -257,6 +270,9 @@ func (UnimplementedDriverServer) Swipe(context.Context, *SwipeRequest) (*Empty, 
 }
 func (UnimplementedDriverServer) PressKey(context.Context, *PressKeyRequest) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method PressKey not implemented")
+}
+func (UnimplementedDriverServer) LongPress(context.Context, *Point) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method LongPress not implemented")
 }
 func (UnimplementedDriverServer) Screenshot(context.Context, *Empty) (*Image, error) {
 	return nil, status.Error(codes.Unimplemented, "method Screenshot not implemented")
@@ -426,6 +442,24 @@ func _Driver_PressKey_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Driver_LongPress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Point)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DriverServer).LongPress(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Driver_LongPress_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DriverServer).LongPress(ctx, req.(*Point))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Driver_Screenshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -586,6 +620,10 @@ var Driver_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PressKey",
 			Handler:    _Driver_PressKey_Handler,
+		},
+		{
+			MethodName: "LongPress",
+			Handler:    _Driver_LongPress_Handler,
 		},
 		{
 			MethodName: "Screenshot",

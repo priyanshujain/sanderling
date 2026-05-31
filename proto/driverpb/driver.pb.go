@@ -957,7 +957,7 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"cpuPercent\x12\x1d\n" +
 	"\n" +
 	"heap_bytes\x18\x02 \x01(\x03R\theapBytes\x12,\n" +
-	"\x12total_memory_bytes\x18\x03 \x01(\x03R\x10totalMemoryBytes2\xb8\b\n" +
+	"\x12total_memory_bytes\x18\x03 \x01(\x03R\x10totalMemoryBytes2\xff\b\n" +
 	"\x06Driver\x12J\n" +
 	"\x06Launch\x12#.sanderling.driver.v1.LaunchRequest\x1a\x1b.sanderling.driver.v1.Empty\x12E\n" +
 	"\tTerminate\x12\x1b.sanderling.driver.v1.Empty\x1a\x1b.sanderling.driver.v1.Empty\x12?\n" +
@@ -965,7 +965,8 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"\vTapSelector\x12\x1e.sanderling.driver.v1.Selector\x1a\x1b.sanderling.driver.v1.Empty\x12D\n" +
 	"\tInputText\x12\x1a.sanderling.driver.v1.Text\x1a\x1b.sanderling.driver.v1.Empty\x12H\n" +
 	"\x05Swipe\x12\".sanderling.driver.v1.SwipeRequest\x1a\x1b.sanderling.driver.v1.Empty\x12N\n" +
-	"\bPressKey\x12%.sanderling.driver.v1.PressKeyRequest\x1a\x1b.sanderling.driver.v1.Empty\x12F\n" +
+	"\bPressKey\x12%.sanderling.driver.v1.PressKeyRequest\x1a\x1b.sanderling.driver.v1.Empty\x12E\n" +
+	"\tLongPress\x12\x1b.sanderling.driver.v1.Point\x1a\x1b.sanderling.driver.v1.Empty\x12F\n" +
 	"\n" +
 	"Screenshot\x12\x1b.sanderling.driver.v1.Empty\x1a\x1b.sanderling.driver.v1.Image\x12M\n" +
 	"\tHierarchy\x12\x1b.sanderling.driver.v1.Empty\x1a#.sanderling.driver.v1.HierarchyJSON\x12O\n" +
@@ -1024,29 +1025,31 @@ var file_driverpb_driver_proto_depIdxs = []int32{
 	3,  // 10: sanderling.driver.v1.Driver.InputText:input_type -> sanderling.driver.v1.Text
 	10, // 11: sanderling.driver.v1.Driver.Swipe:input_type -> sanderling.driver.v1.SwipeRequest
 	11, // 12: sanderling.driver.v1.Driver.PressKey:input_type -> sanderling.driver.v1.PressKeyRequest
-	0,  // 13: sanderling.driver.v1.Driver.Screenshot:input_type -> sanderling.driver.v1.Empty
-	0,  // 14: sanderling.driver.v1.Driver.Hierarchy:input_type -> sanderling.driver.v1.Empty
-	0,  // 15: sanderling.driver.v1.Driver.Snapshot:input_type -> sanderling.driver.v1.Empty
-	12, // 16: sanderling.driver.v1.Driver.RecentLogs:input_type -> sanderling.driver.v1.RecentLogsRequest
-	8,  // 17: sanderling.driver.v1.Driver.WaitForIdle:input_type -> sanderling.driver.v1.Duration
-	0,  // 18: sanderling.driver.v1.Driver.Health:input_type -> sanderling.driver.v1.Empty
-	15, // 19: sanderling.driver.v1.Driver.Metrics:input_type -> sanderling.driver.v1.MetricsRequest
-	0,  // 20: sanderling.driver.v1.Driver.Launch:output_type -> sanderling.driver.v1.Empty
-	0,  // 21: sanderling.driver.v1.Driver.Terminate:output_type -> sanderling.driver.v1.Empty
-	0,  // 22: sanderling.driver.v1.Driver.Tap:output_type -> sanderling.driver.v1.Empty
-	0,  // 23: sanderling.driver.v1.Driver.TapSelector:output_type -> sanderling.driver.v1.Empty
-	0,  // 24: sanderling.driver.v1.Driver.InputText:output_type -> sanderling.driver.v1.Empty
-	0,  // 25: sanderling.driver.v1.Driver.Swipe:output_type -> sanderling.driver.v1.Empty
-	0,  // 26: sanderling.driver.v1.Driver.PressKey:output_type -> sanderling.driver.v1.Empty
-	5,  // 27: sanderling.driver.v1.Driver.Screenshot:output_type -> sanderling.driver.v1.Image
-	6,  // 28: sanderling.driver.v1.Driver.Hierarchy:output_type -> sanderling.driver.v1.HierarchyJSON
-	7,  // 29: sanderling.driver.v1.Driver.Snapshot:output_type -> sanderling.driver.v1.SnapshotResponse
-	13, // 30: sanderling.driver.v1.Driver.RecentLogs:output_type -> sanderling.driver.v1.LogEntries
-	0,  // 31: sanderling.driver.v1.Driver.WaitForIdle:output_type -> sanderling.driver.v1.Empty
-	9,  // 32: sanderling.driver.v1.Driver.Health:output_type -> sanderling.driver.v1.HealthStatus
-	16, // 33: sanderling.driver.v1.Driver.Metrics:output_type -> sanderling.driver.v1.MetricsResponse
-	20, // [20:34] is the sub-list for method output_type
-	6,  // [6:20] is the sub-list for method input_type
+	2,  // 13: sanderling.driver.v1.Driver.LongPress:input_type -> sanderling.driver.v1.Point
+	0,  // 14: sanderling.driver.v1.Driver.Screenshot:input_type -> sanderling.driver.v1.Empty
+	0,  // 15: sanderling.driver.v1.Driver.Hierarchy:input_type -> sanderling.driver.v1.Empty
+	0,  // 16: sanderling.driver.v1.Driver.Snapshot:input_type -> sanderling.driver.v1.Empty
+	12, // 17: sanderling.driver.v1.Driver.RecentLogs:input_type -> sanderling.driver.v1.RecentLogsRequest
+	8,  // 18: sanderling.driver.v1.Driver.WaitForIdle:input_type -> sanderling.driver.v1.Duration
+	0,  // 19: sanderling.driver.v1.Driver.Health:input_type -> sanderling.driver.v1.Empty
+	15, // 20: sanderling.driver.v1.Driver.Metrics:input_type -> sanderling.driver.v1.MetricsRequest
+	0,  // 21: sanderling.driver.v1.Driver.Launch:output_type -> sanderling.driver.v1.Empty
+	0,  // 22: sanderling.driver.v1.Driver.Terminate:output_type -> sanderling.driver.v1.Empty
+	0,  // 23: sanderling.driver.v1.Driver.Tap:output_type -> sanderling.driver.v1.Empty
+	0,  // 24: sanderling.driver.v1.Driver.TapSelector:output_type -> sanderling.driver.v1.Empty
+	0,  // 25: sanderling.driver.v1.Driver.InputText:output_type -> sanderling.driver.v1.Empty
+	0,  // 26: sanderling.driver.v1.Driver.Swipe:output_type -> sanderling.driver.v1.Empty
+	0,  // 27: sanderling.driver.v1.Driver.PressKey:output_type -> sanderling.driver.v1.Empty
+	0,  // 28: sanderling.driver.v1.Driver.LongPress:output_type -> sanderling.driver.v1.Empty
+	5,  // 29: sanderling.driver.v1.Driver.Screenshot:output_type -> sanderling.driver.v1.Image
+	6,  // 30: sanderling.driver.v1.Driver.Hierarchy:output_type -> sanderling.driver.v1.HierarchyJSON
+	7,  // 31: sanderling.driver.v1.Driver.Snapshot:output_type -> sanderling.driver.v1.SnapshotResponse
+	13, // 32: sanderling.driver.v1.Driver.RecentLogs:output_type -> sanderling.driver.v1.LogEntries
+	0,  // 33: sanderling.driver.v1.Driver.WaitForIdle:output_type -> sanderling.driver.v1.Empty
+	9,  // 34: sanderling.driver.v1.Driver.Health:output_type -> sanderling.driver.v1.HealthStatus
+	16, // 35: sanderling.driver.v1.Driver.Metrics:output_type -> sanderling.driver.v1.MetricsResponse
+	21, // [21:36] is the sub-list for method output_type
+	6,  // [6:21] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
