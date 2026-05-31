@@ -47,6 +47,18 @@ type ForegroundChecker interface {
 	ForegroundApp(ctx context.Context) (string, error)
 }
 
+// FocusedWindowChecker is the optional capability for reporting which app owns
+// the focused (on-screen) window. The startup gate prefers it over
+// ForegroundChecker: the resumed-activity signal flips to a freshly launched
+// app before its first frame draws, so observing on it alone can capture the
+// previous app's screen. The focused window only names the app once its window
+// is actually up.
+type FocusedWindowChecker interface {
+	// FocusedWindowApp returns the package owning the focused window, or ""
+	// when no window is focused yet (e.g. mid-launch transition).
+	FocusedWindowApp(ctx context.Context) (string, error)
+}
+
 type LogEntry struct {
 	UnixMillis int64
 	Level      string

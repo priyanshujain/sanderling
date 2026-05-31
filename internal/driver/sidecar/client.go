@@ -33,6 +33,16 @@ func (c *Client) ForegroundApp(ctx context.Context) (string, error) {
 	return android.ForegroundPackage(ctx)
 }
 
+// FocusedWindowApp reports the package owning the focused window. Only Android
+// is supported (via adb); other platforms return "" so the startup gate falls
+// back to the foreground-app signal.
+func (c *Client) FocusedWindowApp(ctx context.Context) (string, error) {
+	if c.platform != "android" {
+		return "", nil
+	}
+	return android.FocusedWindowPackage(ctx)
+}
+
 // Dial connects to the sidecar gRPC server at the given address.
 // Address must be a host:port pair, typically "127.0.0.1:<sidecar-port>".
 func Dial(address string) (*Client, error) {
