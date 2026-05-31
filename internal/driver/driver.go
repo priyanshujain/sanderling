@@ -22,6 +22,11 @@ type DeviceDriver interface {
 
 	Hierarchy(ctx context.Context) (string, error)
 	Screenshot(ctx context.Context) (Image, error)
+	// Snapshot returns the hierarchy and screenshot captured back-to-back
+	// under a backend-side mutex, so the pair describes the same on-device
+	// frame. Prefer this over calling Hierarchy and Screenshot separately:
+	// independent reads can land on different frames during transitions.
+	Snapshot(ctx context.Context) (string, Image, error)
 	// RecentLogs returns log entries at or after `since`, filtered to
 	// `minLevel` or above. An empty minLevel defaults to "E".
 	RecentLogs(ctx context.Context, since time.Time, minLevel string) ([]LogEntry, error)

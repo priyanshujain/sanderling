@@ -162,6 +162,23 @@ func (c *Client) Screenshot(ctx context.Context) (driver.Image, error) {
 	}, nil
 }
 
+// Snapshot fetches hierarchy and screenshot in a single sidecar round-trip.
+// The sidecar serializes the two reads behind a mutex so the returned pair
+// describes the same on-device frame, removing the cross-fade race the
+// runner used to see when fetching them as independent goroutines.
+func (c *Client) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	response, err := c.stub.Snapshot(ctx, &driverpb.Empty{})
+	if err != nil {
+		return "", driver.Image{}, err
+	}
+	image := response.GetScreenshot()
+	return response.GetHierarchy().GetJson(), driver.Image{
+		PNG:    image.GetPng(),
+		Width:  int(image.GetWidth()),
+		Height: int(image.GetHeight()),
+	}, nil
+}
+
 func (c *Client) WaitForIdle(ctx context.Context, duration time.Duration) error {
 	_, err := c.stub.WaitForIdle(ctx, &driverpb.Duration{Millis: duration.Milliseconds()})
 	return err
