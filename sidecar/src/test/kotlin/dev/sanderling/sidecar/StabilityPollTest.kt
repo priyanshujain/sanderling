@@ -5,27 +5,55 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class StabilityPollTest {
-    @Test fun returnsAfterTwoIdenticalSnapshots() {
-        val snapshots = mutableListOf<String>()
+    @Test fun returnsAfterUninterruptedStableStreak() {
         val start = System.currentTimeMillis()
-        pollUntilStable(800L) {
-            val value = "stable"
-            snapshots.add(value)
-            value
-        }
+        pollUntilStable(3000L) { "stable" }
         val elapsed = System.currentTimeMillis() - start
-        assertTrue(elapsed < 600L, "should settle within a couple poll intervals, took ${elapsed}ms")
-        assertTrue(snapshots.size >= 2, "must observe at least two snapshots to confirm stability")
+        assertTrue(
+            elapsed >= MIN_STABLE_STREAK_MILLIS,
+            "must observe a stable streak of at least ${MIN_STABLE_STREAK_MILLIS}ms, elapsed=${elapsed}ms",
+        )
+        assertTrue(elapsed < 3000L, "should not run to cap when stable, elapsed=${elapsed}ms")
     }
 
-    @Test fun returnsAfterChangingThenStabilizing() {
+    @Test fun streakResetsOnAnyChange() {
+        // A late transition that fires after the prior streak has already
+        // begun must reset the clock: the post-transition stable window has
+        // to start over and meet MIN_STABLE_STREAK_MILLIS from scratch.
         var calls = 0
-        pollUntilStable(2000L) {
+        val start = System.currentTimeMillis()
+        // First 4 samples are "calm", then 1 transient change, then "stable"
+        // forever - the calm prefix is meaningless because of the transition.
+        pollUntilStable(3000L) {
             calls++
-            if (calls <= 2) "frame-$calls" else "stable"
+            when {
+                calls <= 4 -> "calm"
+                calls == 5 -> "transient"
+                else -> "stable"
+            }
         }
-        // After 2 changing frames, calls 3 and 4 are both "stable" -> exit.
-        assertTrue(calls >= 4, "expected at least 4 snapshots, got $calls")
+        val elapsed = System.currentTimeMillis() - start
+        assertTrue(
+            elapsed >= MIN_STABLE_STREAK_MILLIS,
+            "post-transition streak must reach ${MIN_STABLE_STREAK_MILLIS}ms, elapsed=${elapsed}ms",
+        )
+        assertTrue(calls >= 10, "expected enough samples to span calm + transient + stable streak, got $calls")
+    }
+
+    @Test fun transitionalNullsForceLoopToKeepWaiting() {
+        // Simulates a NavHost cross-fade where stabilitySnapshot returns null
+        // for several samples (multi-screen detected) before the destination
+        // screen settles. Streak must not start while null returns persist.
+        var calls = 0
+        val transitionalCount = 5
+        pollUntilStable(3000L) {
+            calls++
+            if (calls <= transitionalCount) null else "stable"
+        }
+        assertTrue(
+            calls >= transitionalCount + 2,
+            "must consume the null prefix before starting the streak, calls=$calls",
+        )
     }
 
     @Test fun stopsAtDeadlineWhenNeverStable() {
@@ -69,5 +97,53 @@ class StabilityPollTest {
         val a = """{"attributes":{"resource-id":"LoginEmail","text":"a@b"},"children":[]}"""
         val b = """{"attributes":{"resource-id":"LoginEmail","text":"c@d"},"children":[]}"""
         assertTrue(structuralHash(a) != structuralHash(b), "text change must alter hash")
+    }
+
+    @Test fun stabilitySnapshotReturnsNullDuringNavHostCrossFade() {
+        val midTransition = """
+        {"attributes":{"resource-id":"root"},
+         "children":[
+           {"attributes":{"resource-id":"AddAccountScreen"},"children":[]},
+           {"attributes":{"resource-id":"HomeScreen"},"children":[
+             {"attributes":{"resource-id":"AccountCard","text":"a"},"children":[]}
+           ]}
+         ]}
+        """.trimIndent()
+        assertEquals(null, stabilitySnapshot(midTransition))
+    }
+
+    @Test fun stabilitySnapshotReturnsHashOnSingleScreen() {
+        val singleScreen = """
+        {"attributes":{"resource-id":"HomeScreen"},
+         "children":[
+           {"attributes":{"resource-id":"AccountCard","text":"a"},"children":[]}
+         ]}
+        """.trimIndent()
+        val hash = stabilitySnapshot(singleScreen)
+        assertTrue(hash != null && hash.isNotBlank(), "single-screen tree must yield a hash, got $hash")
+    }
+
+    @Test fun stabilitySnapshotIgnoresNonRouteAttributeValues() {
+        // Random text content ending in "Screen" must not trip the detector;
+        // only route-level attribute keys (resource-id, testTag, identifier)
+        // are considered for the route-tag count.
+        val tree = """
+        {"attributes":{"resource-id":"HomeScreen"},
+         "children":[
+           {"attributes":{"text":"Welcome to MyScreen"},"children":[]}
+         ]}
+        """.trimIndent()
+        assertTrue(stabilitySnapshot(tree) != null, "non-route attribute must not be counted as a screen")
+    }
+
+    @Test fun countRouteScreensCountsTestTagAndIdentifier() {
+        val tree = """
+        {"attributes":{"resource-id":"root"},
+         "children":[
+           {"attributes":{"testTag":"HomeScreen"},"children":[]},
+           {"attributes":{"accessibilityIdentifier":"LedgerScreen"},"children":[]}
+         ]}
+        """.trimIndent()
+        assertEquals(2, countRouteScreens(tree))
     }
 }
