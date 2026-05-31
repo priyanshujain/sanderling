@@ -10,7 +10,7 @@ import {
   whenRoute,
 } from "@sanderling/spec";
 import { defaultActions } from "@sanderling/spec/defaults";
-import { submitChangesBalanceByTypedAmount } from "./predicates";
+import { parseTypedAmount, submitChangesBalanceByTypedAmount } from "./predicates";
 
 interface Account {
   name: string;
@@ -99,7 +99,7 @@ const submitMovesBalanceByTypedAmount = always(
   next(() =>
     submitChangesBalanceByTypedAmount({
       lastAction: lastAction.current,
-      typedAmount: parseDollarCents(txnAmountField.previous?.text),
+      typedAmount: parseTypedAmount(txnAmountField.previous?.text),
       prevTotalBalance: totalBalance.previous ?? 0,
       currTotalBalance: totalBalance.current,
     }),
