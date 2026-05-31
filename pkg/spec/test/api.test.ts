@@ -143,6 +143,8 @@ function installFakeRuntime(): RecordedRuntime {
     },
     tap: ({ on }) => ({ kind: "Tap", on }),
     doubleTap: ({ on }) => ({ kind: "DoubleTap", on }),
+    longPress: ({ on }) => ({ kind: "LongPress", on }),
+    scroll: ({ direction, in: container }) => ({ kind: "Scroll", direction, in: container }),
     inputText: ({ into, text }) => ({ kind: "InputText", into, text }),
     swipe: ({ from: fromPoint, to, durationMillis }) => ({
       kind: "Swipe",
@@ -154,6 +156,8 @@ function installFakeRuntime(): RecordedRuntime {
     wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
     taps: { __sanderlingActionGenerator: true, generate: () => [] },
     doubleTaps: { __sanderlingActionGenerator: true, generate: () => [] },
+    longPresses: { __sanderlingActionGenerator: true, generate: () => [] },
+    scrolls: { __sanderlingActionGenerator: true, generate: () => [] },
     typing: { __sanderlingActionGenerator: true, generate: () => [] },
     swipes: { __sanderlingActionGenerator: true, generate: () => [] },
     waitOnce: { __sanderlingActionGenerator: true, generate: () => [] },

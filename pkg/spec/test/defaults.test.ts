@@ -59,12 +59,16 @@ function installRuntime(initialState: State): RecordedRuntime {
     from: <T>(_items: readonly T[]): Sampler<T> => ({ generate: () => _items[0] as T }),
     tap: ({ on }) => ({ kind: "Tap", on }),
     doubleTap: ({ on }) => ({ kind: "DoubleTap", on }),
+    longPress: ({ on }) => ({ kind: "LongPress", on }),
+    scroll: ({ direction, in: container }) => ({ kind: "Scroll", direction, in: container }),
     inputText: ({ into, text }) => ({ kind: "InputText", into, text }),
     swipe: (p) => ({ kind: "Swipe", from: p.from, to: p.to, durationMillis: p.durationMillis }),
     pressKey: ({ key }) => ({ kind: "PressKey", key }),
     wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
     taps: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     doubleTaps: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    longPresses: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    scrolls: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     typing: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     swipes: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     waitOnce: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
@@ -123,6 +127,13 @@ test("typing resolves as a valid ActionGenerator", async () => {
   installRuntime(emptyState);
   const { typing } = await import("../src/defaults/actions.ts");
   assert.equal(typing.__sanderlingActionGenerator, true);
+});
+
+test("longPresses and scrolls resolve as valid ActionGenerators", async () => {
+  installRuntime(emptyState);
+  const { longPresses, scrolls } = await import("../src/defaults/actions.ts");
+  assert.equal(longPresses.__sanderlingActionGenerator, true);
+  assert.equal(scrolls.__sanderlingActionGenerator, true);
 });
 
 test("defaults barrel re-exports both properties and actions", async () => {
