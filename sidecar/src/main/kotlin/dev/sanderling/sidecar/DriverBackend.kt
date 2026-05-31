@@ -16,13 +16,29 @@ interface DriverBackend {
     fun metrics(bundleId: String): MetricsSample
 }
 
-internal const val STABILITY_POLL_INTERVAL_MILLIS = 120L
-internal const val STABILITY_POLL_CAP_MILLIS = 600L
+// STABILITY_POLL_INTERVAL_MILLIS is set wide enough that UiAutomation /
+// Maestro's contentDescriptor doesn't get hammered: tighter intervals were
+// observed to back the sidecar gRPC stream up under fuzz load to the point
+// of triggering 120s inputText deadlines.
+internal const val STABILITY_POLL_INTERVAL_MILLIS = 250L
+internal const val STABILITY_POLL_CAP_MILLIS = 2000L
 
-// pollUntilStable returns as soon as two consecutive snapshot() results are
-// structurally identical, capped at timeoutMillis. snapshot must omit
-// transient attributes (e.g. measure-pass bounds) so layout-only flicker
-// during a cross-fade doesn't extend the wait.
+// MIN_STABLE_STREAK_MILLIS is the duration the tree must stay structurally
+// identical (and non-transitional) before the poll declares settle. Actions
+// whose effect is async (e.g. tap-submit fires a DB write that later calls
+// popBackStack) leave the UI momentarily stable before the navigation
+// transition fires; requiring an uninterrupted streak of this length means
+// any churn that starts during the window resets the clock instead of being
+// missed.
+internal const val MIN_STABLE_STREAK_MILLIS = 750L
+
+// pollUntilStable returns when the snapshot has been non-null and equal to
+// itself for an uninterrupted stretch of at least MIN_STABLE_STREAK_MILLIS,
+// capped at timeoutMillis. snapshot must omit transient attributes (e.g.
+// measure-pass bounds) so layout-only flicker doesn't extend the wait, and
+// must return null when the snapshot looks transitional (e.g. mid NavHost
+// cross-fade) so the streak resets and the loop keeps polling instead of
+// declaring a partial state stable.
 internal fun pollUntilStable(timeoutMillis: Long, snapshot: () -> String?) {
     if (timeoutMillis <= 0) return
     val deadline = System.currentTimeMillis() + timeoutMillis
@@ -31,6 +47,7 @@ internal fun pollUntilStable(timeoutMillis: Long, snapshot: () -> String?) {
     } catch (_: Exception) {
         null
     }
+    var streakStart = 0L
     while (System.currentTimeMillis() < deadline) {
         Thread.sleep(STABILITY_POLL_INTERVAL_MILLIS)
         val current = try {
@@ -38,9 +55,63 @@ internal fun pollUntilStable(timeoutMillis: Long, snapshot: () -> String?) {
         } catch (_: Exception) {
             null
         }
-        if (prior != null && current != null && prior == current) return
+        val now = System.currentTimeMillis()
+        if (prior != null && current != null && prior == current) {
+            if (streakStart == 0L) streakStart = now
+            if (now - streakStart >= MIN_STABLE_STREAK_MILLIS) return
+        } else {
+            streakStart = 0L
+        }
         prior = current
     }
+}
+
+// stabilitySnapshot probes the current hierarchy for both structural shape
+// and route-transition state. Returns null while more than one route-level
+// destination tag (resource-id/testTag/identifier ending in "Screen") is
+// present, because NavHost keeps both source and destination composables
+// alive during a cross-fade and a snapshot taken in that window is
+// unreliable (lazy lists in the incoming screen mount over multiple frames).
+internal fun stabilitySnapshot(treeJson: String): String? {
+    if (treeJson.isBlank()) return ""
+    if (countRouteScreens(treeJson) > 1) return null
+    return structuralHash(treeJson)
+}
+
+private val ROUTE_TAG_KEYS = setOf(
+    "resource-id", "resourceId", "testTag",
+    "identifier", "accessibilityIdentifier",
+)
+
+internal fun countRouteScreens(treeJson: String): Int {
+    if (treeJson.isBlank()) return 0
+    return try {
+        val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+        val root = mapper.readTree(treeJson)
+        countRouteScreens(root)
+    } catch (_: Exception) {
+        0
+    }
+}
+
+private fun countRouteScreens(node: com.fasterxml.jackson.databind.JsonNode): Int {
+    var count = 0
+    val attributes = node.get("attributes")
+    if (attributes != null && attributes.isObject) {
+        for (key in ROUTE_TAG_KEYS) {
+            val value = attributes.get(key) ?: continue
+            if (value.isNull) continue
+            if (value.asText().endsWith("Screen")) {
+                count++
+                break
+            }
+        }
+    }
+    val children = node.get("children")
+    if (children != null && children.isArray) {
+        for (child in children) count += countRouteScreens(child)
+    }
+    return count
 }
 
 // structuralHash hashes a Maestro TreeNode-shaped JSON string by walking it
@@ -435,7 +506,7 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
             if (isDeviceIdle()) break
             Thread.sleep(IDLE_POLL_INTERVAL_MILLIS)
         }
-        pollUntilStable(STABILITY_POLL_CAP_MILLIS) { structuralHash(hierarchy()) }
+        pollUntilStable(STABILITY_POLL_CAP_MILLIS) { stabilitySnapshot(hierarchy()) }
     }
 
     private fun isDeviceIdle(): Boolean {
@@ -512,7 +583,7 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         // never converges.
         driver.waitForAppToSettle(null, null, durationMillis.toInt())
         pollUntilStable(STABILITY_POLL_CAP_MILLIS) {
-            structuralHash(
+            stabilitySnapshot(
                 com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
                     .writeValueAsString(driver.contentDescriptor(false)),
             )
@@ -705,7 +776,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     override fun waitForIdle(durationMillis: Long) = withReconnect {
         driver.waitForAppToSettle(null, null, durationMillis.toInt())
         pollUntilStable(STABILITY_POLL_CAP_MILLIS) {
-            structuralHash(
+            stabilitySnapshot(
                 com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
                     .writeValueAsString(driver.contentDescriptor(false)),
             )
