@@ -111,7 +111,7 @@ function renderTarget(target: string, isTag: boolean) {
 }
 
 function contentTextForStep(step: Step): string {
-  const action = step.action;
+  const action = step.next_action;
   if (!action) {
     return "";
   }
@@ -140,7 +140,7 @@ function truncateForInline(text: string): string {
 }
 
 function positionTextForStep(step: Step): string | null {
-  const action = step.action;
+  const action = step.next_action;
   if (!action) {
     return null;
   }

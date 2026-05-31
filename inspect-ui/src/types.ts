@@ -125,7 +125,8 @@ export interface Step {
   timestamp: string;
   screen?: string;
   snapshots?: Record<string, unknown>;
-  action?: Action;
+  // next_action is the action chosen for the next iteration based on observing this step.
+  next_action?: Action;
   exceptions?: Exception[];
   violations?: string[];
   hierarchy?: Hierarchy;

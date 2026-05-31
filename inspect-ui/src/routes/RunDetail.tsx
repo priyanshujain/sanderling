@@ -127,7 +127,7 @@ export default function RunDetail() {
     {
       id: "screenshot",
       label: "Screenshot",
-      content: <Screenshot src={beforeScreenshot} action={currentStep?.action} />,
+      content: <Screenshot src={beforeScreenshot} action={currentStep?.next_action} />,
     },
     {
       id: "snapshots",
