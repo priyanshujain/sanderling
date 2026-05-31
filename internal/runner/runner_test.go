@@ -697,3 +697,43 @@ func TestRunner_WaitsForForegroundBeforeFirstAction(t *testing.T) {
 		t.Fatalf("expected the foreground gate (launch at %d) before the first tap (at %d)", firstLaunch, firstTap)
 	}
 }
+
+// TestRunner_WaitsForWindowDrawnBeforeFirstAction verifies the startup gate
+// keeps waiting while the app is the resumed activity but its window has not
+// drawn yet (a leftover screen still focused). It must poll the focused-window
+// signal rather than relaunching, and only proceed once the window names the
+// app.
+func TestRunner_WaitsForWindowDrawnBeforeFirstAction(t *testing.T) {
+	state := newHarness(t)
+	// The app is resumed immediately, but its window lags: the outgoing
+	// settings screen stays focused for two checks before the app draws.
+	state.mock.ForegroundResults = []string{"app.folio"}
+	state.mock.FocusedWindowResults = []string{"com.android.settings", "com.android.settings", "app.folio"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Run(ctx, Options{
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		BundleID:    "app.folio",
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// The gate must have polled the focused window until it named the app,
+	// i.e. at least the three queued results were consumed.
+	if calls := state.mock.FocusedWindowCalls(); calls < 3 {
+		t.Fatalf("expected the gate to poll the focused window until drawn (>=3 calls), got %d", calls)
+	}
+	// The resumed app was never a foreign app, so the gate must not relaunch
+	// or back-press to "fix" a window that simply had not drawn yet.
+	for _, a := range state.mock.Actions() {
+		if a.Kind == mockdriver.ActionPressKey && a.Key == "back" {
+			t.Fatal("expected no back-press while waiting for the window to draw")
+		}
+	}
+}
