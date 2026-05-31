@@ -1,3 +1,19 @@
+// Parses raw user input in the transaction amount field into integer cents.
+// Mirrors the Folio app's parseCents: whole numbers like "50" become 5000
+// cents, decimals like "5.50" become 550, more than 2 decimals or non-numeric
+// input return 0. Leading +/- signs are tolerated and treated as positive.
+export function parseTypedAmount(text: string | undefined | null): number {
+  if (!text) return 0;
+  let trimmed = text.trim().replace(/,/g, "");
+  if (trimmed.startsWith("+") || trimmed.startsWith("-")) trimmed = trimmed.slice(1);
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return 0;
+  const dot = trimmed.indexOf(".");
+  const whole = dot < 0 ? trimmed : trimmed.slice(0, dot);
+  const frac = dot < 0 ? "" : trimmed.slice(dot + 1);
+  const fracPadded = (frac + "00").slice(0, 2);
+  return parseInt(whole, 10) * 100 + parseInt(fracPadded, 10);
+}
+
 // When the last action is a tap (or double-tap) on the transaction Submit
 // button, the absolute change in total balance must equal the amount the
 // user typed. A double-submit lands two transactions and shifts the balance
