@@ -430,25 +430,71 @@ func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
 	}
 
 	actions := state.mock.Actions()
-	var hasHierarchy, hasMetrics, hasLogs bool
+	var hasSnapshot, hasMetrics, hasLogs bool
 	for _, a := range actions {
 		switch a.Kind {
-		case mockdriver.ActionHierarchy:
-			hasHierarchy = true
+		case mockdriver.ActionSnapshot:
+			hasSnapshot = true
 		case mockdriver.ActionMetrics:
 			hasMetrics = true
 		case mockdriver.ActionRecentLogs:
 			hasLogs = true
 		}
 	}
-	if !hasHierarchy {
-		t.Error("expected Hierarchy call in mock actions")
+	if !hasSnapshot {
+		t.Error("expected Snapshot call in mock actions")
 	}
 	if !hasMetrics {
 		t.Error("expected Metrics call in mock actions")
 	}
 	if !hasLogs {
 		t.Error("expected RecentLogs call in mock actions")
+	}
+}
+
+// TestRunner_UsesAtomicSnapshot ensures the runner observes a step's UI
+// through the paired Snapshot RPC instead of racing two independent
+// hierarchy + screenshot reads. The pair must come from one on-device
+// frame; a regression to separate calls is what this test catches.
+func TestRunner_UsesAtomicSnapshot(t *testing.T) {
+	state := newHarness(t)
+	state.mock.ImageData = driver.Image{PNG: []byte("png"), Width: 1, Height: 1}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps == 0 {
+		t.Fatal("expected at least one step")
+	}
+
+	var snapshotCalls, hierarchyCalls, screenshotCalls int
+	for _, action := range state.mock.Actions() {
+		switch action.Kind {
+		case mockdriver.ActionSnapshot:
+			snapshotCalls++
+		case mockdriver.ActionHierarchy:
+			hierarchyCalls++
+		case mockdriver.ActionScreenshot:
+			screenshotCalls++
+		}
+	}
+	if snapshotCalls == 0 {
+		t.Errorf("expected at least one Snapshot call, got %d", snapshotCalls)
+	}
+	if hierarchyCalls != 0 {
+		t.Errorf("expected zero standalone Hierarchy calls (runner must use Snapshot), got %d", hierarchyCalls)
+	}
+	if screenshotCalls != 0 {
+		t.Errorf("expected zero standalone Screenshot calls (runner must use Snapshot), got %d", screenshotCalls)
 	}
 }
 
