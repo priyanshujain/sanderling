@@ -62,6 +62,7 @@ class SnapshotHandlerTest {
             override fun inputText(text: String) {}
             override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {}
             override fun pressKey(key: String) {}
+            override fun longPress(x: Int, y: Int) {}
             override fun screenshot(): Triple<ByteArray, Int, Int> {
                 callOrder.add("screenshot")
                 return Triple(byteArrayOf(1), 0, 0)
