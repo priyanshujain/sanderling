@@ -1,22 +1,19 @@
-export interface LedgerRow {
-  key: string;
-  signed: number;
-}
-
-// When new ledger rows appear, the balance delta must equal the SUM of the
-// new rows' signed amounts. Single-row sums and multi-row sums BOTH must
-// match the delta; a double-submit landing two rows whose total is twice
-// the balance change trips the sum check.
-export function balanceMatchesAddedSum(
-  previousRows: readonly LedgerRow[],
-  currentRows: readonly LedgerRow[],
-  previousBalance: number,
-  currentBalance: number,
-): boolean {
-  const previousKeys = new Set(previousRows.map(row => row.key));
-  const added = currentRows.filter(row => !previousKeys.has(row.key));
-  if (added.length === 0) return true;
-  const delta = currentBalance - previousBalance;
-  const addedSum = added.reduce((sum, row) => sum + row.signed, 0);
-  return addedSum === delta;
+// When the last action is a tap (or double-tap) on the transaction Submit
+// button, the absolute change in total balance must equal the amount the
+// user typed. A double-submit lands two transactions and shifts the balance
+// by 2x the typed amount, tripping this check.
+export function submitChangesBalanceByTypedAmount(args: {
+  lastAction: { kind?: string; on?: string | object } | null;
+  typedAmount: number;
+  prevTotalBalance: number;
+  currTotalBalance: number;
+}): boolean {
+  const { lastAction, typedAmount, prevTotalBalance, currTotalBalance } = args;
+  if (lastAction == null) return true;
+  if (lastAction.kind !== "Tap" && lastAction.kind !== "DoubleTap") return true;
+  const on = lastAction.on;
+  const onString = typeof on === "string" ? on : on != null ? JSON.stringify(on) : "";
+  if (!onString.includes("TxnSubmit")) return true;
+  if (typedAmount === 0) return true;
+  return Math.abs(currTotalBalance - prevTotalBalance) === typedAmount;
 }
