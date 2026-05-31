@@ -206,6 +206,18 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	}
 	element.Class = attrs["class"]
 	element.Package = attrs["package"]
+	if element.Package == "" {
+		// Android omits an explicit package attribute, but native views carry
+		// it as the resource-id prefix (`com.android.systemui:id/...`). Compose
+		// testTags are colon-less and leave the package empty, which keeps them
+		// in scope. This lets target selection tell the app apart from the soft
+		// keyboard and system UI.
+		if resourceID := attrs["resource-id"]; resourceID != "" {
+			if colon := strings.IndexByte(resourceID, ':'); colon > 0 {
+				element.Package = resourceID[:colon]
+			}
+		}
+	}
 	element.Screen = attrs["sanderling-screen"]
 
 	if node.Clickable != nil {
