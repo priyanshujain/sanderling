@@ -417,6 +417,21 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		case <-timer.C:
 		}
 		return tap()
+	case verifier.ActionKindLongPress:
+		x, y, ok := resolveCoordinates(action, tree)
+		if !ok {
+			// No long-press-by-selector RPC exists, so an unresolved target is
+			// nothing we can dispatch; skip rather than error.
+			return nil
+		}
+		return drv.LongPress(ctx, x, y)
+	case verifier.ActionKindScroll:
+		fromX, fromY, toX, toY := scrollEndpoints(action, tree)
+		duration := time.Duration(action.DurationMillis) * time.Millisecond
+		if duration <= 0 {
+			duration = 300 * time.Millisecond
+		}
+		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindInputText:
 		if x, y, ok := resolveCoordinates(action, tree); ok {
 			if err := drv.Tap(ctx, x, y); err != nil {
@@ -503,6 +518,56 @@ func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int,
 	return 0, 0, false
 }
 
+// scrollEndpoints lowers a Scroll to a swipe's from/to points. Pre-computed
+// endpoints (from the generator) win. Otherwise it derives them from the
+// container bounds: the named node when On resolves, else the whole screen.
+func scrollEndpoints(action verifier.Action, tree *hierarchy.Tree) (fromX, fromY, toX, toY int) {
+	if action.FromX != 0 || action.FromY != 0 || action.ToX != 0 || action.ToY != 0 {
+		return action.FromX, action.FromY, action.ToX, action.ToY
+	}
+	bounds := scrollBounds(action, tree)
+	cx, cy := bounds.Center()
+	width := bounds.Width()
+	height := bounds.Height()
+	toX, toY = cx, cy
+	// Scroll direction names content motion; the gesture swipes the opposite
+	// way. Revealing lower content ("down") drags the finger up, so toY drops.
+	switch action.Direction {
+	case "down":
+		toY = cy - (4*height)/10
+	case "up":
+		toY = cy + (4*height)/10
+	case "left":
+		toX = cx + (4*width)/10
+	case "right":
+		toX = cx - (4*width)/10
+	}
+	if toX < 0 {
+		toX = 0
+	}
+	if toY < 0 {
+		toY = 0
+	}
+	return cx, cy, toX, toY
+}
+
+// scrollBounds returns the container bounds for an authored Scroll: the node
+// named by On when it resolves, otherwise the root (whole-screen) bounds.
+func scrollBounds(action verifier.Action, tree *hierarchy.Tree) hierarchy.Bounds {
+	if tree == nil {
+		return hierarchy.Bounds{}
+	}
+	if action.On != "" {
+		if element := tree.Find(action.On); element != nil {
+			return element.Bounds
+		}
+	}
+	if tree.Root != nil {
+		return tree.Root.Bounds
+	}
+	return hierarchy.Bounds{}
+}
+
 // transitionalRetryAttempts caps how many times we re-fetch hierarchy when a
 // tree carries more than one route-level Screen tag (NavHost cross-fade in
 // flight). Each retry pauses transitionalRetrySleep before the next fetch.
@@ -585,7 +650,7 @@ func isTransitionalHierarchy(tree *hierarchy.Tree) bool {
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {
 	traceAction := &trace.Action{Kind: string(action.Kind), X: action.X, Y: action.Y}
 	switch action.Kind {
-	case verifier.ActionKindTap, verifier.ActionKindDoubleTap:
+	case verifier.ActionKindTap, verifier.ActionKindDoubleTap, verifier.ActionKindLongPress:
 		traceAction.Selector = action.On
 		stampSelectorTarget(traceAction, action, tree)
 	case verifier.ActionKindInputText:
@@ -597,6 +662,15 @@ func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action 
 		traceAction.FromY = action.FromY
 		traceAction.ToX = action.ToX
 		traceAction.ToY = action.ToY
+		traceAction.DurationMillis = action.DurationMillis
+		traceAction.X = 0
+		traceAction.Y = 0
+	case verifier.ActionKindScroll:
+		fromX, fromY, toX, toY := scrollEndpoints(action, tree)
+		traceAction.FromX = fromX
+		traceAction.FromY = fromY
+		traceAction.ToX = toX
+		traceAction.ToY = toY
 		traceAction.DurationMillis = action.DurationMillis
 		traceAction.X = 0
 		traceAction.Y = 0
