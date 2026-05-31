@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -843,6 +846,115 @@ func TestRunner_NilHierarchyMarksTransitional(t *testing.T) {
 	}
 	if len(first.Violations) != 0 {
 		t.Errorf("step 1 must skip the verifier; got violations %v", first.Violations)
+	}
+}
+
+// tapSelectorFailFirst wraps a mock driver so the first TapSelector call
+// returns a gRPC DeadlineExceeded error (mimicking a sidecar-side RPC hang),
+// then delegates every subsequent call back to the mock.
+type tapSelectorFailFirst struct {
+	*mockdriver.Driver
+	calls int
+}
+
+func (d *tapSelectorFailFirst) TapSelector(ctx context.Context, selector string) error {
+	d.calls++
+	if d.calls == 1 {
+		return status.Error(codes.DeadlineExceeded, "boom")
+	}
+	return d.Driver.TapSelector(ctx, selector)
+}
+
+// TestRunner_TransientApplyErrorMarksTransitional verifies that a transient
+// gRPC error from applyAction (e.g. sidecar RPC deadline) does not kill the
+// run: the step is marked transitional, the verifier is skipped for it, and
+// the loop continues with the next step running cleanly.
+func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
+	state := newHarness(t)
+	wrapped := &tapSelectorFailFirst{Driver: state.mock}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    300 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Logger:      logger,
+	})
+	if err != nil {
+		t.Fatalf("Run must not return on transient apply error, got %v", err)
+	}
+	if summary.Steps < 2 {
+		t.Fatalf("need at least 2 steps to prove the loop continued past the failed apply, got %d", summary.Steps)
+	}
+	if len(summary.Violations) != 0 {
+		t.Errorf("transient apply error must not surface as a violation, got %v", summary.Violations)
+	}
+	if !strings.Contains(logBuf.String(), "transient apply error") {
+		t.Errorf("expected transient-apply WARN log, got %q", logBuf.String())
+	}
+
+	type traceLine struct {
+		Step         int      `json:"step"`
+		Transitional bool     `json:"transitional"`
+		Violations   []string `json:"violations"`
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(body), []byte("\n"))
+	var first, second traceLine
+	if err := json.Unmarshal(lines[0], &first); err != nil {
+		t.Fatalf("decode first trace line: %v", err)
+	}
+	if err := json.Unmarshal(lines[1], &second); err != nil {
+		t.Fatalf("decode second trace line: %v", err)
+	}
+	if first.Step != 1 || !first.Transitional {
+		t.Errorf("step 1 must be transitional after transient apply error, got step=%d transitional=%v", first.Step, first.Transitional)
+	}
+	if len(first.Violations) != 0 {
+		t.Errorf("transient apply step must have no violations, got %v", first.Violations)
+	}
+	if second.Step != 2 || second.Transitional {
+		t.Errorf("step 2 must run cleanly after the transient step, got step=%d transitional=%v", second.Step, second.Transitional)
+	}
+}
+
+// TestIsTransientApplyError_Classification covers the helper's matching rules
+// directly so future code changes don't quietly drop a transient case.
+func TestIsTransientApplyError_Classification(t *testing.T) {
+	cleanCtx := context.Background()
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cases := []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want bool
+	}{
+		{"nil error", cleanCtx, nil, false},
+		{"deadline exceeded", cleanCtx, status.Error(codes.DeadlineExceeded, "boom"), true},
+		{"unavailable", cleanCtx, status.Error(codes.Unavailable, "boom"), true},
+		{"internal wrapping deadline", cleanCtx, status.Error(codes.Internal, "io.grpc.StatusRuntimeException: DEADLINE_EXCEEDED: ..."), true},
+		{"internal wrapping unavailable", cleanCtx, status.Error(codes.Internal, "io.grpc.StatusRuntimeException: UNAVAILABLE: ..."), true},
+		{"internal generic", cleanCtx, status.Error(codes.Internal, "boom"), false},
+		{"raw context deadline", cleanCtx, context.DeadlineExceeded, true},
+		{"run context cancelled overrides", cancelledCtx, status.Error(codes.DeadlineExceeded, "boom"), false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := isTransientApplyError(testCase.ctx, testCase.err); got != testCase.want {
+				t.Errorf("got %v, want %v", got, testCase.want)
+			}
+		})
 	}
 }
 
