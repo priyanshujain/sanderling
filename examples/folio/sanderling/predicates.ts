@@ -1,3 +1,25 @@
+// Computes the Home-screen total balance from the visible AccountCard balances.
+// When no Home cards are visible (Ledger, AddTransaction, etc.) the carrier
+// value is returned so the property compares apples to apples across screen
+// transitions. The Ledger LedgerBalance is intentionally ignored because it is
+// a single-account number on a different scale than the Home multi-account sum.
+export function computeHomeTotalBalance(args: {
+  cardBalanceTexts: (string | undefined)[];
+  previousCarrier: number;
+}): number {
+  const { cardBalanceTexts, previousCarrier } = args;
+  if (cardBalanceTexts.length === 0) return previousCarrier;
+  return cardBalanceTexts.reduce((sum, text) => sum + parseDollarCents(text), 0);
+}
+
+// Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to integer cents.
+function parseDollarCents(text: string | undefined): number {
+  if (!text) return 0;
+  const sign = text.startsWith("-") ? -1 : 1;
+  const digits = text.replace(/[^0-9]/g, "");
+  return digits ? sign * parseInt(digits, 10) : 0;
+}
+
 // Parses raw user input in the transaction amount field into integer cents.
 // Mirrors the Folio app's parseCents: whole numbers like "50" become 5000
 // cents, decimals like "5.50" become 550, more than 2 decimals or non-numeric
