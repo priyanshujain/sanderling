@@ -17,7 +17,8 @@ type Step struct {
 	Timestamp         time.Time                  `json:"timestamp"`
 	Screen            string                     `json:"screen,omitempty"`
 	Snapshots         map[string]json.RawMessage `json:"snapshots,omitempty"`
-	Action            *Action                    `json:"action,omitempty"`
+	// NextAction is the action chosen for the next iteration based on observing this step.
+	NextAction        *Action                    `json:"next_action,omitempty"`
 	Exceptions        []Exception                `json:"exceptions,omitempty"`
 	Violations        []string                   `json:"violations,omitempty"`
 	Hierarchy         *hierarchy.Tree            `json:"hierarchy,omitempty"`
