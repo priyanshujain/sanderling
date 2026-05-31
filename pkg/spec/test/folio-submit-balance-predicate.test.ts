@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { submitChangesBalanceByTypedAmount } from "../../../examples/folio/sanderling/predicates.ts";
+import {
+  parseTypedAmount,
+  submitChangesBalanceByTypedAmount,
+} from "../../../examples/folio/sanderling/predicates.ts";
 
 const submitOn = "testTag:LedgerScreen > testTag:TxnSubmit";
 
@@ -110,5 +113,53 @@ test("selector as object without TxnSubmit: vacuous true", () => {
       currTotalBalance: 1000,
     }),
     true,
+  );
+});
+
+test("raw whole-dollar input: single submit clears", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: parseTypedAmount("50"),
+      prevTotalBalance: 5000,
+      currTotalBalance: 10000,
+    }),
+    true,
+  );
+});
+
+test("raw whole-dollar input: double submit fires", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: parseTypedAmount("50"),
+      prevTotalBalance: 5000,
+      currTotalBalance: 15000,
+    }),
+    false,
+  );
+});
+
+test("decimal input from empty prior balance clears", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: parseTypedAmount("5.50"),
+      prevTotalBalance: 0,
+      currTotalBalance: 550,
+    }),
+    true,
+  );
+});
+
+test("DoubleTap kind with raw whole-dollar input fires", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      lastAction: { kind: "DoubleTap", on: submitOn },
+      typedAmount: parseTypedAmount("100"),
+      prevTotalBalance: 0,
+      currTotalBalance: 20000,
+    }),
+    false,
   );
 });
