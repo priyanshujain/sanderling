@@ -83,10 +83,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			lastAction = nil
 		}
 
-		// Hierarchy, metrics, and logs are independent device reads — run
+		// Hierarchy, metrics, and logs are independent device reads. Run
 		// them concurrently so metrics+logs hide behind the hierarchy fetch.
 		var tree *hierarchy.Tree
 		var hierarchyErr error
+		var transitional bool
 		var metrics *trace.Metrics
 		var logs []verifier.LogEntry
 
@@ -100,7 +101,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// screenshot describe the same frame, then re-fetches the pair
 		// while the tree still looks transitional.
 		g.Go(func() error {
-			tree, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
+			tree, transitional, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
 			return nil
 		})
 		g.Go(func() error {
@@ -140,36 +141,52 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 		lastLogTime = stepStart
 
-		if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
-			Tree:       tree,
-			LastAction: lastAction,
-			StepTime:   stepStart,
-			RunStart:   summary.StartTime,
-			Logs:       logs,
-		}); err != nil {
-			return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
-		}
-		skipped, overrideErr := options.Verifier.OverrideExtractorValues(v8Overrides)
-		if overrideErr != nil {
-			logger.Warn("v8 override apply failed", "step", stepIndex, "err", overrideErr)
-		}
-		if skipped > 0 {
-			logger.Warn("v8 override skipped out-of-range entries",
-				"step", stepIndex, "skipped", skipped, "have", len(v8Overrides))
-		}
-
 		screen := ""
 		if tree != nil && len(tree.Elements) > 0 {
 			screen = tree.Elements[0].Screen
 		}
-		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
-		options.Verifier.EvaluateProperties()
-		violations := options.Verifier.NewlyViolatedProperties()
-		for _, name := range violations {
-			if predicateErr := options.Verifier.PredicateError(name); predicateErr != nil {
-				logger.Warn("predicate error", "step", stepIndex, "property", name, "err", predicateErr)
+
+		// Transitional trees describe a NavHost mid cross-fade. Pushing
+		// one would poison the verifier's previous/current extractor
+		// advance, so the next clean step would compare against this
+		// transient state and emit false-positive violations. We still
+		// record the step (hierarchy + screenshot) for inspect-side
+		// debugging, but skip the verifier entirely and pick the next
+		// action against the unchanged prior state to keep the loop
+		// progressing.
+		var violations []string
+		var extractorChanges map[string]trace.ExtractorChange
+		if !transitional {
+			if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
+				Tree:       tree,
+				LastAction: lastAction,
+				StepTime:   stepStart,
+				RunStart:   summary.StartTime,
+				Logs:       logs,
+			}); err != nil {
+				return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 			}
+			skipped, overrideErr := options.Verifier.OverrideExtractorValues(v8Overrides)
+			if overrideErr != nil {
+				logger.Warn("v8 override apply failed", "step", stepIndex, "err", overrideErr)
+			}
+			if skipped > 0 {
+				logger.Warn("v8 override skipped out-of-range entries",
+					"step", stepIndex, "skipped", skipped, "have", len(v8Overrides))
+			}
+			options.Verifier.EvaluateProperties()
+			violations = options.Verifier.NewlyViolatedProperties()
+			for _, name := range violations {
+				if predicateErr := options.Verifier.PredicateError(name); predicateErr != nil {
+					logger.Warn("predicate error", "step", stepIndex, "property", name, "err", predicateErr)
+				}
+			}
+			extractorChanges = encodeExtractorChanges(options.Verifier.ChangedExtractors())
+		} else {
+			logger.Warn("transitional tree after retry budget; skipping verifier",
+				"step", stepIndex, "screen", screen, "nodes", treeSize)
 		}
+		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
 
 		var nextAction verifier.Action
 		var nextErr error
@@ -199,7 +216,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			Hierarchy:        tree,
 			Residuals:        residuals,
 			Metrics:          metrics,
-			ExtractorChanges: encodeExtractorChanges(options.Verifier.ChangedExtractors()),
+			ExtractorChanges: extractorChanges,
+			Transitional:     transitional,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
@@ -503,24 +521,28 @@ const (
 // The driver's Snapshot RPC captures both reads under a backend-side mutex
 // so they describe the same on-device frame; the retry exists for the
 // orthogonal case where the frame itself is transitional.
-func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (*hierarchy.Tree, error) {
-	var tree *hierarchy.Tree
-	var hierarchyErr error
+//
+// The transitional return reports whether the retry budget was exhausted
+// on a still-transitional tree. Callers use it to skip the verifier for
+// that step so the previous/current extractor advance does not absorb
+// transient state.
+func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (tree *hierarchy.Tree, transitional bool, err error) {
 	var pngBytes []byte
 retryLoop:
 	for attempt := range transitionalRetryAttempts {
 		hierarchyJSON, image, snapshotErr := options.Driver.Snapshot(ctx)
 		if snapshotErr != nil {
-			hierarchyErr = snapshotErr
+			err = snapshotErr
 			tree = nil
 		} else {
-			tree, hierarchyErr = hierarchy.Parse(hierarchyJSON)
+			tree, err = hierarchy.Parse(hierarchyJSON)
 			pngBytes = image.PNG
 		}
-		if hierarchyErr != nil || !isTransitionalHierarchy(tree) {
+		if err != nil || !isTransitionalHierarchy(tree) {
 			break
 		}
 		if attempt == transitionalRetryAttempts-1 {
+			transitional = true
 			break
 		}
 		timer := time.NewTimer(transitionalRetrySleep)
@@ -536,7 +558,7 @@ retryLoop:
 			logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
 		}
 	}
-	return tree, hierarchyErr
+	return tree, transitional, err
 }
 
 // isTransitionalHierarchy returns true when the tree carries more than one
