@@ -12,15 +12,11 @@ import {
   whenRoute,
 } from "@sanderling/spec";
 import { defaultActions } from "@sanderling/spec/defaults";
+import { balanceMatchesAddedSum, type LedgerRow } from "./predicates";
 
 interface Account {
   name: string;
   balance: number;
-}
-
-interface LedgerRow {
-  key: string;
-  signed: number;
 }
 
 // Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to integer cents.
@@ -93,22 +89,21 @@ const newAccountBalanceIsZero = always(
   })
 );
 
-// Property 2: when new ledger rows appear, the ledger balance delta equals
-// the sum of the new rows' signed amounts. A double-submit lands two rows
-// whose individual amounts cannot both equal the aggregate delta, so each
-// such row fires the property.
+// Property 2: when new ledger rows appear, the balance delta equals the SUM
+// of the new rows' signed amounts. Single-row and multi-row sums both must
+// match; a double-submit lands two rows whose total is twice the balance
+// change and trips the sum check.
 const balanceMatchesAddedTxn = always(
   now(() => route.current === "ledger").implies(
-    next(() => {
-      const prev = ledgerRows.previous ?? [];
-      const curr = ledgerRows.current;
-      const prevKeys = new Set(prev.map(r => r.key));
-      const added = curr.filter(r => !prevKeys.has(r.key));
-      if (added.length === 0) return true;
-      const delta = ledgerBalance.current - (ledgerBalance.previous ?? 0);
-      return added.every(r => r.signed === delta);
-    })
-  )
+    next(() =>
+      balanceMatchesAddedSum(
+        ledgerRows.previous ?? [],
+        ledgerRows.current,
+        ledgerBalance.previous ?? 0,
+        ledgerBalance.current,
+      ),
+    ),
+  ),
 );
 
 const DEMO_EMAIL = "demo@folio.app";
