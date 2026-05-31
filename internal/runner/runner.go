@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -90,11 +91,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// goroutine, whose CDP round-trip can otherwise outrun the step
 		// budget on a hung tab.
 		g, gctx := errgroup.WithContext(ctx)
+		si := stepIndex
+		// fetchSyncedState pairs hierarchy and screenshot in the same goroutine
+		// so when a retry happens on a transitional tree, the screenshot stays
+		// aligned with the final hierarchy snapshot.
 		g.Go(func() error {
-			tree, hierarchyErr = fetchHierarchy(gctx, options.Driver)
+			tree, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
 			return nil
 		})
-		si := stepIndex
 		g.Go(func() error {
 			metrics = captureMetrics(gctx, options, logger, si)
 			return nil
@@ -116,10 +120,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				return nil
 			})
 		}
-		g.Go(func() error {
-			captureScreenshot(gctx, options, logger, si)
-			return nil
-		})
 		// All goroutines write to local variables and return nil, so the Wait
 		// error is always nil; ignored intentionally.
 		_ = g.Wait()
@@ -414,6 +414,89 @@ func fetchHierarchy(ctx context.Context, drv driver.DeviceDriver) (*hierarchy.Tr
 	return hierarchy.Parse(xmlText)
 }
 
+// transitionalRetryAttempts caps how many times we re-fetch hierarchy when a
+// tree carries more than one route-level Screen tag (NavHost cross-fade in
+// flight). Each retry pauses transitionalRetrySleep before the next fetch.
+const (
+	transitionalRetryAttempts = 4
+	transitionalRetrySleep    = 200 * time.Millisecond
+)
+
+// fetchSyncedState fetches hierarchy and screenshot together so the recorded
+// pair shows the same UI moment. If the hierarchy looks like a NavHost
+// cross-fade (multiple route-level *Screen tags), the function waits briefly
+// and re-fetches the pair, up to transitionalRetryAttempts times. This
+// handles transitions whose async work begins after the sidecar's settle
+// poll has already exited.
+func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (*hierarchy.Tree, error) {
+	var tree *hierarchy.Tree
+	var hierarchyErr error
+	var pngBytes []byte
+retryLoop:
+	for attempt := range transitionalRetryAttempts {
+		var wg sync.WaitGroup
+		var localTree *hierarchy.Tree
+		var localHierErr error
+		var localImg driver.Image
+		var localImgErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			localTree, localHierErr = fetchHierarchy(ctx, options.Driver)
+		}()
+		go func() {
+			defer wg.Done()
+			localImg, localImgErr = options.Driver.Screenshot(ctx)
+		}()
+		wg.Wait()
+		tree = localTree
+		hierarchyErr = localHierErr
+		if localImgErr == nil {
+			pngBytes = localImg.PNG
+		}
+		if hierarchyErr != nil || !isTransitionalHierarchy(tree) {
+			break
+		}
+		if attempt == transitionalRetryAttempts-1 {
+			break
+		}
+		timer := time.NewTimer(transitionalRetrySleep)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			break retryLoop
+		case <-timer.C:
+		}
+	}
+	if len(pngBytes) > 0 {
+		if writeErr := options.TraceWriter.WriteScreenshot(stepIndex, pngBytes); writeErr != nil {
+			logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
+		}
+	}
+	return tree, hierarchyErr
+}
+
+// isTransitionalHierarchy returns true when the tree carries more than one
+// resource-id ending in "Screen" - the marker of a Compose NavHost mid
+// cross-fade where both source and destination route composables are alive.
+// Mirrors the sidecar's stabilitySnapshot heuristic so runner-side rejection
+// stays consistent with the settle poll.
+func isTransitionalHierarchy(tree *hierarchy.Tree) bool {
+	if tree == nil {
+		return false
+	}
+	screens := 0
+	for _, element := range tree.Elements {
+		if strings.HasSuffix(element.ResourceID, "Screen") {
+			screens++
+			if screens > 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {
 	traceAction := &trace.Action{Kind: string(action.Kind), X: action.X, Y: action.Y}
 	switch action.Kind {
@@ -538,20 +621,6 @@ func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Actio
 		return verifier.Action{Kind: verifier.ActionKindWait, DurationMillis: decoded.DurationMillis}, nil
 	default:
 		return verifier.Action{}, verifier.ErrNoAction
-	}
-}
-
-func captureScreenshot(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
-	image, err := options.Driver.Screenshot(ctx)
-	if err != nil {
-		logger.Warn("screenshot capture failed", "step", stepIndex, "err", err)
-		return
-	}
-	if len(image.PNG) == 0 {
-		return
-	}
-	if writeErr := options.TraceWriter.WriteScreenshot(stepIndex, image.PNG); writeErr != nil {
-		logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
 	}
 }
 
