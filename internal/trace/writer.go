@@ -24,6 +24,11 @@ type Step struct {
 	Residuals         map[string]json.RawMessage `json:"residuals,omitempty"`
 	Metrics           *Metrics                   `json:"metrics,omitempty"`
 	ExtractorChanges  map[string]ExtractorChange `json:"extractor_changes,omitempty"`
+	// Transitional marks a step whose hierarchy still showed a NavHost
+	// cross-fade (multiple route-level *Screen ids) after the runner's
+	// retry budget. The verifier is skipped for these steps so transient
+	// state does not poison the previous/current extractor advance.
+	Transitional bool `json:"transitional,omitempty"`
 }
 
 // ExtractorChange records the prev/curr JSON values of an extractor whose
