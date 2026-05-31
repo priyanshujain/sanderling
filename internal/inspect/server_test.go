@@ -38,7 +38,7 @@ func newFixtureServer(t *testing.T) (*Server, string) {
 		BundleID:  "com.example",
 	}, []trace.Step{
 		{Index: 1, Timestamp: startedAt, Screen: "Home"},
-		{Index: 2, Timestamp: startedAt.Add(time.Second), Screen: "Home", Action: &trace.Action{Kind: "tap"}},
+		{Index: 2, Timestamp: startedAt.Add(time.Second), Screen: "Home", NextAction: &trace.Action{Kind: "tap"}},
 		{Index: 3, Timestamp: startedAt.Add(2 * time.Second), Screen: "Cart", Violations: []string{"propA"}},
 	})
 	writeRun(t, root, "run-b", trace.Meta{

@@ -104,7 +104,7 @@ func TestCacheStep_LazyDecodeReturnsFullStep(t *testing.T) {
 	startedAt := time.Now().UTC()
 	steps := []trace.Step{
 		{Index: 1, Timestamp: startedAt, Screen: "A"},
-		{Index: 2, Timestamp: startedAt.Add(time.Second), Screen: "B", Action: &trace.Action{Kind: "tap"}},
+		{Index: 2, Timestamp: startedAt.Add(time.Second), Screen: "B", NextAction: &trace.Action{Kind: "tap"}},
 		{Index: 3, Timestamp: startedAt.Add(2 * time.Second), Screen: "C", Violations: []string{"prop1"}},
 	}
 	writeRun(t, root, "r1", trace.Meta{StartedAt: startedAt, EndedAt: timePointer(startedAt.Add(3 * time.Second))}, steps)
@@ -144,13 +144,13 @@ func TestDecodeStepSummary_ActionLabelPerKind(t *testing.T) {
 		wantKind  string
 		wantLabel string
 	}{
-		{`{"step":1,"timestamp":"2026-04-20T10:00:00Z","action":{"kind":"Tap","selector":"id:save"}}`, "Tap", "id:save"},
-		{`{"step":2,"timestamp":"2026-04-20T10:00:01Z","action":{"kind":"Tap","x":140,"y":220}}`, "Tap", "(140,220)"},
-		{`{"step":3,"timestamp":"2026-04-20T10:00:02Z","action":{"kind":"InputText","text":"alice"}}`, "InputText", `"alice"`},
-		{`{"step":4,"timestamp":"2026-04-20T10:00:03Z","action":{"kind":"Swipe","from_x":10,"from_y":500,"to_x":10,"to_y":50}}`, "Swipe", "up"},
-		{`{"step":5,"timestamp":"2026-04-20T10:00:04Z","action":{"kind":"Swipe","from_x":100,"from_y":50,"to_x":600,"to_y":50}}`, "Swipe", "right"},
-		{`{"step":6,"timestamp":"2026-04-20T10:00:05Z","action":{"kind":"PressKey","key":"back"}}`, "PressKey", "back"},
-		{`{"step":7,"timestamp":"2026-04-20T10:00:06Z","action":{"kind":"Wait","duration_millis":500}}`, "Wait", "500ms"},
+		{`{"step":1,"timestamp":"2026-04-20T10:00:00Z","next_action":{"kind":"Tap","selector":"id:save"}}`, "Tap", "id:save"},
+		{`{"step":2,"timestamp":"2026-04-20T10:00:01Z","next_action":{"kind":"Tap","x":140,"y":220}}`, "Tap", "(140,220)"},
+		{`{"step":3,"timestamp":"2026-04-20T10:00:02Z","next_action":{"kind":"InputText","text":"alice"}}`, "InputText", `"alice"`},
+		{`{"step":4,"timestamp":"2026-04-20T10:00:03Z","next_action":{"kind":"Swipe","from_x":10,"from_y":500,"to_x":10,"to_y":50}}`, "Swipe", "up"},
+		{`{"step":5,"timestamp":"2026-04-20T10:00:04Z","next_action":{"kind":"Swipe","from_x":100,"from_y":50,"to_x":600,"to_y":50}}`, "Swipe", "right"},
+		{`{"step":6,"timestamp":"2026-04-20T10:00:05Z","next_action":{"kind":"PressKey","key":"back"}}`, "PressKey", "back"},
+		{`{"step":7,"timestamp":"2026-04-20T10:00:06Z","next_action":{"kind":"Wait","duration_millis":500}}`, "Wait", "500ms"},
 	}
 	for _, tc := range cases {
 		summary, _, err := decodeStepSummary([]byte(tc.line))
