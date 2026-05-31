@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -97,9 +96,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// budget on a hung tab.
 		g, gctx := errgroup.WithContext(ctx)
 		si := stepIndex
-		// fetchSyncedState pairs hierarchy and screenshot in the same goroutine
-		// so when a retry happens on a transitional tree, the screenshot stays
-		// aligned with the final hierarchy snapshot.
+		// fetchSyncedState issues a single Snapshot RPC so hierarchy and
+		// screenshot describe the same frame, then re-fetches the pair
+		// while the tree still looks transitional.
 		g.Go(func() error {
 			tree, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
 			return nil
@@ -486,14 +485,6 @@ func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int,
 	return 0, 0, false
 }
 
-func fetchHierarchy(ctx context.Context, drv driver.DeviceDriver) (*hierarchy.Tree, error) {
-	xmlText, err := drv.Hierarchy(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return hierarchy.Parse(xmlText)
-}
-
 // transitionalRetryAttempts caps how many times we re-fetch hierarchy when a
 // tree carries more than one route-level Screen tag (NavHost cross-fade in
 // flight). Each retry pauses transitionalRetrySleep before the next fetch.
@@ -508,31 +499,23 @@ const (
 // and re-fetches the pair, up to transitionalRetryAttempts times. This
 // handles transitions whose async work begins after the sidecar's settle
 // poll has already exited.
+//
+// The driver's Snapshot RPC captures both reads under a backend-side mutex
+// so they describe the same on-device frame; the retry exists for the
+// orthogonal case where the frame itself is transitional.
 func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (*hierarchy.Tree, error) {
 	var tree *hierarchy.Tree
 	var hierarchyErr error
 	var pngBytes []byte
 retryLoop:
 	for attempt := range transitionalRetryAttempts {
-		var wg sync.WaitGroup
-		var localTree *hierarchy.Tree
-		var localHierErr error
-		var localImg driver.Image
-		var localImgErr error
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			localTree, localHierErr = fetchHierarchy(ctx, options.Driver)
-		}()
-		go func() {
-			defer wg.Done()
-			localImg, localImgErr = options.Driver.Screenshot(ctx)
-		}()
-		wg.Wait()
-		tree = localTree
-		hierarchyErr = localHierErr
-		if localImgErr == nil {
-			pngBytes = localImg.PNG
+		hierarchyJSON, image, snapshotErr := options.Driver.Snapshot(ctx)
+		if snapshotErr != nil {
+			hierarchyErr = snapshotErr
+			tree = nil
+		} else {
+			tree, hierarchyErr = hierarchy.Parse(hierarchyJSON)
+			pngBytes = image.PNG
 		}
 		if hierarchyErr != nil || !isTransitionalHierarchy(tree) {
 			break
