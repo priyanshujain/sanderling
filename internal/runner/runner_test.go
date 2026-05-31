@@ -408,6 +408,110 @@ func TestApplyAction_DoubleTapDispatchesTwoSelectorTaps(t *testing.T) {
 	}
 }
 
+func TestApplyAction_LongPressDispatchesAtResolvedCoordinates(t *testing.T) {
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindLongPress, X: 120, Y: 240}
+
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	found := false
+	for _, a := range driverMock.Actions() {
+		if a.Kind == mockdriver.ActionLongPress && a.X == 120 && a.Y == 240 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected LongPress at (120,240), got %v", driverMock.Actions())
+	}
+}
+
+func TestApplyAction_ScrollWithPrecomputedEndpointsSwipes(t *testing.T) {
+	driverMock := mockdriver.New()
+	action := verifier.Action{
+		Kind:           verifier.ActionKindScroll,
+		Direction:      "down",
+		FromX:          100,
+		FromY:          500,
+		ToX:            100,
+		ToY:            300,
+		DurationMillis: 300,
+	}
+
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	found := false
+	for _, a := range driverMock.Actions() {
+		if a.Kind == mockdriver.ActionSwipe && a.FromX == 100 && a.FromY == 500 && a.ToX == 100 && a.ToY == 300 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected Swipe with precomputed endpoints, got %v", driverMock.Actions())
+	}
+}
+
+func TestApplyAction_ScrollDirectionUsesInversion(t *testing.T) {
+	driverMock := mockdriver.New()
+	treeJSON := `{"attributes":{"resource-id":"com.fixture:id/list","bounds":"[0,0,400,800]"},"children":[],"enabled":true}`
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatalf("parse tree: %v", err)
+	}
+	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "down", On: "id:list"}
+
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	var swipe *mockdriver.Action
+	for i := range driverMock.Actions() {
+		if driverMock.Actions()[i].Kind == mockdriver.ActionSwipe {
+			a := driverMock.Actions()[i]
+			swipe = &a
+		}
+	}
+	if swipe == nil {
+		t.Fatalf("expected a Swipe, got %v", driverMock.Actions())
+	}
+	// "down" reveals lower content by dragging the finger up, so toY < fromY.
+	if swipe.ToY >= swipe.FromY {
+		t.Errorf("expected toY < fromY for scroll down, got from=%d to=%d", swipe.FromY, swipe.ToY)
+	}
+}
+
+func TestApplyAction_ScrollScreenFallback(t *testing.T) {
+	driverMock := mockdriver.New()
+	treeJSON := `{"attributes":{"bounds":"[0,0,400,800]"},"children":[],"enabled":true}`
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatalf("parse tree: %v", err)
+	}
+	// On unset: container falls back to whole-screen (root) bounds.
+	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "up"}
+
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	var swipe *mockdriver.Action
+	for i := range driverMock.Actions() {
+		if driverMock.Actions()[i].Kind == mockdriver.ActionSwipe {
+			a := driverMock.Actions()[i]
+			swipe = &a
+		}
+	}
+	if swipe == nil {
+		t.Fatalf("expected a Swipe, got %v", driverMock.Actions())
+	}
+	if swipe.FromX != 200 || swipe.FromY != 400 {
+		t.Errorf("expected swipe to start at screen center (200,400), got (%d,%d)", swipe.FromX, swipe.FromY)
+	}
+	// "up" reveals upper content by dragging the finger down, so toY > fromY.
+	if swipe.ToY <= swipe.FromY {
+		t.Errorf("expected toY > fromY for scroll up, got from=%d to=%d", swipe.FromY, swipe.ToY)
+	}
+}
+
 func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
 	state := newHarness(t)
 	state.mock.MetricsData = driver.Metrics{CPUPercent: 5.0, HeapBytes: 1024, TotalMemoryBytes: 4096}
