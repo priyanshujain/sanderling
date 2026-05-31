@@ -53,6 +53,13 @@ class DriverService(
         }
     }
 
+    override fun longPress(request: Point, responseObserver: StreamObserver<Empty>) {
+        runRpc(responseObserver) {
+            backend.longPress(request.x, request.y)
+            Empty.getDefaultInstance()
+        }
+    }
+
     override fun tapSelector(request: Selector, responseObserver: StreamObserver<Empty>) {
         runRpc(responseObserver) {
             backend.tapSelector(request.value)
