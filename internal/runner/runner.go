@@ -139,6 +139,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if tree != nil {
 			treeSize = len(tree.Elements)
 		}
+		// A nil or empty tree means the sidecar's hierarchy fetch failed or
+		// returned nothing (e.g. transient device-side timeout). Pushing it
+		// would let spec extractors call findAll() and chain .map() on a null
+		// result; treat it like a transitional capture so the verifier is
+		// skipped, the step is still recorded, and the loop progresses.
+		if treeSize == 0 {
+			transitional = true
+		}
 		lastLogTime = stepStart
 
 		screen := ""

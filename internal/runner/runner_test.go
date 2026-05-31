@@ -773,6 +773,79 @@ func TestRunner_CleanTreeStillVerified(t *testing.T) {
 	}
 }
 
+// snapshotFailFirst wraps a mock driver so the first Snapshot call returns an
+// error (mimicking a sidecar timeout while fetching view hierarchy), then
+// delegates every subsequent call back to the mock.
+type snapshotFailFirst struct {
+	*mockdriver.Driver
+	calls int
+}
+
+func (d *snapshotFailFirst) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	d.calls++
+	if d.calls == 1 {
+		return "", driver.Image{}, errors.New("Timeout while fetching view hierarchy")
+	}
+	return d.Driver.Snapshot(ctx)
+}
+
+// TestRunner_NilHierarchyMarksTransitional verifies that when the sidecar's
+// hierarchy fetch fails (nil tree), the runner marks the step transitional and
+// skips the verifier instead of pushing a nil tree that would crash the spec.
+// Subsequent steps with a clean tree still drive the verifier normally.
+func TestRunner_NilHierarchyMarksTransitional(t *testing.T) {
+	state := newHarnessWithSpec(t, violationSpec)
+	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"HomeScreen"},"children":[]}`
+	wrapped := &snapshotFailFirst{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    200 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps < 2 {
+		t.Fatalf("need at least 2 steps to verify the first is skipped and the second runs, got %d", summary.Steps)
+	}
+	// violationSpec always() => false fires on the first verifier push. With
+	// step 1's verifier skipped, onset moves to step 2.
+	if len(summary.Violations) != 1 {
+		t.Fatalf("expected exactly one onset record, got %d: %v", len(summary.Violations), summary.Violations)
+	}
+	if summary.Violations[0].StepIndex != 2 {
+		t.Errorf("onset step: got %d, want 2 (step 1 verifier skipped due to nil tree)", summary.Violations[0].StepIndex)
+	}
+
+	type traceLine struct {
+		Step         int      `json:"step"`
+		Transitional bool     `json:"transitional"`
+		Violations   []string `json:"violations"`
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first traceLine
+	if err := json.Unmarshal(bytes.SplitN(bytes.TrimSpace(body), []byte("\n"), 2)[0], &first); err != nil {
+		t.Fatalf("decode first trace line: %v", err)
+	}
+	if first.Step != 1 {
+		t.Fatalf("first trace line step: got %d, want 1", first.Step)
+	}
+	if !first.Transitional {
+		t.Error("first step must be marked transitional when the hierarchy fetch failed")
+	}
+	if len(first.Violations) != 0 {
+		t.Errorf("step 1 must skip the verifier; got violations %v", first.Violations)
+	}
+}
+
 // TestRunner_WaitActionSkipsIdle ensures the runner does not call WaitForIdle
 // after a Wait action - the action already provides settling time.
 func TestRunner_WaitActionSkipsIdle(t *testing.T) {
