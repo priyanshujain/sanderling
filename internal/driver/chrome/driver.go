@@ -268,6 +268,21 @@ func (d *Driver) Screenshot(_ context.Context) (driver.Image, error) {
 	return driver.Image{PNG: buf, Width: w, Height: h}, nil
 }
 
+// Snapshot pairs hierarchy and screenshot back-to-back. The chromedp tab
+// is single-threaded so the two CDP round-trips are already serialized:
+// pairing them here matches the DeviceDriver contract without extra locking.
+func (d *Driver) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	hierarchy, err := d.Hierarchy(ctx)
+	if err != nil {
+		return "", driver.Image{}, err
+	}
+	image, err := d.Screenshot(ctx)
+	if err != nil {
+		return hierarchy, driver.Image{}, err
+	}
+	return hierarchy, image, nil
+}
+
 func (d *Driver) RecentLogs(_ context.Context, since time.Time, minLevel string) ([]driver.LogEntry, error) {
 	sinceMillis := since.UnixMilli()
 	d.logsMu.Lock()

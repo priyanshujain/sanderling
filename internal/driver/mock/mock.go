@@ -20,6 +20,7 @@ const (
 	ActionPressKey    ActionKind = "press_key"
 	ActionHierarchy   ActionKind = "hierarchy"
 	ActionScreenshot  ActionKind = "screenshot"
+	ActionSnapshot    ActionKind = "snapshot"
 	ActionRecentLogs  ActionKind = "recent_logs"
 	ActionWaitForIdle ActionKind = "wait_for_idle"
 	ActionHealth      ActionKind = "health"
@@ -232,6 +233,20 @@ func (d *Driver) Screenshot(ctx context.Context) (driver.Image, error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 	return d.ImageData, nil
+}
+
+// Snapshot returns the hierarchy + screenshot pair atomically, mirroring
+// the real driver's contract. It records a single ActionSnapshot so tests
+// can assert the runner reached for the paired RPC instead of racing the
+// two reads.
+func (d *Driver) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	if err := d.failure(ActionSnapshot); err != nil {
+		return "", driver.Image{}, err
+	}
+	d.record(Action{Kind: ActionSnapshot})
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	return d.HierarchyJSON, d.ImageData, nil
 }
 
 func (d *Driver) WaitForIdle(ctx context.Context, duration time.Duration) error {
