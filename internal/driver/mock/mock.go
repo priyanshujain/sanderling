@@ -18,6 +18,7 @@ const (
 	ActionInputText   ActionKind = "input_text"
 	ActionSwipe       ActionKind = "swipe"
 	ActionPressKey    ActionKind = "press_key"
+	ActionLongPress   ActionKind = "long_press"
 	ActionHierarchy   ActionKind = "hierarchy"
 	ActionScreenshot  ActionKind = "screenshot"
 	ActionSnapshot    ActionKind = "snapshot"
@@ -163,6 +164,14 @@ func (d *Driver) Tap(ctx context.Context, x, y int) error {
 		return err
 	}
 	d.record(Action{Kind: ActionTap, X: x, Y: y})
+	return nil
+}
+
+func (d *Driver) LongPress(ctx context.Context, x, y int) error {
+	if err := d.failure(ActionLongPress); err != nil {
+		return err
+	}
+	d.record(Action{Kind: ActionLongPress, X: x, Y: y})
 	return nil
 }
 
