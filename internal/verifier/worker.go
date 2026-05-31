@@ -556,6 +556,10 @@ func (v *Verifier) resolveGenerator(generator goja.Value) (Action, error) {
 		return Action{Kind: ActionKindWait, DurationMillis: 500}, nil
 	case internalKindBuiltinPressKey:
 		return v.generateRandomPressKey()
+	case internalKindBuiltinLongPresses:
+		return v.generateRandomLongPress()
+	case internalKindBuiltinScrolls:
+		return v.generateRandomScroll()
 	default:
 		return Action{}, fmt.Errorf("unknown generator kind %q", kindValue.String())
 	}
@@ -709,6 +713,73 @@ func (v *Verifier) generateRandomSwipe() (Action, error) {
 		ToX:            toX,
 		ToY:            toY,
 		DurationMillis: 250,
+	}, nil
+}
+
+// generateRandomLongPress mirrors generateRandomTap: it picks a visible,
+// clickable, enabled, in-scope element and targets its center. Real users
+// long-press (context menus, reorder handles, multi-select), so a fuzzer that
+// never emits one cannot reach those affordances.
+func (v *Verifier) generateRandomLongPress() (Action, error) {
+	return v.generateRandomTapKind(ActionKindLongPress)
+}
+
+// generateRandomScroll picks a scrollable, in-scope container and emits a swipe
+// across it in a random direction.
+func (v *Verifier) generateRandomScroll() (Action, error) {
+	if v.lastTree == nil {
+		return Action{}, ErrNoAction
+	}
+	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
+	for _, element := range v.lastTree.Elements {
+		if element.Attributes["scrollable"] != "true" {
+			continue
+		}
+		if !v.inScope(element) {
+			continue
+		}
+		if element.Bounds.Width() <= 0 || element.Bounds.Height() <= 0 {
+			continue
+		}
+		candidates = append(candidates, element)
+	}
+	if len(candidates) == 0 {
+		return Action{}, ErrNoAction
+	}
+	picked := candidates[v.rng.IntN(len(candidates))]
+	cx, cy := picked.Bounds.Center()
+	width := picked.Bounds.Width()
+	height := picked.Bounds.Height()
+	directions := []string{"up", "down", "left", "right"}
+	dir := directions[v.rng.IntN(len(directions))]
+	toX, toY := cx, cy
+	// Scroll direction names the content motion; the gesture swipes the
+	// opposite way. Revealing content below ("down") means dragging the
+	// finger up, so toY decreases, and likewise for the other directions.
+	switch dir {
+	case "down":
+		toY = cy - (4*height)/10
+	case "up":
+		toY = cy + (4*height)/10
+	case "left":
+		toX = cx + (4*width)/10
+	case "right":
+		toX = cx - (4*width)/10
+	}
+	if toX < 0 {
+		toX = 0
+	}
+	if toY < 0 {
+		toY = 0
+	}
+	return Action{
+		Kind:           ActionKindScroll,
+		Direction:      dir,
+		FromX:          cx,
+		FromY:          cy,
+		ToX:            toX,
+		ToY:            toY,
+		DurationMillis: 300,
 	}, nil
 }
 

@@ -66,14 +66,16 @@ const (
 	tagInternalKind     = "__sanderlingKind"
 	tagSelector         = "__sanderlingSelector"
 
-	internalKindActions         = "actions"
-	internalKindWeighted        = "weighted"
-	internalKindBuiltinTaps       = "taps"
-	internalKindBuiltinDoubleTaps = "doubleTaps"
-	internalKindBuiltinTyping     = "typing"
-	internalKindBuiltinSwipes     = "swipes"
-	internalKindBuiltinWaitOnce   = "waitOnce"
-	internalKindBuiltinPressKey   = "pressKey"
+	internalKindActions            = "actions"
+	internalKindWeighted           = "weighted"
+	internalKindBuiltinTaps        = "taps"
+	internalKindBuiltinDoubleTaps  = "doubleTaps"
+	internalKindBuiltinTyping      = "typing"
+	internalKindBuiltinSwipes      = "swipes"
+	internalKindBuiltinWaitOnce    = "waitOnce"
+	internalKindBuiltinPressKey    = "pressKey"
+	internalKindBuiltinLongPresses = "longPresses"
+	internalKindBuiltinScrolls     = "scrolls"
 )
 
 // installRuntimeBindings exposes globalThis.__sanderling__ to the loaded spec.
@@ -110,6 +112,12 @@ func (v *Verifier) installRuntimeBindings() error {
 	if err := sanderling.Set("doubleTap", v.bindDoubleTap); err != nil {
 		return err
 	}
+	if err := sanderling.Set("longPress", v.bindLongPress); err != nil {
+		return err
+	}
+	if err := sanderling.Set("scroll", v.bindScroll); err != nil {
+		return err
+	}
 	if err := sanderling.Set("inputText", v.bindInputText); err != nil {
 		return err
 	}
@@ -138,6 +146,12 @@ func (v *Verifier) installRuntimeBindings() error {
 		return err
 	}
 	if err := sanderling.Set("pressKeys", v.builtinGenerator(internalKindBuiltinPressKey)); err != nil {
+		return err
+	}
+	if err := sanderling.Set("longPresses", v.builtinGenerator(internalKindBuiltinLongPresses)); err != nil {
+		return err
+	}
+	if err := sanderling.Set("scrolls", v.builtinGenerator(internalKindBuiltinScrolls)); err != nil {
 		return err
 	}
 
@@ -422,6 +436,29 @@ func (v *Verifier) bindDoubleTap(call goja.FunctionCall) goja.Value {
 	handle := v.runtime.NewObject()
 	_ = handle.Set("kind", "DoubleTap")
 	_ = handle.Set("on", parameters.Get("on"))
+	return handle
+}
+
+func (v *Verifier) bindLongPress(call goja.FunctionCall) goja.Value {
+	parameters := call.Argument(0).ToObject(v.runtime)
+	if parameters == nil {
+		panic(v.runtime.NewTypeError("LongPress requires {on}"))
+	}
+	handle := v.runtime.NewObject()
+	_ = handle.Set("kind", "LongPress")
+	_ = handle.Set("on", parameters.Get("on"))
+	return handle
+}
+
+func (v *Verifier) bindScroll(call goja.FunctionCall) goja.Value {
+	parameters := call.Argument(0).ToObject(v.runtime)
+	if parameters == nil {
+		panic(v.runtime.NewTypeError("Scroll requires {direction}"))
+	}
+	handle := v.runtime.NewObject()
+	_ = handle.Set("kind", "Scroll")
+	_ = handle.Set("direction", parameters.Get("direction"))
+	_ = handle.Set("in", parameters.Get("in"))
 	return handle
 }
 
