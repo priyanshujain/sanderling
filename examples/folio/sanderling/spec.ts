@@ -46,14 +46,19 @@ const accounts = extract<Account[]>("accounts", s =>
 // Total balance: sum of AccountCard balances visible on Home plus the
 // LedgerBalance shown on Ledger. Both screens read the same DB, so summing
 // across whichever screen is visible gives the same authoritative number.
+// Screens that show neither signal (e.g. AddTransactionScreen) carry forward
+// the last-seen sum so `previous` and `current` stay on the same scale.
+let lastSeenTotalBalance = 0;
 const totalBalance = extract("totalBalance", s => {
   const cards = s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]);
   const cardSum = cards.reduce(
     (sum, c) => sum + parseDollarCents(c.find({ testTag: "AccountBalance" })?.text),
     0,
   );
-  const ledgerBal = parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text);
-  return cardSum + ledgerBal;
+  const ledgerBalText = s.ax.find({ testTag: "LedgerBalance" })?.text;
+  if (cards.length === 0 && !ledgerBalText) return lastSeenTotalBalance;
+  lastSeenTotalBalance = cardSum + parseDollarCents(ledgerBalText);
+  return lastSeenTotalBalance;
 });
 
 const lastAction = extract("lastAction", s => s.lastAction);
