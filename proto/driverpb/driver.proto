@@ -18,6 +18,10 @@ service Driver {
 
   rpc Screenshot(Empty) returns (Image);
   rpc Hierarchy(Empty) returns (HierarchyJSON);
+  // Snapshot captures hierarchy and screenshot back-to-back under a
+  // backend-side mutex so the pair describes the same on-device frame.
+  // Use this instead of racing Hierarchy and Screenshot from the runner.
+  rpc Snapshot(Empty) returns (SnapshotResponse);
   rpc RecentLogs(RecentLogsRequest) returns (LogEntries);
 
   rpc WaitForIdle(Duration) returns (Empty);
@@ -54,6 +58,11 @@ message Image {
 
 message HierarchyJSON {
   string json = 1;
+}
+
+message SnapshotResponse {
+  HierarchyJSON hierarchy = 1;
+  Image screenshot = 2;
 }
 
 message Duration {

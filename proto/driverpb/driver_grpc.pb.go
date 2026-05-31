@@ -28,6 +28,7 @@ const (
 	Driver_PressKey_FullMethodName    = "/sanderling.driver.v1.Driver/PressKey"
 	Driver_Screenshot_FullMethodName  = "/sanderling.driver.v1.Driver/Screenshot"
 	Driver_Hierarchy_FullMethodName   = "/sanderling.driver.v1.Driver/Hierarchy"
+	Driver_Snapshot_FullMethodName    = "/sanderling.driver.v1.Driver/Snapshot"
 	Driver_RecentLogs_FullMethodName  = "/sanderling.driver.v1.Driver/RecentLogs"
 	Driver_WaitForIdle_FullMethodName = "/sanderling.driver.v1.Driver/WaitForIdle"
 	Driver_Health_FullMethodName      = "/sanderling.driver.v1.Driver/Health"
@@ -47,6 +48,10 @@ type DriverClient interface {
 	PressKey(ctx context.Context, in *PressKeyRequest, opts ...grpc.CallOption) (*Empty, error)
 	Screenshot(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Image, error)
 	Hierarchy(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HierarchyJSON, error)
+	// Snapshot captures hierarchy and screenshot back-to-back under a
+	// backend-side mutex so the pair describes the same on-device frame.
+	// Use this instead of racing Hierarchy and Screenshot from the runner.
+	Snapshot(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SnapshotResponse, error)
 	RecentLogs(ctx context.Context, in *RecentLogsRequest, opts ...grpc.CallOption) (*LogEntries, error)
 	WaitForIdle(ctx context.Context, in *Duration, opts ...grpc.CallOption) (*Empty, error)
 	Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthStatus, error)
@@ -151,6 +156,16 @@ func (c *driverClient) Hierarchy(ctx context.Context, in *Empty, opts ...grpc.Ca
 	return out, nil
 }
 
+func (c *driverClient) Snapshot(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotResponse)
+	err := c.cc.Invoke(ctx, Driver_Snapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *driverClient) RecentLogs(ctx context.Context, in *RecentLogsRequest, opts ...grpc.CallOption) (*LogEntries, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LogEntries)
@@ -204,6 +219,10 @@ type DriverServer interface {
 	PressKey(context.Context, *PressKeyRequest) (*Empty, error)
 	Screenshot(context.Context, *Empty) (*Image, error)
 	Hierarchy(context.Context, *Empty) (*HierarchyJSON, error)
+	// Snapshot captures hierarchy and screenshot back-to-back under a
+	// backend-side mutex so the pair describes the same on-device frame.
+	// Use this instead of racing Hierarchy and Screenshot from the runner.
+	Snapshot(context.Context, *Empty) (*SnapshotResponse, error)
 	RecentLogs(context.Context, *RecentLogsRequest) (*LogEntries, error)
 	WaitForIdle(context.Context, *Duration) (*Empty, error)
 	Health(context.Context, *Empty) (*HealthStatus, error)
@@ -244,6 +263,9 @@ func (UnimplementedDriverServer) Screenshot(context.Context, *Empty) (*Image, er
 }
 func (UnimplementedDriverServer) Hierarchy(context.Context, *Empty) (*HierarchyJSON, error) {
 	return nil, status.Error(codes.Unimplemented, "method Hierarchy not implemented")
+}
+func (UnimplementedDriverServer) Snapshot(context.Context, *Empty) (*SnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Snapshot not implemented")
 }
 func (UnimplementedDriverServer) RecentLogs(context.Context, *RecentLogsRequest) (*LogEntries, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecentLogs not implemented")
@@ -440,6 +462,24 @@ func _Driver_Hierarchy_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Driver_Snapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DriverServer).Snapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Driver_Snapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DriverServer).Snapshot(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Driver_RecentLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RecentLogsRequest)
 	if err := dec(in); err != nil {
@@ -554,6 +594,10 @@ var Driver_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Hierarchy",
 			Handler:    _Driver_Hierarchy_Handler,
+		},
+		{
+			MethodName: "Snapshot",
+			Handler:    _Driver_Snapshot_Handler,
 		},
 		{
 			MethodName: "RecentLogs",
