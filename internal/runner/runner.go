@@ -290,15 +290,22 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 // never hang the run.
 const foregroundReadyAttempts = 8
 
-// waitForForeground blocks until the app under test is actually on top, so the
-// first action never lands on a leftover screen or a freshly-booted device's
-// system dialog (e.g. Android's "set a screen lock" prompt). Drivers without
-// ForegroundChecker (web, iOS) and an unknown foreground both skip the gate.
+// waitForForeground blocks until the app under test is actually on screen, so
+// the first observe never captures a leftover screen or a freshly-booted
+// device's system dialog (e.g. Android's "set a screen lock" prompt). Drivers
+// without ForegroundChecker (web) and an unknown foreground both skip the gate.
+//
+// It is not enough that the app is the resumed activity: ResumedActivity flips
+// to a freshly launched app ~before its first frame draws, so gating on it
+// alone lets the first observe read the outgoing app. When the driver can also
+// report the focused window, the gate additionally waits for that window to
+// name the app, which only happens once it is genuinely drawn.
 func waitForForeground(ctx context.Context, options Options, logger *slog.Logger) {
 	checker, ok := options.Driver.(driver.ForegroundChecker)
 	if !ok || options.BundleID == "" {
 		return
 	}
+	focusChecker, hasFocus := options.Driver.(driver.FocusedWindowChecker)
 	for attempt := range foregroundReadyAttempts {
 		if err := ctx.Err(); err != nil {
 			return
@@ -308,12 +315,29 @@ func waitForForeground(ctx context.Context, options Options, logger *slog.Logger
 			logger.Warn("foreground check failed before first step", "err", err)
 			return
 		}
-		if foreground == "" || foreground == options.BundleID {
+		if foreground == "" {
+			return // foreground unknowable (e.g. iOS); don't block the run
+		}
+		if foreground != options.BundleID {
+			logger.Warn("app not in foreground at start; bringing it forward",
+				"foreground", foreground, "want", options.BundleID, "attempt", attempt)
+			bringToForeground(ctx, options, logger, 0)
+			continue
+		}
+		if !hasFocus {
+			return // resumed is the app and no finer signal exists
+		}
+		focused, err := focusChecker.FocusedWindowApp(ctx)
+		if err != nil {
+			logger.Warn("focus check failed before first step", "err", err)
 			return
 		}
-		logger.Warn("app not in foreground at start; bringing it forward",
-			"foreground", foreground, "want", options.BundleID, "attempt", attempt)
-		bringToForeground(ctx, options, logger, 0)
+		if focused == options.BundleID {
+			return // window is drawn; safe to observe
+		}
+		logger.Warn("app resumed but window not yet drawn; waiting",
+			"focused", focused, "want", options.BundleID, "attempt", attempt)
+		settleForForeground(ctx, options)
 	}
 	logger.Warn("app never reached foreground before first step; proceeding anyway",
 		"want", options.BundleID)
@@ -331,10 +355,16 @@ func bringToForeground(ctx context.Context, options Options, logger *slog.Logger
 		logger.Warn("relaunch failed", "step", stepIndex, "err", err)
 		return false
 	}
+	settleForForeground(ctx, options)
+	return true
+}
+
+// settleForForeground waits one idle window for the UI to settle, bounding the
+// wait by the driver's idle timeout.
+func settleForForeground(ctx context.Context, options Options) {
 	idleCtx, cancel := context.WithTimeout(ctx, options.IdleTimeout)
 	_ = options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
 	cancel()
-	return true
 }
 
 func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
