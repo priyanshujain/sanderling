@@ -271,7 +271,20 @@ private fun parseKb(line: String): Long? {
     return parts[1].toLongOrNull()
 }
 
-class StubDriverBackend(private val platform: String) : DriverBackend {
+private fun execAdb(arguments: List<String>) {
+    try {
+        val command = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(true).start()
+        command.inputStream.bufferedReader().readText()
+        command.waitFor()
+    } catch (cause: Exception) {
+        println("adb ${arguments.joinToString(" ")} failed: $cause")
+    }
+}
+
+class StubDriverBackend(
+    private val platform: String,
+    private val commandRunner: (List<String>) -> Unit = ::execAdb,
+) : DriverBackend {
     @Volatile var launchCount: Int = 0
         private set
     @Volatile var lastBundleId: String? = null
@@ -309,16 +322,6 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
             return null
         }
 
-        internal const val MAX_CLEAR_DELETES: Int = 1024
-
-        internal fun buildClearKeyevents(textLength: Int): List<String> {
-            if (textLength <= 0) return emptyList()
-            val deletes = minOf(textLength, MAX_CLEAR_DELETES)
-            val args = mutableListOf("shell", "input", "keyevent", "KEYCODE_MOVE_END")
-            repeat(deletes) { args.add("KEYCODE_DEL") }
-            return args
-        }
-
         internal fun escapeForAdbInputText(text: String): String {
             val sb = StringBuilder(text.length)
             for (ch in text) {
@@ -331,24 +334,6 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
             }
             return sb.toString()
         }
-
-        private val FOCUSED_NODE = Regex(
-            "<node\\b([^>]*\\bfocused=\"true\"[^>]*)/?>",
-        )
-        private val TEXT_ATTRIBUTE = Regex("\\btext=\"([^\"]*)\"")
-
-        internal fun parseFocusedText(xml: String): String? {
-            val node = FOCUSED_NODE.find(xml) ?: return null
-            val match = TEXT_ATTRIBUTE.find(node.groupValues[1]) ?: return ""
-            return decodeXmlAttribute(match.groupValues[1])
-        }
-
-        private fun decodeXmlAttribute(value: String): String = value
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
 
         internal val KEY_MAP: Map<String, String> = mapOf(
             "back" to "KEYCODE_BACK",
@@ -413,25 +398,7 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
 
     override fun inputText(text: String) {
         lastInputText = text
-        clearFocusedField()
         runAdb(listOf("shell", "input", "text", escapeForAdbInputText(text)))
-    }
-
-    private fun clearFocusedField() {
-        val current = focusedFieldText() ?: return
-        if (current.isEmpty()) return
-        runAdb(buildClearKeyevents(current.length))
-    }
-
-    private fun focusedFieldText(): String? {
-        val xml = try {
-            hierarchy()
-        } catch (cause: Exception) {
-            println("inputText: hierarchy dump failed: $cause")
-            return null
-        }
-        if (xml.isBlank() || xml == "<hierarchy/>") return null
-        return parseFocusedText(xml)
     }
 
     @Volatile var lastSwipe: SwipeRecord? = null
@@ -464,15 +431,7 @@ class StubDriverBackend(private val platform: String) : DriverBackend {
 
     data class SwipeRecord(val fromX: Int, val fromY: Int, val toX: Int, val toY: Int, val durationMillis: Long)
 
-    private fun runAdb(arguments: List<String>) {
-        try {
-            val command = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(true).start()
-            command.inputStream.bufferedReader().readText()
-            command.waitFor()
-        } catch (cause: Exception) {
-            println("adb ${arguments.joinToString(" ")} failed: $cause")
-        }
-    }
+    private fun runAdb(arguments: List<String>) = commandRunner(arguments)
 
     override fun screenshot(): Triple<ByteArray, Int, Int> {
         return try {
