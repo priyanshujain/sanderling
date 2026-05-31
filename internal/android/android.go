@@ -251,8 +251,26 @@ func ForegroundPackage(ctx context.Context) (string, error) {
 	return parseForegroundPackage(string(output)), nil
 }
 
+// FocusedWindowPackage returns the package owning the currently focused window,
+// or "" when no window is focused (e.g. mid-launch, before the app has drawn).
+// Unlike ForegroundPackage, this reflects what is actually on screen:
+// ResumedActivity flips to a newly launched app before its first frame renders,
+// while mCurrentFocus only names the app once its window is up.
+func FocusedWindowPackage(ctx context.Context) (string, error) {
+	adb, err := AdbBinary()
+	if err != nil {
+		return "", err
+	}
+	output, err := exec.CommandContext(ctx, adb, "shell", "dumpsys", "window").Output()
+	if err != nil {
+		return "", err
+	}
+	return parseFocusedWindowPackage(string(output)), nil
+}
+
 // resumedActivityPackage matches the "<package>/<activity>" component name that
-// dumpsys prints on ResumedActivity lines, capturing the package.
+// dumpsys prints on ResumedActivity and mCurrentFocus lines, capturing the
+// package.
 var resumedActivityPackage = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9_.]*)/[a-zA-Z0-9_.$]+`)
 
 // parseForegroundPackage extracts the foreground package from `dumpsys activity
@@ -260,6 +278,21 @@ var resumedActivityPackage = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9_.]*)/[a-zA-
 func parseForegroundPackage(dumpsys string) string {
 	for line := range strings.SplitSeq(dumpsys, "\n") {
 		if !strings.Contains(line, "ResumedActivity") {
+			continue
+		}
+		if match := resumedActivityPackage.FindStringSubmatch(line); match != nil {
+			return match[1]
+		}
+	}
+	return ""
+}
+
+// parseFocusedWindowPackage extracts the focused-window package from
+// `dumpsys window` output by reading the mCurrentFocus component name. A
+// "mCurrentFocus=null" line (no focused window) yields "".
+func parseFocusedWindowPackage(dumpsys string) string {
+	for line := range strings.SplitSeq(dumpsys, "\n") {
+		if !strings.Contains(line, "mCurrentFocus") {
 			continue
 		}
 		if match := resumedActivityPackage.FindStringSubmatch(line); match != nil {

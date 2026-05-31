@@ -127,3 +127,39 @@ func TestParseForegroundPackage(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFocusedWindowPackage(t *testing.T) {
+	cases := []struct {
+		name    string
+		dumpsys string
+		want    string
+	}{
+		{
+			name:    "folio focused",
+			dumpsys: "  mCurrentFocus=Window{e00f63a u0 app.folio/app.folio.MainActivity}\n  mFocusedApp=ActivityRecord{c0 u0 app.folio/.MainActivity t202}",
+			want:    "app.folio",
+		},
+		{
+			name:    "settings focused",
+			dumpsys: "  mCurrentFocus=Window{709 u0 com.android.settings/com.android.settings.SubSettings}",
+			want:    "com.android.settings",
+		},
+		{
+			name:    "no focused window mid-launch",
+			dumpsys: "  mCurrentFocus=null\n  mFocusedApp=null",
+			want:    "",
+		},
+		{
+			name:    "no focus line",
+			dumpsys: "  some unrelated dumpsys window output\n",
+			want:    "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseFocusedWindowPackage(tc.dumpsys); got != tc.want {
+				t.Errorf("parseFocusedWindowPackage = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
