@@ -20,6 +20,7 @@ func TestDriverServiceDescriptor(t *testing.T) {
 		"InputText":   true,
 		"Swipe":       true,
 		"PressKey":    true,
+		"LongPress":   true,
 		"Screenshot":  true,
 		"Hierarchy":   true,
 		"Snapshot":    true,
