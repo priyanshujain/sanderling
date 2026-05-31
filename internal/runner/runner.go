@@ -59,6 +59,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		logger = slog.Default()
 	}
 
+	// Gate on the app actually being on top before acting, so the first
+	// action never fires against a leftover screen or a system dialog. Done
+	// before the deadline is set so the settle time does not eat the run.
+	waitForForeground(ctx, options, logger)
+
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
 	stepIndex := 0
@@ -277,6 +282,51 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 	}
 	logger.Warn("app left foreground; relaunching",
 		"step", stepIndex, "foreground", foreground, "want", options.BundleID)
+	return bringToForeground(ctx, options, logger, stepIndex)
+}
+
+// foregroundReadyAttempts bounds how many times waitForForeground tries to
+// bring the app forward before the first step, so a stuck system dialog can
+// never hang the run.
+const foregroundReadyAttempts = 8
+
+// waitForForeground blocks until the app under test is actually on top, so the
+// first action never lands on a leftover screen or a freshly-booted device's
+// system dialog (e.g. Android's "set a screen lock" prompt). Drivers without
+// ForegroundChecker (web, iOS) and an unknown foreground both skip the gate.
+func waitForForeground(ctx context.Context, options Options, logger *slog.Logger) {
+	checker, ok := options.Driver.(driver.ForegroundChecker)
+	if !ok || options.BundleID == "" {
+		return
+	}
+	for attempt := range foregroundReadyAttempts {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		foreground, err := checker.ForegroundApp(ctx)
+		if err != nil {
+			logger.Warn("foreground check failed before first step", "err", err)
+			return
+		}
+		if foreground == "" || foreground == options.BundleID {
+			return
+		}
+		logger.Warn("app not in foreground at start; bringing it forward",
+			"foreground", foreground, "want", options.BundleID, "attempt", attempt)
+		bringToForeground(ctx, options, logger, 0)
+	}
+	logger.Warn("app never reached foreground before first step; proceeding anyway",
+		"want", options.BundleID)
+}
+
+// bringToForeground returns the app under test to the foreground. It first
+// presses BACK to dismiss any modal system dialog (a relaunch alone does not
+// close one), then relaunches and waits for the UI to settle. Returns true
+// when the relaunch itself succeeded.
+func bringToForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) bool {
+	if err := options.Driver.PressKey(ctx, "back"); err != nil {
+		logger.Warn("dismiss key before relaunch failed", "step", stepIndex, "err", err)
+	}
 	if err := options.Driver.Launch(ctx, options.BundleID, false, nil); err != nil {
 		logger.Warn("relaunch failed", "step", stepIndex, "err", err)
 		return false
