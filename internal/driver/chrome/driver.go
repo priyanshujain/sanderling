@@ -191,6 +191,23 @@ func (d *Driver) PressKey(_ context.Context, key string) error {
 	return chromedp.Run(d.tabCtx, chromedp.KeyEvent(k))
 }
 
+func (d *Driver) LongPress(_ context.Context, x, y int) error {
+	script := fmt.Sprintf(`
+(function() {
+  const el = document.elementFromPoint(%d, %d);
+  if (!el) return;
+  el.dispatchEvent(new PointerEvent('pointerdown', {clientX: %d, clientY: %d, bubbles: true}));
+  setTimeout(function() {
+    el.dispatchEvent(new PointerEvent('pointerup', {clientX: %d, clientY: %d, bubbles: true}));
+  }, 600);
+})();`,
+		x, y,
+		x, y,
+		x, y,
+	)
+	return chromedp.Run(d.tabCtx, chromedp.Evaluate(script, nil))
+}
+
 // keyMap covers the keys web specs may emit (enter/tab/escape/arrows).
 // "back"/"home" are intentionally absent: backspace/NUL have no navigation
 // semantics in a browser, and the V8 action mix already excludes them.
