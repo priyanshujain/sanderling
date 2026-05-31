@@ -15,6 +15,7 @@ service Driver {
   rpc InputText(Text) returns (Empty);
   rpc Swipe(SwipeRequest) returns (Empty);
   rpc PressKey(PressKeyRequest) returns (Empty);
+  rpc LongPress(Point) returns (Empty);
 
   rpc Screenshot(Empty) returns (Image);
   rpc Hierarchy(Empty) returns (HierarchyJSON);
