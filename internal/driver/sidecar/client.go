@@ -93,6 +93,11 @@ func (c *Client) Tap(ctx context.Context, x, y int) error {
 	return err
 }
 
+func (c *Client) LongPress(ctx context.Context, x, y int) error {
+	_, err := c.stub.LongPress(ctx, &driverpb.Point{X: int32(x), Y: int32(y)})
+	return err
+}
+
 func (c *Client) TapSelector(ctx context.Context, selector string) error {
 	_, err := c.stub.TapSelector(ctx, &driverpb.Selector{Value: selector})
 	return err
