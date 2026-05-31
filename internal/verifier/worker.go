@@ -39,6 +39,8 @@ type Verifier struct {
 	stepTime       time.Time
 	runStart       time.Time
 
+	appPackage string
+
 	rng *rand.Rand
 }
 
@@ -46,6 +48,14 @@ type Option func(*Verifier)
 
 func WithRand(rng *rand.Rand) Option {
 	return func(v *Verifier) { v.rng = rng }
+}
+
+// WithAppPackage scopes random-action target selection to the app under test.
+// Nodes belonging to another package (the soft keyboard, system UI, permission
+// dialogs) are excluded so exploration never spends steps fuzzing the IME or
+// inserting keyboard glyphs into fields. Empty package keeps current behavior.
+func WithAppPackage(appPackage string) Option {
+	return func(v *Verifier) { v.appPackage = appPackage }
 }
 
 func New(options ...Option) (*Verifier, error) {
@@ -565,6 +575,17 @@ func (v *Verifier) generateRandomDoubleTap() (Action, error) {
 	return v.generateRandomTapKind(ActionKindDoubleTap)
 }
 
+// inScope reports whether an element belongs to the app under test. Nodes from
+// another package (the soft keyboard, system UI, permission dialogs) are out of
+// scope. An unset app package or an element with no package falls through to in
+// scope, preserving behavior on platforms that omit the attribute (e.g. iOS).
+func (v *Verifier) inScope(element *hierarchy.Element) bool {
+	if v.appPackage == "" || element.Package == "" {
+		return true
+	}
+	return element.Package == v.appPackage
+}
+
 func (v *Verifier) generateRandomTapKind(kind ActionKind) (Action, error) {
 	if v.lastTree == nil {
 		return Action{}, ErrNoAction
@@ -572,6 +593,9 @@ func (v *Verifier) generateRandomTapKind(kind ActionKind) (Action, error) {
 	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
 	for _, element := range v.lastTree.Elements {
 		if !element.Clickable || !element.Enabled {
+			continue
+		}
+		if !v.inScope(element) {
 			continue
 		}
 		if element.Bounds.Right-element.Bounds.Left <= 0 || element.Bounds.Bottom-element.Bounds.Top <= 0 {
@@ -621,6 +645,9 @@ func (v *Verifier) generateRandomInput() (Action, error) {
 		if !element.Editable || !element.Enabled {
 			continue
 		}
+		if !v.inScope(element) {
+			continue
+		}
 		if element.Bounds.Right-element.Bounds.Left <= 0 || element.Bounds.Bottom-element.Bounds.Top <= 0 {
 			continue
 		}
@@ -642,7 +669,16 @@ func (v *Verifier) generateRandomSwipe() (Action, error) {
 	if v.lastTree == nil || len(v.lastTree.Elements) == 0 {
 		return Action{}, ErrNoAction
 	}
-	element := v.lastTree.Elements[v.rng.IntN(len(v.lastTree.Elements))]
+	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
+	for _, element := range v.lastTree.Elements {
+		if v.inScope(element) {
+			candidates = append(candidates, element)
+		}
+	}
+	if len(candidates) == 0 {
+		return Action{}, ErrNoAction
+	}
+	element := candidates[v.rng.IntN(len(candidates))]
 	cx, cy := element.Bounds.Center()
 	if cx <= 0 || cy <= 0 {
 		return Action{}, ErrNoAction
