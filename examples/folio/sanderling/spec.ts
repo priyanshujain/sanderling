@@ -5,14 +5,12 @@ import {
   always,
   extract,
   from,
-  keyedBy,
   next,
-  now,
   weighted,
   whenRoute,
 } from "@sanderling/spec";
 import { defaultActions } from "@sanderling/spec/defaults";
-import { balanceMatchesAddedSum, type LedgerRow } from "./predicates";
+import { submitChangesBalanceByTypedAmount } from "./predicates";
 
 interface Account {
   name: string;
@@ -45,15 +43,20 @@ const accounts = extract<Account[]>("accounts", s =>
     balance: parseDollarCents(card.find({ testTag: "AccountBalance" })?.text),
   })));
 
-// Ledger rows: identity composed from the row's stable testTag'd cells.
-const ledgerRows = extract<LedgerRow[]>("ledgerRows", s =>
-  s.ax.findAll([{ testTag: "LedgerScreen" }, { testTag: "LedgerRow" }]).map(row => ({
-    key: keyedBy(row, ["TxnDate", "TxnNote", "TxnAmount"]),
-    signed: parseDollarCents(row.find({ testTag: "TxnAmount" })?.text),
-  })));
+// Total balance: sum of AccountCard balances visible on Home plus the
+// LedgerBalance shown on Ledger. Both screens read the same DB, so summing
+// across whichever screen is visible gives the same authoritative number.
+const totalBalance = extract("totalBalance", s => {
+  const cards = s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]);
+  const cardSum = cards.reduce(
+    (sum, c) => sum + parseDollarCents(c.find({ testTag: "AccountBalance" })?.text),
+    0,
+  );
+  const ledgerBal = parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text);
+  return cardSum + ledgerBal;
+});
 
-const ledgerBalance = extract("ledgerBalance", s =>
-  parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text));
+const lastAction = extract("lastAction", s => s.lastAction);
 
 const loginEmailField = extract("loginEmailField", s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginEmail" }]));
@@ -89,20 +92,17 @@ const newAccountBalanceIsZero = always(
   })
 );
 
-// Property 2: when new ledger rows appear, the balance delta equals the SUM
-// of the new rows' signed amounts. Single-row and multi-row sums both must
-// match; a double-submit lands two rows whose total is twice the balance
-// change and trips the sum check.
-const balanceMatchesAddedTxn = always(
-  now(() => route.current === "ledger").implies(
-    next(() =>
-      balanceMatchesAddedSum(
-        ledgerRows.previous ?? [],
-        ledgerRows.current,
-        ledgerBalance.previous ?? 0,
-        ledgerBalance.current,
-      ),
-    ),
+// Property 2: a tap on TxnSubmit must move the total balance by exactly the
+// typed amount. A double-submit lands two transactions, so the balance shifts
+// by twice the typed amount and the check fires.
+const submitMovesBalanceByTypedAmount = always(
+  next(() =>
+    submitChangesBalanceByTypedAmount({
+      lastAction: lastAction.current,
+      typedAmount: parseDollarCents(txnAmountField.previous?.text),
+      prevTotalBalance: totalBalance.previous ?? 0,
+      currTotalBalance: totalBalance.current,
+    }),
   ),
 );
 
@@ -162,7 +162,7 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
 
 export const properties = {
   newAccountBalanceIsZero,
-  balanceMatchesAddedTxn,
+  submitMovesBalanceByTypedAmount,
 };
 
 export const setup = login;
