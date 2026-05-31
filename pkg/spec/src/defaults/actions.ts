@@ -2,6 +2,9 @@ import { doubleTaps, swipes, taps, typing, weighted } from "../actions.ts";
 import type { ActionGenerator } from "../types.ts";
 
 export { doubleTaps, pressKey, swipes, taps, typing, waitOnce } from "../actions.ts";
+// longPresses and scrolls are opt-in generators: not part of defaultActions,
+// but authors can include them in their own weighted() set.
+export { longPresses, scrolls } from "../actions.ts";
 
 // A broad exploration generator: tap things, type edge-case values into fields,
 // and swipe. Layer it under targeted depth flows so the fuzzer wanders the whole
