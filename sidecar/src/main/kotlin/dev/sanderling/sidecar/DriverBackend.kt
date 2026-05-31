@@ -14,7 +14,18 @@ interface DriverBackend {
     fun waitForIdle(durationMillis: Long)
     fun healthy(): Boolean
     fun metrics(bundleId: String): MetricsSample
+
+    // snapshot captures hierarchy then screenshot back-to-back. The service
+    // layer holds a mutex around the call so concurrent callers observe a
+    // serialized pair from the same on-device frame. Backends may override
+    // to fuse the two reads more tightly when their native API allows.
+    fun snapshot(): SnapshotSample = SnapshotSample(hierarchy(), screenshot())
 }
+
+data class SnapshotSample(
+    val hierarchyJson: String,
+    val screenshot: Triple<ByteArray, Int, Int>,
+)
 
 // STABILITY_POLL_INTERVAL_MILLIS is set wide enough that UiAutomation /
 // Maestro's contentDescriptor doesn't get hammered: tighter intervals were
