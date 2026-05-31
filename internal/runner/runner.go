@@ -211,7 +211,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			Index:            stepIndex,
 			Timestamp:        stepStart,
 			Screen:           screen,
-			Action:           traceAction,
+			NextAction:       traceAction,
 			Violations:       violations,
 			Hierarchy:        tree,
 			Residuals:        residuals,
