@@ -682,3 +682,51 @@ func TestNodeFindDoesNotReturnSiblings(t *testing.T) {
 		t.Fatal("Node.Find should not return nodes from sibling subtrees")
 	}
 }
+
+// TestPackageDerivedFromResourceIDPrefix verifies that when the sidecar omits an
+// explicit package attribute, native nodes pick it up from the resource-id
+// prefix while colon-less Compose testTags stay empty (in scope for the app).
+func TestPackageDerivedFromResourceIDPrefix(t *testing.T) {
+	const dump = `{
+	  "attributes": {"class": "android.widget.FrameLayout", "bounds": "[0,0,320,640]"},
+	  "children": [
+	    {"attributes": {"resource-id": "AddAccountScreen", "bounds": "[0,0,320,400]"}, "clickable": true, "enabled": true, "children": []},
+	    {"attributes": {"resource-id": "com.google.android.inputmethod.latin:id/key_pos_0_0", "bounds": "[0,400,40,440]"}, "clickable": true, "enabled": true, "children": []},
+	    {"attributes": {"resource-id": "android:id/content", "bounds": "[0,0,320,640]"}, "children": []}
+	  ]
+	}`
+	tree, err := Parse(dump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := map[string]string{
+		"AddAccountScreen": "",
+		"com.google.android.inputmethod.latin:id/key_pos_0_0": "com.google.android.inputmethod.latin",
+		"android:id/content": "android",
+	}
+	for _, element := range tree.Elements {
+		expected, ok := want[element.ResourceID]
+		if !ok {
+			continue
+		}
+		if element.Package != expected {
+			t.Errorf("resource-id %q: package = %q, want %q", element.ResourceID, element.Package, expected)
+		}
+	}
+}
+
+// TestExplicitPackageAttributeWins verifies an explicit package attribute is not
+// overridden by the resource-id prefix fallback.
+func TestExplicitPackageAttributeWins(t *testing.T) {
+	const dump = `{
+	  "attributes": {"resource-id": "android:id/content", "package": "app.folio", "bounds": "[0,0,320,640]"},
+	  "children": []
+	}`
+	tree, err := Parse(dump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := tree.Elements[0].Package; got != "app.folio" {
+		t.Errorf("package = %q, want app.folio (explicit attr should win)", got)
+	}
+}
