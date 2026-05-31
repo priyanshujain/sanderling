@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -215,6 +217,28 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			logger.Warn("residual encode failed", "step", stepIndex, "err", residualErr)
 		}
 
+		applySkipped := false
+		if nextErr == nil {
+			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
+				if isWDADrop(err) {
+					return summary, fmt.Errorf("step %d: iOS XCTest runner lost connection - known WDA startup flake, re-run the test: %w", stepIndex, err)
+				}
+				if isTransientApplyError(ctx, err) {
+					logger.Warn("transient apply error; marking step transitional", "step", stepIndex, "err", err)
+					transitional = true
+					applySkipped = true
+					lastAction = nil
+				} else {
+					return summary, fmt.Errorf("step %d apply: %w", stepIndex, err)
+				}
+			} else {
+				actionCopy := nextAction
+				lastAction = &actionCopy
+			}
+		} else {
+			lastAction = nil
+		}
+
 		step := trace.Step{
 			Index:            stepIndex,
 			Timestamp:        stepStart,
@@ -237,24 +261,12 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				Properties: violations,
 			})
 		}
-
-		if nextErr == nil {
-			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
-				if isWDADrop(err) {
-					return summary, fmt.Errorf("step %d: iOS XCTest runner lost connection - known WDA startup flake, re-run the test: %w", stepIndex, err)
-				}
-				return summary, fmt.Errorf("step %d apply: %w", stepIndex, err)
-			}
-			actionCopy := nextAction
-			lastAction = &actionCopy
-		} else {
-			lastAction = nil
-		}
-
 		// Wait actions are themselves a settling: skip the idle poll. Actions
 		// that mutate the UI fall through to WaitForIdle so the next step's
-		// concurrent fetches observe a stable post-action state.
-		if nextErr == nil && nextAction.Kind != verifier.ActionKindWait {
+		// concurrent fetches observe a stable post-action state. A transient
+		// apply error means nothing landed, so the idle poll has nothing to
+		// settle and may itself hang on the same device condition.
+		if nextErr == nil && !applySkipped && nextAction.Kind != verifier.ActionKindWait {
 			idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
 			idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
 			if idleErr != nil && idleCtx.Err() == nil {
@@ -828,4 +840,30 @@ func isWDADrop(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "ConnectException") ||
 		(strings.Contains(msg, "code = Internal") && strings.Contains(msg, "SocketException"))
+}
+
+// isTransientApplyError reports whether an applyAction failure is a transient
+// device-side hang (sidecar RPC deadline, momentary unavailability) rather than
+// a fatal condition. Such steps are recorded as transitional and the loop
+// continues. The run context being cancelled is never transient: it means the
+// caller wants to stop.
+func isTransientApplyError(runCtx context.Context, err error) bool {
+	if err == nil || runCtx.Err() != nil {
+		return false
+	}
+	if s, ok := status.FromError(err); ok {
+		switch s.Code() {
+		case codes.DeadlineExceeded, codes.Unavailable:
+			return true
+		case codes.Internal:
+			message := s.Message()
+			if strings.Contains(message, "DEADLINE_EXCEEDED") || strings.Contains(message, "UNAVAILABLE") {
+				return true
+			}
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return false
 }
