@@ -36,6 +36,7 @@ func New() *Driver {
 		append(chromedp.DefaultExecAllocatorOptions[:],
 			chromedp.Flag("headless", true),
 			chromedp.Flag("disable-gpu", true),
+			chromedp.NoSandbox,
 		)...,
 	)
 	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
