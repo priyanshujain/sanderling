@@ -337,6 +337,14 @@ const runtime = {
   doubleTap(p: { on: unknown }): unknown {
     return { kind: "DoubleTap", on: p.on };
   },
+  longPress(): unknown {
+    // Why: web has no long-press gesture for v1; the factory returns null so LongPress() calls no-op.
+    return null;
+  },
+  scroll(): unknown {
+    // Why: web has no native scroll gesture for v1; the factory returns null so Scroll() calls no-op.
+    return null;
+  },
   inputText(p: { into: unknown; text: string }): unknown {
     return { kind: "InputText", into: p.into, text: p.text };
   },
@@ -357,6 +365,8 @@ const runtime = {
   },
   taps: { __sanderlingActionGenerator: true, __sanderlingKind: "taps" } as ActionGeneratorHandle,
   doubleTaps: { __sanderlingActionGenerator: true, __sanderlingKind: "doubleTaps" } as ActionGeneratorHandle,
+  longPresses: { __sanderlingActionGenerator: true, __sanderlingKind: "longPresses" } as ActionGeneratorHandle,
+  scrolls: { __sanderlingActionGenerator: true, __sanderlingKind: "scrolls" } as ActionGeneratorHandle,
   typing: { __sanderlingActionGenerator: true, __sanderlingKind: "typing" } as ActionGeneratorHandle,
   swipes: { __sanderlingActionGenerator: true, __sanderlingKind: "swipes" } as ActionGeneratorHandle,
   waitOnce: { __sanderlingActionGenerator: true, __sanderlingKind: "waitOnce" } as ActionGeneratorHandle,
@@ -458,6 +468,10 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
       return randomInput();
     case "swipes":
       return randomSwipe();
+    case "longPresses":
+    case "scrolls":
+      // Why: web has no long-press or native scroll gesture for v1; both no-op.
+      return null;
     case "waitOnce":
       return { kind: "Wait", durationMillis: 500 };
     case "pressKey":
@@ -619,6 +633,10 @@ function serializeAction(action: unknown): unknown {
         duration_millis: obj.durationMillis ?? 250,
       };
     }
+    case "LongPress":
+    case "Scroll":
+      // Why: web has no long-press or native scroll gesture for v1; drop the action.
+      return null;
     case "PressKey":
       return { kind: "PressKey", key: obj.key };
     case "Wait":
