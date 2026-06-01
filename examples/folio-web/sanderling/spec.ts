@@ -3,9 +3,11 @@ import {
   Tap,
   actions,
   always,
+  edgeCaseText,
   eventually,
   extract,
   from,
+  integers,
   next,
   now,
   taps,
@@ -175,7 +177,9 @@ const openAddAccount = actions(() => {
   return btn ? [Tap({ on: btn })] : [];
 });
 
-const accountNameSampler = from([
+// Readable enumeration keeps the demo legible; repeats over a run still
+// exercise duplicate-name handling.
+const accountNames = from([
   "Checking",
   "Savings",
   "Travel",
@@ -183,17 +187,19 @@ const accountNameSampler = from([
   "Emergency Fund",
   "Investments",
   "Groceries",
-  "  ",
-  "Checking",
-  "A".repeat(41),
   "Petty Cash",
 ]);
 
-const typeAccountName = actions(() => {
-  if (!onAddAccountPage.current) return [];
-  const field = accountNameField.current;
-  return field ? [InputText({ into: field, text: accountNameSampler.generate() })] : [];
-});
+function typeAccountNameWith(sampler: { generate(): string }) {
+  return actions(() => {
+    if (!onAddAccountPage.current) return [];
+    const field = accountNameField.current;
+    return field ? [InputText({ into: field, text: sampler.generate() })] : [];
+  });
+}
+
+const typeAccountName = typeAccountNameWith(accountNames);
+const typeAccountNameEdge = typeAccountNameWith(edgeCaseText());
 
 const submitAddAccount = actions(() => {
   if (!onAddAccountPage.current) return [];
@@ -214,25 +220,20 @@ const openAddTxn = actions(() => {
   return btn ? [Tap({ on: btn })] : [];
 });
 
-const amountSampler = from([
-  "12.34",
-  "100",
-  "0.01",
-  "999.99",
-  "5.5",
-  "42",
-  "0",
-  "",
-  "1e4",
-  "0.001",
-  "-5",
-]);
+// Valid happy-path amounts keep the balance properties exercised; the edge
+// branch (weighted in actionsRoot) stresses parsing with the adversarial corpus.
+const validAmounts = integers().between(1, 99999);
 
-const typeAmount = actions(() => {
-  if (!onAddTxnPage.current) return [];
-  const field = txnAmountField.current;
-  return field ? [InputText({ into: field, text: amountSampler.generate() })] : [];
-});
+function typeAmountWith(sampler: { generate(): string }) {
+  return actions(() => {
+    if (!onAddTxnPage.current) return [];
+    const field = txnAmountField.current;
+    return field ? [InputText({ into: field, text: sampler.generate() })] : [];
+  });
+}
+
+const typeAmount = typeAmountWith({ generate: () => String(validAmounts.generate()) });
+const typeAmountEdge = typeAmountWith(edgeCaseText());
 
 const noteSampler = from([
   "Coffee",
@@ -277,11 +278,13 @@ export const actionsRoot = weighted(
   [30, loginHelper],
   [2, adversarialLogin],
   [14, openAddAccount],
-  [18, typeAccountName],
+  [14, typeAccountName],
+  [4, typeAccountNameEdge],
   [14, submitAddAccount],
   [14, openAccount],
   [12, openAddTxn],
-  [18, typeAmount],
+  [14, typeAmount],
+  [4, typeAmountEdge],
   [8, typeNote],
   [6, toggleTxnType],
   [16, submitTxn],
