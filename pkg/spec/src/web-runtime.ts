@@ -20,17 +20,33 @@ import { installRuntime } from "./runtime-entry.ts";
 import type { BuiltinVerb, Candidate, Host } from "./action-tree.ts";
 
 interface Handle {
-  current: unknown;
-  previous: unknown;
+  readonly current: unknown;
+  readonly previous: unknown;
+  named(name: string): Handle;
 }
 
 interface ExtractorEntry {
   getter: (state: unknown) => unknown;
   handle: Handle;
   name: string;
+  currentValue: unknown;
+  previousValue: unknown;
 }
 
 const extractors: ExtractorEntry[] = [];
+
+// extracting is true only while an extractor getter is running. The current/
+// previous accessors consult it so a getter that reaches into another
+// extractor's handle throws instead of reading a stale cross-extractor value.
+let extracting = false;
+
+function checkNotExtracting(slot: "current" | "previous"): void {
+  if (extracting) {
+    throw new Error(
+      `reading .${slot} of an extractor inside another extractor is not allowed; extractor getters may read only from the state argument`,
+    );
+  }
+}
 
 // SANDERLING_SEED is the host-computed 64-bit seed, injected as a decimal
 // string via the bundle define. We parse it into a BigInt without ever going
@@ -315,13 +331,30 @@ function buildState(): unknown {
 
 const runtime = {
   extract<T>(getter: (state: unknown) => T, name?: string): Handle {
-    const handle: Handle = { current: undefined, previous: undefined };
     const resolvedName = name && name.length > 0 ? name : `extractor_${extractors.length}`;
-    extractors.push({
+    const entry: ExtractorEntry = {
       getter: getter as (s: unknown) => unknown,
-      handle,
+      handle: undefined as unknown as Handle,
       name: resolvedName,
-    });
+      currentValue: undefined,
+      previousValue: undefined,
+    };
+    const handle: Handle = {
+      get current() {
+        checkNotExtracting("current");
+        return entry.currentValue;
+      },
+      get previous() {
+        checkNotExtracting("previous");
+        return entry.previousValue;
+      },
+      named(name: string): Handle {
+        entry.name = name;
+        return handle;
+      },
+    };
+    entry.handle = handle;
+    extractors.push(entry);
     return handle;
   },
   always: noopFormula,
@@ -350,14 +383,17 @@ function evaluateExtractors(): Record<number, unknown> {
   for (let i = 0; i < extractors.length; i++) {
     const entry = extractors[i];
     if (!entry) continue;
-    entry.handle.previous = entry.handle.current;
+    entry.previousValue = entry.currentValue;
     let value: unknown;
+    extracting = true;
     try {
       value = entry.getter(state);
     } catch {
       value = undefined;
+    } finally {
+      extracting = false;
     }
-    entry.handle.current = value;
+    entry.currentValue = value;
     result[i] = sanitize(value);
   }
   return result;
