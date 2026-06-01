@@ -132,7 +132,15 @@ function installFakeRuntime(): RecordedRuntime {
     },
   };
   const recorded = Object.assign(runtime, calls) as RecordedRuntime;
-  globalThis.__sanderling__ = recorded;
+  // web-runtime.ts locks __sanderling__ as non-writable (configurable) when it
+  // is imported earlier in the same bun-test process, so a plain assignment
+  // would throw. defineProperty installs (and reinstalls) the fake regardless.
+  Object.defineProperty(globalThis, "__sanderling__", {
+    value: recorded,
+    writable: false,
+    configurable: true,
+    enumerable: false,
+  });
   return recorded;
 }
 
