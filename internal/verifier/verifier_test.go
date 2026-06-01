@@ -582,12 +582,15 @@ globalThis.properties = {
 		t.Errorf("verdict: got %v, want %v", got, ltl.VerdictViolated)
 	}
 
-	predicateErr := verifier.PredicateError("broken")
-	if predicateErr == nil {
-		t.Fatal("PredicateError: got nil, want non-nil")
+	witness := verifier.Witness("broken")
+	if witness == nil {
+		t.Fatal("Witness: got nil, want non-nil")
 	}
-	if !strings.Contains(predicateErr.Error(), "bad predicate") {
-		t.Errorf("PredicateError message: got %q, want to contain %q", predicateErr.Error(), "bad predicate")
+	if !witness.IsError {
+		t.Errorf("Witness.IsError = false, want true for a thrown predicate")
+	}
+	if !strings.Contains(witness.Reason, "bad predicate") {
+		t.Errorf("Witness.Reason: got %q, want to contain %q", witness.Reason, "bad predicate")
 	}
 }
 
@@ -741,13 +744,14 @@ func TestFrom_SeededReplayIsDeterministic(t *testing.T) {
 	}
 }
 
-// PredicateError must reflect the most recent step's predicate result, not a
-// latched first-step error. The runner logs PredicateError once per step; if it
-// stays pinned to step 1 forever, downstream debugging looks frozen even though
-// the underlying state is changing.
-func TestPredicateError_ReflectsCurrentStepNotFirstStep(t *testing.T) {
+// A thrown predicate is a witnessed violation at the step it first throws, and
+// the property latches violated thereafter (sticky always semantics). The
+// witness captures the onset step's error text (count=1) and the extractor
+// snapshot at that step; it does not keep updating to later counts because the
+// verdict has latched.
+func TestThrowingPredicate_WitnessCapturesOnsetStep(t *testing.T) {
 	const spec = `
-globalThis.counter = __sanderling__.extract(state => state.snapshots["count"]);
+globalThis.counter = __sanderling__.extract(state => state.snapshots["count"], "counter");
 globalThis.properties = {
   reportsCounter: __sanderling__.always(() => { throw new Error("count=" + counter.current); }),
 };
@@ -760,16 +764,24 @@ globalThis.properties = {
 		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"count": raw}}); err != nil {
 			t.Fatal(err)
 		}
-		_ = verifier.EvaluateProperties()
+		verdicts := verifier.EvaluateProperties()
+		if got := verdicts["reportsCounter"]; got != ltl.VerdictViolated {
+			t.Fatalf("step %d: verdict = %v, want violated", step, got)
+		}
+	}
 
-		got := verifier.PredicateError("reportsCounter")
-		if got == nil {
-			t.Fatalf("step %d: PredicateError = nil, want non-nil", step)
-		}
-		want := "count=" + string(rune('0'+step))
-		if !strings.Contains(got.Error(), want) {
-			t.Errorf("step %d: PredicateError = %q, want to contain %q", step, got.Error(), want)
-		}
+	witness := verifier.Witness("reportsCounter")
+	if witness == nil {
+		t.Fatal("Witness = nil, want non-nil")
+	}
+	if witness.Step != 1 {
+		t.Errorf("Witness.Step = %d, want 1 (onset)", witness.Step)
+	}
+	if !strings.Contains(witness.Reason, "count=1") {
+		t.Errorf("Witness.Reason = %q, want to contain %q", witness.Reason, "count=1")
+	}
+	if got := string(witness.Extractors["counter"]); got != `"1"` {
+		t.Errorf("Witness.Extractors[counter] = %s, want %q", got, `"1"`)
 	}
 }
 
