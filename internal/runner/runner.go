@@ -778,51 +778,9 @@ func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Actio
 	if err != nil {
 		return verifier.Action{}, fmt.Errorf("v8 next action: %w", err)
 	}
-	if len(raw) == 0 || string(raw) == "null" {
-		return verifier.Action{}, verifier.ErrNoAction
-	}
-	var decoded struct {
-		Kind           string `json:"kind"`
-		X              int    `json:"x"`
-		Y              int    `json:"y"`
-		FromX          int    `json:"from_x"`
-		FromY          int    `json:"from_y"`
-		ToX            int    `json:"to_x"`
-		ToY            int    `json:"to_y"`
-		Key            string `json:"key"`
-		Text           string `json:"text"`
-		DurationMillis int    `json:"duration_millis"`
-	}
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return verifier.Action{}, fmt.Errorf("decode v8 action: %w", err)
-	}
-	switch decoded.Kind {
-	case "Tap":
-		return verifier.Action{Kind: verifier.ActionKindTap, X: decoded.X, Y: decoded.Y}, nil
-	case "DoubleTap":
-		return verifier.Action{Kind: verifier.ActionKindDoubleTap, X: decoded.X, Y: decoded.Y}, nil
-	case "InputText":
-		return verifier.Action{
-			Kind: verifier.ActionKindInputText,
-			X:    decoded.X, Y: decoded.Y,
-			Text: decoded.Text,
-		}, nil
-	case "Swipe":
-		return verifier.Action{
-			Kind:           verifier.ActionKindSwipe,
-			FromX:          decoded.FromX,
-			FromY:          decoded.FromY,
-			ToX:            decoded.ToX,
-			ToY:            decoded.ToY,
-			DurationMillis: decoded.DurationMillis,
-		}, nil
-	case "PressKey":
-		return verifier.Action{Kind: verifier.ActionKindPressKey, Key: decoded.Key}, nil
-	case "Wait":
-		return verifier.Action{Kind: verifier.ActionKindWait, DurationMillis: decoded.DurationMillis}, nil
-	default:
-		return verifier.Action{}, verifier.ErrNoAction
-	}
+	// Both engines emit the unified flat camelCase wire contract; one decoder
+	// reads it. A null payload means the generator declined to act this tick.
+	return verifier.DecodeAction(raw)
 }
 
 // collectWitnesses gathers the violation witness for each newly-violated

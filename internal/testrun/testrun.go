@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -110,7 +109,8 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	}
 
 	verifierInstance, err := verifier.New(
-		verifier.WithRand(rand.New(rand.NewPCG(uint64(seed), 0))),
+		verifier.WithSeed(uint64(seed)),
+		verifier.WithPlatform(options.Platform),
 		verifier.WithAppPackage(options.BundleID),
 	)
 	if err != nil {
