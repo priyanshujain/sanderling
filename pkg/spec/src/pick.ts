@@ -12,7 +12,9 @@
 //
 //   weighted node:   ONE float64() draw, then an ASCENDING cumulative scan over
 //                    max(0, weight). (matches worker.go pickWeighted.)
-//   actions node:    if the generated list has >1 entry, ONE intN(len) draw;
+//   actions node:    the generator runs FIRST (any from(...).generate() inside
+//                    draws intN(itemCount) for >1 items, nothing otherwise),
+//                    THEN if the returned list has >1 entry, ONE intN(len) draw;
 //                    a 0- or 1-element list draws nothing. (pickFromResult.)
 //   builtin node, per verb, in this exact sequence:
 //     taps/doubleTaps/longPresses: intN(candidateCount)            [1 draw]
@@ -35,6 +37,7 @@ import type {
 } from "./action-tree.ts";
 import type { Direction, Point } from "./types.ts";
 import { INPUT_CORPUS, NATIVE_PRESS_KEYS, WEB_PRESS_KEYS } from "./corpus.ts";
+import { setSamplerRng } from "./actions.ts";
 import { supports, warnUnsupportedOnce } from "./verbs.ts";
 
 // SWIPE_MIN_MAGNITUDE / SWIPE_MAGNITUDE_SPAN reproduce worker.go's
@@ -71,8 +74,16 @@ export function walk(
   switch (node.kind) {
     case "weighted":
       return walkWeighted(node.branches, rng, host);
-    case "actions":
-      return walkActions(node.generate(), rng);
+    case "actions": {
+      // Expose the picker's rng to from(...).generate() calls inside the
+      // generator so author sampling shares this single deterministic stream.
+      setSamplerRng(rng);
+      try {
+        return walkActions(node.generate(), rng);
+      } finally {
+        setSamplerRng(null);
+      }
+    }
     case "builtin":
       return walkBuiltin(node.verb, rng, host);
   }
