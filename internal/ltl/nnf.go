@@ -26,9 +26,13 @@ func nnf(formula Formula) Formula {
 	case OrFormula:
 		return OrFormula{Left: nnf(concrete.Left), Right: nnf(concrete.Right)}
 	case ImpliesFormula:
-		return ImpliesFormula{
-			Antecedent: nnf(concrete.Antecedent),
-			Consequent: nnf(concrete.Consequent),
+		// a -> b is rewritten to (not a) or b so the consequent is always
+		// reduced live each step. Keeping it as ImpliesFormula let a pending
+		// (temporal) antecedent defer the whole implication and silently drop a
+		// consequent that was false at the current step.
+		return OrFormula{
+			Left:  pushNot(concrete.Antecedent),
+			Right: nnf(concrete.Consequent),
 		}
 	default:
 		return formula

@@ -347,18 +347,14 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		return pending(next)
 
 	case ImpliesFormula:
-		antecedent := reduce(concrete.Antecedent, now)
-		switch antecedent.status {
-		case statusHolds:
-			return reduce(concrete.Consequent, now)
-		case statusViolated:
-			return holds()
-		case statusPending:
-			return pending(ImpliesFormula{
-				Antecedent: antecedent.formula,
-				Consequent: concrete.Consequent,
-			})
-		}
+		// NewEvaluator runs nnf, which rewrites a -> b to (not a) or b, so this
+		// case is unreachable from a normal evaluator. A directly-constructed
+		// formula reduced here is evaluated through the same equivalence so a
+		// pending antecedent cannot drop the consequent.
+		return reduce(OrFormula{
+			Left:  pushNot(concrete.Antecedent),
+			Right: nnf(concrete.Consequent),
+		}, now)
 
 	case OrFormula:
 		left := reduce(concrete.Left, now)
@@ -420,13 +416,21 @@ func reduce(formula Formula, now time.Time) reduceResult {
 			return violatedFrom(innerResult, concrete, "always inner violated")
 		}
 		// A bounded Always is the dual of a bounded Eventually: once the window
-		// closes without a breach it is vacuously satisfied. At the last step in
-		// the window a pending inner cannot be deferred, so it resolves to holds.
+		// closes without a breach it is vacuously satisfied. A pending inner at
+		// the closing step is a deferred obligation (a strong next, or an inner
+		// liveness that has not discharged); it must be carried so a later step
+		// or Finalize resolves it, never dropped to holds.
 		if concrete.HasStepBound && concrete.StepBound <= 1 {
-			return holds()
+			if innerResult.status == statusHolds {
+				return holds()
+			}
+			return pending(innerResult.formula)
 		}
 		if concrete.HasDeadline && !now.Before(concrete.Deadline) {
-			return holds()
+			if innerResult.status == statusHolds {
+				return holds()
+			}
+			return pending(innerResult.formula)
 		}
 		next := concrete
 		next.Inner = concrete.Inner
