@@ -34,8 +34,8 @@ export {};
 
 const fakeSpec = `
 const handle = (globalThis as { __sanderling__: { extract: (g: () => unknown) => unknown } }).__sanderling__.extract(() => 42);
-(globalThis as { actions?: unknown }).actions = handle;
-export {};
+export const actionsRoot = handle;
+export const properties = "WEB_PROPS_MARKER";
 `
 
 func TestBundleWeb_RegistersExpectedGlobals(t *testing.T) {
@@ -61,6 +61,8 @@ func TestBundleWeb_RegistersExpectedGlobals(t *testing.T) {
 		"__sanderlingExtractors__",
 		"__sanderlingNextAction__",
 		"__sanderling__",
+		"WEB_PROPS_MARKER",
+		"globalThis.actions",
 	} {
 		if !strings.Contains(source, expected) {
 			t.Errorf("bundle missing %q\nsource head:\n%s", expected, head(source, 500))
