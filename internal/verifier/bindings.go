@@ -20,11 +20,6 @@ type extractorState struct {
 
 type formulaState struct {
 	predicate goja.Callable
-	// err holds the goja error from this thunk's most recent invocation, or
-	// nil if the latest call succeeded. The thunk returns false on error so
-	// the LTL evaluator marks the property violated; PredicateError surfaces
-	// the underlying cause for the current step.
-	err error
 }
 
 type specKind int

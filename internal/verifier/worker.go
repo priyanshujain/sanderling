@@ -31,6 +31,7 @@ type Verifier struct {
 
 	priorVerdicts map[string]ltl.Verdict
 	newlyViolated []string
+	witnesses     map[string]Witness
 
 	lastTree       *hierarchy.Tree
 	lastAction     *Action
@@ -64,6 +65,7 @@ func New(options ...Option) (*Verifier, error) {
 		properties:    map[string]int{},
 		evaluators:    map[string]*ltl.Evaluator{},
 		priorVerdicts: map[string]ltl.Verdict{},
+		witnesses:     map[string]Witness{},
 		rng:           rand.New(rand.NewPCG(0, 0)),
 	}
 	for _, option := range options {
@@ -139,7 +141,8 @@ func (v *Verifier) buildFormulaNode(index int) (ltl.Formula, error) {
 	case specKindPure:
 		return ltl.Pure(spec.pureValue), nil
 	case specKindThunk:
-		return ltl.Thunk(v.formulaThunk(spec.predicateIndex)), nil
+		name := fmt.Sprintf("p%d", spec.predicateIndex)
+		return ltl.ThunkNamed(name, v.formulaThunk(spec.predicateIndex)), nil
 	case specKindNow:
 		child, err := v.buildFormulaNode(spec.childA)
 		if err != nil {
@@ -244,7 +247,6 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 	// Extractor previous/current advance exactly once per PushSnapshot.
 	// Predicate thunks read these slots but never trigger advancement, so
 	// invoking a thunk multiple times between snapshots is value-stable.
-	// refreshPredicateErrors relies on this to safely re-call predicates.
 	for index, extractor := range v.extractors {
 		previous := extractor.handle.Get("current")
 		_ = extractor.handle.Set("previous", previous)
@@ -362,12 +364,12 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 	for name, evaluator := range v.evaluators {
 		verdicts[name] = evaluator.ObserveAt(stepTime)
 	}
-	v.refreshPredicateErrors()
 
 	var onset []string
 	for name, verdict := range verdicts {
 		if verdict == ltl.VerdictViolated && v.priorVerdicts[name] != ltl.VerdictViolated {
 			onset = append(onset, name)
+			v.captureWitness(name)
 		}
 	}
 	sort.Strings(onset)
@@ -378,6 +380,89 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 	v.priorVerdicts = next
 
 	return verdicts
+}
+
+// Witness is the verifier-level record of a property violation: the LTL reason
+// (a predicate's thrown-error text, "predicate false", or a liveness failure),
+// the step it fired at, and a snapshot of every extractor's current value at
+// that step. The snapshot lets a reader see the state that produced the
+// violation without replaying the run.
+type Witness struct {
+	Property   string
+	Reason     string
+	Step       int
+	IsError    bool
+	Extractors map[string]json.RawMessage
+}
+
+// captureWitness records the witness for a property that just transitioned to
+// violated, snapshotting the current extractor values so the cause is visible
+// after the run.
+func (v *Verifier) captureWitness(name string) {
+	evaluator, ok := v.evaluators[name]
+	if !ok {
+		return
+	}
+	violation := evaluator.Violation()
+	if violation == nil {
+		return
+	}
+	v.witnesses[name] = Witness{
+		Property:   name,
+		Reason:     violation.Reason,
+		Step:       violation.Step,
+		IsError:    violation.IsError,
+		Extractors: v.extractorSnapshot(),
+	}
+}
+
+// extractorSnapshot encodes every named extractor's current value as JSON. A
+// nil value (extractor never advanced or its value did not survive Export)
+// is recorded as JSON null.
+func (v *Verifier) extractorSnapshot() map[string]json.RawMessage {
+	if len(v.extractors) == 0 {
+		return nil
+	}
+	snapshot := make(map[string]json.RawMessage, len(v.extractors))
+	for _, extractor := range v.extractors {
+		value := extractor.curr
+		if value == nil {
+			value = []byte("null")
+		}
+		snapshot[extractor.name] = append(json.RawMessage(nil), value...)
+	}
+	return snapshot
+}
+
+// Witness returns the captured violation witness for a property, or nil if the
+// property has not violated. Callers consult this after EvaluateProperties (or
+// Finalize) reports a violation to surface the cause and the state at onset.
+func (v *Verifier) Witness(name string) *Witness {
+	witness, ok := v.witnesses[name]
+	if !ok {
+		return nil
+	}
+	return &witness
+}
+
+// Finalize drives each evaluator to its terminal verdict and returns the names
+// of properties that violate only at run end (a liveness obligation that never
+// discharged), capturing a witness for each. Properties already violated
+// mid-run are not re-reported here.
+func (v *Verifier) Finalize() []string {
+	var ended []string
+	for name, evaluator := range v.evaluators {
+		if v.priorVerdicts[name] == ltl.VerdictViolated {
+			continue
+		}
+		if evaluator.Finalize() == ltl.VerdictViolated {
+			ended = append(ended, name)
+			v.captureWitness(name)
+			v.priorVerdicts[name] = ltl.VerdictViolated
+		}
+	}
+	sort.Strings(ended)
+	return ended
 }
 
 // NewlyViolatedProperties returns the names of properties whose verdict
@@ -396,14 +481,14 @@ func (v *Verifier) NewlyViolatedProperties() []string {
 }
 
 // Residuals returns the residual formula for each registered property after
-// the most recent EvaluateProperties call. Properties that errored during
-// predicate evaluation surface as ErrorFormula so the inspect UI can render
-// "predicate threw" inline.
+// the most recent EvaluateProperties call. Properties whose violation was
+// caused by a thrown predicate surface as ErrorFormula, sourced from the
+// captured witness, so the inspect UI can render "predicate threw" inline.
 func (v *Verifier) Residuals() map[string]ltl.Formula {
 	residuals := map[string]ltl.Formula{}
 	for name, evaluator := range v.evaluators {
-		if predicateErr := v.PredicateError(name); predicateErr != nil {
-			residuals[name] = ltl.ErrorFormula{Message: predicateErr.Error()}
+		if witness, ok := v.witnesses[name]; ok && witness.IsError {
+			residuals[name] = ltl.ErrorFormula{Message: witness.Reason}
 			continue
 		}
 		residuals[name] = evaluator.Residual()
@@ -445,72 +530,15 @@ func (v *Verifier) NextAction() (Action, error) {
 
 var ErrNoAction = errors.New("verifier: no action available")
 
-func (v *Verifier) formulaThunk(index int) func() bool {
-	return func() bool {
+func (v *Verifier) formulaThunk(index int) func() (bool, error) {
+	return func() (bool, error) {
 		formula := v.formulas[index]
 		result, err := formula.predicate(goja.Undefined())
 		if err != nil {
-			formula.err = err
-			return false
+			return false, err
 		}
-		formula.err = nil
-		return result.ToBoolean()
+		return result.ToBoolean(), nil
 	}
-}
-
-// refreshPredicateErrors re-invokes every registered predicate so that
-// formula.err reflects the current step rather than a latched first-step
-// throw. EvaluateProperties short-circuits once a property has latched to
-// violated, so without this refresh the runner's per-step "predicate error"
-// log freezes on whatever the predicate threw at step 1. The refreshed errors
-// have no effect on verdicts.
-//
-// Invariant: predicates may be re-invoked here outside the LTL gate that
-// would normally skip them (e.g. an `implies` consequent whose antecedent is
-// false). They must therefore be side-effect-free reads of extractor state;
-// any spec that asserts internal preconditions inside a predicate could
-// surface a spurious error in the inspect UI without affecting verdicts.
-func (v *Verifier) refreshPredicateErrors() {
-	for _, formula := range v.formulas {
-		result, err := formula.predicate(goja.Undefined())
-		if err != nil {
-			formula.err = err
-			continue
-		}
-		_ = result
-		formula.err = nil
-	}
-}
-
-// PredicateError returns the first goja error raised by any thunk in the
-// named property's formula tree, or nil if none fired. Callers typically
-// consult this after EvaluateProperties reports a violation to distinguish
-// a genuine predicate-false verdict from a malformed spec.
-func (v *Verifier) PredicateError(name string) error {
-	rootIndex, ok := v.properties[name]
-	if !ok {
-		return nil
-	}
-	return v.firstThunkError(rootIndex)
-}
-
-func (v *Verifier) firstThunkError(index int) error {
-	if index < 0 || index >= len(v.formulaSpecs) {
-		return nil
-	}
-	spec := v.formulaSpecs[index]
-	switch spec.kind {
-	case specKindThunk:
-		return v.formulas[spec.predicateIndex].err
-	case specKindImplies, specKindOr, specKindAnd:
-		if err := v.firstThunkError(spec.childA); err != nil {
-			return err
-		}
-		return v.firstThunkError(spec.childB)
-	case specKindNow, specKindNext, specKindEventually, specKindNot, specKindAlways:
-		return v.firstThunkError(spec.childA)
-	}
-	return nil
 }
 
 func (v *Verifier) resolveGenerator(generator goja.Value) (Action, error) {
