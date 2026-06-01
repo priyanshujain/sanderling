@@ -23,12 +23,17 @@ func bundleIntegrationSpec(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtimePath, err := filepath.Abs("../../pkg/spec/src/goja-runtime.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defaultsPath, err := filepath.Abs("../../pkg/spec/src/defaults/properties.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
 	bundle, err := bundler.Bundle(bundler.Options{
-		EntryFile: specPath,
+		EntryFile:   specPath,
+		RuntimeFile: runtimePath,
 		Aliases: map[string]string{
 			"@sanderling/spec":                     apiPath,
 			"@sanderling/spec/defaults/properties": defaultsPath,
