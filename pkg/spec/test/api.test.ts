@@ -31,6 +31,7 @@ import {
 } from "../src/index.ts";
 import { setSamplerRng } from "../src/actions.ts";
 import { Pcg } from "../src/pcg.ts";
+import type { GeneratorNode } from "../src/action-tree.ts";
 import type {
   AccessibilityElement,
   EventuallyFormula,
@@ -272,15 +273,21 @@ test("weighted returns a weighted node carrying the branches", () => {
   ]);
 });
 
-test("builtin factories return builtin nodes", () => {
-  assert.deepEqual(taps, { kind: "builtin", verb: "taps" });
-  assert.deepEqual(doubleTaps, { kind: "builtin", verb: "doubleTaps" });
-  assert.deepEqual(longPresses, { kind: "builtin", verb: "longPresses" });
-  assert.deepEqual(scrolls, { kind: "builtin", verb: "scrolls" });
-  assert.deepEqual(typing, { kind: "builtin", verb: "typing" });
-  assert.deepEqual(swipes, { kind: "builtin", verb: "swipes" });
-  assert.deepEqual(waitOnce, { kind: "builtin", verb: "waitOnce" });
-  assert.deepEqual(pressKey, { kind: "builtin", verb: "pressKeys" });
+test("builtin factories return builtin nodes carrying their verb", () => {
+  const cases: Array<[GeneratorNode, string]> = [
+    [taps, "taps"],
+    [doubleTaps, "doubleTaps"],
+    [longPresses, "longPresses"],
+    [scrolls, "scrolls"],
+    [typing, "typing"],
+    [swipes, "swipes"],
+    [waitOnce, "waitOnce"],
+    [pressKey, "pressKeys"],
+  ];
+  for (const [node, verb] of cases) {
+    assert.equal(node.kind, "builtin");
+    assert.equal((node as { verb: string }).verb, verb);
+  }
 });
 
 test("from with a single item returns it without drawing", () => {

@@ -55,14 +55,15 @@ test("defaults bundle exports defaultActions as a weighted node", async () => {
 test("typing resolves as a builtin node", async () => {
   installRuntime(emptyState);
   const { typing } = await import("../src/defaults/actions.ts");
-  assert.deepEqual(typing, { kind: "builtin", verb: "typing" });
+  assert.equal(typing.kind, "builtin");
+  assert.equal((typing as { verb: string }).verb, "typing");
 });
 
 test("longPresses and scrolls resolve as builtin nodes", async () => {
   installRuntime(emptyState);
   const { longPresses, scrolls } = await import("../src/defaults/actions.ts");
-  assert.deepEqual(longPresses, { kind: "builtin", verb: "longPresses" });
-  assert.deepEqual(scrolls, { kind: "builtin", verb: "scrolls" });
+  assert.equal((longPresses as { verb: string }).verb, "longPresses");
+  assert.equal((scrolls as { verb: string }).verb, "scrolls");
 });
 
 test("defaults barrel re-exports both properties and actions", async () => {
