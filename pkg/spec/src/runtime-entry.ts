@@ -8,7 +8,7 @@
 // identical action stream by construction.
 
 import { Pcg } from "./pcg.ts";
-import { nextAction } from "./pick.ts";
+import { nextAction, walk } from "./pick.ts";
 import type { ActionDescriptor, GeneratorNode, Host } from "./action-tree.ts";
 import type { Point } from "./types.ts";
 
@@ -82,15 +82,18 @@ export function serializeAction(action: ActionDescriptor | null): SerializedActi
       };
     }
     case "Scroll": {
-      const from = pointOf(action.in);
+      const from = pointOf(action.from) ?? pointOf(action.in);
       if (!from) return null;
+      // The builtin generator pre-computes `to`; an author Scroll without it
+      // collapses to a zero-length gesture the runner re-derives from bounds.
+      const to = pointOf(action.to) ?? from;
       return {
         kind: "Scroll",
         direction: action.direction,
         fromX: from.x,
         fromY: from.y,
-        toX: from.x,
-        toY: from.y,
+        toX: to.x,
+        toY: to.y,
         durationMillis: DEFAULT_SWIPE_DURATION,
       };
     }
@@ -106,6 +109,11 @@ export function serializeAction(action: ActionDescriptor | null): SerializedActi
 // AFTER this call (the web bundle imports the runtime before the spec, so the
 // root only exists on globalThis.actions once the spec has evaluated).
 // evaluateExtractors is the engine's snapshot of the spec's extract() handles.
+//
+// Setup precedence: when the spec assigned globalThis.setup, it is walked ONCE
+// per tick first; if it yields an action that wins, otherwise the call falls
+// through to the action root's 16-attempt retry. This matches the native
+// verifier's prior NextAction precedence and applies on both engines.
 export function installRuntime(
   host: Host,
   root: GeneratorNode | null | (() => GeneratorNode | null),
@@ -113,9 +121,18 @@ export function installRuntime(
 ): void {
   const rng = new Pcg(host.seedHi(), host.seedLo());
   const resolveRoot = typeof root === "function" ? root : () => root;
+  const resolveSetup = () =>
+    (globalThis as { setup?: GeneratorNode }).setup ?? null;
   defineLockedGlobal("__sanderlingExtractors__", () => evaluateExtractors());
   defineLockedGlobal("__sanderlingNextAction__", () => {
+    // resolveRoot runs first: on web it also resets the per-tick candidate
+    // cache, which setup's walk below must see fresh.
     const current = resolveRoot();
+    const setup = resolveSetup();
+    if (setup) {
+      const setupAction = walk(setup, rng, host);
+      if (setupAction) return serializeAction(setupAction);
+    }
     if (!current) return null;
     return serializeAction(nextAction(current, rng, host));
   });

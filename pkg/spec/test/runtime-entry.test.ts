@@ -98,7 +98,75 @@ test("PressKey and Wait pass through their fields", () => {
   });
 });
 
+test("builtin Scroll carries the pre-computed to endpoint", () => {
+  assert.deepEqual(
+    serializeAction({
+      kind: "Scroll",
+      direction: "down",
+      in: { x: 100, y: 200 },
+      from: { x: 100, y: 200 },
+      to: { x: 100, y: 120 },
+    }),
+    {
+      kind: "Scroll",
+      direction: "down",
+      fromX: 100,
+      fromY: 200,
+      toX: 100,
+      toY: 120,
+      durationMillis: 250,
+    },
+  );
+});
+
 test("an unresolved (string) target drops the action", () => {
   assert.equal(serializeAction({ kind: "Tap", on: "id:never-resolved" }), null);
   assert.equal(serializeAction(null), null);
+});
+
+// Wire round-trip: serialize -> JSON -> parse asserts every field the Go
+// decodeAction reads survives by its exact camelCase name. A rename (fromX vs
+// from_x) would silently turn web/native actions into no-ops; this catches it.
+test("serialized actions JSON round-trip with the decoder's field names", () => {
+  const cases: ActionDescriptor[] = [
+    { kind: "Tap", on: { x: 1, y: 2, selector: "id:a" } as never },
+    { kind: "InputText", into: { x: 3, y: 4 } as never, text: "x" },
+    { kind: "Swipe", from: { x: 5, y: 6 }, to: { x: 7, y: 8 }, durationMillis: 9 },
+    { kind: "Scroll", direction: "up", in: { x: 1, y: 1 } as never },
+    { kind: "PressKey", key: "enter" },
+    { kind: "Wait", durationMillis: 10 },
+  ];
+  for (const descriptor of cases) {
+    const wire = serializeAction(descriptor);
+    assert.ok(wire, `expected ${descriptor.kind} to serialize`);
+    const decoded = JSON.parse(JSON.stringify(wire)) as Record<string, unknown>;
+    assert.equal(decoded.kind, wire!.kind);
+    switch (wire!.kind) {
+      case "Tap":
+        assert.equal(typeof decoded.x, "number");
+        assert.equal(typeof decoded.y, "number");
+        assert.equal(decoded.selector, "id:a");
+        break;
+      case "InputText":
+        assert.equal(typeof decoded.x, "number");
+        assert.equal(decoded.text, "x");
+        break;
+      case "Swipe":
+        assert.equal(decoded.fromX, 5);
+        assert.equal(decoded.toY, 8);
+        assert.equal(decoded.durationMillis, 9);
+        break;
+      case "Scroll":
+        assert.equal(decoded.direction, "up");
+        assert.equal(typeof decoded.fromX, "number");
+        assert.equal(typeof decoded.toX, "number");
+        break;
+      case "PressKey":
+        assert.equal(decoded.key, "enter");
+        break;
+      case "Wait":
+        assert.equal(decoded.durationMillis, 10);
+        break;
+    }
+  }
 });

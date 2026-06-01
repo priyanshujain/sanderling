@@ -53,7 +53,11 @@ test("taps draws one candidate index and targets its point", () => {
   const action = walk(builtin("taps"), rng, host);
   assert.deepEqual(action, {
     kind: "Tap",
-    on: { x: POINTS[expectedIndex]!.x, y: POINTS[expectedIndex]!.y },
+    on: {
+      x: POINTS[expectedIndex]!.x,
+      y: POINTS[expectedIndex]!.y,
+      selector: POINTS[expectedIndex]!.selector,
+    },
   });
 });
 
@@ -72,6 +76,7 @@ test("typing draws candidate index then corpus index, in that order", () => {
   assert.deepEqual(action.into, {
     x: POINTS[candidateIndex]!.x,
     y: POINTS[candidateIndex]!.y,
+    selector: POINTS[candidateIndex]!.selector,
   });
   assert.equal(action.text, INPUT_CORPUS[corpusIndex]);
 });
@@ -142,7 +147,11 @@ test("doubleTaps and longPresses draw exactly one candidate index", () => {
     const kind = verb === "doubleTaps" ? "DoubleTap" : "LongPress";
     assert.deepEqual(action, {
       kind,
-      on: { x: POINTS[index]!.x, y: POINTS[index]!.y },
+      on: {
+        x: POINTS[index]!.x,
+        y: POINTS[index]!.y,
+        selector: POINTS[index]!.selector,
+      },
     });
   }
 });

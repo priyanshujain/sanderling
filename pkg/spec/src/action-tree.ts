@@ -44,7 +44,10 @@ export type ActionDescriptor =
   | { kind: "Tap"; on: Target }
   | { kind: "DoubleTap"; on: Target }
   | { kind: "LongPress"; on: Target }
-  | { kind: "Scroll"; direction: Direction; in?: Target }
+  // Scroll carries the author target (in) for spec-written scrolls; the builtin
+  // generator additionally pre-computes the swipe from/to so the wire contract
+  // carries a real gesture rather than a zero-length one.
+  | { kind: "Scroll"; direction: Direction; in?: Target; from?: Target; to?: Target }
   | { kind: "InputText"; into: Target; text: string }
   | { kind: "Swipe"; from: Target; to: Target; durationMillis?: number }
   | { kind: "PressKey"; key: string }

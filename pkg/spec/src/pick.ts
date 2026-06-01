@@ -142,22 +142,74 @@ function walkBuiltin(
 
   switch (verb) {
     case "taps":
-      return { kind: "Tap", on: point };
+      return tapDescriptor("Tap", point, picked.selector);
     case "doubleTaps":
-      return { kind: "DoubleTap", on: point };
+      return tapDescriptor("DoubleTap", point, picked.selector);
     case "longPresses":
-      return { kind: "LongPress", on: point };
+      return tapDescriptor("LongPress", point, picked.selector);
     case "typing": {
       const text = INPUT_CORPUS[rng.intN(INPUT_CORPUS.length)] ?? "";
-      return { kind: "InputText", into: point, text };
+      return { kind: "InputText", into: withSelector(point, picked.selector), text };
     }
     case "swipes":
       return buildSwipe(point, rng);
     case "scrolls": {
       const direction = DIRECTIONS[rng.intN(DIRECTIONS.length)] ?? "down";
-      return { kind: "Scroll", direction, in: point };
+      return buildScroll(point, direction, picked, rng);
     }
   }
+}
+
+// withSelector attaches a native selector to a resolved Point so the runner can
+// re-resolve the target by id/text. The web host omits it (point-only).
+function withSelector(point: Point, selector?: string): Point {
+  if (selector === undefined) return point;
+  return { ...point, selector } as Point;
+}
+
+function tapDescriptor(
+  kind: "Tap" | "DoubleTap" | "LongPress",
+  point: Point,
+  selector?: string,
+): ActionDescriptor {
+  return { kind, on: withSelector(point, selector) } as ActionDescriptor;
+}
+
+// buildScroll lowers a scroll to a swipe over the container, matching
+// worker.go's geometry: the gesture drags opposite the named content motion,
+// magnitude 40% of the container extent. Missing width/height (web root) yields
+// a zero-length endpoint, which the runner re-derives from container bounds.
+function buildScroll(
+  from: Point,
+  direction: Direction,
+  candidate: { width?: number; height?: number },
+  _rng: Pcg,
+): ActionDescriptor {
+  const width = candidate.width ?? 0;
+  const height = candidate.height ?? 0;
+  let toX = from.x;
+  let toY = from.y;
+  switch (direction) {
+    case "down":
+      toY = from.y - Math.trunc((4 * height) / 10);
+      break;
+    case "up":
+      toY = from.y + Math.trunc((4 * height) / 10);
+      break;
+    case "left":
+      toX = from.x + Math.trunc((4 * width) / 10);
+      break;
+    case "right":
+      toX = from.x - Math.trunc((4 * width) / 10);
+      break;
+  }
+  return {
+    kind: "Scroll",
+    direction,
+    in: from,
+    from,
+    to: { x: Math.max(0, toX), y: Math.max(0, toY) },
+  } as ActionDescriptor;
 }
 
 function walkPressKey(rng: Pcg, host: Host): ActionDescriptor | null {
