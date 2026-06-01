@@ -74,7 +74,7 @@ func Bundle(options Options) (Result, error) {
 			return Result{}, fmt.Errorf("entry path: %w", err)
 		}
 		buildOptions.Stdin = &esbuild.StdinOptions{
-			Contents:   fmt.Sprintf("import %q;\nimport %q;\n", runtimeAbs, specAbs),
+			Contents:   fmt.Sprintf("import %q;\n%s", runtimeAbs, registrationEntry(specAbs)),
 			ResolveDir: filepath.Dir(specAbs),
 			Loader:     esbuild.LoaderTS,
 		}
@@ -99,4 +99,17 @@ func Bundle(options Options) (Result, error) {
 		JavaScript: javascript,
 		SHA256:     hex.EncodeToString(sum[:]),
 	}, nil
+}
+
+// registrationEntry imports the spec as a namespace and copies its named
+// exports onto globalThis so authors write plain `export const properties /
+// actionsRoot / setup` without hand-assigning globalThis. The guards let web
+// specs omit setup. esbuild keeps the exports because the trailer references
+// them; output stays an IIFE.
+func registrationEntry(specAbs string) string {
+	return fmt.Sprintf(`import * as __spec from %q;
+if (__spec.actionsRoot !== undefined) globalThis.actions = __spec.actionsRoot;
+if (__spec.properties !== undefined) globalThis.properties = __spec.properties;
+if (__spec.setup !== undefined) globalThis.setup = __spec.setup;
+`, specAbs)
 }
