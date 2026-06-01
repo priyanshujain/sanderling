@@ -52,3 +52,4 @@ export {
   weighted,
   whenRoute,
 } from "./actions.ts";
+export { edgeCaseText, emails, integers, strings } from "./values.ts";
