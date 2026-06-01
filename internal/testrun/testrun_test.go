@@ -3,8 +3,30 @@ package testrun
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
+
+func TestResolveSeed_UsesConfiguredWhenNonZero(t *testing.T) {
+	if got := resolveSeed(42); got != 42 {
+		t.Fatalf("got %d, want 42", got)
+	}
+}
+
+func TestResolveSeed_DerivesWhenZero(t *testing.T) {
+	if got := resolveSeed(0); got == 0 {
+		t.Fatal("expected a non-zero time-derived seed")
+	}
+}
+
+// TestSeedDefineFormatsAsDecimal guards the contract that Execute uses to put
+// the seed into the web bundle: strconv.FormatInt base 10, which web-runtime
+// folds to a 32-bit PRNG seed.
+func TestSeedDefineFormatsAsDecimal(t *testing.T) {
+	if got := strconv.FormatInt(resolveSeed(8675309), 10); got != "8675309" {
+		t.Fatalf("got %q, want 8675309", got)
+	}
+}
 
 func TestResolveSpecAPIPath_FindsUpwardSibling(t *testing.T) {
 	root := t.TempDir()

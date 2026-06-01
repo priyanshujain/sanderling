@@ -122,6 +122,38 @@ func TestBundleWeb_IsDeterministic(t *testing.T) {
 	}
 }
 
+// TestBundleWeb_InjectsSeedDefine asserts that a SANDERLING_SEED define is
+// inlined into the bundle so --seed reaches the web runtime PRNG. esbuild
+// replaces process.env.SANDERLING_SEED with the quoted literal at build time.
+func TestBundleWeb_InjectsSeedDefine(t *testing.T) {
+	directory := t.TempDir()
+	runtimePath := filepath.Join(directory, "web-runtime.ts")
+	specPath := filepath.Join(directory, "spec.ts")
+	runtime := fakeRuntime + "\n(globalThis as Record<string, unknown>).__seed = process.env.SANDERLING_SEED;\n"
+	if err := os.WriteFile(runtimePath, []byte(runtime), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(specPath, []byte(fakeSpec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := BundleWeb(WebOptions{
+		EntryFile:      specPath,
+		WebRuntimeFile: runtimePath,
+		Defines:        map[string]string{"SANDERLING_SEED": "8675309"},
+	})
+	if err != nil {
+		t.Fatalf("BundleWeb: %v", err)
+	}
+	source := string(result.JavaScript)
+	if !strings.Contains(source, "8675309") {
+		t.Errorf("seed literal not inlined into bundle\nsource head:\n%s", head(source, 500))
+	}
+	if strings.Contains(source, "process.env.SANDERLING_SEED") {
+		t.Errorf("define left unsubstituted in bundle")
+	}
+}
+
 func head(text string, max int) string {
 	if len(text) <= max {
 		return text
