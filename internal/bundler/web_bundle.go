@@ -50,9 +50,7 @@ func BundleWeb(options WebOptions) (Result, error) {
 		defines["process.env."+key] = quoteJSString(value)
 	}
 
-	stdinContents := fmt.Sprintf(`import %q;
-import %q;
-`, runtimeAbs, specAbs)
+	stdinContents := fmt.Sprintf("import %q;\n%s", runtimeAbs, registrationEntry(specAbs))
 
 	output := esbuild.Build(esbuild.BuildOptions{
 		Stdin: &esbuild.StdinOptions{
