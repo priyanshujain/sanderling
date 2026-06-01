@@ -1,3 +1,4 @@
+// Package chrome implements the device driver for web targets by driving Chrome over the DevTools protocol.
 package chrome
 
 import (

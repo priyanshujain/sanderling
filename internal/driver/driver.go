@@ -1,3 +1,4 @@
+// Package driver defines the platform-agnostic device automation interface and shared types.
 package driver
 
 import (
