@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/android"
@@ -53,9 +54,11 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		aliases["@sanderling/spec/defaults"] = filepath.Join(base, "defaults/index.ts")
 		aliases["@sanderling/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
 	}
+	seed := resolveSeed(options.Seed)
 	defines := map[string]string{
 		"SANDERLING_TEST_PHONE": os.Getenv("SANDERLING_TEST_PHONE"),
 		"SANDERLING_TEST_OTP":   os.Getenv("SANDERLING_TEST_OTP"),
+		"SANDERLING_SEED":       strconv.FormatInt(seed, 10),
 	}
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile: options.Spec,
@@ -101,10 +104,6 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		}
 	}
 
-	seed := options.Seed
-	if seed == 0 {
-		seed = time.Now().UnixNano()
-	}
 	verifierInstance, err := verifier.New(
 		verifier.WithRand(rand.New(rand.NewPCG(uint64(seed), 0))),
 		verifier.WithAppPackage(options.BundleID),
@@ -171,6 +170,16 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// resolveSeed returns the configured seed, or a time-derived one when unset.
+// The same value seeds both the goja PRNG and the web bundle's SANDERLING_SEED
+// define, so a single run is reproducible across both runtimes.
+func resolveSeed(configured int64) int64 {
+	if configured != 0 {
+		return configured
+	}
+	return time.Now().UnixNano()
 }
 
 // resolveWebRuntimePath returns the path to pkg/spec/src/web-runtime.ts.
