@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -26,18 +27,20 @@ import (
 )
 
 const fixtureSpec = `
-const balance = __sanderling__.extract(state => state.snapshots.balance ?? 0);
+import { actions, always, extract, Tap } from "@sanderling/spec";
+const balance = extract(state => state.snapshots.balance ?? 0);
 globalThis.properties = {
-  balanceNonNegative: __sanderling__.always(() => balance.current >= 0),
+  balanceNonNegative: always(() => balance.current >= 0),
 };
-globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:next" })]);
+globalThis.actions = actions(() => [Tap({ on: "id:next" })]);
 `
 
 const violationSpec = `
+import { actions, always } from "@sanderling/spec";
 globalThis.properties = {
-  balanceNonNegative: __sanderling__.always(() => false),
+  balanceNonNegative: always(() => false),
 };
-globalThis.actions = __sanderling__.actions(() => []);
+globalThis.actions = actions(() => []);
 `
 
 type harness struct {
@@ -48,6 +51,34 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	return newHarnessWithSpec(t, fixtureSpec)
+}
+
+// bundleSpec compiles an authored TS spec with the goja runtime entry so the
+// loaded bundle installs __sanderlingNextAction__ (the shared picker).
+func bundleSpec(t *testing.T, specSource string) string {
+	t.Helper()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.ts")
+	if err := os.WriteFile(specPath, []byte(specSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	apiPath, err := filepath.Abs("../../pkg/spec/src/index.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimePath, err := filepath.Abs("../../pkg/spec/src/goja-runtime.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := bundler.Bundle(bundler.Options{
+		EntryFile:   specPath,
+		RuntimeFile: runtimePath,
+		Aliases:     map[string]string{"@sanderling/spec": apiPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(bundle.JavaScript)
 }
 
 func newHarnessWithSpec(t *testing.T, spec string) *harness {
@@ -61,7 +92,7 @@ func newHarnessWithSpec(t *testing.T, spec string) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifierInstance.Load(spec); err != nil {
+	if err := verifierInstance.Load(bundleSpec(t, spec)); err != nil {
 		t.Fatal(err)
 	}
 	state := &harness{
@@ -196,10 +227,11 @@ func TestRunner_ViolationSurfacesOnlyOnOnsetStep(t *testing.T) {
 
 func TestRunner_ThrowingPredicateIsLoggedNotPanic(t *testing.T) {
 	const throwingSpec = `
+import { actions, always, Tap } from "@sanderling/spec";
 globalThis.properties = {
-  broken: __sanderling__.always(() => { throw new Error("bad predicate"); }),
+  broken: always(() => { throw new Error("bad predicate"); }),
 };
-globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:next" })]);
+globalThis.actions = actions(() => [Tap({ on: "id:next" })]);
 `
 	state := newHarnessWithSpec(t, throwingSpec)
 
@@ -962,7 +994,8 @@ func TestIsTransientApplyError_Classification(t *testing.T) {
 // after a Wait action - the action already provides settling time.
 func TestRunner_WaitActionSkipsIdle(t *testing.T) {
 	const waitSpec = `
-globalThis.actions = __sanderling__.actions(() => [__sanderling__.wait({ durationMillis: 5 })]);
+import { actions, Wait } from "@sanderling/spec";
+globalThis.actions = actions(() => [Wait({ durationMillis: 5 })]);
 `
 	state := newHarnessWithSpec(t, waitSpec)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
