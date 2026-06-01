@@ -594,6 +594,41 @@ globalThis.properties = {
 	}
 }
 
+// An unbounded eventually that never fires stays pending during the run and is
+// only reported by Finalize at run end. The witness records why it failed.
+func TestFinalize_UnmetEventuallyReportedWithWitness(t *testing.T) {
+	const spec = `
+globalThis.flag = __sanderling__.extract(state => state.snapshots["flag"] ?? false, "flag");
+globalThis.properties = {
+  flagEventuallyTrue: __sanderling__.always(__sanderling__.eventually(() => flag.current === true)),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	for step := 0; step < 3; step++ {
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"flag": json.RawMessage(`false`)}}); err != nil {
+			t.Fatal(err)
+		}
+		verdicts := verifier.EvaluateProperties()
+		if got := verdicts["flagEventuallyTrue"]; got != ltl.VerdictPending {
+			t.Fatalf("step %d: verdict = %v, want pending", step, got)
+		}
+	}
+
+	ended := verifier.Finalize()
+	if !slices.Contains(ended, "flagEventuallyTrue") {
+		t.Fatalf("Finalize ended = %v, want to contain flagEventuallyTrue", ended)
+	}
+	witness := verifier.Witness("flagEventuallyTrue")
+	if witness == nil {
+		t.Fatal("Witness = nil after Finalize, want non-nil")
+	}
+	if !strings.Contains(witness.Reason, "eventually") {
+		t.Errorf("Witness.Reason = %q, want to mention eventually", witness.Reason)
+	}
+}
+
 func TestLoad_AcceptsSpecWithoutPropertiesOrActions(t *testing.T) {
 	verifier := newVerifier(t)
 	if err := verifier.Load(`const noop = 1;`); err != nil {
