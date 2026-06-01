@@ -16,6 +16,7 @@ import dev.sanderling.driver.v1.Point
 import dev.sanderling.driver.v1.PressKeyRequest
 import dev.sanderling.driver.v1.RecentLogsRequest
 import dev.sanderling.driver.v1.Selector
+import dev.sanderling.driver.v1.SnapshotResponse
 import dev.sanderling.driver.v1.SwipeRequest
 import dev.sanderling.driver.v1.Text
 import io.grpc.stub.StreamObserver
@@ -27,6 +28,7 @@ class DriverService(
 ) : DriverGrpc.DriverImplBase() {
 
     private val launchedBundleId = AtomicReference<String?>(null)
+    private val snapshotLock = Any()
 
     override fun launch(request: LaunchRequest, responseObserver: StreamObserver<Empty>) {
         runRpc(responseObserver) {
@@ -47,6 +49,13 @@ class DriverService(
     override fun tap(request: Point, responseObserver: StreamObserver<Empty>) {
         runRpc(responseObserver) {
             backend.tap(request.x, request.y)
+            Empty.getDefaultInstance()
+        }
+    }
+
+    override fun longPress(request: Point, responseObserver: StreamObserver<Empty>) {
+        runRpc(responseObserver) {
+            backend.longPress(request.x, request.y)
             Empty.getDefaultInstance()
         }
     }
@@ -113,6 +122,23 @@ class DriverService(
     override fun hierarchy(request: Empty, responseObserver: StreamObserver<HierarchyJSON>) {
         runRpc(responseObserver) {
             HierarchyJSON.newBuilder().setJson(backend.hierarchy()).build()
+        }
+    }
+
+    override fun snapshot(request: Empty, responseObserver: StreamObserver<SnapshotResponse>) {
+        runRpc(responseObserver) {
+            val sample = synchronized(snapshotLock) { backend.snapshot() }
+            val (png, width, height) = sample.screenshot
+            SnapshotResponse.newBuilder()
+                .setHierarchy(HierarchyJSON.newBuilder().setJson(sample.hierarchyJson).build())
+                .setScreenshot(
+                    Image.newBuilder()
+                        .setPng(ByteString.copyFrom(png))
+                        .setWidth(width)
+                        .setHeight(height)
+                        .build(),
+                )
+                .build()
         }
     }
 

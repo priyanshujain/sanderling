@@ -52,7 +52,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.DurationVar(&options.duration, "duration", 5*time.Minute, "total test duration")
 	flagSet.Int64Var(&options.seed, "seed", 0, "RNG seed (0 = random)")
 	flagSet.StringVar(&options.output, "output", "./runs", "output directory for traces")
-	flagSet.BoolVar(&options.clearData, "clear-data", false, "clear app data before launching so the run starts from a fresh install")
+	flagSet.BoolVar(&options.clearData, "clear-data", true, "clear app data before launching so each run starts from a fresh install; pass --clear-data=false to resume prior state")
 	if err := flagSet.Parse(args); err != nil {
 		return testOptions{}, err
 	}

@@ -61,6 +61,19 @@ class DriverServiceTest {
         assertEquals(100 to 250, backend.lastTap)
     }
 
+    @Test fun longPressForwardsCoordinates() {
+        var observed: Pair<Int, Int>? = null
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun longPress(x: Int, y: Int) {
+                observed = x to y
+            }
+        }
+        val client = newClient(backend)
+
+        client.longPress(Point.newBuilder().setX(400).setY(900).build())
+        assertEquals(400 to 900, observed)
+    }
+
     @Test fun inputTextForwardsValue() {
         val backend = StubDriverBackend("android")
         val client = newClient(backend)

@@ -4,6 +4,7 @@ export type {
   Action,
   ActionGenerator,
   AttrSelector,
+  DoubleTapAction,
   EventuallyFormula,
   ExceptionRecord,
   Extracted,
@@ -30,16 +31,19 @@ export type {
 export { extract, keyedBy } from "./extract.ts";
 export { always, eventually, next, now } from "./ltl.ts";
 export {
+  DoubleTap,
   InputText,
   PressKey,
   Swipe,
   Tap,
   Wait,
   actions,
+  doubleTaps,
   from,
   pressKey,
   swipes,
   taps,
+  typing,
   waitOnce,
   weighted,
   whenRoute,

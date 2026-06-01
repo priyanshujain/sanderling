@@ -141,6 +141,61 @@ func TestBoolFieldsFromNode(t *testing.T) {
 	}
 }
 
+func TestEditableDerivation(t *testing.T) {
+	cases := []struct {
+		name string
+		node string
+		want bool
+	}{
+		{"driver flag", `{"attributes": {"bounds": "[0,0,10,10]"}, "editable": true}`, true},
+		{"driver flag false", `{"attributes": {"bounds": "[0,0,10,10]"}, "editable": false}`, false},
+		{"native EditText class", `{"attributes": {"class": "android.widget.EditText", "bounds": "[0,0,10,10]"}}`, true},
+		{"hintText attr", `{"attributes": {"hintText": "Enter amount", "bounds": "[0,0,10,10]"}}`, true},
+		{"plain button", `{"attributes": {"class": "android.widget.Button", "bounds": "[0,0,10,10]"}}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tree, err := Parse(tc.node)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			el := tree.Elements[0]
+			if el.Editable != tc.want {
+				t.Errorf("Editable = %v, want %v", el.Editable, tc.want)
+			}
+			if got := el.Attributes["editable"]; got != boolString(tc.want) {
+				t.Errorf("attrs[editable] = %q, want %q", got, boolString(tc.want))
+			}
+		})
+	}
+}
+
+func boolString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// TestFindByEditableSelector confirms find({editable:true}) matches via the
+// mirrored attrs entry, the same path clickable uses.
+func TestFindByEditableSelector(t *testing.T) {
+	input := `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"class": "android.widget.EditText", "bounds": "[0,0,100,40]"}, "children": []},
+	    {"attributes": {"class": "android.widget.Button", "bounds": "[0,40,100,80]"}, "children": []}
+	  ]
+	}`
+	tree, _ := Parse(input)
+	if el := tree.Find("editable:true"); el == nil {
+		t.Fatal("expected to find the EditText via editable:true")
+	}
+	if matches := tree.FindAll("editable:true"); len(matches) != 1 {
+		t.Fatalf("editable:true matched %d elements, want 1", len(matches))
+	}
+}
+
 func TestIdentifierFallback(t *testing.T) {
 	input := `{
 	  "attributes": {"identifier": "my-button", "bounds": "[0,0,100,100]"},
@@ -625,5 +680,53 @@ func TestNodeFindDoesNotReturnSiblings(t *testing.T) {
 	result := a2Node.Find("id:B")
 	if result != nil && result.Element.ResourceID == "B" {
 		t.Fatal("Node.Find should not return nodes from sibling subtrees")
+	}
+}
+
+// TestPackageDerivedFromResourceIDPrefix verifies that when the sidecar omits an
+// explicit package attribute, native nodes pick it up from the resource-id
+// prefix while colon-less Compose testTags stay empty (in scope for the app).
+func TestPackageDerivedFromResourceIDPrefix(t *testing.T) {
+	const dump = `{
+	  "attributes": {"class": "android.widget.FrameLayout", "bounds": "[0,0,320,640]"},
+	  "children": [
+	    {"attributes": {"resource-id": "AddAccountScreen", "bounds": "[0,0,320,400]"}, "clickable": true, "enabled": true, "children": []},
+	    {"attributes": {"resource-id": "com.google.android.inputmethod.latin:id/key_pos_0_0", "bounds": "[0,400,40,440]"}, "clickable": true, "enabled": true, "children": []},
+	    {"attributes": {"resource-id": "android:id/content", "bounds": "[0,0,320,640]"}, "children": []}
+	  ]
+	}`
+	tree, err := Parse(dump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := map[string]string{
+		"AddAccountScreen": "",
+		"com.google.android.inputmethod.latin:id/key_pos_0_0": "com.google.android.inputmethod.latin",
+		"android:id/content": "android",
+	}
+	for _, element := range tree.Elements {
+		expected, ok := want[element.ResourceID]
+		if !ok {
+			continue
+		}
+		if element.Package != expected {
+			t.Errorf("resource-id %q: package = %q, want %q", element.ResourceID, element.Package, expected)
+		}
+	}
+}
+
+// TestExplicitPackageAttributeWins verifies an explicit package attribute is not
+// overridden by the resource-id prefix fallback.
+func TestExplicitPackageAttributeWins(t *testing.T) {
+	const dump = `{
+	  "attributes": {"resource-id": "android:id/content", "package": "app.folio", "bounds": "[0,0,320,640]"},
+	  "children": []
+	}`
+	tree, err := Parse(dump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := tree.Elements[0].Package; got != "app.folio" {
+		t.Errorf("package = %q, want app.folio (explicit attr should win)", got)
 	}
 }

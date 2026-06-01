@@ -91,3 +91,75 @@ func TestPathContains(t *testing.T) {
 		t.Error("did not expect /nope in PATH")
 	}
 }
+
+func TestParseForegroundPackage(t *testing.T) {
+	cases := []struct {
+		name    string
+		dumpsys string
+		want    string
+	}{
+		{
+			name:    "mResumedActivity folio",
+			dumpsys: "  Stack #0:\n    mResumedActivity: ActivityRecord{a1b2c3 u0 app.folio/.MainActivity t42}\n",
+			want:    "app.folio",
+		},
+		{
+			name:    "topResumedActivity chrome",
+			dumpsys: "ResumedActivity: ActivityRecord{ff u0 com.android.chrome/com.google.android.apps.chrome.Main t9}\n  topResumedActivity=ActivityRecord{ff u0 com.android.chrome/com.google.android.apps.chrome.Main}",
+			want:    "com.android.chrome",
+		},
+		{
+			name:    "launcher",
+			dumpsys: "    mResumedActivity: ActivityRecord{x u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t1}",
+			want:    "com.google.android.apps.nexuslauncher",
+		},
+		{
+			name:    "no resumed activity",
+			dumpsys: "  some unrelated dumpsys output\n  with no resumed line\n",
+			want:    "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseForegroundPackage(tc.dumpsys); got != tc.want {
+				t.Errorf("parseForegroundPackage = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseFocusedWindowPackage(t *testing.T) {
+	cases := []struct {
+		name    string
+		dumpsys string
+		want    string
+	}{
+		{
+			name:    "folio focused",
+			dumpsys: "  mCurrentFocus=Window{e00f63a u0 app.folio/app.folio.MainActivity}\n  mFocusedApp=ActivityRecord{c0 u0 app.folio/.MainActivity t202}",
+			want:    "app.folio",
+		},
+		{
+			name:    "settings focused",
+			dumpsys: "  mCurrentFocus=Window{709 u0 com.android.settings/com.android.settings.SubSettings}",
+			want:    "com.android.settings",
+		},
+		{
+			name:    "no focused window mid-launch",
+			dumpsys: "  mCurrentFocus=null\n  mFocusedApp=null",
+			want:    "",
+		},
+		{
+			name:    "no focus line",
+			dumpsys: "  some unrelated dumpsys window output\n",
+			want:    "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseFocusedWindowPackage(tc.dumpsys); got != tc.want {
+				t.Errorf("parseFocusedWindowPackage = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

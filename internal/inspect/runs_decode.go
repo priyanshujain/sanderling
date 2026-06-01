@@ -61,7 +61,7 @@ func decodeStepSummary(line []byte) (StepSummary, int, error) {
 		Index     int       `json:"step"`
 		Timestamp time.Time `json:"timestamp"`
 		Screen    string    `json:"screen,omitempty"`
-		Action    *struct {
+		NextAction *struct {
 			Kind           string `json:"kind"`
 			X              int    `json:"x,omitempty"`
 			Y              int    `json:"y,omitempty"`
@@ -73,7 +73,7 @@ func decodeStepSummary(line []byte) (StepSummary, int, error) {
 			Text           string `json:"text,omitempty"`
 			Selector       string `json:"selector,omitempty"`
 			DurationMillis int    `json:"duration_millis,omitempty"`
-		} `json:"action,omitempty"`
+		} `json:"next_action,omitempty"`
 		Exceptions []json.RawMessage `json:"exceptions,omitempty"`
 		Violations []string          `json:"violations,omitempty"`
 	}
@@ -87,29 +87,29 @@ func decodeStepSummary(line []byte) (StepSummary, int, error) {
 		HasViolations: len(partial.Violations) > 0,
 		HasExceptions: len(partial.Exceptions) > 0,
 	}
-	if partial.Action != nil {
-		summary.ActionKind = partial.Action.Kind
-		switch partial.Action.Kind {
-		case "Tap":
-			if partial.Action.Selector != "" {
-				summary.ActionLabel = partial.Action.Selector
-			} else if partial.Action.Text != "" {
-				summary.ActionLabel = partial.Action.Text
-			} else if partial.Action.X != 0 || partial.Action.Y != 0 {
-				summary.ActionLabel = fmt.Sprintf("(%d,%d)", partial.Action.X, partial.Action.Y)
+	if partial.NextAction != nil {
+		summary.ActionKind = partial.NextAction.Kind
+		switch partial.NextAction.Kind {
+		case "Tap", "DoubleTap":
+			if partial.NextAction.Selector != "" {
+				summary.ActionLabel = partial.NextAction.Selector
+			} else if partial.NextAction.Text != "" {
+				summary.ActionLabel = partial.NextAction.Text
+			} else if partial.NextAction.X != 0 || partial.NextAction.Y != 0 {
+				summary.ActionLabel = fmt.Sprintf("(%d,%d)", partial.NextAction.X, partial.NextAction.Y)
 			}
 		case "InputText":
-			summary.ActionLabel = fmt.Sprintf("%q", partial.Action.Text)
+			summary.ActionLabel = fmt.Sprintf("%q", partial.NextAction.Text)
 		case "Swipe":
 			summary.ActionLabel = swipeDirectionLabel(
-				partial.Action.FromX, partial.Action.FromY,
-				partial.Action.ToX, partial.Action.ToY,
+				partial.NextAction.FromX, partial.NextAction.FromY,
+				partial.NextAction.ToX, partial.NextAction.ToY,
 			)
 		case "PressKey":
-			summary.ActionLabel = partial.Action.Key
+			summary.ActionLabel = partial.NextAction.Key
 		case "Wait":
-			if partial.Action.DurationMillis > 0 {
-				summary.ActionLabel = fmt.Sprintf("%dms", partial.Action.DurationMillis)
+			if partial.NextAction.DurationMillis > 0 {
+				summary.ActionLabel = fmt.Sprintf("%dms", partial.NextAction.DurationMillis)
 			}
 		}
 	}

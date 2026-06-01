@@ -58,11 +58,18 @@ function installRuntime(initialState: State): RecordedRuntime {
     }),
     from: <T>(_items: readonly T[]): Sampler<T> => ({ generate: () => _items[0] as T }),
     tap: ({ on }) => ({ kind: "Tap", on }),
+    doubleTap: ({ on }) => ({ kind: "DoubleTap", on }),
+    longPress: ({ on }) => ({ kind: "LongPress", on }),
+    scroll: ({ direction, in: container }) => ({ kind: "Scroll", direction, in: container }),
     inputText: ({ into, text }) => ({ kind: "InputText", into, text }),
     swipe: (p) => ({ kind: "Swipe", from: p.from, to: p.to, durationMillis: p.durationMillis }),
     pressKey: ({ key }) => ({ kind: "PressKey", key }),
     wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
     taps: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    doubleTaps: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    longPresses: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    scrolls: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
+    typing: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     swipes: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     waitOnce: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
     pressKeys: { __sanderlingActionGenerator: true, generate: () => [] } as ActionGenerator,
@@ -107,4 +114,31 @@ test("defaults bundle exports formulas tagged as LTL properties", async () => {
   const defaults = await import("../src/defaults/properties.ts");
   assert.equal(defaults.noUncaughtExceptions.__sanderlingFormula, true);
   assert.equal(defaults.noLogcatErrors.__sanderlingFormula, true);
+});
+
+test("defaults bundle exports defaultActions as a valid ActionGenerator", async () => {
+  installRuntime(emptyState);
+  const defaults = await import("../src/defaults/actions.ts");
+  assert.equal(defaults.defaultActions.__sanderlingActionGenerator, true);
+  assert.equal(typeof defaults.defaultActions.generate, "function");
+});
+
+test("typing resolves as a valid ActionGenerator", async () => {
+  installRuntime(emptyState);
+  const { typing } = await import("../src/defaults/actions.ts");
+  assert.equal(typing.__sanderlingActionGenerator, true);
+});
+
+test("longPresses and scrolls resolve as valid ActionGenerators", async () => {
+  installRuntime(emptyState);
+  const { longPresses, scrolls } = await import("../src/defaults/actions.ts");
+  assert.equal(longPresses.__sanderlingActionGenerator, true);
+  assert.equal(scrolls.__sanderlingActionGenerator, true);
+});
+
+test("defaults barrel re-exports both properties and actions", async () => {
+  installRuntime(emptyState);
+  const barrel = await import("../src/defaults/index.ts");
+  assert.equal(barrel.defaultActions.__sanderlingActionGenerator, true);
+  assert.equal(barrel.noUncaughtExceptions.__sanderlingFormula, true);
 });

@@ -5,21 +5,20 @@ import {
   always,
   extract,
   from,
-  keyedBy,
   next,
-  now,
   weighted,
   whenRoute,
 } from "@sanderling/spec";
+import { defaultActions } from "@sanderling/spec/defaults";
+import {
+  computeHomeTotalBalance,
+  parseTypedAmount,
+  submitChangesBalanceByTypedAmount,
+} from "./predicates";
 
 interface Account {
   name: string;
   balance: number;
-}
-
-interface LedgerRow {
-  key: string;
-  signed: number;
 }
 
 // Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to integer cents.
@@ -31,8 +30,8 @@ function parseDollarCents(text: string | undefined): number {
 }
 
 // Route detection via testTag (resource-id on Android, accessibilityIdentifier on iOS)
-const loggedIn = extract(s => s.ax.find({ testTag: "LoginScreen" }) == null);
-const route = extract<string | null>(s => {
+const loggedIn = extract("loggedIn", s => s.ax.find({ testTag: "LoginScreen" }) == null);
+const route = extract<string | null>("route", s => {
   if (s.ax.find({ testTag: "LoginScreen" })) return "login";
   if (s.ax.find({ testTag: "AddAccountScreen" })) return "add-account";
   if (s.ax.find({ testTag: "AddTransactionScreen" })) return "add-transaction";
@@ -42,45 +41,47 @@ const route = extract<string | null>(s => {
 });
 
 // Account cards on Home: identity is the AccountName text; balance comes from AccountBalance.
-const accounts = extract<Account[]>(s =>
+const accounts = extract<Account[]>("accounts", s =>
   s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]).map(card => ({
     name: card.find({ testTag: "AccountName" })?.text ?? "",
     balance: parseDollarCents(card.find({ testTag: "AccountBalance" })?.text),
   })));
 
-// Ledger rows: identity composed from the row's stable testTag'd cells.
-const ledgerRows = extract<LedgerRow[]>(s =>
-  s.ax.findAll([{ testTag: "LedgerScreen" }, { testTag: "LedgerRow" }]).map(row => ({
-    key: keyedBy(row, ["TxnDate", "TxnNote", "TxnAmount"]),
-    signed: parseDollarCents(row.find({ testTag: "TxnAmount" })?.text),
-  })));
+// Total balance: sum of AccountCard balances visible on Home. The carrier
+// deliberately tracks only the Home multi-account total. Ledger's
+// LedgerBalance is a single-account number on a different scale and would
+// corrupt cross-screen comparisons if mixed in. Off-Home steps carry forward
+// the last-seen Home sum so `previous` and `current` stay on the same scale.
+let lastHomeTotal = 0;
+const totalBalance = extract("totalBalance", s => {
+  const cards = s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]);
+  const cardBalanceTexts = cards.map(c => c.find({ testTag: "AccountBalance" })?.text);
+  lastHomeTotal = computeHomeTotalBalance({ cardBalanceTexts, previousCarrier: lastHomeTotal });
+  return lastHomeTotal;
+});
 
-const ledgerBalance = extract(s =>
-  parseDollarCents(s.ax.find({ testTag: "LedgerBalance" })?.text));
+const lastAction = extract("lastAction", s => s.lastAction);
 
-const focusedFieldTag = extract(s => s.ax.find({ focused: true })?.id ?? null);
-
-const loginEmailField = extract(s =>
+const loginEmailField = extract("loginEmailField", s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginEmail" }]));
-const loginPasswordField = extract(s =>
+const loginPasswordField = extract("loginPasswordField", s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginPassword" }]));
-const loginSubmit = extract(s =>
+const loginSubmit = extract("loginSubmit", s =>
   s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginSubmit" }]));
-const addAccountButton = extract(s =>
+const addAccountButton = extract("addAccountButton", s =>
   s.ax.find([{ testTag: "HomeScreen" }, { testTag: "AddAccountButton" }]));
-const accountNameField = extract(s =>
+const accountNameField = extract("accountNameField", s =>
   s.ax.find([{ testTag: "AddAccountScreen" }, { testTag: "AccountNameField" }]));
-const addAccountSubmit = extract(s =>
+const addAccountSubmit = extract("addAccountSubmit", s =>
   s.ax.find([{ testTag: "AddAccountScreen" }, { testTag: "AddAccountSubmit" }]));
-const addTxnButton = extract(s =>
+const addTxnButton = extract("addTxnButton", s =>
   s.ax.find([{ testTag: "LedgerScreen" }, { testTag: "AddTransactionButton" }]));
-const txnAmountField = extract(s =>
+const txnAmountField = extract("txnAmountField", s =>
   s.ax.find([{ testTag: "AddTransactionScreen" }, { testTag: "TxnAmountField" }]));
-const txnSubmit = extract(s =>
+const txnSubmit = extract("txnSubmit", s =>
   s.ax.find([{ testTag: "AddTransactionScreen" }, { testTag: "TxnSubmit" }]));
-const accountCards = extract(s =>
+const accountCards = extract("accountCards", s =>
   s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]));
-const backButton = extract(s => s.ax.find({ testTag: "BackButton" }));
 
 // Property 1: every newly-appearing account starts with balance === 0.
 // Identity is by visible name. Guard against navigation transitions where
@@ -95,39 +96,39 @@ const newAccountBalanceIsZero = always(
   })
 );
 
-// Property 2: a newly-added ledger row changes the ledger balance by exactly its signed amount.
-const newTxnChangesBalance = always(
-  now(() => route.current === "ledger").implies(
-    next(() => {
-      const prev = ledgerRows.previous ?? [];
-      const curr = ledgerRows.current;
-      if (curr.length !== prev.length + 1) return true;
-      const prevKeys = new Set(prev.map(r => r.key));
-      const added = curr.find(r => !prevKeys.has(r.key));
-      if (!added) return true;
-      const delta = ledgerBalance.current - (ledgerBalance.previous ?? 0);
-      return delta === added.signed && delta !== 0;
-    })
-  )
+// Property 2: a tap on TxnSubmit must move the total balance by exactly the
+// typed amount. A double-submit lands two transactions, so the balance shifts
+// by twice the typed amount and the check fires. The route gate inside the
+// predicate skips off-Home landings where totalBalance.current is the carrier.
+const submitMovesBalanceByTypedAmount = always(
+  next(() =>
+    submitChangesBalanceByTypedAmount({
+      route: route.current,
+      lastAction: lastAction.current,
+      typedAmount: parseTypedAmount(txnAmountField.previous?.text),
+      prevTotalBalance: totalBalance.previous ?? 0,
+      currTotalBalance: totalBalance.current,
+    }),
+  ),
 );
 
 const DEMO_EMAIL = "demo@folio.app";
 const DEMO_PASSWORD = "ledger123";
 
-// Login: drive the form via focus state read from the native focused="true" attr.
+// Login: drive the form by reading what's currently in each field, not by
+// inferring intent from which one happens to be focused. A focus-driven
+// approach loops forever if we re-enter the login screen with the password
+// field already focused (e.g. after an exception bounces us back from
+// another screen): it would type the password then tap submit with an
+// empty email field, see no progress, and repeat indefinitely.
 const login = actions(() => {
   if (loggedIn.current) return [];
-  const focus = focusedFieldTag.current;
-  if (focus === "LoginPassword") {
-    const submit = loginSubmit.current;
-    return submit ? [Tap({ on: submit })] : [];
-  }
-  if (focus === "LoginEmail") {
-    const pwd = loginPasswordField.current;
-    return pwd ? [InputText({ into: pwd, text: DEMO_PASSWORD })] : [];
-  }
   const email = loginEmailField.current;
-  return email ? [InputText({ into: email, text: DEMO_EMAIL })] : [];
+  const pwd = loginPasswordField.current;
+  if (email && !email.text) return [InputText({ into: email, text: DEMO_EMAIL })];
+  if (pwd && !pwd.text) return [InputText({ into: pwd, text: DEMO_PASSWORD })];
+  const submit = loginSubmit.current;
+  return submit ? [Tap({ on: submit })] : [];
 });
 
 const accountNames = from(["Checking", "Savings", "Travel", "Emergency Fund", "Investments"]);
@@ -165,22 +166,20 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
   return opts;
 });
 
-const back = actions(() => {
-  const btn = backButton.current;
-  return btn ? [Tap({ on: btn })] : [];
-});
-
 export const properties = {
   newAccountBalanceIsZero,
-  newTxnChangesBalance,
+  submitMovesBalanceByTypedAmount,
 };
 
 export const setup = login;
 
+// Targeted depth (addAccount / addTxn) drives the deep flows; defaultActions
+// adds breadth so the fuzzer wanders the whole app and types edge-case values
+// into every field, stressing the balance invariants above.
 export const actionsRoot = weighted(
   [50, addAccount],
-  [40, addTxn],
-  [10, back],
+  [30, addTxn],
+  [20, defaultActions],
 );
 
 (globalThis as { actions?: unknown; properties?: unknown; setup?: unknown }).actions = actionsRoot;

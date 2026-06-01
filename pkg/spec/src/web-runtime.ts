@@ -20,6 +20,7 @@ interface Handle {
 interface ExtractorEntry {
   getter: (state: unknown) => unknown;
   handle: Handle;
+  name: string;
 }
 
 interface ActionGeneratorHandle {
@@ -290,9 +291,14 @@ function buildState(): unknown {
 }
 
 const runtime = {
-  extract<T>(getter: (state: unknown) => T): Handle {
+  extract<T>(getter: (state: unknown) => T, name?: string): Handle {
     const handle: Handle = { current: undefined, previous: undefined };
-    extractors.push({ getter: getter as (s: unknown) => unknown, handle });
+    const resolvedName = name && name.length > 0 ? name : `extractor_${extractors.length}`;
+    extractors.push({
+      getter: getter as (s: unknown) => unknown,
+      handle,
+      name: resolvedName,
+    });
     return handle;
   },
   always: noopFormula,
@@ -328,6 +334,17 @@ const runtime = {
   tap(p: { on: unknown }): unknown {
     return { kind: "Tap", on: p.on };
   },
+  doubleTap(p: { on: unknown }): unknown {
+    return { kind: "DoubleTap", on: p.on };
+  },
+  longPress(): unknown {
+    // Why: web has no long-press gesture for v1; the factory returns null so LongPress() calls no-op.
+    return null;
+  },
+  scroll(): unknown {
+    // Why: web has no native scroll gesture for v1; the factory returns null so Scroll() calls no-op.
+    return null;
+  },
   inputText(p: { into: unknown; text: string }): unknown {
     return { kind: "InputText", into: p.into, text: p.text };
   },
@@ -347,6 +364,10 @@ const runtime = {
     return { kind: "Wait", durationMillis: p.durationMillis };
   },
   taps: { __sanderlingActionGenerator: true, __sanderlingKind: "taps" } as ActionGeneratorHandle,
+  doubleTaps: { __sanderlingActionGenerator: true, __sanderlingKind: "doubleTaps" } as ActionGeneratorHandle,
+  longPresses: { __sanderlingActionGenerator: true, __sanderlingKind: "longPresses" } as ActionGeneratorHandle,
+  scrolls: { __sanderlingActionGenerator: true, __sanderlingKind: "scrolls" } as ActionGeneratorHandle,
+  typing: { __sanderlingActionGenerator: true, __sanderlingKind: "typing" } as ActionGeneratorHandle,
   swipes: { __sanderlingActionGenerator: true, __sanderlingKind: "swipes" } as ActionGeneratorHandle,
   waitOnce: { __sanderlingActionGenerator: true, __sanderlingKind: "waitOnce" } as ActionGeneratorHandle,
   pressKeys: { __sanderlingActionGenerator: true, __sanderlingKind: "pressKey" } as ActionGeneratorHandle,
@@ -440,9 +461,17 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
       return resolveGenerator(inner);
     }
     case "taps":
-      return randomTap();
+      return randomTap("Tap");
+    case "doubleTaps":
+      return randomTap("DoubleTap");
+    case "typing":
+      return randomInput();
     case "swipes":
       return randomSwipe();
+    case "longPresses":
+    case "scrolls":
+      // Why: web has no long-press or native scroll gesture for v1; both no-op.
+      return null;
     case "waitOnce":
       return { kind: "Wait", durationMillis: 500 };
     case "pressKey":
@@ -456,7 +485,7 @@ function resolveGenerator(handle: ActionGeneratorHandle): unknown {
 // doesn't re-walk the DOM and re-flush layout on every iteration.
 let randomTapCandidates: HTMLElement[] | null = null;
 
-function randomTap(): unknown {
+function randomTap(kind: "Tap" | "DoubleTap"): unknown {
   if (!randomTapCandidates) {
     randomTapCandidates = Array.from(
       document.querySelectorAll<HTMLElement>(
@@ -474,11 +503,64 @@ function randomTap(): unknown {
   if (!picked) return null;
   const rect = picked.getBoundingClientRect();
   return {
-    kind: "Tap",
+    kind,
     on: {
       x: Math.round(rect.left + rect.width / 2),
       y: Math.round(rect.top + rect.height / 2),
     },
+  };
+}
+
+// Per-tick cache mirroring randomTapCandidates, reset each NextAction tick.
+let randomInputCandidates: HTMLElement[] | null = null;
+
+const NON_TEXT_INPUT_TYPES = [
+  "button", "submit", "checkbox", "radio", "range", "color", "file", "image", "reset",
+];
+
+// Edge-case input pool mirroring the goja-side inputCorpus: empty, whitespace,
+// overflow length, unicode, numeric boundaries, and common injection payloads.
+const WEB_INPUT_CORPUS = [
+  "", "a", "a".repeat(4096), "🙂🔥💸", "  ", "\t\n", "-1",
+  "999999999999999999999", "0.0000001", "1e10", "'; DROP TABLE--",
+  "<script>alert(1)</script>", "../../etc/passwd", "%s%n", "NaN",
+];
+
+function isEditableElement(element: HTMLElement): boolean {
+  if (element.isContentEditable) return true;
+  const tag = element.tagName.toLowerCase();
+  if (tag === "textarea") return true;
+  if (tag === "input") {
+    const type = ((element as HTMLInputElement).type || "").toLowerCase();
+    return !NON_TEXT_INPUT_TYPES.includes(type);
+  }
+  return false;
+}
+
+function randomInput(): unknown {
+  if (!randomInputCandidates) {
+    randomInputCandidates = Array.from(
+      document.querySelectorAll<HTMLElement>("input, textarea, [contenteditable]"),
+    ).filter((element) => {
+      if (!isEditableElement(element)) return false;
+      if ((element as HTMLInputElement).disabled) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+  }
+  const candidates = randomInputCandidates;
+  if (candidates.length === 0) return null;
+  const picked = candidates[Math.floor(Math.random() * candidates.length)];
+  if (!picked) return null;
+  const rect = picked.getBoundingClientRect();
+  const text = WEB_INPUT_CORPUS[Math.floor(Math.random() * WEB_INPUT_CORPUS.length)];
+  return {
+    kind: "InputText",
+    into: {
+      x: Math.round(rect.left + rect.width / 2),
+      y: Math.round(rect.top + rect.height / 2),
+    },
+    text,
   };
 }
 
@@ -514,6 +596,14 @@ function serializeAction(action: unknown): unknown {
       }
       return { kind: "Tap", x: point.x, y: point.y };
     }
+    case "DoubleTap": {
+      const point = pointOf(obj.on);
+      if (!point) {
+        console.warn("[sanderling] DoubleTap target did not resolve to coordinates");
+        return null;
+      }
+      return { kind: "DoubleTap", x: point.x, y: point.y };
+    }
     case "InputText": {
       const point = pointOf(obj.into);
       if (!point) {
@@ -543,6 +633,10 @@ function serializeAction(action: unknown): unknown {
         duration_millis: obj.durationMillis ?? 250,
       };
     }
+    case "LongPress":
+    case "Scroll":
+      // Why: web has no long-press or native scroll gesture for v1; drop the action.
+      return null;
     case "PressKey":
       return { kind: "PressKey", key: obj.key };
     case "Wait":
@@ -569,6 +663,7 @@ defineLockedGlobal("__sanderlingNextAction__", function (): unknown {
   if (!actionsRoot) return null;
   // Reset per-tick caches so each invocation gets a fresh DOM scan.
   randomTapCandidates = null;
+  randomInputCandidates = null;
   // Match the goja runtime: retry up to 16 times when a weighted entry's
   // generator returns []. Otherwise on routes where most generators are
   // gated to other pages, ~80% of ticks would emit no action.

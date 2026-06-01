@@ -1,10 +1,14 @@
 package verifier
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/dop251/goja"
@@ -25,12 +29,17 @@ type Verifier struct {
 
 	evaluators map[string]*ltl.Evaluator
 
+	priorVerdicts map[string]ltl.Verdict
+	newlyViolated []string
+
 	lastTree       *hierarchy.Tree
 	lastAction     *Action
 	lastLogs       []LogEntry
 	lastExceptions []Exception
 	stepTime       time.Time
 	runStart       time.Time
+
+	appPackage string
 
 	rng *rand.Rand
 }
@@ -41,12 +50,21 @@ func WithRand(rng *rand.Rand) Option {
 	return func(v *Verifier) { v.rng = rng }
 }
 
+// WithAppPackage scopes random-action target selection to the app under test.
+// Nodes belonging to another package (the soft keyboard, system UI, permission
+// dialogs) are excluded so exploration never spends steps fuzzing the IME or
+// inserting keyboard glyphs into fields. Empty package keeps current behavior.
+func WithAppPackage(appPackage string) Option {
+	return func(v *Verifier) { v.appPackage = appPackage }
+}
+
 func New(options ...Option) (*Verifier, error) {
 	verifier := &Verifier{
-		runtime:    goja.New(),
-		properties: map[string]int{},
-		evaluators: map[string]*ltl.Evaluator{},
-		rng:        rand.New(rand.NewPCG(0, 0)),
+		runtime:       goja.New(),
+		properties:    map[string]int{},
+		evaluators:    map[string]*ltl.Evaluator{},
+		priorVerdicts: map[string]ltl.Verdict{},
+		rng:           rand.New(rand.NewPCG(0, 0)),
 	}
 	for _, option := range options {
 		option(verifier)
@@ -235,8 +253,53 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 			return fmt.Errorf("extractor %d: %w", index, err)
 		}
 		_ = extractor.handle.Set("current", newValue)
+		extractor.prev = extractor.curr
+		extractor.curr = encodeExtractorValue(newValue)
 	}
 	return nil
+}
+
+// encodeExtractorValue produces a stable JSON encoding of an extractor's
+// current value for diff comparison. goja values that don't survive Export
+// (e.g. wrapped host functions) yield nil; callers treat nil as "unknown" and
+// emit no diff entry.
+func encodeExtractorValue(value goja.Value) []byte {
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return []byte("null")
+	}
+	exported := value.Export()
+	body, err := json.Marshal(exported)
+	if err != nil {
+		return nil
+	}
+	return body
+}
+
+// ChangedExtractors returns the named extractors whose value changed between
+// the prior PushSnapshot and the current one. The map is keyed by extractor
+// name; unnamed extractors (extractor_N fallback) are included so the inspect
+// UI can still display them under a numeric label. The very first snapshot
+// emits every non-null extractor as a change (Prev=null, Curr=current) since
+// the runner can otherwise misread "no diff yet" as "nothing initialized".
+func (v *Verifier) ChangedExtractors() map[string]ExtractorChange {
+	changes := map[string]ExtractorChange{}
+	for _, extractor := range v.extractors {
+		if extractor.curr == nil {
+			continue
+		}
+		prev := extractor.prev
+		if prev == nil {
+			prev = []byte("null")
+		}
+		if bytes.Equal(prev, extractor.curr) {
+			continue
+		}
+		changes[extractor.name] = ExtractorChange{
+			Prev: append([]byte(nil), prev...),
+			Curr: append([]byte(nil), extractor.curr...),
+		}
+	}
+	return changes
 }
 
 // OverrideExtractorValues replaces each extractor's `current` slot with a
@@ -287,6 +350,9 @@ type SnapshotInput struct {
 // after the most recent PushSnapshot. The step time passed in PushSnapshot is
 // forwarded to each evaluator so deadline-bound operators see the snapshot's
 // wall clock rather than time.Now().
+//
+// As a side effect, the set of properties that newly transitioned to violated
+// on this call is recorded; see NewlyViolatedProperties.
 func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 	verdicts := map[string]ltl.Verdict{}
 	stepTime := v.stepTime
@@ -297,7 +363,36 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 		verdicts[name] = evaluator.ObserveAt(stepTime)
 	}
 	v.refreshPredicateErrors()
+
+	var onset []string
+	for name, verdict := range verdicts {
+		if verdict == ltl.VerdictViolated && v.priorVerdicts[name] != ltl.VerdictViolated {
+			onset = append(onset, name)
+		}
+	}
+	sort.Strings(onset)
+	v.newlyViolated = onset
+
+	next := make(map[string]ltl.Verdict, len(verdicts))
+	maps.Copy(next, verdicts)
+	v.priorVerdicts = next
+
 	return verdicts
+}
+
+// NewlyViolatedProperties returns the names of properties whose verdict
+// transitioned from non-Violated to Violated on the most recent
+// EvaluateProperties call, sorted lexicographically. Returns nil if no
+// transition occurred or EvaluateProperties has not been called.
+//
+// This is the onset set: each property name appears at most once across a
+// run's traces, at the step where the violation first fired. Subsequent
+// steps where the property remains violated (LTL `always` sticky semantics)
+// will not list it. Use this for trace emission and summary reporting so the
+// onset is the only step that surfaces the violation event; use
+// EvaluateProperties for residual / current-verdict needs.
+func (v *Verifier) NewlyViolatedProperties() []string {
+	return append([]string(nil), v.newlyViolated...)
 }
 
 // Residuals returns the residual formula for each registered property after
@@ -451,12 +546,20 @@ func (v *Verifier) resolveGenerator(generator goja.Value) (Action, error) {
 		return v.resolveGenerator(picked)
 	case internalKindBuiltinTaps:
 		return v.generateRandomTap()
+	case internalKindBuiltinDoubleTaps:
+		return v.generateRandomDoubleTap()
+	case internalKindBuiltinTyping:
+		return v.generateRandomInput()
 	case internalKindBuiltinSwipes:
 		return v.generateRandomSwipe()
 	case internalKindBuiltinWaitOnce:
 		return Action{Kind: ActionKindWait, DurationMillis: 500}, nil
 	case internalKindBuiltinPressKey:
 		return v.generateRandomPressKey()
+	case internalKindBuiltinLongPresses:
+		return v.generateRandomLongPress()
+	case internalKindBuiltinScrolls:
+		return v.generateRandomScroll()
 	default:
 		return Action{}, fmt.Errorf("unknown generator kind %q", kindValue.String())
 	}
@@ -465,12 +568,38 @@ func (v *Verifier) resolveGenerator(generator goja.Value) (Action, error) {
 // generateRandomTap picks a visible, tappable element from the last
 // hierarchy snapshot and returns a Tap action targeting its center.
 func (v *Verifier) generateRandomTap() (Action, error) {
+	return v.generateRandomTapKind(ActionKindTap)
+}
+
+// generateRandomDoubleTap is the DoubleTap counterpart of generateRandomTap.
+// Real user gestures include double-tap (image zoom, like-to-favorite,
+// play/pause); a fuzzer that never emits one cannot exercise either those
+// features or the sub-100ms race windows that single-step Tap cadence misses.
+func (v *Verifier) generateRandomDoubleTap() (Action, error) {
+	return v.generateRandomTapKind(ActionKindDoubleTap)
+}
+
+// inScope reports whether an element belongs to the app under test. Nodes from
+// another package (the soft keyboard, system UI, permission dialogs) are out of
+// scope. An unset app package or an element with no package falls through to in
+// scope, preserving behavior on platforms that omit the attribute (e.g. iOS).
+func (v *Verifier) inScope(element *hierarchy.Element) bool {
+	if v.appPackage == "" || element.Package == "" {
+		return true
+	}
+	return element.Package == v.appPackage
+}
+
+func (v *Verifier) generateRandomTapKind(kind ActionKind) (Action, error) {
 	if v.lastTree == nil {
 		return Action{}, ErrNoAction
 	}
 	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
 	for _, element := range v.lastTree.Elements {
 		if !element.Clickable || !element.Enabled {
+			continue
+		}
+		if !v.inScope(element) {
 			continue
 		}
 		if element.Bounds.Right-element.Bounds.Left <= 0 || element.Bounds.Bottom-element.Bounds.Top <= 0 {
@@ -483,7 +612,99 @@ func (v *Verifier) generateRandomTap() (Action, error) {
 	}
 	picked := candidates[v.rng.IntN(len(candidates))]
 	x, y := picked.Bounds.Center()
-	return Action{Kind: ActionKindTap, X: x, Y: y}, nil
+	return Action{Kind: kind, On: selectorForElement(v.lastTree, picked), X: x, Y: y}, nil
+}
+
+// selectorForElement builds a canonical "key:value" selector that resolves
+// back to the given element via hierarchy.Tree.Find. Prefers resource-id (the
+// testTag carrier on Android / accessibilityIdentifier on iOS), falling back
+// to text and content-description so action-gated properties can still tell
+// what was tapped even on legacy nodes without a testTag. Returns "" when no
+// candidate selector uniquely resolves to the picked element so the runner
+// keeps using the action's coordinates without re-routing to a sibling that
+// shares the same id/text.
+func selectorForElement(tree *hierarchy.Tree, element *hierarchy.Element) string {
+	if element == nil || tree == nil {
+		return ""
+	}
+	candidates := make([]string, 0, 4)
+	if element.ResourceID != "" {
+		candidates = append(candidates, "id:"+element.ResourceID)
+	}
+	// Some platforms surface the Compose testTag only in the attributes map
+	// (the sidecar doesn't always promote it to resource-id). Try the raw
+	// attribute keys before falling back to text-based selectors so an
+	// element with a unique testTag still gets identified.
+	for _, key := range []string{"testTag", "identifier", "accessibilityIdentifier"} {
+		if value := element.Attributes[key]; value != "" {
+			candidates = append(candidates, key+":"+value)
+		}
+	}
+	if element.Text != "" {
+		candidates = append(candidates, "text:"+element.Text)
+	}
+	if element.Description != "" {
+		candidates = append(candidates, "desc:"+element.Description)
+	}
+	for _, selector := range candidates {
+		resolved := tree.Find(selector)
+		if resolved == nil || resolved != element {
+			continue
+		}
+		return selector
+	}
+	return ""
+}
+
+// inputCorpus is the edge-case string pool the typing builtin draws from to
+// stress field parsing: empty, whitespace, overflow length, unicode, numeric
+// boundaries, and common injection payloads.
+var inputCorpus = []string{
+	"",
+	"a",
+	strings.Repeat("a", 4096),
+	"🙂🔥💸",
+	"  ",
+	"\t\n",
+	"-1",
+	"999999999999999999999",
+	"0.0000001",
+	"1e10",
+	"'; DROP TABLE--",
+	"<script>alert(1)</script>",
+	"../../etc/passwd",
+	"%s%n",
+	"NaN",
+}
+
+// generateRandomInput picks a visible, editable, enabled element from the last
+// hierarchy snapshot and types a random edge-case value into it. The runner
+// taps the target coordinates to focus before typing, so this works on both
+// native and web with no driver-side dispatch change.
+func (v *Verifier) generateRandomInput() (Action, error) {
+	if v.lastTree == nil {
+		return Action{}, ErrNoAction
+	}
+	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
+	for _, element := range v.lastTree.Elements {
+		if !element.Editable || !element.Enabled {
+			continue
+		}
+		if !v.inScope(element) {
+			continue
+		}
+		if element.Bounds.Right-element.Bounds.Left <= 0 || element.Bounds.Bottom-element.Bounds.Top <= 0 {
+			continue
+		}
+		candidates = append(candidates, element)
+	}
+	if len(candidates) == 0 {
+		return Action{}, ErrNoAction
+	}
+	picked := candidates[v.rng.IntN(len(candidates))]
+	x, y := picked.Bounds.Center()
+	value := inputCorpus[v.rng.IntN(len(inputCorpus))]
+	return Action{Kind: ActionKindInputText, X: x, Y: y, Text: value}, nil
 }
 
 // generateRandomSwipe emits a swipe over a random enabled element or the
@@ -493,7 +714,16 @@ func (v *Verifier) generateRandomSwipe() (Action, error) {
 	if v.lastTree == nil || len(v.lastTree.Elements) == 0 {
 		return Action{}, ErrNoAction
 	}
-	element := v.lastTree.Elements[v.rng.IntN(len(v.lastTree.Elements))]
+	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
+	for _, element := range v.lastTree.Elements {
+		if v.inScope(element) {
+			candidates = append(candidates, element)
+		}
+	}
+	if len(candidates) == 0 {
+		return Action{}, ErrNoAction
+	}
+	element := candidates[v.rng.IntN(len(candidates))]
 	cx, cy := element.Bounds.Center()
 	if cx <= 0 || cy <= 0 {
 		return Action{}, ErrNoAction
@@ -524,6 +754,73 @@ func (v *Verifier) generateRandomSwipe() (Action, error) {
 		ToX:            toX,
 		ToY:            toY,
 		DurationMillis: 250,
+	}, nil
+}
+
+// generateRandomLongPress mirrors generateRandomTap: it picks a visible,
+// clickable, enabled, in-scope element and targets its center. Real users
+// long-press (context menus, reorder handles, multi-select), so a fuzzer that
+// never emits one cannot reach those affordances.
+func (v *Verifier) generateRandomLongPress() (Action, error) {
+	return v.generateRandomTapKind(ActionKindLongPress)
+}
+
+// generateRandomScroll picks a scrollable, in-scope container and emits a swipe
+// across it in a random direction.
+func (v *Verifier) generateRandomScroll() (Action, error) {
+	if v.lastTree == nil {
+		return Action{}, ErrNoAction
+	}
+	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
+	for _, element := range v.lastTree.Elements {
+		if element.Attributes["scrollable"] != "true" {
+			continue
+		}
+		if !v.inScope(element) {
+			continue
+		}
+		if element.Bounds.Width() <= 0 || element.Bounds.Height() <= 0 {
+			continue
+		}
+		candidates = append(candidates, element)
+	}
+	if len(candidates) == 0 {
+		return Action{}, ErrNoAction
+	}
+	picked := candidates[v.rng.IntN(len(candidates))]
+	cx, cy := picked.Bounds.Center()
+	width := picked.Bounds.Width()
+	height := picked.Bounds.Height()
+	directions := []string{"up", "down", "left", "right"}
+	dir := directions[v.rng.IntN(len(directions))]
+	toX, toY := cx, cy
+	// Scroll direction names the content motion; the gesture swipes the
+	// opposite way. Revealing content below ("down") means dragging the
+	// finger up, so toY decreases, and likewise for the other directions.
+	switch dir {
+	case "down":
+		toY = cy - (4*height)/10
+	case "up":
+		toY = cy + (4*height)/10
+	case "left":
+		toX = cx + (4*width)/10
+	case "right":
+		toX = cx - (4*width)/10
+	}
+	if toX < 0 {
+		toX = 0
+	}
+	if toY < 0 {
+		toY = 0
+	}
+	return Action{
+		Kind:           ActionKindScroll,
+		Direction:      dir,
+		FromX:          cx,
+		FromY:          cy,
+		ToX:            toX,
+		ToY:            toY,
+		DurationMillis: 300,
 	}, nil
 }
 

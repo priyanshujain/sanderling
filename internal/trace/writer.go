@@ -13,16 +13,32 @@ import (
 )
 
 type Step struct {
-	Index         int                        `json:"step"`
-	Timestamp     time.Time                  `json:"timestamp"`
-	Screen        string                     `json:"screen,omitempty"`
-	Snapshots     map[string]json.RawMessage `json:"snapshots,omitempty"`
-	Action        *Action                    `json:"action,omitempty"`
-	Exceptions    []Exception                `json:"exceptions,omitempty"`
-	Violations    []string                   `json:"violations,omitempty"`
-	Hierarchy  *hierarchy.Tree            `json:"hierarchy,omitempty"`
-	Residuals  map[string]json.RawMessage `json:"residuals,omitempty"`
-	Metrics    *Metrics                   `json:"metrics,omitempty"`
+	Index             int                        `json:"step"`
+	Timestamp         time.Time                  `json:"timestamp"`
+	Screen            string                     `json:"screen,omitempty"`
+	Snapshots         map[string]json.RawMessage `json:"snapshots,omitempty"`
+	// NextAction is the action chosen for the next iteration based on observing this step.
+	NextAction        *Action                    `json:"next_action,omitempty"`
+	Exceptions        []Exception                `json:"exceptions,omitempty"`
+	Violations        []string                   `json:"violations,omitempty"`
+	Hierarchy         *hierarchy.Tree            `json:"hierarchy,omitempty"`
+	Residuals         map[string]json.RawMessage `json:"residuals,omitempty"`
+	Metrics           *Metrics                   `json:"metrics,omitempty"`
+	ExtractorChanges  map[string]ExtractorChange `json:"extractor_changes,omitempty"`
+	// Transitional marks a step whose hierarchy still showed a NavHost
+	// cross-fade (multiple route-level *Screen ids) after the runner's
+	// retry budget. The verifier is skipped for these steps so transient
+	// state does not poison the previous/current extractor advance.
+	Transitional bool `json:"transitional,omitempty"`
+}
+
+// ExtractorChange records the prev/curr JSON values of an extractor whose
+// observation differed between two consecutive steps. Surfaced under
+// violation rows in the inspect UI as a "what changed at this step"
+// breadcrumb.
+type ExtractorChange struct {
+	Prev json.RawMessage `json:"prev"`
+	Curr json.RawMessage `json:"curr"`
 }
 
 type Metrics struct {
@@ -123,13 +139,6 @@ func (w *Writer) WriteStep(step Step) error {
 
 func (w *Writer) WriteScreenshot(stepIndex int, png []byte) error {
 	return w.writePNG(fmt.Sprintf("step-%05d.png", stepIndex), png)
-}
-
-// WriteScreenshotAfter writes the post-action screenshot for a step.
-// Callers use this after applyAction + waitForIdle so the UI can show a
-// before/after pair.
-func (w *Writer) WriteScreenshotAfter(stepIndex int, png []byte) error {
-	return w.writePNG(fmt.Sprintf("step-%05d-after.png", stepIndex), png)
 }
 
 func (w *Writer) writePNG(name string, png []byte) error {

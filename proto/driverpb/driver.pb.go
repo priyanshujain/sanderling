@@ -361,6 +361,58 @@ func (x *HierarchyJSON) GetJson() string {
 	return ""
 }
 
+type SnapshotResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Hierarchy     *HierarchyJSON         `protobuf:"bytes,1,opt,name=hierarchy,proto3" json:"hierarchy,omitempty"`
+	Screenshot    *Image                 `protobuf:"bytes,2,opt,name=screenshot,proto3" json:"screenshot,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotResponse) Reset() {
+	*x = SnapshotResponse{}
+	mi := &file_driverpb_driver_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotResponse) ProtoMessage() {}
+
+func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_driverpb_driver_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotResponse.ProtoReflect.Descriptor instead.
+func (*SnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SnapshotResponse) GetHierarchy() *HierarchyJSON {
+	if x != nil {
+		return x.Hierarchy
+	}
+	return nil
+}
+
+func (x *SnapshotResponse) GetScreenshot() *Image {
+	if x != nil {
+		return x.Screenshot
+	}
+	return nil
+}
+
 type Duration struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Millis        int64                  `protobuf:"varint,1,opt,name=millis,proto3" json:"millis,omitempty"`
@@ -370,7 +422,7 @@ type Duration struct {
 
 func (x *Duration) Reset() {
 	*x = Duration{}
-	mi := &file_driverpb_driver_proto_msgTypes[7]
+	mi := &file_driverpb_driver_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -382,7 +434,7 @@ func (x *Duration) String() string {
 func (*Duration) ProtoMessage() {}
 
 func (x *Duration) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[7]
+	mi := &file_driverpb_driver_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -395,7 +447,7 @@ func (x *Duration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Duration.ProtoReflect.Descriptor instead.
 func (*Duration) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{7}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Duration) GetMillis() int64 {
@@ -416,7 +468,7 @@ type HealthStatus struct {
 
 func (x *HealthStatus) Reset() {
 	*x = HealthStatus{}
-	mi := &file_driverpb_driver_proto_msgTypes[8]
+	mi := &file_driverpb_driver_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -428,7 +480,7 @@ func (x *HealthStatus) String() string {
 func (*HealthStatus) ProtoMessage() {}
 
 func (x *HealthStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[8]
+	mi := &file_driverpb_driver_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -441,7 +493,7 @@ func (x *HealthStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthStatus.ProtoReflect.Descriptor instead.
 func (*HealthStatus) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{8}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *HealthStatus) GetReady() bool {
@@ -476,7 +528,7 @@ type SwipeRequest struct {
 
 func (x *SwipeRequest) Reset() {
 	*x = SwipeRequest{}
-	mi := &file_driverpb_driver_proto_msgTypes[9]
+	mi := &file_driverpb_driver_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -488,7 +540,7 @@ func (x *SwipeRequest) String() string {
 func (*SwipeRequest) ProtoMessage() {}
 
 func (x *SwipeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[9]
+	mi := &file_driverpb_driver_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -501,7 +553,7 @@ func (x *SwipeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SwipeRequest.ProtoReflect.Descriptor instead.
 func (*SwipeRequest) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{9}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SwipeRequest) GetFrom() *Point {
@@ -536,7 +588,7 @@ type PressKeyRequest struct {
 
 func (x *PressKeyRequest) Reset() {
 	*x = PressKeyRequest{}
-	mi := &file_driverpb_driver_proto_msgTypes[10]
+	mi := &file_driverpb_driver_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -548,7 +600,7 @@ func (x *PressKeyRequest) String() string {
 func (*PressKeyRequest) ProtoMessage() {}
 
 func (x *PressKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[10]
+	mi := &file_driverpb_driver_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -561,7 +613,7 @@ func (x *PressKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PressKeyRequest.ProtoReflect.Descriptor instead.
 func (*PressKeyRequest) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{10}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PressKeyRequest) GetKey() string {
@@ -584,7 +636,7 @@ type RecentLogsRequest struct {
 
 func (x *RecentLogsRequest) Reset() {
 	*x = RecentLogsRequest{}
-	mi := &file_driverpb_driver_proto_msgTypes[11]
+	mi := &file_driverpb_driver_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -596,7 +648,7 @@ func (x *RecentLogsRequest) String() string {
 func (*RecentLogsRequest) ProtoMessage() {}
 
 func (x *RecentLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[11]
+	mi := &file_driverpb_driver_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -609,7 +661,7 @@ func (x *RecentLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecentLogsRequest.ProtoReflect.Descriptor instead.
 func (*RecentLogsRequest) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{11}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *RecentLogsRequest) GetSinceUnixMillis() int64 {
@@ -635,7 +687,7 @@ type LogEntries struct {
 
 func (x *LogEntries) Reset() {
 	*x = LogEntries{}
-	mi := &file_driverpb_driver_proto_msgTypes[12]
+	mi := &file_driverpb_driver_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -647,7 +699,7 @@ func (x *LogEntries) String() string {
 func (*LogEntries) ProtoMessage() {}
 
 func (x *LogEntries) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[12]
+	mi := &file_driverpb_driver_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -660,7 +712,7 @@ func (x *LogEntries) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntries.ProtoReflect.Descriptor instead.
 func (*LogEntries) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{12}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LogEntries) GetEntries() []*LogEntry {
@@ -682,7 +734,7 @@ type LogEntry struct {
 
 func (x *LogEntry) Reset() {
 	*x = LogEntry{}
-	mi := &file_driverpb_driver_proto_msgTypes[13]
+	mi := &file_driverpb_driver_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -694,7 +746,7 @@ func (x *LogEntry) String() string {
 func (*LogEntry) ProtoMessage() {}
 
 func (x *LogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[13]
+	mi := &file_driverpb_driver_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -707,7 +759,7 @@ func (x *LogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
 func (*LogEntry) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{13}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *LogEntry) GetUnixMillis() int64 {
@@ -747,7 +799,7 @@ type MetricsRequest struct {
 
 func (x *MetricsRequest) Reset() {
 	*x = MetricsRequest{}
-	mi := &file_driverpb_driver_proto_msgTypes[14]
+	mi := &file_driverpb_driver_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -759,7 +811,7 @@ func (x *MetricsRequest) String() string {
 func (*MetricsRequest) ProtoMessage() {}
 
 func (x *MetricsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[14]
+	mi := &file_driverpb_driver_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -772,7 +824,7 @@ func (x *MetricsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsRequest.ProtoReflect.Descriptor instead.
 func (*MetricsRequest) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{14}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *MetricsRequest) GetBundleId() string {
@@ -793,7 +845,7 @@ type MetricsResponse struct {
 
 func (x *MetricsResponse) Reset() {
 	*x = MetricsResponse{}
-	mi := &file_driverpb_driver_proto_msgTypes[15]
+	mi := &file_driverpb_driver_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -805,7 +857,7 @@ func (x *MetricsResponse) String() string {
 func (*MetricsResponse) ProtoMessage() {}
 
 func (x *MetricsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_driverpb_driver_proto_msgTypes[15]
+	mi := &file_driverpb_driver_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -818,7 +870,7 @@ func (x *MetricsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsResponse.ProtoReflect.Descriptor instead.
 func (*MetricsResponse) Descriptor() ([]byte, []int) {
-	return file_driverpb_driver_proto_rawDescGZIP(), []int{15}
+	return file_driverpb_driver_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *MetricsResponse) GetCpuPercent() float64 {
@@ -868,7 +920,12 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"\x05width\x18\x02 \x01(\x05R\x05width\x12\x16\n" +
 	"\x06height\x18\x03 \x01(\x05R\x06height\"#\n" +
 	"\rHierarchyJSON\x12\x12\n" +
-	"\x04json\x18\x01 \x01(\tR\x04json\"\"\n" +
+	"\x04json\x18\x01 \x01(\tR\x04json\"\x92\x01\n" +
+	"\x10SnapshotResponse\x12A\n" +
+	"\thierarchy\x18\x01 \x01(\v2#.sanderling.driver.v1.HierarchyJSONR\thierarchy\x12;\n" +
+	"\n" +
+	"screenshot\x18\x02 \x01(\v2\x1b.sanderling.driver.v1.ImageR\n" +
+	"screenshot\"\"\n" +
 	"\bDuration\x12\x16\n" +
 	"\x06millis\x18\x01 \x01(\x03R\x06millis\"Z\n" +
 	"\fHealthStatus\x12\x14\n" +
@@ -900,7 +957,7 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"cpuPercent\x12\x1d\n" +
 	"\n" +
 	"heap_bytes\x18\x02 \x01(\x03R\theapBytes\x12,\n" +
-	"\x12total_memory_bytes\x18\x03 \x01(\x03R\x10totalMemoryBytes2\xe7\a\n" +
+	"\x12total_memory_bytes\x18\x03 \x01(\x03R\x10totalMemoryBytes2\xff\b\n" +
 	"\x06Driver\x12J\n" +
 	"\x06Launch\x12#.sanderling.driver.v1.LaunchRequest\x1a\x1b.sanderling.driver.v1.Empty\x12E\n" +
 	"\tTerminate\x12\x1b.sanderling.driver.v1.Empty\x1a\x1b.sanderling.driver.v1.Empty\x12?\n" +
@@ -908,10 +965,12 @@ const file_driverpb_driver_proto_rawDesc = "" +
 	"\vTapSelector\x12\x1e.sanderling.driver.v1.Selector\x1a\x1b.sanderling.driver.v1.Empty\x12D\n" +
 	"\tInputText\x12\x1a.sanderling.driver.v1.Text\x1a\x1b.sanderling.driver.v1.Empty\x12H\n" +
 	"\x05Swipe\x12\".sanderling.driver.v1.SwipeRequest\x1a\x1b.sanderling.driver.v1.Empty\x12N\n" +
-	"\bPressKey\x12%.sanderling.driver.v1.PressKeyRequest\x1a\x1b.sanderling.driver.v1.Empty\x12F\n" +
+	"\bPressKey\x12%.sanderling.driver.v1.PressKeyRequest\x1a\x1b.sanderling.driver.v1.Empty\x12E\n" +
+	"\tLongPress\x12\x1b.sanderling.driver.v1.Point\x1a\x1b.sanderling.driver.v1.Empty\x12F\n" +
 	"\n" +
 	"Screenshot\x12\x1b.sanderling.driver.v1.Empty\x1a\x1b.sanderling.driver.v1.Image\x12M\n" +
-	"\tHierarchy\x12\x1b.sanderling.driver.v1.Empty\x1a#.sanderling.driver.v1.HierarchyJSON\x12W\n" +
+	"\tHierarchy\x12\x1b.sanderling.driver.v1.Empty\x1a#.sanderling.driver.v1.HierarchyJSON\x12O\n" +
+	"\bSnapshot\x12\x1b.sanderling.driver.v1.Empty\x1a&.sanderling.driver.v1.SnapshotResponse\x12W\n" +
 	"\n" +
 	"RecentLogs\x12'.sanderling.driver.v1.RecentLogsRequest\x1a .sanderling.driver.v1.LogEntries\x12J\n" +
 	"\vWaitForIdle\x12\x1e.sanderling.driver.v1.Duration\x1a\x1b.sanderling.driver.v1.Empty\x12I\n" +
@@ -931,7 +990,7 @@ func file_driverpb_driver_proto_rawDescGZIP() []byte {
 	return file_driverpb_driver_proto_rawDescData
 }
 
-var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_driverpb_driver_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_driverpb_driver_proto_goTypes = []any{
 	(*Empty)(nil),             // 0: sanderling.driver.v1.Empty
 	(*LaunchRequest)(nil),     // 1: sanderling.driver.v1.LaunchRequest
@@ -940,53 +999,60 @@ var file_driverpb_driver_proto_goTypes = []any{
 	(*Selector)(nil),          // 4: sanderling.driver.v1.Selector
 	(*Image)(nil),             // 5: sanderling.driver.v1.Image
 	(*HierarchyJSON)(nil),     // 6: sanderling.driver.v1.HierarchyJSON
-	(*Duration)(nil),          // 7: sanderling.driver.v1.Duration
-	(*HealthStatus)(nil),      // 8: sanderling.driver.v1.HealthStatus
-	(*SwipeRequest)(nil),      // 9: sanderling.driver.v1.SwipeRequest
-	(*PressKeyRequest)(nil),   // 10: sanderling.driver.v1.PressKeyRequest
-	(*RecentLogsRequest)(nil), // 11: sanderling.driver.v1.RecentLogsRequest
-	(*LogEntries)(nil),        // 12: sanderling.driver.v1.LogEntries
-	(*LogEntry)(nil),          // 13: sanderling.driver.v1.LogEntry
-	(*MetricsRequest)(nil),    // 14: sanderling.driver.v1.MetricsRequest
-	(*MetricsResponse)(nil),   // 15: sanderling.driver.v1.MetricsResponse
-	nil,                       // 16: sanderling.driver.v1.LaunchRequest.EnvEntry
+	(*SnapshotResponse)(nil),  // 7: sanderling.driver.v1.SnapshotResponse
+	(*Duration)(nil),          // 8: sanderling.driver.v1.Duration
+	(*HealthStatus)(nil),      // 9: sanderling.driver.v1.HealthStatus
+	(*SwipeRequest)(nil),      // 10: sanderling.driver.v1.SwipeRequest
+	(*PressKeyRequest)(nil),   // 11: sanderling.driver.v1.PressKeyRequest
+	(*RecentLogsRequest)(nil), // 12: sanderling.driver.v1.RecentLogsRequest
+	(*LogEntries)(nil),        // 13: sanderling.driver.v1.LogEntries
+	(*LogEntry)(nil),          // 14: sanderling.driver.v1.LogEntry
+	(*MetricsRequest)(nil),    // 15: sanderling.driver.v1.MetricsRequest
+	(*MetricsResponse)(nil),   // 16: sanderling.driver.v1.MetricsResponse
+	nil,                       // 17: sanderling.driver.v1.LaunchRequest.EnvEntry
 }
 var file_driverpb_driver_proto_depIdxs = []int32{
-	16, // 0: sanderling.driver.v1.LaunchRequest.env:type_name -> sanderling.driver.v1.LaunchRequest.EnvEntry
-	2,  // 1: sanderling.driver.v1.SwipeRequest.from:type_name -> sanderling.driver.v1.Point
-	2,  // 2: sanderling.driver.v1.SwipeRequest.to:type_name -> sanderling.driver.v1.Point
-	13, // 3: sanderling.driver.v1.LogEntries.entries:type_name -> sanderling.driver.v1.LogEntry
-	1,  // 4: sanderling.driver.v1.Driver.Launch:input_type -> sanderling.driver.v1.LaunchRequest
-	0,  // 5: sanderling.driver.v1.Driver.Terminate:input_type -> sanderling.driver.v1.Empty
-	2,  // 6: sanderling.driver.v1.Driver.Tap:input_type -> sanderling.driver.v1.Point
-	4,  // 7: sanderling.driver.v1.Driver.TapSelector:input_type -> sanderling.driver.v1.Selector
-	3,  // 8: sanderling.driver.v1.Driver.InputText:input_type -> sanderling.driver.v1.Text
-	9,  // 9: sanderling.driver.v1.Driver.Swipe:input_type -> sanderling.driver.v1.SwipeRequest
-	10, // 10: sanderling.driver.v1.Driver.PressKey:input_type -> sanderling.driver.v1.PressKeyRequest
-	0,  // 11: sanderling.driver.v1.Driver.Screenshot:input_type -> sanderling.driver.v1.Empty
-	0,  // 12: sanderling.driver.v1.Driver.Hierarchy:input_type -> sanderling.driver.v1.Empty
-	11, // 13: sanderling.driver.v1.Driver.RecentLogs:input_type -> sanderling.driver.v1.RecentLogsRequest
-	7,  // 14: sanderling.driver.v1.Driver.WaitForIdle:input_type -> sanderling.driver.v1.Duration
-	0,  // 15: sanderling.driver.v1.Driver.Health:input_type -> sanderling.driver.v1.Empty
-	14, // 16: sanderling.driver.v1.Driver.Metrics:input_type -> sanderling.driver.v1.MetricsRequest
-	0,  // 17: sanderling.driver.v1.Driver.Launch:output_type -> sanderling.driver.v1.Empty
-	0,  // 18: sanderling.driver.v1.Driver.Terminate:output_type -> sanderling.driver.v1.Empty
-	0,  // 19: sanderling.driver.v1.Driver.Tap:output_type -> sanderling.driver.v1.Empty
-	0,  // 20: sanderling.driver.v1.Driver.TapSelector:output_type -> sanderling.driver.v1.Empty
-	0,  // 21: sanderling.driver.v1.Driver.InputText:output_type -> sanderling.driver.v1.Empty
-	0,  // 22: sanderling.driver.v1.Driver.Swipe:output_type -> sanderling.driver.v1.Empty
-	0,  // 23: sanderling.driver.v1.Driver.PressKey:output_type -> sanderling.driver.v1.Empty
-	5,  // 24: sanderling.driver.v1.Driver.Screenshot:output_type -> sanderling.driver.v1.Image
-	6,  // 25: sanderling.driver.v1.Driver.Hierarchy:output_type -> sanderling.driver.v1.HierarchyJSON
-	12, // 26: sanderling.driver.v1.Driver.RecentLogs:output_type -> sanderling.driver.v1.LogEntries
-	0,  // 27: sanderling.driver.v1.Driver.WaitForIdle:output_type -> sanderling.driver.v1.Empty
-	8,  // 28: sanderling.driver.v1.Driver.Health:output_type -> sanderling.driver.v1.HealthStatus
-	15, // 29: sanderling.driver.v1.Driver.Metrics:output_type -> sanderling.driver.v1.MetricsResponse
-	17, // [17:30] is the sub-list for method output_type
-	4,  // [4:17] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	17, // 0: sanderling.driver.v1.LaunchRequest.env:type_name -> sanderling.driver.v1.LaunchRequest.EnvEntry
+	6,  // 1: sanderling.driver.v1.SnapshotResponse.hierarchy:type_name -> sanderling.driver.v1.HierarchyJSON
+	5,  // 2: sanderling.driver.v1.SnapshotResponse.screenshot:type_name -> sanderling.driver.v1.Image
+	2,  // 3: sanderling.driver.v1.SwipeRequest.from:type_name -> sanderling.driver.v1.Point
+	2,  // 4: sanderling.driver.v1.SwipeRequest.to:type_name -> sanderling.driver.v1.Point
+	14, // 5: sanderling.driver.v1.LogEntries.entries:type_name -> sanderling.driver.v1.LogEntry
+	1,  // 6: sanderling.driver.v1.Driver.Launch:input_type -> sanderling.driver.v1.LaunchRequest
+	0,  // 7: sanderling.driver.v1.Driver.Terminate:input_type -> sanderling.driver.v1.Empty
+	2,  // 8: sanderling.driver.v1.Driver.Tap:input_type -> sanderling.driver.v1.Point
+	4,  // 9: sanderling.driver.v1.Driver.TapSelector:input_type -> sanderling.driver.v1.Selector
+	3,  // 10: sanderling.driver.v1.Driver.InputText:input_type -> sanderling.driver.v1.Text
+	10, // 11: sanderling.driver.v1.Driver.Swipe:input_type -> sanderling.driver.v1.SwipeRequest
+	11, // 12: sanderling.driver.v1.Driver.PressKey:input_type -> sanderling.driver.v1.PressKeyRequest
+	2,  // 13: sanderling.driver.v1.Driver.LongPress:input_type -> sanderling.driver.v1.Point
+	0,  // 14: sanderling.driver.v1.Driver.Screenshot:input_type -> sanderling.driver.v1.Empty
+	0,  // 15: sanderling.driver.v1.Driver.Hierarchy:input_type -> sanderling.driver.v1.Empty
+	0,  // 16: sanderling.driver.v1.Driver.Snapshot:input_type -> sanderling.driver.v1.Empty
+	12, // 17: sanderling.driver.v1.Driver.RecentLogs:input_type -> sanderling.driver.v1.RecentLogsRequest
+	8,  // 18: sanderling.driver.v1.Driver.WaitForIdle:input_type -> sanderling.driver.v1.Duration
+	0,  // 19: sanderling.driver.v1.Driver.Health:input_type -> sanderling.driver.v1.Empty
+	15, // 20: sanderling.driver.v1.Driver.Metrics:input_type -> sanderling.driver.v1.MetricsRequest
+	0,  // 21: sanderling.driver.v1.Driver.Launch:output_type -> sanderling.driver.v1.Empty
+	0,  // 22: sanderling.driver.v1.Driver.Terminate:output_type -> sanderling.driver.v1.Empty
+	0,  // 23: sanderling.driver.v1.Driver.Tap:output_type -> sanderling.driver.v1.Empty
+	0,  // 24: sanderling.driver.v1.Driver.TapSelector:output_type -> sanderling.driver.v1.Empty
+	0,  // 25: sanderling.driver.v1.Driver.InputText:output_type -> sanderling.driver.v1.Empty
+	0,  // 26: sanderling.driver.v1.Driver.Swipe:output_type -> sanderling.driver.v1.Empty
+	0,  // 27: sanderling.driver.v1.Driver.PressKey:output_type -> sanderling.driver.v1.Empty
+	0,  // 28: sanderling.driver.v1.Driver.LongPress:output_type -> sanderling.driver.v1.Empty
+	5,  // 29: sanderling.driver.v1.Driver.Screenshot:output_type -> sanderling.driver.v1.Image
+	6,  // 30: sanderling.driver.v1.Driver.Hierarchy:output_type -> sanderling.driver.v1.HierarchyJSON
+	7,  // 31: sanderling.driver.v1.Driver.Snapshot:output_type -> sanderling.driver.v1.SnapshotResponse
+	13, // 32: sanderling.driver.v1.Driver.RecentLogs:output_type -> sanderling.driver.v1.LogEntries
+	0,  // 33: sanderling.driver.v1.Driver.WaitForIdle:output_type -> sanderling.driver.v1.Empty
+	9,  // 34: sanderling.driver.v1.Driver.Health:output_type -> sanderling.driver.v1.HealthStatus
+	16, // 35: sanderling.driver.v1.Driver.Metrics:output_type -> sanderling.driver.v1.MetricsResponse
+	21, // [21:36] is the sub-list for method output_type
+	6,  // [6:21] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_driverpb_driver_proto_init() }
@@ -1000,7 +1066,7 @@ func file_driverpb_driver_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_driverpb_driver_proto_rawDesc), len(file_driverpb_driver_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   17,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

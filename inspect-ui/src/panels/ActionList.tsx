@@ -111,7 +111,7 @@ function renderTarget(target: string, isTag: boolean) {
 }
 
 function contentTextForStep(step: Step): string {
-  const action = step.action;
+  const action = step.next_action;
   if (!action) {
     return "";
   }
@@ -121,8 +121,26 @@ function contentTextForStep(step: Step): string {
   return "";
 }
 
+const MAX_INLINE_VALUE = 80;
+
+function formatExtractorValue(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return JSON.stringify(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function truncateForInline(text: string): string {
+  if (text.length <= MAX_INLINE_VALUE) return text;
+  return `${text.slice(0, MAX_INLINE_VALUE - 1)}...`;
+}
+
 function positionTextForStep(step: Step): string | null {
-  const action = step.action;
+  const action = step.next_action;
   if (!action) {
     return null;
   }
@@ -289,6 +307,56 @@ export default function ActionList({
                     {contentText ? contentText : `""`}
                   </span>
                 </div>
+                {step.has_violations && selectedStep?.extractor_changes
+                  ? (() => {
+                      const entries = Object.entries(selectedStep.extractor_changes);
+                      if (entries.length === 0) return null;
+                      entries.sort(([a], [b]) => a.localeCompare(b));
+                      return (
+                        <div className="action-list-extractor-changes">
+                          <div className="action-list-extractor-changes-heading">
+                            extractor changes
+                          </div>
+                          {entries.map(([name, change]) => {
+                            const prev = formatExtractorValue(change.prev);
+                            const curr = formatExtractorValue(change.curr);
+                            const inlineFits =
+                              prev.length + curr.length <= MAX_INLINE_VALUE * 2;
+                            if (inlineFits) {
+                              return (
+                                <div key={name} className="action-list-extractor-change-row">
+                                  <span className="action-list-extractor-change-name">
+                                    {name}
+                                  </span>
+                                  <span className="action-list-extractor-change-diff">
+                                    {truncateForInline(prev)} → {truncateForInline(curr)}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            return (
+                              <details
+                                key={name}
+                                className="action-list-extractor-change-row action-list-extractor-change-row-collapsed"
+                              >
+                                <summary>
+                                  <span className="action-list-extractor-change-name">
+                                    {name}
+                                  </span>
+                                  <span className="action-list-extractor-change-diff">
+                                    {truncateForInline(prev)} → {truncateForInline(curr)}
+                                  </span>
+                                </summary>
+                                <pre className="action-list-extractor-change-full">
+                                  {`prev: ${prev}\ncurr: ${curr}`}
+                                </pre>
+                              </details>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()
+                  : null}
               </div>
             ) : null}
           </li>

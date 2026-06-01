@@ -3,6 +3,7 @@ package verifier
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dop251/goja"
@@ -69,7 +70,7 @@ func accessibilityObject(runtime *goja.Runtime, tree *hierarchy.Tree) *goja.Obje
 		if node == nil {
 			return goja.Undefined()
 		}
-		return nodeObject(runtime, node, selectorStringFromJS(call.Argument(0)))
+		return nodeObject(runtime, node, selectorStringFromJS(runtime, call.Argument(0)))
 	}
 	findAll := func(call goja.FunctionCall) goja.Value {
 		if tree == nil {
@@ -78,7 +79,7 @@ func accessibilityObject(runtime *goja.Runtime, tree *hierarchy.Tree) *goja.Obje
 		nodes := findAllNodesFromJS(runtime, tree, call.Argument(0))
 		array := runtime.NewArray()
 		for i, n := range nodes {
-			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(call.Argument(0))))
+			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(runtime, call.Argument(0))))
 		}
 		return array
 	}
@@ -100,6 +101,7 @@ func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) go
 	_ = object.Set("checked", element.Checked)
 	_ = object.Set("focused", element.Focused)
 	_ = object.Set("selected", element.Selected)
+	_ = object.Set("editable", element.Editable)
 	_ = object.Set("x", centerX)
 	_ = object.Set("y", centerY)
 	_ = object.Set(tagSelector, selector)
@@ -120,14 +122,14 @@ func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) go
 		if childNode == nil {
 			return goja.Undefined()
 		}
-		return nodeObject(runtime, childNode, selectorStringFromJS(arg))
+		return nodeObject(runtime, childNode, selectorStringFromJS(runtime, arg))
 	}
 	childFindAll := func(call goja.FunctionCall) goja.Value {
 		arg := call.Argument(0)
 		childNodes := findAllNodesInSubtreeFromJS(runtime, node, arg)
 		array := runtime.NewArray()
 		for i, n := range childNodes {
-			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(arg)))
+			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(runtime, arg)))
 		}
 		return array
 	}
@@ -265,15 +267,62 @@ func selectorPathFromJS(runtime *goja.Runtime, arg goja.Value) ([]hierarchy.Sele
 
 // selectorStringFromJS returns a string representation of the selector argument
 // for tagging returned element objects (used by selectorOf to reconstruct the
-// selector when the element is passed back as an action target).
-func selectorStringFromJS(arg goja.Value) string {
-	if goja.IsUndefined(arg) || goja.IsNull(arg) {
+// selector when the element is passed back as an action target). Output
+// follows the canonical hierarchy selector grammar: "k:v" pairs space-joined
+// per object, chains joined by " > ".
+func selectorStringFromJS(runtime *goja.Runtime, arg goja.Value) string {
+	if arg == nil || goja.IsUndefined(arg) || goja.IsNull(arg) {
 		return ""
 	}
 	if s, ok := arg.Export().(string); ok {
 		return s
 	}
-	return arg.String()
+	exported := arg.Export()
+	if slice, ok := exported.([]any); ok {
+		object := arg.ToObject(runtime)
+		if object == nil {
+			return ""
+		}
+		parts := make([]string, 0, len(slice))
+		for index := range slice {
+			entry := object.Get(fmt.Sprintf("%d", index))
+			if entry == nil || goja.IsUndefined(entry) || goja.IsNull(entry) {
+				continue
+			}
+			segment := selectorObjectToString(runtime, entry)
+			if segment == "" {
+				continue
+			}
+			parts = append(parts, segment)
+		}
+		return strings.Join(parts, " > ")
+	}
+	return selectorObjectToString(runtime, arg)
+}
+
+// selectorObjectToString formats a single JS object as a space-joined sequence
+// of "k:v" pairs, mirroring the hierarchy package's predicate grammar.
+func selectorObjectToString(runtime *goja.Runtime, arg goja.Value) string {
+	if arg == nil || goja.IsUndefined(arg) || goja.IsNull(arg) {
+		return ""
+	}
+	object := arg.ToObject(runtime)
+	if object == nil {
+		return ""
+	}
+	keys := object.Keys()
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key == tagSelector {
+			continue
+		}
+		value := object.Get(key)
+		if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s:%s", key, value.String()))
+	}
+	return strings.Join(parts, " ")
 }
 
 func lastActionObject(runtime *goja.Runtime, action *Action) goja.Value {
@@ -301,6 +350,16 @@ func lastActionObject(runtime *goja.Runtime, action *Action) goja.Value {
 		if action.DurationMillis > 0 {
 			_ = object.Set("durationMillis", action.DurationMillis)
 		}
+	case ActionKindScroll:
+		_ = object.Set("direction", action.Direction)
+		from := runtime.NewObject()
+		_ = from.Set("x", action.FromX)
+		_ = from.Set("y", action.FromY)
+		to := runtime.NewObject()
+		_ = to.Set("x", action.ToX)
+		_ = to.Set("y", action.ToY)
+		_ = object.Set("from", from)
+		_ = object.Set("to", to)
 	case ActionKindPressKey:
 		_ = object.Set("key", action.Key)
 	case ActionKindWait:
@@ -371,6 +430,10 @@ func jsValueToAction(runtime *goja.Runtime, value goja.Value) (Action, error) {
 		on := object.Get("on")
 		x, y := coordinatesOf(runtime, on)
 		return Action{Kind: ActionKindTap, On: selectorOf(runtime, on), X: x, Y: y}, nil
+	case "DoubleTap":
+		on := object.Get("on")
+		x, y := coordinatesOf(runtime, on)
+		return Action{Kind: ActionKindDoubleTap, On: selectorOf(runtime, on), X: x, Y: y}, nil
 	case "InputText":
 		into := object.Get("into")
 		text := object.Get("text")
@@ -394,6 +457,20 @@ func jsValueToAction(runtime *goja.Runtime, value goja.Value) (Action, error) {
 			ToX:            toX,
 			ToY:            toY,
 			DurationMillis: intField(object, "durationMillis"),
+		}, nil
+	case "LongPress":
+		on := object.Get("on")
+		x, y := coordinatesOf(runtime, on)
+		return Action{Kind: ActionKindLongPress, On: selectorOf(runtime, on), X: x, Y: y}, nil
+	case "Scroll":
+		in := object.Get("in")
+		x, y := coordinatesOf(runtime, in)
+		return Action{
+			Kind:      ActionKindScroll,
+			Direction: stringOf(object.Get("direction")),
+			On:        selectorOf(runtime, in),
+			X:         x,
+			Y:         y,
 		}, nil
 	case "PressKey":
 		return Action{Kind: ActionKindPressKey, Key: stringOf(object.Get("key"))}, nil

@@ -5,10 +5,13 @@ type ActionKind string
 
 const (
 	ActionKindTap       ActionKind = "Tap"
+	ActionKindDoubleTap ActionKind = "DoubleTap"
 	ActionKindInputText ActionKind = "InputText"
 	ActionKindSwipe     ActionKind = "Swipe"
 	ActionKindPressKey  ActionKind = "PressKey"
 	ActionKindWait      ActionKind = "Wait"
+	ActionKindLongPress ActionKind = "LongPress"
+	ActionKindScroll    ActionKind = "Scroll"
 )
 
 // Action is a single UI interaction produced by the spec's action generator.
@@ -27,6 +30,9 @@ type Action struct {
 	DurationMillis int
 	// Key is the logical key name for ActionKindPressKey.
 	Key string
+	// Direction is the scroll direction for ActionKindScroll: one of "up",
+	// "down", "left", "right". Empty for every other kind.
+	Direction string
 }
 
 // LogEntry mirrors a logcat line captured between steps.
@@ -43,4 +49,12 @@ type Exception struct {
 	Message    string
 	StackTrace string
 	UnixMillis int64
+}
+
+// ExtractorChange records a single extractor's value transition across one
+// step. Used to surface "what changed at this step" breadcrumbs at violation
+// markers in the inspect UI.
+type ExtractorChange struct {
+	Prev []byte
+	Curr []byte
 }

@@ -1,6 +1,7 @@
 {
   "name": "folio",
   "private": true,
+  "type": "module",
   "description": "Minimal sanderling integration example.",
   "devDependencies": {
     "@sanderling/spec": "file:../../../pkg/spec"

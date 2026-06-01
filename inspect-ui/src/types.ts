@@ -115,15 +115,22 @@ export interface Metrics {
   total_memory_bytes?: number;
 }
 
+export interface ExtractorChange {
+  prev: unknown;
+  curr: unknown;
+}
+
 export interface Step {
   step: number;
   timestamp: string;
   screen?: string;
   snapshots?: Record<string, unknown>;
-  action?: Action;
+  // next_action is the action chosen for the next iteration based on observing this step.
+  next_action?: Action;
   exceptions?: Exception[];
   violations?: string[];
   hierarchy?: Hierarchy;
   residuals?: Record<string, ResidualNode>;
   metrics?: Metrics;
+  extractor_changes?: Record<string, ExtractorChange>;
 }

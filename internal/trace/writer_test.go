@@ -102,7 +102,7 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 	step := Step{
 		Index:     1,
 		Timestamp: time.Now().UTC(),
-		Action: &Action{
+		NextAction: &Action{
 			Kind:           "tap",
 			Selector:       "id:next",
 			ResolvedBounds: &BoundsRecord{X: 10, Y: 20, Width: 100, Height: 50},
@@ -120,14 +120,14 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("bad jsonl: %v\n%s", err, body)
 	}
-	if got.Action.Selector != "id:next" {
-		t.Errorf("selector = %q", got.Action.Selector)
+	if got.NextAction.Selector != "id:next" {
+		t.Errorf("selector = %q", got.NextAction.Selector)
 	}
-	if got.Action.ResolvedBounds == nil || got.Action.ResolvedBounds.Width != 100 {
-		t.Errorf("resolved_bounds round-trip wrong: %+v", got.Action.ResolvedBounds)
+	if got.NextAction.ResolvedBounds == nil || got.NextAction.ResolvedBounds.Width != 100 {
+		t.Errorf("resolved_bounds round-trip wrong: %+v", got.NextAction.ResolvedBounds)
 	}
-	if got.Action.TapPoint == nil || got.Action.TapPoint.X != 60 {
-		t.Errorf("tap_point round-trip wrong: %+v", got.Action.TapPoint)
+	if got.NextAction.TapPoint == nil || got.NextAction.TapPoint.X != 60 {
+		t.Errorf("tap_point round-trip wrong: %+v", got.NextAction.TapPoint)
 	}
 	if string(got.Residuals["prop1"]) != `{"op":"true"}` {
 		t.Errorf("residuals round-trip wrong: %s", got.Residuals["prop1"])
@@ -162,7 +162,7 @@ func TestWriteStep_AppendsOneJsonLine(t *testing.T) {
 		Snapshots: map[string]json.RawMessage{
 			"ledger.balance": json.RawMessage(`1500`),
 		},
-		Action:     &Action{Kind: "tap", X: 100, Y: 200},
+		NextAction: &Action{Kind: "tap", X: 100, Y: 200},
 		Violations: []string{"ledgerBalanceMatchesTxns"},
 	}
 	if err := writer.WriteStep(step); err != nil {
@@ -177,7 +177,7 @@ func TestWriteStep_AppendsOneJsonLine(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &got); err != nil {
 		t.Fatalf("invalid JSONL line: %v\n%s", err, lines[0])
 	}
-	if got.Index != 1 || got.Screen != "customer_ledger" || got.Action.X != 100 || got.Violations[0] != "ledgerBalanceMatchesTxns" {
+	if got.Index != 1 || got.Screen != "customer_ledger" || got.NextAction.X != 100 || got.Violations[0] != "ledgerBalanceMatchesTxns" {
 		t.Errorf("step round-trip wrong: %+v", got)
 	}
 }

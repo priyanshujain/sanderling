@@ -19,9 +19,15 @@ type DeviceDriver interface {
 	InputText(ctx context.Context, text string) error
 	Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error
 	PressKey(ctx context.Context, key string) error
+	LongPress(ctx context.Context, x, y int) error
 
 	Hierarchy(ctx context.Context) (string, error)
 	Screenshot(ctx context.Context) (Image, error)
+	// Snapshot returns the hierarchy and screenshot captured back-to-back
+	// under a backend-side mutex, so the pair describes the same on-device
+	// frame. Prefer this over calling Hierarchy and Screenshot separately:
+	// independent reads can land on different frames during transitions.
+	Snapshot(ctx context.Context) (string, Image, error)
 	// RecentLogs returns log entries at or after `since`, filtered to
 	// `minLevel` or above. An empty minLevel defaults to "E".
 	RecentLogs(ctx context.Context, since time.Time, minLevel string) ([]LogEntry, error)
@@ -33,6 +39,30 @@ type DeviceDriver interface {
 	// 100). HeapBytes is resident set size; TotalMemoryBytes includes
 	// native allocations.
 	Metrics(ctx context.Context, bundleID string) (Metrics, error)
+}
+
+// ForegroundChecker is the optional capability for reporting which app is
+// currently in the foreground. The runner uses it to keep exploration scoped
+// to the app under test: when an action backs out of (or otherwise leaves) the
+// app, the runner relaunches it before acting again. Drivers that cannot
+// determine the foreground app simply do not implement this interface.
+type ForegroundChecker interface {
+	// ForegroundApp returns the bundle id / package of the app currently in
+	// the foreground. An empty string means "unknown" and the runner skips
+	// enforcement for that step rather than relaunching blindly.
+	ForegroundApp(ctx context.Context) (string, error)
+}
+
+// FocusedWindowChecker is the optional capability for reporting which app owns
+// the focused (on-screen) window. The startup gate prefers it over
+// ForegroundChecker: the resumed-activity signal flips to a freshly launched
+// app before its first frame draws, so observing on it alone can capture the
+// previous app's screen. The focused window only names the app once its window
+// is actually up.
+type FocusedWindowChecker interface {
+	// FocusedWindowApp returns the package owning the focused window, or ""
+	// when no window is focused yet (e.g. mid-launch transition).
+	FocusedWindowApp(ctx context.Context) (string, error)
 }
 
 type LogEntry struct {

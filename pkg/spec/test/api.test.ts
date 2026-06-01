@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  DoubleTap,
   InputText,
   PressKey,
   Swipe,
@@ -37,6 +38,7 @@ import type {
 
 interface RecordedRuntime extends SanderlingRuntime {
   extracts: Array<(state: State) => unknown>;
+  extractNames: Array<string | undefined>;
   alwaysArgs: Array<(() => boolean) | Formula>;
   nowPredicates: Array<() => boolean>;
   nextPredicates: Array<() => boolean>;
@@ -91,6 +93,7 @@ function makeChainableEventually(record: RecordedRuntime): EventuallyFormula {
 function installFakeRuntime(): RecordedRuntime {
   const calls = {
     extracts: [] as Array<(state: State) => unknown>,
+    extractNames: [] as Array<string | undefined>,
     alwaysArgs: [] as Array<(() => boolean) | Formula>,
     nowPredicates: [] as Array<() => boolean>,
     nextPredicates: [] as Array<() => boolean>,
@@ -105,8 +108,9 @@ function installFakeRuntime(): RecordedRuntime {
     fromCalls: [] as unknown[][],
   };
   const runtime = {
-    extract: <T>(getter: (state: State) => T): Extracted<T> => {
+    extract: <T>(getter: (state: State) => T, name?: string): Extracted<T> => {
       calls.extracts.push(getter as (state: State) => unknown);
+      calls.extractNames.push(name);
       return { current: undefined as unknown as T, previous: undefined };
     },
     always: (predicateOrFormula: (() => boolean) | Formula): Formula => {
@@ -138,6 +142,9 @@ function installFakeRuntime(): RecordedRuntime {
       return { generate: () => items[0] as T };
     },
     tap: ({ on }) => ({ kind: "Tap", on }),
+    doubleTap: ({ on }) => ({ kind: "DoubleTap", on }),
+    longPress: ({ on }) => ({ kind: "LongPress", on }),
+    scroll: ({ direction, in: container }) => ({ kind: "Scroll", direction, in: container }),
     inputText: ({ into, text }) => ({ kind: "InputText", into, text }),
     swipe: ({ from: fromPoint, to, durationMillis }) => ({
       kind: "Swipe",
@@ -148,6 +155,10 @@ function installFakeRuntime(): RecordedRuntime {
     pressKey: ({ key }) => ({ kind: "PressKey", key }),
     wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
     taps: { __sanderlingActionGenerator: true, generate: () => [] },
+    doubleTaps: { __sanderlingActionGenerator: true, generate: () => [] },
+    longPresses: { __sanderlingActionGenerator: true, generate: () => [] },
+    scrolls: { __sanderlingActionGenerator: true, generate: () => [] },
+    typing: { __sanderlingActionGenerator: true, generate: () => [] },
     swipes: { __sanderlingActionGenerator: true, generate: () => [] },
     waitOnce: { __sanderlingActionGenerator: true, generate: () => [] },
     pressKeys: { __sanderlingActionGenerator: true, generate: () => [] },
@@ -163,6 +174,24 @@ test("extract forwards the getter to the runtime", () => {
   extract<unknown>(getter);
   assert.equal(runtime.extracts.length, 1);
   assert.equal(runtime.extracts[0], getter);
+  assert.equal(runtime.extractNames[0], undefined);
+});
+
+test("extract accepts an explicit name", () => {
+  const runtime = installFakeRuntime();
+  const getter = (state: State) => state.snapshots["balance"];
+  extract<unknown>("ledgerBalance", getter);
+  assert.equal(runtime.extracts.length, 1);
+  assert.equal(runtime.extracts[0], getter);
+  assert.equal(runtime.extractNames[0], "ledgerBalance");
+});
+
+test("extract throws when given a name with no getter", () => {
+  installFakeRuntime();
+  assert.throws(
+    () => (extract as unknown as (n: string) => unknown)("orphan"),
+    /getter is required/,
+  );
 });
 
 test("always wraps a predicate into a formula via the runtime", () => {
@@ -215,6 +244,12 @@ test("Tap returns a TapAction with the supplied selector", () => {
   installFakeRuntime();
   const action = Tap({ on: "id:login_continue" });
   assert.deepEqual(action, { kind: "Tap", on: "id:login_continue" });
+});
+
+test("DoubleTap returns a DoubleTapAction with the supplied selector", () => {
+  installFakeRuntime();
+  const action = DoubleTap({ on: "id:save" });
+  assert.deepEqual(action, { kind: "DoubleTap", on: "id:save" });
 });
 
 test("Tap accepts an AccessibilityElement", () => {

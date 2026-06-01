@@ -66,6 +66,7 @@ type Element struct {
 	Checked    bool              `json:"checked,omitempty"`
 	Focused    bool              `json:"focused,omitempty"`
 	Selected   bool              `json:"selected,omitempty"`
+	Editable   bool              `json:"editable,omitempty"`
 	Bounds     Bounds            `json:"bounds"`
 	Attributes map[string]string `json:"attrs,omitempty"`
 }
@@ -91,6 +92,7 @@ type treeNodeJSON struct {
 	Focused    *bool             `json:"focused"`
 	Checked    *bool             `json:"checked"`
 	Selected   *bool             `json:"selected"`
+	Editable   *bool             `json:"editable"`
 }
 
 // Selector describes a multi-attribute AND match.
@@ -204,6 +206,18 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	}
 	element.Class = attrs["class"]
 	element.Package = attrs["package"]
+	if element.Package == "" {
+		// Android omits an explicit package attribute, but native views carry
+		// it as the resource-id prefix (`com.android.systemui:id/...`). Compose
+		// testTags are colon-less and leave the package empty, which keeps them
+		// in scope. This lets target selection tell the app apart from the soft
+		// keyboard and system UI.
+		if resourceID := attrs["resource-id"]; resourceID != "" {
+			if colon := strings.IndexByte(resourceID, ':'); colon > 0 {
+				element.Package = resourceID[:colon]
+			}
+		}
+	}
 	element.Screen = attrs["sanderling-screen"]
 
 	if node.Clickable != nil {
@@ -220,6 +234,11 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	}
 	if node.Selected != nil {
 		element.Selected = *node.Selected
+	}
+	if node.Editable != nil {
+		element.Editable = *node.Editable
+	} else {
+		element.Editable = strings.Contains(element.Class, "EditText") || attrs["hintText"] != ""
 	}
 
 	if b, ok := attrs["bounds"]; ok && b != "" {
@@ -246,6 +265,7 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	if node.Selected != nil {
 		element.Attributes["selected"] = strconv.FormatBool(*node.Selected)
 	}
+	element.Attributes["editable"] = strconv.FormatBool(element.Editable)
 
 	return element
 }

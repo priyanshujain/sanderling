@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
 
@@ -115,6 +116,117 @@ func TestEvaluateProperties_HoldsThenViolates(t *testing.T) {
 		if got := verdicts["balanceNonNegative"]; got != testCase.want {
 			t.Errorf("step %d (balance=%d): got %v, want %v", index, testCase.balance, got, testCase.want)
 		}
+	}
+}
+
+func TestNewlyViolatedProperties_OnsetOnly(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, helloSpec)
+
+	// Balance trajectory: holds, holds, violates, stays violated, stays violated.
+	// Onset must appear only on step 3 even though the residual stays false
+	// through steps 4 and 5 (LTL `always` sticky semantics).
+	balances := []int{1500, 1500, -1, 500, 500}
+	for index, balance := range balances {
+		raw, _ := json.Marshal(balance)
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": raw}}); err != nil {
+			t.Fatal(err)
+		}
+		_ = verifier.EvaluateProperties()
+		got := verifier.NewlyViolatedProperties()
+		step := index + 1
+		if step == 3 {
+			want := []string{"balanceNonNegative"}
+			if !slices.Equal(got, want) {
+				t.Errorf("step %d (onset): got %v, want %v", step, got, want)
+			}
+		} else if len(got) != 0 {
+			t.Errorf("step %d: expected empty onset set, got %v", step, got)
+		}
+	}
+}
+
+func TestNewlyViolatedProperties_FirstStepViolation(t *testing.T) {
+	const spec = `
+globalThis.properties = {
+  alwaysFalse: __sanderling__.always(() => false),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	for step := 1; step <= 3; step++ {
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}}); err != nil {
+			t.Fatal(err)
+		}
+		_ = verifier.EvaluateProperties()
+		got := verifier.NewlyViolatedProperties()
+		if step == 1 {
+			want := []string{"alwaysFalse"}
+			if !slices.Equal(got, want) {
+				t.Errorf("step 1 (onset): got %v, want %v", got, want)
+			}
+		} else if len(got) != 0 {
+			t.Errorf("step %d: expected empty onset set after first-step violation, got %v", step, got)
+		}
+	}
+}
+
+func TestNewlyViolatedProperties_MultipleProperties(t *testing.T) {
+	const spec = `
+const a = __sanderling__.extract(state => state.snapshots["a"] ?? 0);
+const b = __sanderling__.extract(state => state.snapshots["b"] ?? 0);
+globalThis.properties = {
+  propA: __sanderling__.always(() => a.current >= 0),
+  propB: __sanderling__.always(() => b.current >= 0),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	// propA violates at step 2, propB violates at step 4. Each must surface
+	// only on its own onset step.
+	aValues := []int{1, -1, -1, -1}
+	bValues := []int{1, 1, 1, -1}
+	expectOnset := map[int][]string{
+		2: {"propA"},
+		4: {"propB"},
+	}
+	for index := range aValues {
+		aRaw, _ := json.Marshal(aValues[index])
+		bRaw, _ := json.Marshal(bValues[index])
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"a": aRaw, "b": bRaw}}); err != nil {
+			t.Fatal(err)
+		}
+		_ = verifier.EvaluateProperties()
+		got := verifier.NewlyViolatedProperties()
+		step := index + 1
+		want := expectOnset[step]
+		if !slices.Equal(got, want) {
+			t.Errorf("step %d: got %v, want %v", step, got, want)
+		}
+	}
+}
+
+func TestNewlyViolatedProperties_DeterministicOrder(t *testing.T) {
+	const spec = `
+globalThis.properties = {
+  zebra:  __sanderling__.always(() => false),
+  apple:  __sanderling__.always(() => false),
+  mango:  __sanderling__.always(() => false),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = verifier.EvaluateProperties()
+	got := verifier.NewlyViolatedProperties()
+	want := []string{"apple", "mango", "zebra"}
+	if !slices.Equal(got, want) {
+		t.Errorf("onset order: got %v, want %v (sorted lexicographically)", got, want)
 	}
 }
 
@@ -281,6 +393,75 @@ func TestNextAction_NoSetupRegistered(t *testing.T) {
 	}
 }
 
+// TestDoubleTapsBuiltin_TargetsClickable verifies the doubleTaps builtin emits
+// a DoubleTap action targeting a clickable, enabled element's center.
+func TestDoubleTapsBuiltin_TargetsClickable(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"testTag": "SubmitButton", "bounds": "[0,40,100,80]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `globalThis.actions = __sanderling__.doubleTaps;`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.Kind != ActionKindDoubleTap {
+		t.Fatalf("kind = %v, want DoubleTap", action.Kind)
+	}
+	if action.X != 50 || action.Y != 60 {
+		t.Errorf("coords = (%d,%d), want (50,60) at SubmitButton center", action.X, action.Y)
+	}
+	// Action-gated properties read lastAction.on to tell which target the
+	// chooser hit. An empty On reduces those properties to vacuously-true and
+	// they never fire on the real tap event.
+	if action.On == "" {
+		t.Fatal("On must be populated so action-gated properties can identify the target")
+	}
+	if !strings.Contains(action.On, "SubmitButton") {
+		t.Errorf("On = %q, want a selector containing SubmitButton", action.On)
+	}
+	resolved := tree.Find(action.On)
+	if resolved == nil {
+		t.Fatalf("On = %q does not resolve in the same tree", action.On)
+	}
+	rx, ry := resolved.Bounds.Center()
+	if rx != action.X || ry != action.Y {
+		t.Errorf("On %q resolves to (%d,%d), want the picked element's center (%d,%d)",
+			action.On, rx, ry, action.X, action.Y)
+	}
+}
+
+func TestDoubleTap_RoundTrip(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.actions = __sanderling__.actions(() => [
+			__sanderling__.doubleTap({ on: "id:save" }),
+		]);
+	`)
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.Kind != ActionKindDoubleTap {
+		t.Errorf("kind: got %v, want DoubleTap", action.Kind)
+	}
+	if action.On != "id:save" {
+		t.Errorf("selector: got %q, want id:save", action.On)
+	}
+}
+
 func TestInputText_RoundTrip(t *testing.T) {
 	verifier := newVerifier(t)
 	mustLoad(t, verifier, `
@@ -299,6 +480,65 @@ func TestInputText_RoundTrip(t *testing.T) {
 	}
 	if action.On != "id:phone" || action.Text != "+919876543210" {
 		t.Errorf("payload wrong: %+v", action)
+	}
+}
+
+// TestTypingBuiltin_TargetsEditableField verifies the typing generator emits an
+// InputText action aimed at an editable, enabled element's center and fills it
+// with a corpus value, ignoring clickable-but-not-editable elements.
+func TestTypingBuiltin_TargetsEditableField(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"testTag": "EmailField", "bounds": "[0,0,100,40]"}, "editable": true, "enabled": true, "children": []},
+	    {"attributes": {"testTag": "SubmitButton", "bounds": "[0,40,100,80]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `globalThis.actions = __sanderling__.typing;`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.Kind != ActionKindInputText {
+		t.Fatalf("kind = %v, want InputText", action.Kind)
+	}
+	if action.X != 50 || action.Y != 20 {
+		t.Errorf("coords = (%d,%d), want (50,20) at EmailField center", action.X, action.Y)
+	}
+	if !slices.Contains(inputCorpus, action.Text) {
+		t.Errorf("text %q not drawn from inputCorpus", action.Text)
+	}
+}
+
+// TestTypingBuiltin_NoEditableYieldsErrNoAction verifies the typing generator
+// declines (ErrNoAction) when no editable element is present, so a weighted
+// layer falls through to another generator.
+func TestTypingBuiltin_NoEditableYieldsErrNoAction(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"testTag": "SubmitButton", "bounds": "[0,0,100,40]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `globalThis.actions = __sanderling__.typing;`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifier.NextAction(); !errors.Is(err, ErrNoAction) {
+		t.Fatalf("err = %v, want ErrNoAction", err)
 	}
 }
 
@@ -608,6 +848,150 @@ globalThis.properties = {
 
 globalThis.actions = __sanderling__.actions(() => []);
 `
+
+// TestSelectorStringFromJS_CanonicalGrammar guarantees the selector tag stamped
+// on returned AX nodes round-trips back to a parseable selector string when the
+// node is later used as an action target. Without this, an action emitted from
+// `tap({ on: state.ax.find({ testTag: "LoginEmail" }) })` ends up with
+// `action.selector = "[object Object]"` in the trace.
+func TestSelectorStringFromJS_CanonicalGrammar(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"testTag": "LoginScreen", "bounds": "[0,0,100,40]"},
+	     "children": [
+	       {"attributes": {"testTag": "LoginEmail", "bounds": "[0,0,100,20]"}, "editable": true, "enabled": true, "children": []}
+	     ]}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.objectSelector = __sanderling__.extract(state =>
+			state.ax.find({ testTag: "LoginScreen" })
+		);
+		globalThis.chainSelector = __sanderling__.extract(state =>
+			state.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginEmail" }])
+		);
+		globalThis.stringSelector = __sanderling__.extract(state =>
+			state.ax.find("testTag:LoginScreen")
+		);
+	`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+
+	read := func(name string) string {
+		handle := verifier.runtime.GlobalObject().Get(name).ToObject(verifier.runtime)
+		current := handle.Get("current")
+		if goja.IsUndefined(current) || goja.IsNull(current) {
+			return ""
+		}
+		object := current.ToObject(verifier.runtime)
+		return object.Get(tagSelector).String()
+	}
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"objectSelector", "testTag:LoginScreen"},
+		{"chainSelector", "testTag:LoginScreen > testTag:LoginEmail"},
+		{"stringSelector", "testTag:LoginScreen"},
+	}
+	for _, testCase := range cases {
+		got := read(testCase.name)
+		if got != testCase.want {
+			t.Errorf("%s: got %q, want %q", testCase.name, got, testCase.want)
+		}
+		if strings.Contains(got, "[object") {
+			t.Errorf("%s: selector contains garbage %q", testCase.name, got)
+		}
+	}
+}
+
+// TestChangedExtractors_DiffsBetweenSnapshots verifies the per-step diff
+// surfaces only extractors whose value actually changed, keyed by name (or
+// extractor_N fallback when unnamed).
+func TestChangedExtractors_DiffsBetweenSnapshots(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		__sanderling__.extract(state => state.snapshots["a"] ?? 0, "alpha");
+		__sanderling__.extract(state => state.snapshots["b"] ?? 0);
+	`)
+
+	push := func(a, b int) {
+		raw := func(n int) json.RawMessage {
+			body, _ := json.Marshal(n)
+			return body
+		}
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"a": raw(a), "b": raw(b)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	push(1, 1)
+	first := verifier.ChangedExtractors()
+	if _, ok := first["alpha"]; !ok {
+		t.Errorf("step 1: expected alpha in diff (initial value), got %+v", first)
+	}
+	if _, ok := first["extractor_1"]; !ok {
+		t.Errorf("step 1: expected extractor_1 fallback name in diff, got %+v", first)
+	}
+
+	push(1, 2)
+	second := verifier.ChangedExtractors()
+	if _, ok := second["alpha"]; ok {
+		t.Errorf("step 2: alpha did not change, should not appear: %+v", second)
+	}
+	change, ok := second["extractor_1"]
+	if !ok {
+		t.Fatalf("step 2: expected extractor_1 in diff, got %+v", second)
+	}
+	if string(change.Prev) != "1" || string(change.Curr) != "2" {
+		t.Errorf("step 2: extractor_1 diff prev=%s curr=%s, want 1 -> 2", change.Prev, change.Curr)
+	}
+
+	push(1, 2)
+	third := verifier.ChangedExtractors()
+	if len(third) != 0 {
+		t.Errorf("step 3: nothing changed, diff should be empty, got %+v", third)
+	}
+}
+
+// TestExtract_DefaultsAndNamedNames verifies bindExtract assigns a fallback
+// `extractor_N` name when no name is supplied and respects an explicit one.
+func TestExtract_DefaultsAndNamedNames(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		__sanderling__.extract(state => 1);
+		__sanderling__.extract(state => 2, "ledgerRows");
+		__sanderling__.extract(state => 3);
+	`)
+	if len(verifier.extractors) != 3 {
+		t.Fatalf("extractors registered: got %d, want 3", len(verifier.extractors))
+	}
+	want := []string{"extractor_0", "ledgerRows", "extractor_2"}
+	for i, name := range want {
+		if got := verifier.extractors[i].name; got != name {
+			t.Errorf("extractor %d name: got %q, want %q", i, got, name)
+		}
+	}
+}
+
+// TestSelectorStringFromJS_NullEmpty verifies that nil/undefined args produce
+// an empty string instead of "null"/"undefined" garbage.
+func TestSelectorStringFromJS_NullEmpty(t *testing.T) {
+	verifier := newVerifier(t)
+	if got := selectorStringFromJS(verifier.runtime, goja.Undefined()); got != "" {
+		t.Errorf("undefined: got %q, want empty", got)
+	}
+	if got := selectorStringFromJS(verifier.runtime, goja.Null()); got != "" {
+		t.Errorf("null: got %q, want empty", got)
+	}
+}
 
 func TestOverrideExtractorValues_PropagatesNestedObjectFields(t *testing.T) {
 	verifier := newVerifier(t)

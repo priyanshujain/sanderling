@@ -35,8 +35,48 @@ _android-home:
     echo "could not locate Android SDK (set ANDROID_HOME)" >&2
     exit 1
 
+# Ensure an Android device is online. If none is connected and no AVD is
+# provided, boot the first AVD whose system image is actually installed
+# (headless) and wait for it to finish booting.
+_ensure-device:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sdk="$(just _android-home)"
+    adb="$sdk/platform-tools/adb"
+    if "$adb" devices | awk 'NR>1 && $2=="device"{f=1} END{exit !f}'; then
+      exit 0
+    fi
+    if [[ -n "{{avd}}" ]]; then
+      exit 0  # sanderling boots the named AVD itself
+    fi
+    emulator="$sdk/emulator/emulator"
+    avd=""
+    for candidate in $("$emulator" -list-avds); do
+      # The AVD directory is named in <name>.ini's path= field, which is not
+      # always "<name>.avd" (e.g. Medium_Phone_API_36.0 -> Medium_Phone.avd).
+      avddir="$(sed -n 's/^path=//p' "$HOME/.android/avd/$candidate.ini" 2>/dev/null || true)"
+      [[ -n "$avddir" ]] || avddir="$HOME/.android/avd/$candidate.avd"
+      sysdir="$(sed -n 's/^image\.sysdir\.1=//p' "$avddir/config.ini" 2>/dev/null || true)"
+      if [[ -n "$sysdir" && -d "$sdk/$sysdir" ]]; then avd="$candidate"; break; fi
+    done
+    if [[ -z "$avd" ]]; then
+      echo "no bootable AVD found (no installed system image); create one or set AVD=" >&2
+      exit 1
+    fi
+    echo "booting emulator: $avd"
+    ANDROID_SDK_ROOT="$sdk" ANDROID_HOME="$sdk" nohup "$emulator" -avd "$avd" \
+      -no-window -no-snapshot -gpu swiftshader_indirect -no-audio >/tmp/folio-emulator.log 2>&1 &
+    for _ in $(seq 1 150); do
+      if [[ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+        echo "emulator ready"; exit 0
+      fi
+      sleep 2
+    done
+    echo "emulator did not finish booting in time (see /tmp/folio-emulator.log)" >&2
+    exit 1
+
 # Build and install the folio APK on a running emulator/device.
-install:
+install: _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
@@ -82,8 +122,8 @@ ios:
     xcrun simctl launch booted app.folio
 
 # Run 'sanderling test' against the folio app. Uses a connected device if one is
-# online, otherwise boots AVD=<name> if provided.
-test:
+# online; otherwise boots AVD=<name> when provided, or auto-boots a bootable AVD.
+test: _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     avd_flag=()

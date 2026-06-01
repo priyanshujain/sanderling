@@ -36,6 +36,7 @@ func New() *Driver {
 		append(chromedp.DefaultExecAllocatorOptions[:],
 			chromedp.Flag("headless", true),
 			chromedp.Flag("disable-gpu", true),
+			chromedp.NoSandbox,
 		)...,
 	)
 	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
@@ -190,6 +191,23 @@ func (d *Driver) PressKey(_ context.Context, key string) error {
 	return chromedp.Run(d.tabCtx, chromedp.KeyEvent(k))
 }
 
+func (d *Driver) LongPress(_ context.Context, x, y int) error {
+	script := fmt.Sprintf(`
+(function() {
+  const el = document.elementFromPoint(%d, %d);
+  if (!el) return;
+  el.dispatchEvent(new PointerEvent('pointerdown', {clientX: %d, clientY: %d, bubbles: true}));
+  setTimeout(function() {
+    el.dispatchEvent(new PointerEvent('pointerup', {clientX: %d, clientY: %d, bubbles: true}));
+  }, 600);
+})();`,
+		x, y,
+		x, y,
+		x, y,
+	)
+	return chromedp.Run(d.tabCtx, chromedp.Evaluate(script, nil))
+}
+
 // keyMap covers the keys web specs may emit (enter/tab/escape/arrows).
 // "back"/"home" are intentionally absent: backspace/NUL have no navigation
 // semantics in a browser, and the V8 action mix already excludes them.
@@ -218,7 +236,8 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
     if (el.id) attrs['resource-id'] = el.id;
     const label = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '';
     if (label) attrs['content-desc'] = label;
-    if (el.tagName) attrs['tag'] = el.tagName.toLowerCase();
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag) attrs['tag'] = tag;
     if (el.className && typeof el.className === 'string' && el.className.trim()) {
       attrs['class'] = el.className.trim();
     }
@@ -226,6 +245,9 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
     const isClickable = !!(el.onclick || el.tagName === 'A' || el.tagName === 'BUTTON' ||
       el.tagName === 'INPUT' || el.tagName === 'SELECT' ||
       el.getAttribute('role') === 'button' || el.getAttribute('onclick'));
+    const isEditable = el.isContentEditable || tag === 'textarea' ||
+      (tag === 'input' && !['button','submit','checkbox','radio','range','color','file','image','reset']
+        .includes((el.type || '').toLowerCase()));
     const children = [];
     for (const child of el.children) {
       children.push(buildTree(child, false));
@@ -238,6 +260,7 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
       focused: document.activeElement === el || null,
       checked: el.checked || null,
       selected: el.selected || null,
+      editable: isEditable || null,
     };
   }
   return buildTree(document.body, true);
@@ -261,6 +284,21 @@ func (d *Driver) Screenshot(_ context.Context) (driver.Image, error) {
 	}
 	w, h := pngDimensions(buf)
 	return driver.Image{PNG: buf, Width: w, Height: h}, nil
+}
+
+// Snapshot pairs hierarchy and screenshot back-to-back. The chromedp tab
+// is single-threaded so the two CDP round-trips are already serialized:
+// pairing them here matches the DeviceDriver contract without extra locking.
+func (d *Driver) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	hierarchy, err := d.Hierarchy(ctx)
+	if err != nil {
+		return "", driver.Image{}, err
+	}
+	image, err := d.Screenshot(ctx)
+	if err != nil {
+		return hierarchy, driver.Image{}, err
+	}
+	return hierarchy, image, nil
 }
 
 func (d *Driver) RecentLogs(_ context.Context, since time.Time, minLevel string) ([]driver.LogEntry, error) {

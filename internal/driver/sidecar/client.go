@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	driverpb "github.com/priyanshujain/sanderling/proto/driverpb"
 )
@@ -15,6 +16,31 @@ import (
 type Client struct {
 	connection *grpc.ClientConn
 	stub       driverpb.DriverClient
+	platform   string
+}
+
+// SetPlatform records the target platform so capability methods (e.g.
+// ForegroundApp) can pick the right backend. The caller sets this right after
+// Dial.
+func (c *Client) SetPlatform(platform string) { c.platform = platform }
+
+// ForegroundApp reports the foreground package. Only Android is supported (via
+// adb); other platforms return "" so the runner skips app-scope enforcement.
+func (c *Client) ForegroundApp(ctx context.Context) (string, error) {
+	if c.platform != "android" {
+		return "", nil
+	}
+	return android.ForegroundPackage(ctx)
+}
+
+// FocusedWindowApp reports the package owning the focused window. Only Android
+// is supported (via adb); other platforms return "" so the startup gate falls
+// back to the foreground-app signal.
+func (c *Client) FocusedWindowApp(ctx context.Context) (string, error) {
+	if c.platform != "android" {
+		return "", nil
+	}
+	return android.FocusedWindowPackage(ctx)
 }
 
 // Dial connects to the sidecar gRPC server at the given address.
@@ -64,6 +90,11 @@ func (c *Client) Terminate(ctx context.Context) error {
 
 func (c *Client) Tap(ctx context.Context, x, y int) error {
 	_, err := c.stub.Tap(ctx, &driverpb.Point{X: int32(x), Y: int32(y)})
+	return err
+}
+
+func (c *Client) LongPress(ctx context.Context, x, y int) error {
+	_, err := c.stub.LongPress(ctx, &driverpb.Point{X: int32(x), Y: int32(y)})
 	return err
 }
 
@@ -133,6 +164,23 @@ func (c *Client) Screenshot(ctx context.Context) (driver.Image, error) {
 		PNG:    response.GetPng(),
 		Width:  int(response.GetWidth()),
 		Height: int(response.GetHeight()),
+	}, nil
+}
+
+// Snapshot fetches hierarchy and screenshot in a single sidecar round-trip.
+// The sidecar serializes the two reads behind a mutex so the returned pair
+// describes the same on-device frame, removing the cross-fade race the
+// runner used to see when fetching them as independent goroutines.
+func (c *Client) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	response, err := c.stub.Snapshot(ctx, &driverpb.Empty{})
+	if err != nil {
+		return "", driver.Image{}, err
+	}
+	image := response.GetScreenshot()
+	return response.GetHierarchy().GetJson(), driver.Image{
+		PNG:    image.GetPng(),
+		Width:  int(image.GetWidth()),
+		Height: int(image.GetHeight()),
 	}, nil
 }
 
