@@ -2,6 +2,8 @@ package verifier
 
 import (
 	"fmt"
+	"log/slog"
+	"math/big"
 	"time"
 
 	"github.com/dop251/goja"
@@ -57,20 +59,7 @@ type formulaSpec struct {
 const (
 	tagFormula          = "__sanderlingFormula"
 	tagFormulaSpecIndex = "__sanderlingFormulaSpec"
-	tagActionGenerator  = "__sanderlingActionGenerator"
-	tagInternalKind     = "__sanderlingKind"
 	tagSelector         = "__sanderlingSelector"
-
-	internalKindActions            = "actions"
-	internalKindWeighted           = "weighted"
-	internalKindBuiltinTaps        = "taps"
-	internalKindBuiltinDoubleTaps  = "doubleTaps"
-	internalKindBuiltinTyping      = "typing"
-	internalKindBuiltinSwipes      = "swipes"
-	internalKindBuiltinWaitOnce    = "waitOnce"
-	internalKindBuiltinPressKey    = "pressKey"
-	internalKindBuiltinLongPresses = "longPresses"
-	internalKindBuiltinScrolls     = "scrolls"
 )
 
 // installRuntimeBindings exposes globalThis.__sanderling__ to the loaded spec.
@@ -92,65 +81,64 @@ func (v *Verifier) installRuntimeBindings() error {
 	if err := sanderling.Set("eventually", v.bindEventually); err != nil {
 		return err
 	}
-	if err := sanderling.Set("actions", v.bindActions); err != nil {
-		return err
-	}
-	if err := sanderling.Set("weighted", v.bindWeighted); err != nil {
-		return err
-	}
-	if err := sanderling.Set("from", v.bindFrom); err != nil {
-		return err
-	}
-	if err := sanderling.Set("tap", v.bindTap); err != nil {
-		return err
-	}
-	if err := sanderling.Set("doubleTap", v.bindDoubleTap); err != nil {
-		return err
-	}
-	if err := sanderling.Set("longPress", v.bindLongPress); err != nil {
-		return err
-	}
-	if err := sanderling.Set("scroll", v.bindScroll); err != nil {
-		return err
-	}
-	if err := sanderling.Set("inputText", v.bindInputText); err != nil {
-		return err
-	}
-	if err := sanderling.Set("swipe", v.bindSwipe); err != nil {
-		return err
-	}
-	if err := sanderling.Set("pressKey", v.bindPressKey); err != nil {
-		return err
-	}
-	if err := sanderling.Set("wait", v.bindWait); err != nil {
-		return err
-	}
-	if err := sanderling.Set("taps", v.builtinGenerator(internalKindBuiltinTaps)); err != nil {
-		return err
-	}
-	if err := sanderling.Set("doubleTaps", v.builtinGenerator(internalKindBuiltinDoubleTaps)); err != nil {
-		return err
-	}
-	if err := sanderling.Set("typing", v.builtinGenerator(internalKindBuiltinTyping)); err != nil {
-		return err
-	}
-	if err := sanderling.Set("swipes", v.builtinGenerator(internalKindBuiltinSwipes)); err != nil {
-		return err
-	}
-	if err := sanderling.Set("waitOnce", v.builtinGenerator(internalKindBuiltinWaitOnce)); err != nil {
-		return err
-	}
-	if err := sanderling.Set("pressKeys", v.builtinGenerator(internalKindBuiltinPressKey)); err != nil {
-		return err
-	}
-	if err := sanderling.Set("longPresses", v.builtinGenerator(internalKindBuiltinLongPresses)); err != nil {
-		return err
-	}
-	if err := sanderling.Set("scrolls", v.builtinGenerator(internalKindBuiltinScrolls)); err != nil {
-		return err
-	}
 
-	return v.runtime.GlobalObject().Set("__sanderling__", sanderling)
+	if err := v.runtime.GlobalObject().Set("__sanderling__", sanderling); err != nil {
+		return err
+	}
+	return v.installHost()
+}
+
+// installHost exposes globalThis.__sanderlingHost__ for the goja runtime entry.
+// The shared picker (pick.ts) draws against it: platform() drives the verb
+// matrix and press-key pool; seedHi/seedLo construct its Pcg; queryCandidates
+// enumerates targets over the hierarchy tree; reportUnsupported logs once.
+func (v *Verifier) installHost() error {
+	host := v.runtime.NewObject()
+	if err := host.Set("platform", func(goja.FunctionCall) goja.Value {
+		return v.runtime.ToValue(v.platform)
+	}); err != nil {
+		return err
+	}
+	if err := host.Set("seedHi", func(goja.FunctionCall) goja.Value {
+		return v.runtime.ToValue(new(big.Int).SetUint64(v.seed))
+	}); err != nil {
+		return err
+	}
+	if err := host.Set("seedLo", func(goja.FunctionCall) goja.Value {
+		return v.runtime.ToValue(big.NewInt(0))
+	}); err != nil {
+		return err
+	}
+	if err := host.Set("queryCandidates", v.bindQueryCandidates); err != nil {
+		return err
+	}
+	if err := host.Set("reportUnsupported", func(call goja.FunctionCall) goja.Value {
+		slog.Warn("verb unsupported on platform", "verb", call.Argument(0).String(), "platform", v.platform)
+		return goja.Undefined()
+	}); err != nil {
+		return err
+	}
+	return v.runtime.GlobalObject().Set("__sanderlingHost__", host)
+}
+
+// bindQueryCandidates returns the host-enumerated targets for a verb as an
+// array of {x, y, selector, width, height}, in tree order.
+func (v *Verifier) bindQueryCandidates(call goja.FunctionCall) goja.Value {
+	verb := call.Argument(0).String()
+	candidates := v.candidatesForVerb(verb)
+	array := v.runtime.NewArray()
+	for index, candidate := range candidates {
+		item := v.runtime.NewObject()
+		_ = item.Set("x", candidate.x)
+		_ = item.Set("y", candidate.y)
+		_ = item.Set("width", candidate.width)
+		_ = item.Set("height", candidate.height)
+		if candidate.selector != "" {
+			_ = item.Set("selector", candidate.selector)
+		}
+		_ = array.Set(fmt.Sprintf("%d", index), item)
+	}
+	return array
 }
 
 func (v *Verifier) bindExtract(call goja.FunctionCall) goja.Value {
@@ -352,163 +340,3 @@ func (v *Verifier) extractSpecIndex(value goja.Value) (int, bool) {
 	return int(indexValue.ToInteger()), true
 }
 
-func (v *Verifier) bindActions(call goja.FunctionCall) goja.Value {
-	if len(call.Arguments) != 1 {
-		panic(v.runtime.NewTypeError("actions requires a single generator argument"))
-	}
-	if _, ok := goja.AssertFunction(call.Arguments[0]); !ok {
-		panic(v.runtime.NewTypeError("actions argument must be a function"))
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set(tagActionGenerator, true)
-	_ = handle.Set(tagInternalKind, internalKindActions)
-	_ = handle.Set("generate", call.Arguments[0])
-	return handle
-}
-
-func (v *Verifier) bindWeighted(call goja.FunctionCall) goja.Value {
-	entries := v.runtime.NewArray()
-	for index, argument := range call.Arguments {
-		object := argument.ToObject(v.runtime)
-		if object == nil {
-			panic(v.runtime.NewTypeError(fmt.Sprintf("weighted entry %d must be a [number, generator] tuple", index)))
-		}
-		if err := entries.Set(fmt.Sprintf("%d", index), object); err != nil {
-			panic(v.runtime.NewGoError(err))
-		}
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set(tagActionGenerator, true)
-	_ = handle.Set(tagInternalKind, internalKindWeighted)
-	_ = handle.Set("entries", entries)
-	return handle
-}
-
-// bindFrom returns a `{ generate }` that picks uniformly at random from the
-// provided items using the verifier's seeded rng.
-func (v *Verifier) bindFrom(call goja.FunctionCall) goja.Value {
-	if len(call.Arguments) != 1 {
-		panic(v.runtime.NewTypeError("from requires an array argument"))
-	}
-	itemsValue := call.Arguments[0]
-	itemsObject := itemsValue.ToObject(v.runtime)
-	if itemsObject == nil {
-		panic(v.runtime.NewTypeError("from argument must be an array"))
-	}
-	lengthValue := itemsObject.Get("length")
-	if lengthValue == nil {
-		panic(v.runtime.NewTypeError("from argument must be array-like"))
-	}
-	length := int(lengthValue.ToInteger())
-
-	handle := v.runtime.NewObject()
-	_ = handle.Set("generate", func(goja.FunctionCall) goja.Value {
-		if length == 0 {
-			return goja.Undefined()
-		}
-		index := v.rng.IntN(length)
-		return itemsObject.Get(fmt.Sprintf("%d", index))
-	})
-	return handle
-}
-
-func (v *Verifier) bindTap(call goja.FunctionCall) goja.Value {
-	parameters := call.Argument(0).ToObject(v.runtime)
-	if parameters == nil {
-		panic(v.runtime.NewTypeError("Tap requires {on}"))
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set("kind", "Tap")
-	_ = handle.Set("on", parameters.Get("on"))
-	return handle
-}
-
-func (v *Verifier) bindDoubleTap(call goja.FunctionCall) goja.Value {
-	parameters := call.Argument(0).ToObject(v.runtime)
-	if parameters == nil {
-		panic(v.runtime.NewTypeError("DoubleTap requires {on}"))
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set("kind", "DoubleTap")
-	_ = handle.Set("on", parameters.Get("on"))
-	return handle
-}
-
-func (v *Verifier) bindLongPress(call goja.FunctionCall) goja.Value {
-	parameters := call.Argument(0).ToObject(v.runtime)
-	if parameters == nil {
-		panic(v.runtime.NewTypeError("LongPress requires {on}"))
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set("kind", "LongPress")
-	_ = handle.Set("on", parameters.Get("on"))
-	return handle
-}
-
-func (v *Verifier) bindScroll(call goja.FunctionCall) goja.Value {
-	parameters := call.Argument(0).ToObject(v.runtime)
-	if parameters == nil {
-		panic(v.runtime.NewTypeError("Scroll requires {direction}"))
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set("kind", "Scroll")
-	_ = handle.Set("direction", parameters.Get("direction"))
-	_ = handle.Set("in", parameters.Get("in"))
-	return handle
-}
-
-func (v *Verifier) bindInputText(call goja.FunctionCall) goja.Value {
-	parameters := call.Argument(0).ToObject(v.runtime)
-	if parameters == nil {
-		panic(v.runtime.NewTypeError("InputText requires {into, text}"))
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set("kind", "InputText")
-	_ = handle.Set("into", parameters.Get("into"))
-	_ = handle.Set("text", parameters.Get("text"))
-	return handle
-}
-
-func (v *Verifier) bindSwipe(call goja.FunctionCall) goja.Value {
-	parameters := call.Argument(0).ToObject(v.runtime)
-	if parameters == nil {
-		panic(v.runtime.NewTypeError("Swipe requires {from, to}"))
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set("kind", "Swipe")
-	_ = handle.Set("from", parameters.Get("from"))
-	_ = handle.Set("to", parameters.Get("to"))
-	if duration := parameters.Get("durationMillis"); duration != nil && !goja.IsUndefined(duration) {
-		_ = handle.Set("durationMillis", duration)
-	}
-	return handle
-}
-
-func (v *Verifier) bindPressKey(call goja.FunctionCall) goja.Value {
-	parameters := call.Argument(0).ToObject(v.runtime)
-	if parameters == nil {
-		panic(v.runtime.NewTypeError("PressKey requires {key}"))
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set("kind", "PressKey")
-	_ = handle.Set("key", parameters.Get("key"))
-	return handle
-}
-
-func (v *Verifier) bindWait(call goja.FunctionCall) goja.Value {
-	parameters := call.Argument(0).ToObject(v.runtime)
-	if parameters == nil {
-		panic(v.runtime.NewTypeError("Wait requires {durationMillis}"))
-	}
-	handle := v.runtime.NewObject()
-	_ = handle.Set("kind", "Wait")
-	_ = handle.Set("durationMillis", parameters.Get("durationMillis"))
-	return handle
-}
-
-func (v *Verifier) builtinGenerator(kind string) *goja.Object {
-	handle := v.runtime.NewObject()
-	_ = handle.Set(tagActionGenerator, true)
-	_ = handle.Set(tagInternalKind, kind)
-	return handle
-}

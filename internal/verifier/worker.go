@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"math/rand/v2"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/dop251/goja"
@@ -23,9 +21,11 @@ type Verifier struct {
 	formulas     []*formulaState
 	formulaSpecs []formulaSpec
 
-	properties      map[string]int // property name -> formula-spec index
-	actionGenerator goja.Value
-	setupGenerator  goja.Value
+	properties map[string]int // property name -> formula-spec index
+
+	// nextActionFn is the bundle-installed __sanderlingNextAction__, which runs
+	// the shared picker (pick.ts) over the shared Pcg.
+	nextActionFn goja.Callable
 
 	evaluators map[string]*ltl.Evaluator
 
@@ -41,14 +41,24 @@ type Verifier struct {
 	runStart       time.Time
 
 	appPackage string
-
-	rng *rand.Rand
+	platform   string
+	seed       uint64
 }
 
 type Option func(*Verifier)
 
-func WithRand(rng *rand.Rand) Option {
-	return func(v *Verifier) { v.rng = rng }
+// WithSeed sets the 64-bit seed the JS picker constructs its Pcg from
+// (new Pcg(seed, 0), matching the web bundle's SANDERLING_SEED). The verifier
+// exposes it to the bundle via the __sanderlingHost__.seedHi/seedLo binds.
+func WithSeed(seed uint64) Option {
+	return func(v *Verifier) { v.seed = seed }
+}
+
+// WithPlatform names the platform the host reports to the picker
+// ("android"/"ios"/"web"); it drives the verb-support matrix and the press-key
+// pool. Empty defaults to "android".
+func WithPlatform(platform string) Option {
+	return func(v *Verifier) { v.platform = platform }
 }
 
 // WithAppPackage scopes random-action target selection to the app under test.
@@ -66,10 +76,13 @@ func New(options ...Option) (*Verifier, error) {
 		evaluators:    map[string]*ltl.Evaluator{},
 		priorVerdicts: map[string]ltl.Verdict{},
 		witnesses:     map[string]Witness{},
-		rng:           rand.New(rand.NewPCG(0, 0)),
+		platform:      "android",
 	}
 	for _, option := range options {
 		option(verifier)
+	}
+	if verifier.platform == "" {
+		verifier.platform = "android"
 	}
 	if err := verifier.installRuntimeBindings(); err != nil {
 		return nil, fmt.Errorf("install bindings: %w", err)
@@ -107,12 +120,14 @@ func (v *Verifier) Load(source string) error {
 		}
 	}
 
-	if actionsValue := v.runtime.GlobalObject().Get("actions"); actionsValue != nil && !goja.IsUndefined(actionsValue) && !goja.IsNull(actionsValue) {
-		v.actionGenerator = actionsValue
-	}
-
-	if setupValue := v.runtime.GlobalObject().Get("setup"); setupValue != nil && !goja.IsUndefined(setupValue) && !goja.IsNull(setupValue) {
-		v.setupGenerator = setupValue
+	// The bundle's goja runtime entry installs __sanderlingNextAction__ once the
+	// spec assigned globalThis.actions. Capture it; a spec bundled without the
+	// runtime entry (raw-JS unit fixtures) leaves it nil and NextAction reports
+	// ErrNoAction.
+	if fn := v.runtime.GlobalObject().Get("__sanderlingNextAction__"); fn != nil {
+		if callable, ok := goja.AssertFunction(fn); ok {
+			v.nextActionFn = callable
+		}
 	}
 
 	return nil
@@ -496,36 +511,27 @@ func (v *Verifier) Residuals() map[string]ltl.Formula {
 	return residuals
 }
 
-// NextAction resolves an action for the current step. The setup generator,
-// when registered, runs first; if it yields an action, that wins. When setup
-// returns ErrNoAction (all branches empty) the call falls through to the
-// root action generator with the existing retry semantics. Setup is consulted
-// every step, so state regression (e.g. a logout under fuzz) automatically
-// re-engages the precondition.
+// NextAction resolves an action for the current step by invoking the bundled
+// __sanderlingNextAction__(), which runs the SHARED picker (pick.ts) over the
+// shared Pcg. Setup-generator precedence and the 16-attempt retry both live in
+// runtime-entry.ts now, so this is a thin call-and-decode. A null result (the
+// generator declined to act) reports ErrNoAction.
 func (v *Verifier) NextAction() (Action, error) {
-	if v.setupGenerator != nil {
-		action, err := v.resolveGenerator(v.setupGenerator)
-		if err == nil {
-			return action, nil
-		}
-		if !errors.Is(err, ErrNoAction) {
-			return Action{}, err
-		}
-	}
-	if v.actionGenerator == nil {
+	if v.nextActionFn == nil {
 		return Action{}, ErrNoAction
 	}
-	const maxRetries = 16
-	for range maxRetries {
-		action, err := v.resolveGenerator(v.actionGenerator)
-		if err == nil {
-			return action, nil
-		}
-		if !errors.Is(err, ErrNoAction) {
-			return Action{}, err
-		}
+	value, err := v.nextActionFn(goja.Undefined())
+	if err != nil {
+		return Action{}, fmt.Errorf("next action: %w", err)
 	}
-	return Action{}, ErrNoAction
+	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
+		return Action{}, ErrNoAction
+	}
+	raw, err := json.Marshal(value.Export())
+	if err != nil {
+		return Action{}, fmt.Errorf("marshal action: %w", err)
+	}
+	return DecodeAction(raw)
 }
 
 var ErrNoAction = errors.New("verifier: no action available")
@@ -541,72 +547,6 @@ func (v *Verifier) formulaThunk(index int) func() (bool, error) {
 	}
 }
 
-func (v *Verifier) resolveGenerator(generator goja.Value) (Action, error) {
-	object := generator.ToObject(v.runtime)
-	if object == nil {
-		return Action{}, fmt.Errorf("generator is not an object")
-	}
-	kindValue := object.Get(tagInternalKind)
-	if kindValue == nil {
-		return Action{}, fmt.Errorf("generator missing internal kind tag")
-	}
-	switch kindValue.String() {
-	case internalKindActions:
-		generateValue := object.Get("generate")
-		generate, ok := goja.AssertFunction(generateValue)
-		if !ok {
-			return Action{}, fmt.Errorf("actions handle missing generate function")
-		}
-		result, err := generate(goja.Undefined())
-		if err != nil {
-			return Action{}, fmt.Errorf("generate: %w", err)
-		}
-		return v.pickFromResult(result)
-	case internalKindWeighted:
-		entries := object.Get("entries").ToObject(v.runtime)
-		if entries == nil {
-			return Action{}, fmt.Errorf("weighted handle missing entries")
-		}
-		picked, err := v.pickWeighted(entries)
-		if err != nil {
-			return Action{}, err
-		}
-		return v.resolveGenerator(picked)
-	case internalKindBuiltinTaps:
-		return v.generateRandomTap()
-	case internalKindBuiltinDoubleTaps:
-		return v.generateRandomDoubleTap()
-	case internalKindBuiltinTyping:
-		return v.generateRandomInput()
-	case internalKindBuiltinSwipes:
-		return v.generateRandomSwipe()
-	case internalKindBuiltinWaitOnce:
-		return Action{Kind: ActionKindWait, DurationMillis: 500}, nil
-	case internalKindBuiltinPressKey:
-		return v.generateRandomPressKey()
-	case internalKindBuiltinLongPresses:
-		return v.generateRandomLongPress()
-	case internalKindBuiltinScrolls:
-		return v.generateRandomScroll()
-	default:
-		return Action{}, fmt.Errorf("unknown generator kind %q", kindValue.String())
-	}
-}
-
-// generateRandomTap picks a visible, tappable element from the last
-// hierarchy snapshot and returns a Tap action targeting its center.
-func (v *Verifier) generateRandomTap() (Action, error) {
-	return v.generateRandomTapKind(ActionKindTap)
-}
-
-// generateRandomDoubleTap is the DoubleTap counterpart of generateRandomTap.
-// Real user gestures include double-tap (image zoom, like-to-favorite,
-// play/pause); a fuzzer that never emits one cannot exercise either those
-// features or the sub-100ms race windows that single-step Tap cadence misses.
-func (v *Verifier) generateRandomDoubleTap() (Action, error) {
-	return v.generateRandomTapKind(ActionKindDoubleTap)
-}
-
 // inScope reports whether an element belongs to the app under test. Nodes from
 // another package (the soft keyboard, system UI, permission dialogs) are out of
 // scope. An unset app package or an element with no package falls through to in
@@ -616,31 +556,6 @@ func (v *Verifier) inScope(element *hierarchy.Element) bool {
 		return true
 	}
 	return element.Package == v.appPackage
-}
-
-func (v *Verifier) generateRandomTapKind(kind ActionKind) (Action, error) {
-	if v.lastTree == nil {
-		return Action{}, ErrNoAction
-	}
-	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
-	for _, element := range v.lastTree.Elements {
-		if !element.Clickable || !element.Enabled {
-			continue
-		}
-		if !v.inScope(element) {
-			continue
-		}
-		if element.Bounds.Right-element.Bounds.Left <= 0 || element.Bounds.Bottom-element.Bounds.Top <= 0 {
-			continue
-		}
-		candidates = append(candidates, element)
-	}
-	if len(candidates) == 0 {
-		return Action{}, ErrNoAction
-	}
-	picked := candidates[v.rng.IntN(len(candidates))]
-	x, y := picked.Bounds.Center()
-	return Action{Kind: kind, On: selectorForElement(v.lastTree, picked), X: x, Y: y}, nil
 }
 
 // selectorForElement builds a canonical "key:value" selector that resolves
@@ -684,237 +599,58 @@ func selectorForElement(tree *hierarchy.Tree, element *hierarchy.Element) string
 	return ""
 }
 
-// inputCorpus is the edge-case string pool the typing builtin draws from to
-// stress field parsing: empty, whitespace, overflow length, unicode, numeric
-// boundaries, and common injection payloads.
-var inputCorpus = []string{
-	"",
-	"a",
-	strings.Repeat("a", 4096),
-	"🙂🔥💸",
-	"  ",
-	"\t\n",
-	"-1",
-	"999999999999999999999",
-	"0.0000001",
-	"1e10",
-	"'; DROP TABLE--",
-	"<script>alert(1)</script>",
-	"../../etc/passwd",
-	"%s%n",
-	"NaN",
-}
-
-// generateRandomInput picks a visible, editable, enabled element from the last
-// hierarchy snapshot and types a random edge-case value into it. The runner
-// taps the target coordinates to focus before typing, so this works on both
-// native and web with no driver-side dispatch change.
-func (v *Verifier) generateRandomInput() (Action, error) {
+// candidatesForVerb enumerates the host-side targets a builtin verb may draw
+// from, in v.lastTree.Elements ORDER (the order is part of the picker's parity
+// contract). The filters are LIFTED from the old Go picker:
+//   taps/doubleTaps/longPresses: clickable + enabled + positive bounds
+//   typing:                      editable + enabled + positive bounds
+//   scrolls:                     scrollable attribute + positive bounds
+//   swipes:                      any in-scope element
+// Every candidate carries the resolving selector so the runner can re-route by
+// id/text. Out-of-scope nodes (the soft keyboard, system UI) are always dropped.
+func (v *Verifier) candidatesForVerb(verb string) []candidate {
 	if v.lastTree == nil {
-		return Action{}, ErrNoAction
+		return nil
 	}
-	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
+	var result []candidate
 	for _, element := range v.lastTree.Elements {
-		if !element.Editable || !element.Enabled {
-			continue
-		}
 		if !v.inScope(element) {
 			continue
 		}
-		if element.Bounds.Right-element.Bounds.Left <= 0 || element.Bounds.Bottom-element.Bounds.Top <= 0 {
+		if !verbAccepts(verb, element) {
 			continue
 		}
-		candidates = append(candidates, element)
+		x, y := element.Bounds.Center()
+		result = append(result, candidate{
+			x:        x,
+			y:        y,
+			width:    element.Bounds.Width(),
+			height:   element.Bounds.Height(),
+			selector: selectorForElement(v.lastTree, element),
+		})
 	}
-	if len(candidates) == 0 {
-		return Action{}, ErrNoAction
-	}
-	picked := candidates[v.rng.IntN(len(candidates))]
-	x, y := picked.Bounds.Center()
-	value := inputCorpus[v.rng.IntN(len(inputCorpus))]
-	return Action{Kind: ActionKindInputText, X: x, Y: y, Text: value}, nil
+	return result
 }
 
-// generateRandomSwipe emits a swipe over a random enabled element or the
-// whole screen, in a random direction. Returns ErrNoAction only when we have
-// no tree to size a gesture off of.
-func (v *Verifier) generateRandomSwipe() (Action, error) {
-	if v.lastTree == nil || len(v.lastTree.Elements) == 0 {
-		return Action{}, ErrNoAction
-	}
-	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
-	for _, element := range v.lastTree.Elements {
-		if v.inScope(element) {
-			candidates = append(candidates, element)
-		}
-	}
-	if len(candidates) == 0 {
-		return Action{}, ErrNoAction
-	}
-	element := candidates[v.rng.IntN(len(candidates))]
-	cx, cy := element.Bounds.Center()
-	if cx <= 0 || cy <= 0 {
-		return Action{}, ErrNoAction
-	}
-	// Pick a direction: 0=up 1=down 2=left 3=right; magnitude 200-600 px.
-	magnitude := 200 + v.rng.IntN(401)
-	toX, toY := cx, cy
-	switch v.rng.IntN(4) {
-	case 0:
-		toY = cy - magnitude
-	case 1:
-		toY = cy + magnitude
-	case 2:
-		toX = cx - magnitude
-	case 3:
-		toX = cx + magnitude
-	}
-	if toX < 0 {
-		toX = 0
-	}
-	if toY < 0 {
-		toY = 0
-	}
-	return Action{
-		Kind:           ActionKindSwipe,
-		FromX:          cx,
-		FromY:          cy,
-		ToX:            toX,
-		ToY:            toY,
-		DurationMillis: 250,
-	}, nil
+type candidate struct {
+	x, y          int
+	width, height int
+	selector      string
 }
 
-// generateRandomLongPress mirrors generateRandomTap: it picks a visible,
-// clickable, enabled, in-scope element and targets its center. Real users
-// long-press (context menus, reorder handles, multi-select), so a fuzzer that
-// never emits one cannot reach those affordances.
-func (v *Verifier) generateRandomLongPress() (Action, error) {
-	return v.generateRandomTapKind(ActionKindLongPress)
-}
-
-// generateRandomScroll picks a scrollable, in-scope container and emits a swipe
-// across it in a random direction.
-func (v *Verifier) generateRandomScroll() (Action, error) {
-	if v.lastTree == nil {
-		return Action{}, ErrNoAction
+// verbAccepts applies the per-verb element filter.
+func verbAccepts(verb string, element *hierarchy.Element) bool {
+	positiveBounds := element.Bounds.Width() > 0 && element.Bounds.Height() > 0
+	switch verb {
+	case "taps", "doubleTaps", "longPresses":
+		return element.Clickable && element.Enabled && positiveBounds
+	case "typing":
+		return element.Editable && element.Enabled && positiveBounds
+	case "scrolls":
+		return element.Attributes["scrollable"] == "true" && positiveBounds
+	case "swipes":
+		return true
+	default:
+		return false
 	}
-	candidates := make([]*hierarchy.Element, 0, len(v.lastTree.Elements))
-	for _, element := range v.lastTree.Elements {
-		if element.Attributes["scrollable"] != "true" {
-			continue
-		}
-		if !v.inScope(element) {
-			continue
-		}
-		if element.Bounds.Width() <= 0 || element.Bounds.Height() <= 0 {
-			continue
-		}
-		candidates = append(candidates, element)
-	}
-	if len(candidates) == 0 {
-		return Action{}, ErrNoAction
-	}
-	picked := candidates[v.rng.IntN(len(candidates))]
-	cx, cy := picked.Bounds.Center()
-	width := picked.Bounds.Width()
-	height := picked.Bounds.Height()
-	directions := []string{"up", "down", "left", "right"}
-	dir := directions[v.rng.IntN(len(directions))]
-	toX, toY := cx, cy
-	// Scroll direction names the content motion; the gesture swipes the
-	// opposite way. Revealing content below ("down") means dragging the
-	// finger up, so toY decreases, and likewise for the other directions.
-	switch dir {
-	case "down":
-		toY = cy - (4*height)/10
-	case "up":
-		toY = cy + (4*height)/10
-	case "left":
-		toX = cx + (4*width)/10
-	case "right":
-		toX = cx - (4*width)/10
-	}
-	if toX < 0 {
-		toX = 0
-	}
-	if toY < 0 {
-		toY = 0
-	}
-	return Action{
-		Kind:           ActionKindScroll,
-		Direction:      dir,
-		FromX:          cx,
-		FromY:          cy,
-		ToX:            toX,
-		ToY:            toY,
-		DurationMillis: 300,
-	}, nil
-}
-
-func (v *Verifier) generateRandomPressKey() (Action, error) {
-	// Keep exploration gentle: only "back" for now. Home/menu would navigate
-	// away from the app under test.
-	return Action{Kind: ActionKindPressKey, Key: "back"}, nil
-}
-
-func (v *Verifier) pickFromResult(result goja.Value) (Action, error) {
-	if result == nil || goja.IsUndefined(result) || goja.IsNull(result) {
-		return Action{}, ErrNoAction
-	}
-	object := result.ToObject(v.runtime)
-	if object == nil {
-		return Action{}, ErrNoAction
-	}
-	lengthValue := object.Get("length")
-	if lengthValue == nil {
-		return jsValueToAction(v.runtime, result)
-	}
-	length := int(lengthValue.ToInteger())
-	if length == 0 {
-		return Action{}, ErrNoAction
-	}
-	pick := v.rng.IntN(length)
-	return jsValueToAction(v.runtime, object.Get(fmt.Sprintf("%d", pick)))
-}
-
-func (v *Verifier) pickWeighted(entries *goja.Object) (goja.Value, error) {
-	lengthValue := entries.Get("length")
-	if lengthValue == nil {
-		return nil, fmt.Errorf("weighted entries missing length")
-	}
-	length := int(lengthValue.ToInteger())
-	if length == 0 {
-		return nil, ErrNoAction
-	}
-
-	weights := make([]float64, length)
-	generators := make([]goja.Value, length)
-	totalWeight := 0.0
-	for index := range length {
-		entry := entries.Get(fmt.Sprintf("%d", index)).ToObject(v.runtime)
-		if entry == nil {
-			return nil, fmt.Errorf("weighted entry %d not an array", index)
-		}
-		weight := entry.Get("0").ToFloat()
-		generator := entry.Get("1")
-		if weight < 0 {
-			weight = 0
-		}
-		weights[index] = weight
-		generators[index] = generator
-		totalWeight += weight
-	}
-	if totalWeight == 0 {
-		return nil, ErrNoAction
-	}
-	pick := v.rng.Float64() * totalWeight
-	cumulative := 0.0
-	for index := range length {
-		cumulative += weights[index]
-		if pick < cumulative {
-			return generators[index], nil
-		}
-	}
-	return generators[length-1], nil
 }
