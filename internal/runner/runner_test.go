@@ -125,6 +125,11 @@ func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
 	if len(summary.Violations) != 0 {
 		t.Errorf("no violations expected, got %v", summary.Violations)
 	}
+	// Every builtin verb is supported on every platform, so a clean run must
+	// report no unsupported verbs (the runner still wires the field through).
+	if len(summary.UnsupportedVerbs) != 0 {
+		t.Errorf("expected no unsupported verbs, got %v", summary.UnsupportedVerbs)
+	}
 
 	actions := state.mock.Actions()
 	if !containsAction(actions, mockdriver.ActionTapSelector, "id:next") {
