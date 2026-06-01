@@ -1,6 +1,6 @@
 //go:build withsidecar
 
-package sidecar
+package sidecarassets
 
 import _ "embed"
 

@@ -1,4 +1,4 @@
-package sidecar
+package sidecarassets
 
 import (
 	"crypto/sha256"
