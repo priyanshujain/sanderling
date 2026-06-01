@@ -339,12 +339,14 @@ function recordException(error: unknown): void {
   });
 }
 
-globalThis.addEventListener("error", (event: ErrorEvent) => {
-  recordException(event.error ?? event.message);
-});
-globalThis.addEventListener("unhandledrejection", (event: PromiseRejectionEvent) => {
-  recordException(event.reason);
-});
+if (typeof globalThis.addEventListener === "function") {
+  globalThis.addEventListener("error", (event: ErrorEvent) => {
+    recordException(event.error ?? event.message);
+  });
+  globalThis.addEventListener("unhandledrejection", (event: PromiseRejectionEvent) => {
+    recordException(event.reason);
+  });
+}
 
 function buildState(): unknown {
   return {
