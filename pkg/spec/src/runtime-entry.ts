@@ -102,18 +102,22 @@ export function serializeAction(action: ActionDescriptor | null): SerializedActi
 }
 
 // installRuntime defines the next-action and extractor globals for one engine.
-// root is the generator the spec assigned (globalThis.actions); evaluateExtractors
-// is the engine's snapshot of the spec's extract() handles.
+// root is the generator the spec assigned; pass a function when the spec runs
+// AFTER this call (the web bundle imports the runtime before the spec, so the
+// root only exists on globalThis.actions once the spec has evaluated).
+// evaluateExtractors is the engine's snapshot of the spec's extract() handles.
 export function installRuntime(
   host: Host,
-  root: GeneratorNode | null,
+  root: GeneratorNode | null | (() => GeneratorNode | null),
   evaluateExtractors: () => Record<number, unknown>,
 ): void {
   const rng = new Pcg(host.seedHi(), host.seedLo());
+  const resolveRoot = typeof root === "function" ? root : () => root;
   defineLockedGlobal("__sanderlingExtractors__", () => evaluateExtractors());
   defineLockedGlobal("__sanderlingNextAction__", () => {
-    if (!root) return null;
-    return serializeAction(nextAction(root, rng, host));
+    const current = resolveRoot();
+    if (!current) return null;
+    return serializeAction(nextAction(current, rng, host));
   });
 }
 
