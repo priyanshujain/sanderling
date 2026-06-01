@@ -142,6 +142,33 @@ func (d *Driver) TapSelector(_ context.Context, selector string) error {
 	return chromedp.Run(d.tabCtx, chromedp.Click(target, chromedp.NodeVisible))
 }
 
+// doubleTapGap is the inter-tap delay for DoubleTap: short enough to land both
+// events inside a sub-100 ms race window. The browser has no single double-tap
+// primitive, so the gesture is two taps with this gap.
+const doubleTapGap = 50 * time.Millisecond
+
+func (d *Driver) DoubleTap(ctx context.Context, x, y int) error {
+	return webDoubleTap(ctx, func() error { return d.Tap(ctx, x, y) })
+}
+
+func (d *Driver) DoubleTapSelector(ctx context.Context, selector string) error {
+	return webDoubleTap(ctx, func() error { return d.TapSelector(ctx, selector) })
+}
+
+func webDoubleTap(ctx context.Context, tap func() error) error {
+	if err := tap(); err != nil {
+		return err
+	}
+	timer := time.NewTimer(doubleTapGap)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	return tap()
+}
+
 func (d *Driver) InputText(_ context.Context, text string) error {
 	return chromedp.Run(d.tabCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
