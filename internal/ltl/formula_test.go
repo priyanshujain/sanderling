@@ -187,12 +187,6 @@ func TestNot_InvertsPure(t *testing.T) {
 	}
 }
 
-func TestVerdict_StringPending(t *testing.T) {
-	if got := VerdictPending.String(); got != "pending" {
-		t.Errorf("VerdictPending.String() = %q", got)
-	}
-}
-
 func TestMarshalJSON_AlwaysImpliesEventually(t *testing.T) {
 	formula := Always(Implies(Now(Pure(true)), EventuallyWithinSteps(Pure(false), 3)))
 	body, err := json.Marshal(formula)

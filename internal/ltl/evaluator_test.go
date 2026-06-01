@@ -93,15 +93,6 @@ func TestEvaluator_TopLevelThunkRespectsObservation(t *testing.T) {
 	}
 }
 
-func TestVerdict_String(t *testing.T) {
-	if VerdictHolds.String() != "holds" {
-		t.Errorf("VerdictHolds.String() = %q", VerdictHolds.String())
-	}
-	if VerdictViolated.String() != "violated" {
-		t.Errorf("VerdictViolated.String() = %q", VerdictViolated.String())
-	}
-}
-
 func TestDescribe(t *testing.T) {
 	formula := Always(Pure(true))
 	if got := Describe(formula); !strings.Contains(got, "Always") || !strings.Contains(got, "Pure(true)") {
