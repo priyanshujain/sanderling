@@ -1,3 +1,4 @@
+// Command hier-check is a developer tool that parses a hierarchy dump and reports selector matches.
 package main
 
 import (

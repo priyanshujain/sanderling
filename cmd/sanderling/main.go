@@ -1,3 +1,4 @@
+// Command sanderling is the CLI entry point for the property-based UI fuzzer.
 package main
 
 import (
