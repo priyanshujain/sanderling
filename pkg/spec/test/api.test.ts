@@ -4,38 +4,45 @@ import { test } from "node:test";
 import {
   DoubleTap,
   InputText,
+  LongPress,
   PressKey,
+  Scroll,
   Swipe,
   Tap,
   Wait,
   actions,
   always,
+  doubleTaps,
   eventually,
   extract,
   from,
   keyedBy,
+  longPresses,
   next,
   now,
   pressKey,
+  scrolls,
   swipes,
   taps,
+  typing,
   waitOnce,
   weighted,
   whenRoute,
 } from "../src/index.ts";
+import { setSamplerRng } from "../src/actions.ts";
+import { Pcg } from "../src/pcg.ts";
 import type {
   AccessibilityElement,
-  Action,
-  ActionGenerator,
   EventuallyFormula,
   Extracted,
   Formula,
-  Sampler,
   State,
   SanderlingRuntime,
-  WeightedEntry,
 } from "../src/types.ts";
 
+// extract() and the LTL constructors stay host-bound on __sanderling__; the
+// action factories now return plain data and need no runtime. This fake records
+// the host-bound calls so the forwarding tests can assert them.
 interface RecordedRuntime extends SanderlingRuntime {
   extracts: Array<(state: State) => unknown>;
   extractNames: Array<string | undefined>;
@@ -48,13 +55,10 @@ interface RecordedRuntime extends SanderlingRuntime {
   orCalls: number;
   andCalls: number;
   notCalls: number;
-  actionGenerators: Array<() => Action[]>;
-  weightedCalls: WeightedEntry[][];
-  fromCalls: unknown[][];
 }
 
 function makeChainableFormula(record: RecordedRuntime): Formula {
-  const formula: Formula = {
+  return {
     __sanderlingFormula: true,
     implies(other: Formula): Formula {
       record.impliesCalls++;
@@ -76,7 +80,6 @@ function makeChainableFormula(record: RecordedRuntime): Formula {
       return makeChainableFormula(record);
     },
   };
-  return formula;
 }
 
 function makeChainableEventually(record: RecordedRuntime): EventuallyFormula {
@@ -103,11 +106,8 @@ function installFakeRuntime(): RecordedRuntime {
     orCalls: 0,
     andCalls: 0,
     notCalls: 0,
-    actionGenerators: [] as Array<() => Action[]>,
-    weightedCalls: [] as WeightedEntry[][],
-    fromCalls: [] as unknown[][],
   };
-  const runtime = {
+  const runtime: SanderlingRuntime = {
     extract: <T>(getter: (state: State) => T, name?: string): Extracted<T> => {
       calls.extracts.push(getter as (state: State) => unknown);
       calls.extractNames.push(name);
@@ -129,40 +129,7 @@ function installFakeRuntime(): RecordedRuntime {
       calls.eventuallyPredicates.push(predicate);
       return makeChainableEventually(recorded);
     },
-    actions: (generator: () => Action[]): ActionGenerator => {
-      calls.actionGenerators.push(generator);
-      return { __sanderlingActionGenerator: true, generate: generator };
-    },
-    weighted: (...entries: WeightedEntry[]): ActionGenerator => {
-      calls.weightedCalls.push(entries);
-      return { __sanderlingActionGenerator: true, generate: () => [] };
-    },
-    from: <T>(items: readonly T[]): Sampler<T> => {
-      calls.fromCalls.push(items as unknown[]);
-      return { generate: () => items[0] as T };
-    },
-    tap: ({ on }) => ({ kind: "Tap", on }),
-    doubleTap: ({ on }) => ({ kind: "DoubleTap", on }),
-    longPress: ({ on }) => ({ kind: "LongPress", on }),
-    scroll: ({ direction, in: container }) => ({ kind: "Scroll", direction, in: container }),
-    inputText: ({ into, text }) => ({ kind: "InputText", into, text }),
-    swipe: ({ from: fromPoint, to, durationMillis }) => ({
-      kind: "Swipe",
-      from: fromPoint,
-      to,
-      durationMillis,
-    }),
-    pressKey: ({ key }) => ({ kind: "PressKey", key }),
-    wait: ({ durationMillis }) => ({ kind: "Wait", durationMillis }),
-    taps: { __sanderlingActionGenerator: true, generate: () => [] },
-    doubleTaps: { __sanderlingActionGenerator: true, generate: () => [] },
-    longPresses: { __sanderlingActionGenerator: true, generate: () => [] },
-    scrolls: { __sanderlingActionGenerator: true, generate: () => [] },
-    typing: { __sanderlingActionGenerator: true, generate: () => [] },
-    swipes: { __sanderlingActionGenerator: true, generate: () => [] },
-    waitOnce: { __sanderlingActionGenerator: true, generate: () => [] },
-    pressKeys: { __sanderlingActionGenerator: true, generate: () => [] },
-  } satisfies SanderlingRuntime;
+  };
   const recorded = Object.assign(runtime, calls) as RecordedRuntime;
   globalThis.__sanderling__ = recorded;
   return recorded;
@@ -202,14 +169,6 @@ test("always wraps a predicate into a formula via the runtime", () => {
   assert.equal(formula.__sanderlingFormula, true);
 });
 
-test("always accepts a formula handle", () => {
-  const runtime = installFakeRuntime();
-  const inner = now(() => true);
-  const wrapped = always(inner);
-  assert.equal(runtime.alwaysArgs.at(-1), inner);
-  assert.equal(wrapped.__sanderlingFormula, true);
-});
-
 test("now/next/eventually forward predicates", () => {
   const runtime = installFakeRuntime();
   const p1 = () => true;
@@ -240,20 +199,30 @@ test("formula chaining exposes implies/or/and/not", () => {
   assert.equal(runtime.notCalls, 1);
 });
 
-test("Tap returns a TapAction with the supplied selector", () => {
-  installFakeRuntime();
-  const action = Tap({ on: "id:login_continue" });
-  assert.deepEqual(action, { kind: "Tap", on: "id:login_continue" });
+test("Tap returns a TapAction descriptor", () => {
+  assert.deepEqual(Tap({ on: "id:login_continue" }), {
+    kind: "Tap",
+    on: "id:login_continue",
+  });
 });
 
-test("DoubleTap returns a DoubleTapAction with the supplied selector", () => {
-  installFakeRuntime();
-  const action = DoubleTap({ on: "id:save" });
-  assert.deepEqual(action, { kind: "DoubleTap", on: "id:save" });
+test("DoubleTap returns a DoubleTapAction descriptor", () => {
+  assert.deepEqual(DoubleTap({ on: "id:save" }), { kind: "DoubleTap", on: "id:save" });
+});
+
+test("LongPress returns a LongPressAction descriptor", () => {
+  assert.deepEqual(LongPress({ on: "id:row" }), { kind: "LongPress", on: "id:row" });
+});
+
+test("Scroll returns a ScrollAction descriptor", () => {
+  assert.deepEqual(Scroll({ direction: "down", in: "id:list" }), {
+    kind: "Scroll",
+    direction: "down",
+    in: "id:list",
+  });
 });
 
 test("Tap accepts an AccessibilityElement", () => {
-  installFakeRuntime();
   const element: AccessibilityElement = {
     id: "login_continue",
     find: () => undefined,
@@ -264,63 +233,86 @@ test("Tap accepts an AccessibilityElement", () => {
   assert.equal(action.on, element);
 });
 
-test("InputText returns an InputTextAction", () => {
-  installFakeRuntime();
-  const action = InputText({ into: "id:phone", text: "+1234567890" });
-  assert.deepEqual(action, { kind: "InputText", into: "id:phone", text: "+1234567890" });
-});
-
-test("Swipe returns a SwipeAction with the supplied endpoints", () => {
-  installFakeRuntime();
-  const action = Swipe({ from: { x: 10, y: 20 }, to: { x: 30, y: 40 }, durationMillis: 400 });
-  assert.deepEqual(action, {
-    kind: "Swipe",
-    from: { x: 10, y: 20 },
-    to: { x: 30, y: 40 },
-    durationMillis: 400,
+test("InputText returns an InputTextAction descriptor", () => {
+  assert.deepEqual(InputText({ into: "id:phone", text: "+1234567890" }), {
+    kind: "InputText",
+    into: "id:phone",
+    text: "+1234567890",
   });
 });
 
-test("PressKey returns a PressKeyAction", () => {
-  installFakeRuntime();
-  const action = PressKey({ key: "back" });
-  assert.deepEqual(action, { kind: "PressKey", key: "back" });
+test("Swipe returns a SwipeAction descriptor", () => {
+  assert.deepEqual(
+    Swipe({ from: { x: 10, y: 20 }, to: { x: 30, y: 40 }, durationMillis: 400 }),
+    { kind: "Swipe", from: { x: 10, y: 20 }, to: { x: 30, y: 40 }, durationMillis: 400 },
+  );
 });
 
-test("Wait returns a WaitAction", () => {
-  installFakeRuntime();
-  const action = Wait({ durationMillis: 500 });
-  assert.deepEqual(action, { kind: "Wait", durationMillis: 500 });
+test("PressKey returns a PressKeyAction descriptor", () => {
+  assert.deepEqual(PressKey({ key: "back" }), { kind: "PressKey", key: "back" });
 });
 
-test("actions wraps a generator into the runtime's ActionGenerator", () => {
-  const runtime = installFakeRuntime();
+test("Wait returns a WaitAction descriptor", () => {
+  assert.deepEqual(Wait({ durationMillis: 500 }), { kind: "Wait", durationMillis: 500 });
+});
+
+test("actions returns an actions node carrying the generator", () => {
   const generator = () => [Tap({ on: "id:x" })];
-  const wrapped = actions(generator);
-  assert.equal(runtime.actionGenerators[0], generator);
-  assert.equal(wrapped.__sanderlingActionGenerator, true);
+  const node = actions(generator);
+  assert.equal(node.kind, "actions");
+  assert.equal((node as { generate: unknown }).generate, generator);
 });
 
-test("weighted forwards weighted entries to the runtime", () => {
-  const runtime = installFakeRuntime();
-  const entries: WeightedEntry[] = [
+test("weighted returns a weighted node carrying the branches", () => {
+  const node = weighted([80, taps], [20, swipes]);
+  assert.equal(node.kind, "weighted");
+  assert.deepEqual((node as { branches: unknown }).branches, [
     [80, taps],
     [20, swipes],
-  ];
-  weighted(...entries);
-  assert.deepEqual(runtime.weightedCalls[0], entries);
+  ]);
 });
 
-test("from forwards items to the runtime", () => {
-  const runtime = installFakeRuntime();
-  const sampler = from(["a", "b", "c"]);
-  assert.deepEqual(runtime.fromCalls[0], ["a", "b", "c"]);
-  assert.equal(sampler.generate(), "a");
+test("builtin factories return builtin nodes", () => {
+  assert.deepEqual(taps, { kind: "builtin", verb: "taps" });
+  assert.deepEqual(doubleTaps, { kind: "builtin", verb: "doubleTaps" });
+  assert.deepEqual(longPresses, { kind: "builtin", verb: "longPresses" });
+  assert.deepEqual(scrolls, { kind: "builtin", verb: "scrolls" });
+  assert.deepEqual(typing, { kind: "builtin", verb: "typing" });
+  assert.deepEqual(swipes, { kind: "builtin", verb: "swipes" });
+  assert.deepEqual(waitOnce, { kind: "builtin", verb: "waitOnce" });
+  assert.deepEqual(pressKey, { kind: "builtin", verb: "pressKeys" });
 });
 
-function elementWithChildren(
-  cells: Record<string, string>,
-): AccessibilityElement {
+test("from with a single item returns it without drawing", () => {
+  const sampler = from(["only"]);
+  setSamplerRng(new Pcg(42n, 0n));
+  try {
+    assert.equal(sampler.generate(), "only");
+  } finally {
+    setSamplerRng(null);
+  }
+});
+
+test("from draws intN(len) from the active picker rng", () => {
+  const items = ["a", "b", "c"];
+  const sampler = from(items);
+  const rng = new Pcg(42n, 0n);
+  const oracle = new Pcg(42n, 0n);
+  setSamplerRng(rng);
+  try {
+    const index = oracle.intN(items.length);
+    assert.equal(sampler.generate(), items[index]);
+  } finally {
+    setSamplerRng(null);
+  }
+});
+
+test("from falls back to the first item outside a picker walk", () => {
+  setSamplerRng(null);
+  assert.equal(from(["a", "b", "c"]).generate(), "a");
+});
+
+function elementWithChildren(cells: Record<string, string>): AccessibilityElement {
   return {
     find: selector => {
       if (typeof selector === "string" || Array.isArray(selector)) return undefined;
@@ -346,58 +338,42 @@ test("keyedBy joins testTag-resolved texts with a stable delimiter", () => {
 });
 
 test("keyedBy returns empty string for an undefined element", () => {
-  installFakeRuntime();
   assert.equal(keyedBy(undefined, ["TxnDate"]), "");
 });
 
 test("keyedBy substitutes empty strings for missing children", () => {
-  installFakeRuntime();
   const row = elementWithChildren({ TxnDate: "2026-04-26" });
-  assert.equal(
-    keyedBy(row, ["TxnDate", "TxnNote", "TxnAmount"]),
-    "2026-04-26\x1f\x1f",
-  );
+  assert.equal(keyedBy(row, ["TxnDate", "TxnNote", "TxnAmount"]), "2026-04-26\x1f\x1f");
 });
 
-test("whenRoute returns [] when current route does not match", () => {
-  installFakeRuntime();
+test("whenRoute body is skipped when the current route does not match", () => {
   const route = { current: "home" as string | null };
   let bodyCalled = false;
-  const generator = whenRoute(route, "ledger", () => {
+  const node = whenRoute(route, "ledger", () => {
     bodyCalled = true;
     return [Tap({ on: "id:x" })];
   });
-  assert.deepEqual(generator.generate(), []);
+  assert.equal(node.kind, "actions");
+  assert.deepEqual((node as { generate: () => unknown }).generate(), []);
   assert.equal(bodyCalled, false);
 });
 
-test("whenRoute calls body when current route matches", () => {
-  installFakeRuntime();
+test("whenRoute runs the body when the current route matches", () => {
   const route = { current: "ledger" as string | null };
-  const generator = whenRoute(route, "ledger", () => [Tap({ on: "id:x" })]);
-  const result = generator.generate();
+  const node = whenRoute(route, "ledger", () => [Tap({ on: "id:x" })]);
+  const result = (node as { generate: () => Array<{ kind: string }> }).generate();
   assert.equal(result.length, 1);
   assert.equal(result[0]?.kind, "Tap");
 });
 
 test("whenRoute accepts an array of allowed routes", () => {
-  installFakeRuntime();
   const route = { current: "add-account" as string | null };
-  const generator = whenRoute(route, ["home", "add-account"], () => [Tap({ on: "id:x" })]);
-  assert.equal(generator.generate().length, 1);
+  const node = whenRoute(route, ["home", "add-account"], () => [Tap({ on: "id:x" })]);
+  assert.equal((node as { generate: () => unknown[] }).generate().length, 1);
 });
 
-test("whenRoute returns [] for null route", () => {
-  installFakeRuntime();
+test("whenRoute body is skipped for a null route", () => {
   const route = { current: null as string | null };
-  const generator = whenRoute(route, ["home"], () => [Tap({ on: "id:x" })]);
-  assert.deepEqual(generator.generate(), []);
-});
-
-test("default generators proxy through to the runtime", () => {
-  installFakeRuntime();
-  assert.equal(taps.__sanderlingActionGenerator, true);
-  assert.equal(swipes.__sanderlingActionGenerator, true);
-  assert.equal(waitOnce.__sanderlingActionGenerator, true);
-  assert.equal(pressKey.__sanderlingActionGenerator, true);
+  const node = whenRoute(route, ["home"], () => [Tap({ on: "id:x" })]);
+  assert.deepEqual((node as { generate: () => unknown }).generate(), []);
 });
