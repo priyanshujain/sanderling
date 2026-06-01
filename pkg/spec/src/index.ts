@@ -43,7 +43,7 @@ export {
   doubleTaps,
   from,
   longPresses,
-  pressKey,
+  pressKeys,
   scrolls,
   swipes,
   taps,

@@ -1,7 +1,7 @@
 import { doubleTaps, swipes, taps, typing, weighted } from "../actions.ts";
 import type { ActionGenerator } from "../types.ts";
 
-export { doubleTaps, pressKey, swipes, taps, typing, waitOnce } from "../actions.ts";
+export { doubleTaps, pressKeys, swipes, taps, typing, waitOnce } from "../actions.ts";
 // longPresses and scrolls are opt-in generators: not part of defaultActions,
 // but authors can include them in their own weighted() set.
 export { longPresses, scrolls } from "../actions.ts";
