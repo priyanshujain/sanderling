@@ -123,4 +123,4 @@ export const scrolls: GeneratorNode = builtinNode("scrolls");
 export const typing: GeneratorNode = builtinNode("typing");
 export const swipes: GeneratorNode = builtinNode("swipes");
 export const waitOnce: GeneratorNode = builtinNode("waitOnce");
-export const pressKey: GeneratorNode = builtinNode("pressKeys");
+export const pressKeys: GeneratorNode = builtinNode("pressKeys");
