@@ -22,7 +22,7 @@ DOCS_TEMPLATE := docs/_template/page.html
 INSPECT_DIST := internal/inspect/dist
 WEB_DIST := inspect-ui/dist
 
-.PHONY: bootstrap proto sidecar sanderling install test test-go test-kotlin test-spec-api web-typecheck web-build web-dev inspect-dev docs clean release-cli release-npm-dry
+.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-kotlin test-spec-api web-typecheck web-build web-dev inspect-dev docs clean release-cli release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -73,6 +73,11 @@ test: test-go test-spec-api web-typecheck
 
 test-go:
 	$(GO) test $(GO_PACKAGES)
+
+# Drives small web fixtures through the real pipeline against headless Chrome.
+# Kept out of `test` because it needs a Chrome binary on PATH.
+test-browser:
+	$(GO) test -tags browser ./internal/integration/...
 
 test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test
