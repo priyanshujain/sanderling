@@ -316,6 +316,36 @@ function buildAx(): unknown {
   };
 }
 
+// Uncaught errors and unhandled rejections are buffered here as they fire, so
+// the default noUncaughtExceptions property can observe them. Without this the
+// web state.exceptions would always be empty and a page that throws would
+// silently pass.
+interface CapturedException {
+  class: string;
+  message: string;
+  stackTrace: string;
+  unixMillis: number;
+}
+
+const capturedExceptions: CapturedException[] = [];
+
+function recordException(error: unknown): void {
+  const asError = error instanceof Error ? error : undefined;
+  capturedExceptions.push({
+    class: asError?.name ?? "Error",
+    message: asError?.message ?? String(error),
+    stackTrace: asError?.stack ?? "",
+    unixMillis: Date.now(),
+  });
+}
+
+globalThis.addEventListener("error", (event: ErrorEvent) => {
+  recordException(event.error ?? event.message);
+});
+globalThis.addEventListener("unhandledrejection", (event: PromiseRejectionEvent) => {
+  recordException(event.reason);
+});
+
 function buildState(): unknown {
   return {
     snapshots: {},
@@ -325,7 +355,7 @@ function buildState(): unknown {
     lastAction: null,
     time: 0,
     logs: [],
-    exceptions: [],
+    exceptions: capturedExceptions.slice(),
   };
 }
 
