@@ -2,117 +2,100 @@ package verifier
 
 import (
 	"encoding/json"
-	"os/exec"
+	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
-
-	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
-// TestCrossRuntimeParity is the W2 acceptance gate: given the SAME seed and the
-// SAME candidate state, the goja verifier and the node/web picker must emit a
-// BYTE-IDENTICAL action stream. Both engines run the SHARED pick.ts over the
-// SHARED Pcg, so this test fails the moment one runtime's JS number/bigint
-// behavior diverges from the other's.
+// TestCrossRuntimeParity is the W2 acceptance gate: for a FIXED seed and a FIXED
+// candidate state, the goja-bundled picker must emit the SAME action stream as
+// the node/web pick.ts. Both engines run the SHARED pick.ts over the SHARED Pcg,
+// so each asserts the SAME committed golden (pkg/spec/test/fixtures/
+// parity-golden.json); the node side does so in pkg/spec/test/parity.test.ts.
+// Matching one golden on both sides proves they match each other without either
+// invoking the other.
 //
-// The goja side drives the real verifier.NextAction over a fixed hierarchy. The
-// candidate list that hierarchy yields is then handed verbatim to the node
-// harness so both engines index the same targets; the only variable left is the
-// JS engine.
+// The candidate ORDER and the per-tick PCG draw order are the parity contract.
+// A stub __sanderlingHost__ feeds the SAME three candidates (in the SAME order)
+// for every verb, so the hierarchy filter is out of the picture and the only
+// variable left is the JS engine. The weighted root mixes a tap branch with a
+// typing branch, exercising weighted selection, a builtin, and the input corpus
+// within the 20-tick window; reordering candidates or adding/dropping a draw on
+// either side shifts the stream and fails the golden.
 func TestCrossRuntimeParity(t *testing.T) {
 	const seed uint64 = 0x9e3779b97f4a7c15
-	const steps = 32
-
-	const treeJSON = `{
-	  "attributes": {"resource-id": "root", "bounds": "[0,0,400,800]"},
-	  "children": [
-	    {"attributes": {"resource-id": "alpha", "bounds": "[0,0,400,100]"}, "clickable": true, "enabled": true, "children": []},
-	    {"attributes": {"resource-id": "beta", "bounds": "[0,100,400,200]"}, "clickable": true, "enabled": true, "children": []},
-	    {"attributes": {"resource-id": "gamma", "bounds": "[0,200,400,300]"}, "clickable": true, "enabled": true, "children": []},
-	    {"attributes": {"resource-id": "delta", "bounds": "[0,300,400,400]"}, "clickable": true, "enabled": true, "children": []},
-	    {"attributes": {"resource-id": "epsilon", "bounds": "[0,400,400,500]"}, "clickable": true, "enabled": true, "children": []}
-	  ]
-	}`
-	tree, err := hierarchy.Parse(treeJSON)
-	if err != nil {
-		t.Fatalf("parse tree: %v", err)
-	}
+	golden := loadParityGolden(t)
 
 	verifier := newVerifier(t, WithSeed(seed))
+	installStubHost(t, verifier)
 	loadActionSpec(t, verifier, `
-		import { taps } from "@sanderling/spec";
-		globalThis.actions = taps;
+		import { taps, typing, weighted } from "@sanderling/spec";
+		globalThis.actions = weighted([3, taps], [1, typing]);
 	`)
-	if err := verifier.PushSnapshot(SnapshotInput{Tree: tree}); err != nil {
-		t.Fatalf("push snapshot: %v", err)
-	}
 
-	gojaStream := make([]Action, 0, steps)
-	for range steps {
-		action, err := verifier.NextAction()
+	if len(golden) == 0 {
+		t.Fatal("golden stream is empty")
+	}
+	for step, want := range golden {
+		got, err := verifier.NextAction()
 		if err != nil {
-			t.Fatalf("goja next action: %v", err)
+			t.Fatalf("goja next action at step %d: %v", step, err)
 		}
-		gojaStream = append(gojaStream, action)
-	}
-
-	// Hand node the exact candidate list goja drew from, so both engines index
-	// the same targets and only the JS engine differs.
-	nodeStream := runNodeParity(t, seed, steps, verifier.candidatesForVerb("taps"))
-	if len(nodeStream) != len(gojaStream) {
-		t.Fatalf("stream length: goja=%d node=%d", len(gojaStream), len(nodeStream))
-	}
-	for i := range gojaStream {
-		if gojaStream[i] != nodeStream[i] {
-			t.Fatalf("step %d diverged:\n goja=%+v\n node=%+v", i, gojaStream[i], nodeStream[i])
+		if got != want {
+			t.Fatalf("step %d diverged from golden:\n goja=%+v\n want=%+v", step, got, want)
 		}
 	}
 }
 
-// runNodeParity runs the shared picker under node (tsx) with the given seed and
-// candidate list, decoding its serialized stream with the SAME DecodeAction the
-// runner uses so the comparison is apples-to-apples.
-func runNodeParity(t *testing.T, seed uint64, steps int, candidates []candidate) []Action {
+// installStubHost replaces the verifier's hierarchy-backed __sanderlingHost__
+// with one returning a FIXED candidate list for every verb, keeping the seed the
+// verifier was constructed with. It must run BEFORE Load, because the bundled
+// goja runtime entry captures the host when the spec evaluates.
+func installStubHost(t *testing.T, verifier *Verifier) {
 	t.Helper()
-	wire := make([]map[string]any, len(candidates))
-	for i, candidate := range candidates {
-		wire[i] = map[string]any{
-			"x": candidate.x, "y": candidate.y,
-			"width": candidate.width, "height": candidate.height,
-			"selector": candidate.selector,
-		}
+	const stub = `
+		const candidates = [
+			{ x: 50, y: 60, selector: "id:alpha", width: 100, height: 40 },
+			{ x: 150, y: 160, selector: "id:beta", width: 120, height: 48 },
+			{ x: 250, y: 260, selector: "id:gamma", width: 80, height: 32 },
+		];
+		const seedHi = globalThis.__sanderlingHost__.seedHi;
+		const seedLo = globalThis.__sanderlingHost__.seedLo;
+		globalThis.__sanderlingHost__ = {
+			platform: () => "android",
+			queryCandidates: () => candidates,
+			reportUnsupported: () => {},
+			seedHi,
+			seedLo,
+		};
+	`
+	if _, err := verifier.runtime.RunString(stub); err != nil {
+		t.Fatalf("install stub host: %v", err)
 	}
-	candidatesJSON, err := json.Marshal(wire)
+}
+
+// loadParityGolden decodes the shared golden stream with the SAME DecodeAction
+// the runner uses, so the goja comparison is apples-to-apples with the wire the
+// node picker emits.
+func loadParityGolden(t *testing.T) []Action {
+	t.Helper()
+	path, err := filepath.Abs("../../pkg/spec/test/fixtures/parity-golden.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	specDir, err := filepath.Abs("../../pkg/spec")
+	body, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read golden: %v", err)
 	}
-
-	command := exec.Command("node", "--import", "tsx", "test/parity-harness.ts")
-	command.Dir = specDir
-	command.Env = append(command.Environ(),
-		"SANDERLING_PARITY_SEED="+strconv.FormatUint(seed, 10),
-		"SANDERLING_PARITY_STEPS="+strconv.Itoa(steps),
-		"SANDERLING_PARITY_CANDIDATES="+string(candidatesJSON),
-	)
-	output, err := command.Output()
-	if err != nil {
-		t.Fatalf("node parity harness: %v\noutput: %s", err, output)
-	}
-
 	var raw []json.RawMessage
-	if err := json.Unmarshal(output, &raw); err != nil {
-		t.Fatalf("decode node output %q: %v", output, err)
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("decode golden: %v", err)
 	}
 	stream := make([]Action, len(raw))
 	for i, message := range raw {
 		action, err := DecodeAction(message)
 		if err != nil {
-			t.Fatalf("decode node action %d: %v", i, err)
+			t.Fatalf("decode golden action %d: %v", i, err)
 		}
 		stream[i] = action
 	}
