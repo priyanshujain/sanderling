@@ -1232,3 +1232,27 @@ func TestOverrideExtractorValues_PropagatesNestedObjectFields(t *testing.T) {
 		t.Errorf("scalar field missing: card.current.balance = %d, want 12345", got)
 	}
 }
+
+// TestUnsupportedVerbs_CollectedDedupedInOrder drives the real host binding the
+// shared picker invokes (__sanderlingHost__.reportUnsupported) and asserts the
+// verifier collects each verb once, in first-seen order, for the run report.
+func TestUnsupportedVerbs_CollectedDedupedInOrder(t *testing.T) {
+	verifier := newVerifier(t)
+	report, ok := goja.AssertFunction(
+		verifier.runtime.GlobalObject().Get("__sanderlingHost__").
+			ToObject(verifier.runtime).Get("reportUnsupported"),
+	)
+	if !ok {
+		t.Fatal("reportUnsupported host binding missing")
+	}
+	for _, verb := range []string{"scrolls", "swipes", "scrolls", "longPresses"} {
+		if _, err := report(goja.Undefined(), verifier.runtime.ToValue(verb)); err != nil {
+			t.Fatalf("reportUnsupported(%q): %v", verb, err)
+		}
+	}
+	got := verifier.UnsupportedVerbs()
+	want := []string{"scrolls", "swipes", "longPresses"}
+	if !slices.Equal(got, want) {
+		t.Errorf("UnsupportedVerbs = %v, want %v", got, want)
+	}
+}
