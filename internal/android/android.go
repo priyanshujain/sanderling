@@ -1,3 +1,4 @@
+// Package android boots and prepares an Android device or emulator for testing via adb.
 package android
 
 import (
