@@ -37,7 +37,7 @@ import type {
 } from "./action-tree.ts";
 import type { Direction, Point } from "./types.ts";
 import { INPUT_CORPUS, NATIVE_PRESS_KEYS, WEB_PRESS_KEYS } from "./corpus.ts";
-import { setSamplerRng } from "./actions.ts";
+import { setSamplerRng } from "./sampler-rng.ts";
 import { supports, warnUnsupportedOnce } from "./verbs.ts";
 
 // SWIPE_MIN_MAGNITUDE / SWIPE_MAGNITUDE_SPAN reproduce worker.go's

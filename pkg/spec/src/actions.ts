@@ -4,7 +4,6 @@
 // factory forwards to globalThis.__sanderling__ anymore: the same data tree
 // drives both the goja verifier and the V8 web runtime.
 
-import type { Pcg } from "./pcg.ts";
 import type {
   AccessibilityElement,
   Action,
@@ -23,6 +22,9 @@ import type {
   WeightedEntry,
 } from "./types.ts";
 import type { ActionDescriptor, BuiltinVerb, GeneratorNode } from "./action-tree.ts";
+import { getSamplerRng } from "./sampler-rng.ts";
+
+export { setSamplerRng } from "./sampler-rng.ts";
 
 function builtinNode(verb: BuiltinVerb): GeneratorNode {
   return { kind: "builtin", verb };
@@ -49,21 +51,12 @@ export function weighted(...entries: WeightedEntry[]): GeneratorNode {
   return { kind: "weighted", branches: entries };
 }
 
-// samplerRng is the picker's Pcg while it evaluates an `actions` node's
-// generator (set by pick.ts walkActions). `from(...).generate()` draws from it
-// so sampling shares the single deterministic stream. It is null outside a
-// walk; eager spec-time generate() calls then fall back to the first item.
-let samplerRng: Pcg | null = null;
-
-export function setSamplerRng(rng: Pcg | null): void {
-  samplerRng = rng;
-}
-
 export function from<T>(items: readonly T[]): Sampler<T> {
   return {
     generate(): T {
       if (items.length <= 1) return items[0] as T;
-      const index = samplerRng ? samplerRng.intN(items.length) : 0;
+      const rng = getSamplerRng();
+      const index = rng ? rng.intN(items.length) : 0;
       return items[index] as T;
     },
   };
