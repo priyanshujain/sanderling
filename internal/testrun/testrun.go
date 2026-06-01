@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/android"
@@ -173,6 +174,10 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		for _, violation := range summary.Violations {
 			fmt.Fprintf(stdout, "  step %d: %v\n", violation.StepIndex, violation.Properties)
 		}
+	}
+	if len(summary.UnsupportedVerbs) > 0 {
+		fmt.Fprintf(stdout, "unsupported on %s: %s\n",
+			options.Platform, strings.Join(summary.UnsupportedVerbs, ", "))
 	}
 	return nil
 }
