@@ -709,7 +709,12 @@ defineLockedGlobal("__sanderlingExtractors__", function (): Record<number, unkno
 });
 
 defineLockedGlobal("__sanderlingNextAction__", function (): unknown {
-  if (!actionsRoot) return null;
+  // The spec assigns its root to globalThis.actions (a data tree from
+  // @sanderling/spec actions.ts that carries the legacy __sanderlingKind tags
+  // this picker reads). Fall back to a root captured via __sanderling__ for the
+  // bundler stub specs that still call the old factories.
+  const root = (globalThis as { actions?: ActionGeneratorHandle }).actions ?? actionsRoot;
+  if (!root) return null;
   // Reset per-tick caches so each invocation gets a fresh DOM scan.
   randomTapCandidates = null;
   randomInputCandidates = null;
@@ -717,7 +722,7 @@ defineLockedGlobal("__sanderlingNextAction__", function (): unknown {
   // generator returns []. Otherwise on routes where most generators are
   // gated to other pages, ~80% of ticks would emit no action.
   for (let attempt = 0; attempt < 16; attempt++) {
-    const action = serializeAction(resolveGenerator(actionsRoot));
+    const action = serializeAction(resolveGenerator(root));
     if (action !== null) return action;
   }
   return null;
