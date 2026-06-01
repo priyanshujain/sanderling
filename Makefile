@@ -77,7 +77,7 @@ test-go:
 # Drives small web fixtures through the real pipeline against headless Chrome.
 # Kept out of `test` because it needs a Chrome binary on PATH.
 test-browser:
-	$(GO) test -tags browser ./internal/integration/...
+	$(GO) test -tags browser ./test/browser/...
 
 test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test
