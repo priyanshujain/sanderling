@@ -17,11 +17,11 @@ import {
 import { noUncaughtExceptions } from "@sanderling/spec/defaults/properties";
 
 // Page-presence checks via stable element ids.
-const onLoginPage = extract((s) => !!s.ax.find({ id: "email" }));
-const onHomePage = extract((s) => !!s.ax.find({ id: "add-account" }));
-const onAddAccountPage = extract((s) => !!s.ax.find({ id: "account-name" }));
-const onLedgerPage = extract((s) => !!s.ax.find({ id: "ledger" }));
-const onAddTxnPage = extract((s) => !!s.ax.find({ id: "txn-amount" }));
+const onLoginPage = extract((s) => !!s.ax.find({ id: "email" })).named("onLoginPage");
+const onHomePage = extract((s) => !!s.ax.find({ id: "add-account" })).named("onHomePage");
+const onAddAccountPage = extract((s) => !!s.ax.find({ id: "account-name" })).named("onAddAccountPage");
+const onLedgerPage = extract((s) => !!s.ax.find({ id: "ledger" })).named("onLedgerPage");
+const onAddTxnPage = extract((s) => !!s.ax.find({ id: "txn-amount" })).named("onAddTxnPage");
 
 // Auth state: true on any authenticated page, false only on login page.
 const loggedIn = extract((s) => {
@@ -34,7 +34,7 @@ const loggedIn = extract((s) => {
     s.ax.find({ id: "txn-amount" }) ||
     s.ax.find({ id: "add-txn" })
   );
-});
+}).named("loggedIn");
 
 // Read raw cents off explicit data-cents attributes; no aria-label parsing.
 function readCents(value: string | undefined): number {
@@ -46,7 +46,7 @@ function readCents(value: string | undefined): number {
 const totalBalance = extract((s) => {
   const el = s.ax.find({ id: "total-balance" });
   return readCents(el?.attrs?.["data-cents"]);
-});
+}).named("totalBalance");
 
 // Account cards expose `data-account-id` + `data-balance` so the spec reads
 // structured data without parsing aria-label.
@@ -56,33 +56,33 @@ const accountCards = extract((s) => {
     id: el.attrs?.["data-account-id"] ?? "",
     balance: readCents(el.attrs?.["data-balance"]),
   }));
-});
+}).named("accountCards");
 
 const ledgerTxnCount = extract((s) => {
   const el = s.ax.find({ id: "ledger" });
   return readCents(el?.attrs?.["data-txn-count"]);
-});
+}).named("ledgerTxnCount");
 
 const ledgerBalance = extract((s) => {
   const el = s.ax.find({ id: "ledger-balance" });
   return readCents(el?.attrs?.["data-cents"]);
-});
+}).named("ledgerBalance");
 
 // UI element handles.
-const emailField = extract((s) => s.ax.find({ id: "email" }));
-const passwordField = extract((s) => s.ax.find({ id: "password" }));
-const loginSubmit = extract((s) => s.ax.find({ id: "login-submit" }));
-const logoutButton = extract((s) => s.ax.find({ id: "logout" }));
-const addAccountButton = extract((s) => s.ax.find({ id: "add-account" }));
-const accountNameField = extract((s) => s.ax.find({ id: "account-name" }));
-const addAccountSubmit = extract((s) => s.ax.find({ id: "add-account-submit" }));
-const addTxnButton = extract((s) => s.ax.find({ id: "add-txn" }));
-const txnAmountField = extract((s) => s.ax.find({ id: "txn-amount" }));
-const txnNoteField = extract((s) => s.ax.find({ id: "txn-note" }));
-const txnCreditButton = extract((s) => s.ax.find({ id: "txn-credit" }));
-const txnDebitButton = extract((s) => s.ax.find({ id: "txn-debit" }));
-const txnSubmit = extract((s) => s.ax.find({ id: "txn-submit" }));
-const backButton = extract((s) => s.ax.find({ id: "back" }));
+const emailField = extract((s) => s.ax.find({ id: "email" })).named("emailField");
+const passwordField = extract((s) => s.ax.find({ id: "password" })).named("passwordField");
+const loginSubmit = extract((s) => s.ax.find({ id: "login-submit" })).named("loginSubmit");
+const logoutButton = extract((s) => s.ax.find({ id: "logout" })).named("logoutButton");
+const addAccountButton = extract((s) => s.ax.find({ id: "add-account" })).named("addAccountButton");
+const accountNameField = extract((s) => s.ax.find({ id: "account-name" })).named("accountNameField");
+const addAccountSubmit = extract((s) => s.ax.find({ id: "add-account-submit" })).named("addAccountSubmit");
+const addTxnButton = extract((s) => s.ax.find({ id: "add-txn" })).named("addTxnButton");
+const txnAmountField = extract((s) => s.ax.find({ id: "txn-amount" })).named("txnAmountField");
+const txnNoteField = extract((s) => s.ax.find({ id: "txn-note" })).named("txnNoteField");
+const txnCreditButton = extract((s) => s.ax.find({ id: "txn-credit" })).named("txnCreditButton");
+const txnDebitButton = extract((s) => s.ax.find({ id: "txn-debit" })).named("txnDebitButton");
+const txnSubmit = extract((s) => s.ax.find({ id: "txn-submit" })).named("txnSubmit");
+const backButton = extract((s) => s.ax.find({ id: "back" })).named("backButton");
 
 // -- Properties --
 
