@@ -31,10 +31,22 @@ func (v Verdict) String() string {
 // violated) or carries them forward as residuals. Once a single obligation
 // violates, the overall verdict latches to Violated.
 type Evaluator struct {
-	root     Formula
-	pending  []Formula
-	violated bool
-	steps    int
+	root      Formula
+	pending   []Formula
+	violated  bool
+	steps     int
+	violation *Violation
+}
+
+// Violation is the witness for a latched verdict: the failing sub-formula, a
+// human-readable reason, and the observation step it fired at. A thrown
+// predicate carries the goja error text as its reason; a plain false carries
+// "predicate false"; Finalize fills it for liveness obligations that never
+// discharged.
+type Violation struct {
+	Formula Formula
+	Reason  string
+	Step    int
 }
 
 func NewEvaluator(formula Formula) *Evaluator {
@@ -67,6 +79,10 @@ func (e *Evaluator) ObserveAt(now time.Time) Verdict {
 		case statusViolated:
 			e.violated = true
 			e.pending = nil
+			e.violation = result.witness
+			if e.violation != nil {
+				e.violation.Step = e.steps
+			}
 			return VerdictViolated
 		case statusPending:
 			e.pending = append(e.pending, result.formula)
@@ -113,10 +129,38 @@ func (e *Evaluator) Finalize() Verdict {
 		if finalize(obligation) == statusViolated {
 			e.violated = true
 			e.pending = nil
+			e.violation = &Violation{
+				Formula: obligation,
+				Reason:  finalizeReason(obligation),
+				Step:    e.steps,
+			}
 			return VerdictViolated
 		}
 	}
 	return VerdictHolds
+}
+
+// Violation returns the witness for a latched violation, or nil if the
+// evaluator has not violated. The witness is set by ObserveAt at the step a
+// reduction first violated, or by Finalize for a liveness obligation that
+// never discharged.
+func (e *Evaluator) Violation() *Violation {
+	return e.violation
+}
+
+// finalizeReason describes why an undischarged obligation resolves to violated
+// at run end.
+func finalizeReason(formula Formula) string {
+	switch formula.(type) {
+	case EventuallyFormula:
+		return "eventually never satisfied"
+	case NextFormula:
+		return "next obligation unmet at run end"
+	case ThunkFormula:
+		return "obligation unmet at run end"
+	default:
+		return "liveness obligation unmet at run end"
+	}
 }
 
 // finalize collapses a pending obligation to its terminal status assuming no
@@ -207,10 +251,36 @@ const (
 type reduceResult struct {
 	status  residualStatus
 	formula Formula
+	witness *Violation
 }
 
-func holds() reduceResult    { return reduceResult{status: statusHolds} }
+func holds() reduceResult { return reduceResult{status: statusHolds} }
+
+// violated reports a violation without an attached witness. Used where the
+// failing sub-formula is recovered from a child result whose own witness is
+// carried up by violatedFrom.
 func violated() reduceResult { return reduceResult{status: statusViolated} }
+
+// violatedWith reports a violation that originates at the given sub-formula
+// with the given reason. The reason distinguishes a thrown predicate from a
+// plain false so callers (and the inspect UI) can render the cause.
+func violatedWith(formula Formula, reason string) reduceResult {
+	return reduceResult{
+		status:  statusViolated,
+		witness: &Violation{Formula: formula, Reason: reason},
+	}
+}
+
+// violatedFrom propagates a child violation, preferring the child's witness so
+// the deepest failing leaf survives. When the child carried no witness the
+// fallback formula and reason describe this level instead.
+func violatedFrom(child reduceResult, fallback Formula, reason string) reduceResult {
+	if child.witness != nil {
+		return reduceResult{status: statusViolated, witness: child.witness}
+	}
+	return violatedWith(fallback, reason)
+}
+
 func pending(f Formula) reduceResult {
 	return reduceResult{status: statusPending, formula: f}
 }
@@ -221,13 +291,17 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		if concrete.Value {
 			return holds()
 		}
-		return violated()
+		return violatedWith(concrete, "pure false")
 
 	case ThunkFormula:
-		if concrete.Func() {
+		result, err := concrete.Func()
+		if err != nil {
+			return violatedWith(concrete, err.Error())
+		}
+		if result {
 			return holds()
 		}
-		return violated()
+		return violatedWith(concrete, "predicate false")
 
 	case NowFormula:
 		return reduce(concrete.Inner, now)
@@ -250,10 +324,10 @@ func reduce(formula Formula, now time.Time) reduceResult {
 			return holds()
 		}
 		if concrete.HasStepBound && concrete.StepBound <= 1 {
-			return violated()
+			return violatedFrom(innerResult, concrete, "eventually bound exhausted")
 		}
 		if concrete.HasDeadline && !now.Before(concrete.Deadline) {
-			return violated()
+			return violatedFrom(innerResult, concrete, "eventually deadline reached")
 		}
 		next := concrete
 		if concrete.HasStepBound {
@@ -282,7 +356,7 @@ func reduce(formula Formula, now time.Time) reduceResult {
 			return holds()
 		}
 		if left.status == statusViolated && right.status == statusViolated {
-			return violated()
+			return violatedFrom(left, concrete, "both disjuncts violated")
 		}
 		if left.status == statusViolated {
 			return pending(right.formula)
@@ -295,8 +369,11 @@ func reduce(formula Formula, now time.Time) reduceResult {
 	case AndFormula:
 		left := reduce(concrete.Left, now)
 		right := reduce(concrete.Right, now)
-		if left.status == statusViolated || right.status == statusViolated {
-			return violated()
+		if left.status == statusViolated {
+			return violatedFrom(left, concrete, "conjunct violated")
+		}
+		if right.status == statusViolated {
+			return violatedFrom(right, concrete, "conjunct violated")
 		}
 		if left.status == statusHolds && right.status == statusHolds {
 			return holds()
@@ -313,7 +390,7 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		inner := reduce(concrete.Inner, now)
 		switch inner.status {
 		case statusHolds:
-			return violated()
+			return violatedWith(concrete, "negated formula held")
 		case statusViolated:
 			return holds()
 		case statusPending:
@@ -329,7 +406,7 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		}
 		innerResult := reduce(concrete.Inner, now)
 		if innerResult.status == statusViolated {
-			return violated()
+			return violatedFrom(innerResult, concrete, "always inner violated")
 		}
 		// A bounded Always is the dual of a bounded Eventually: once the window
 		// closes without a breach it is vacuously satisfied. At the last step in

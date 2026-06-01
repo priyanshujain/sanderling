@@ -50,11 +50,13 @@ type PureFormula struct {
 	Value bool
 }
 
-// ThunkFormula wraps an opaque predicate closure. Name carries the predicate's
-// identity so two distinct predicates produce distinct describe() keys and are
-// never merged during obligation collapse.
+// ThunkFormula wraps an opaque predicate closure. Func returns the predicate's
+// boolean result and a non-nil error when the predicate threw; a thrown
+// predicate is a witnessed violation distinct from a plain false. Name carries
+// the predicate's identity so two distinct predicates produce distinct
+// describe() keys and are never merged during obligation collapse.
 type ThunkFormula struct {
-	Func func() bool
+	Func func() (bool, error)
 	Name string
 }
 
@@ -111,9 +113,9 @@ func Always(inner Formula) Formula { return AlwaysFormula{Inner: inner} }
 
 func Pure(value bool) Formula { return PureFormula{Value: value} }
 
-func Thunk(function func() bool) Formula { return ThunkFormula{Func: function} }
+func Thunk(function func() (bool, error)) Formula { return ThunkFormula{Func: function} }
 
-func ThunkNamed(name string, function func() bool) Formula {
+func ThunkNamed(name string, function func() (bool, error)) Formula {
 	return ThunkFormula{Func: function, Name: name}
 }
 
@@ -175,8 +177,8 @@ func (t ThunkFormula) describe() string {
 	}
 	return "Thunk(...)"
 }
-func (n NowFormula) describe() string    { return "Now(" + n.Inner.describe() + ")" }
-func (n NextFormula) describe() string   { return "Next(" + n.Inner.describe() + ")" }
+func (n NowFormula) describe() string  { return "Now(" + n.Inner.describe() + ")" }
+func (n NextFormula) describe() string { return "Next(" + n.Inner.describe() + ")" }
 func (e EventuallyFormula) describe() string {
 	parts := []string{e.Inner.describe()}
 	if e.HasStepBound {
