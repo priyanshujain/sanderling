@@ -292,6 +292,3 @@ export const actionsRoot = weighted(
   [4, taps],
   [2, waitOnce],
 );
-
-(globalThis as { actions?: unknown; properties?: unknown }).actions = actionsRoot;
-(globalThis as { properties?: unknown }).properties = properties;
