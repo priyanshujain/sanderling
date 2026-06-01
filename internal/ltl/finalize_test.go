@@ -7,7 +7,7 @@ import (
 )
 
 func TestFinalize_UnboundedEventuallyUnmetIsViolated(t *testing.T) {
-	evaluator := NewEvaluator(Eventually(ThunkNamed("p", func() bool { return false })))
+	evaluator := NewEvaluator(Eventually(ThunkNamed("p", func() (bool, error) { return false, nil })))
 	for index := range 3 {
 		if got := evaluator.ObserveAt(time.Unix(int64(index), 0)); got != VerdictPending {
 			t.Fatalf("step %d: got %v, want pending", index, got)
@@ -19,7 +19,7 @@ func TestFinalize_UnboundedEventuallyUnmetIsViolated(t *testing.T) {
 }
 
 func TestFinalize_FinalStepNextIsViolated(t *testing.T) {
-	evaluator := NewEvaluator(Next(ThunkNamed("p", func() bool { return true })))
+	evaluator := NewEvaluator(Next(ThunkNamed("p", func() (bool, error) { return true, nil })))
 	if got := evaluator.Observe(); got != VerdictPending {
 		t.Fatalf("step 1: got %v, want pending", got)
 	}
@@ -51,7 +51,7 @@ func TestFinalize_BoundedAlwaysVacuouslyHolds(t *testing.T) {
 	evaluator := NewEvaluator(EventuallyWithinSteps(Pure(false), 5))
 	evaluator.Observe()
 	// The negated form of this is a bounded Always; build it directly.
-	bounded := NewEvaluator(Always(Not(EventuallyWithinSteps(ThunkNamed("p", func() bool { return false }), 5))))
+	bounded := NewEvaluator(Always(Not(EventuallyWithinSteps(ThunkNamed("p", func() (bool, error) { return false, nil }), 5))))
 	bounded.Observe()
 	if got := bounded.Finalize(); got == VerdictViolated {
 		t.Errorf("bounded always should not finalize to violated, got %v", got)
@@ -68,9 +68,9 @@ func TestEventuallyWithin_ViolatesIffNConsecutiveFalse(t *testing.T) {
 		// trueAt < 0 means inner is never true.
 		trueAt := int(trueAtSeed)%(bound+2) - 1
 		step := 0
-		inner := ThunkNamed("p", func() bool {
+		inner := ThunkNamed("p", func() (bool, error) {
 			current := trueAt >= 0 && step == trueAt
-			return current
+			return current, nil
 		})
 		evaluator := NewEvaluator(EventuallyWithinSteps(inner, bound))
 
@@ -103,10 +103,10 @@ func TestViolationLatchIsMonotonic(t *testing.T) {
 			values[index] = (seed>>uint(index))&1 == 1
 		}
 		step := 0
-		evaluator := NewEvaluator(Always(ThunkNamed("p", func() bool {
+		evaluator := NewEvaluator(Always(ThunkNamed("p", func() (bool, error) {
 			current := values[step%len(values)]
 			step++
-			return current
+			return current, nil
 		})))
 		seenViolated := false
 		for index := range 16 {
@@ -140,8 +140,8 @@ func TestCollapse_IdenticalObligationsMerge(t *testing.T) {
 
 func TestCollapse_DistinctPredicatesDoNotMerge(t *testing.T) {
 	merged := collapse([]Formula{
-		Eventually(ThunkNamed("p3", func() bool { return false })),
-		Eventually(ThunkNamed("p4", func() bool { return false })),
+		Eventually(ThunkNamed("p3", func() (bool, error) { return false, nil })),
+		Eventually(ThunkNamed("p4", func() (bool, error) { return false, nil })),
 	})
 	if len(merged) != 2 {
 		t.Errorf("distinct predicates must not merge, got %d", len(merged))
@@ -151,7 +151,7 @@ func TestCollapse_DistinctPredicatesDoNotMerge(t *testing.T) {
 func TestCollapse_NamedThunkLeakBoundsPendingSet(t *testing.T) {
 	// Always(Eventually(sameThunk)): each step spawns an identical obligation.
 	// Without collapse the pending set grows unboundedly.
-	evaluator := NewEvaluator(Always(Eventually(ThunkNamed("p", func() bool { return false }))))
+	evaluator := NewEvaluator(Always(Eventually(ThunkNamed("p", func() (bool, error) { return false, nil }))))
 	for index := range 20 {
 		evaluator.ObserveAt(time.Unix(int64(index), 0))
 	}

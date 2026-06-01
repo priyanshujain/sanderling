@@ -14,7 +14,7 @@ func leafFor(seed uint8) Formula {
 	case 1:
 		return Pure(false)
 	default:
-		return ThunkNamed("p", func() bool { return true })
+		return ThunkNamed("p", func() (bool, error) { return true, nil })
 	}
 }
 
@@ -66,7 +66,7 @@ func TestNNF_BoundedEventuallyDualKeepsBound(t *testing.T) {
 }
 
 func TestNNF_PushesNotToThunkLeaf(t *testing.T) {
-	formula := nnf(Always(Not(Always(ThunkNamed("p", func() bool { return true })))))
+	formula := nnf(Always(Not(Always(ThunkNamed("p", func() (bool, error) { return true, nil })))))
 	always, ok := formula.(AlwaysFormula)
 	if !ok {
 		t.Fatalf("expected AlwaysFormula, got %T", formula)
@@ -85,7 +85,7 @@ func TestNNF_PushesNotToThunkLeaf(t *testing.T) {
 }
 
 func TestNNF_NotAlwaysTrueViaEvaluatorReportsViolated(t *testing.T) {
-	evaluator := NewEvaluator(Always(Not(Always(ThunkNamed("p", func() bool { return true })))))
+	evaluator := NewEvaluator(Always(Not(Always(ThunkNamed("p", func() (bool, error) { return true, nil })))))
 	for index := range 4 {
 		if got := evaluator.ObserveAt(time.Unix(int64(index), 0)); got == VerdictViolated {
 			t.Fatalf("step %d latched violated prematurely", index)

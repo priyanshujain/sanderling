@@ -50,7 +50,7 @@ func TestAlways_Now_ViolatesImmediately(t *testing.T) {
 
 func TestAlways_Next_PendingThenViolated(t *testing.T) {
 	y := true
-	evaluator := NewEvaluator(Always(Next(Thunk(func() bool { return y }))))
+	evaluator := NewEvaluator(Always(Next(Thunk(func() (bool, error) { return y, nil }))))
 
 	if got := evaluator.Observe(); got != VerdictPending {
 		t.Errorf("step 1: got %v, want pending", got)
@@ -62,7 +62,7 @@ func TestAlways_Next_PendingThenViolated(t *testing.T) {
 }
 
 func TestAlways_Next_StaysPendingWhileInnerHolds(t *testing.T) {
-	evaluator := NewEvaluator(Always(Next(Thunk(func() bool { return true }))))
+	evaluator := NewEvaluator(Always(Next(Thunk(func() (bool, error) { return true, nil }))))
 	for index := range 3 {
 		if got := evaluator.ObserveAt(time.Unix(int64(index), 0)); got != VerdictPending {
 			t.Errorf("step %d: got %v, want pending", index+1, got)
@@ -76,8 +76,8 @@ func TestAlways_NowImpliesEventuallyWithin_ViolatesWhenYLate(t *testing.T) {
 	xValues := []bool{true, false, false, false, false}
 	yValues := []bool{false, false, false, true, true}
 	step := 0
-	predX := Thunk(func() bool { return xValues[step] })
-	predY := Thunk(func() bool { return yValues[step] })
+	predX := Thunk(func() (bool, error) { return xValues[step], nil })
+	predY := Thunk(func() (bool, error) { return yValues[step], nil })
 
 	formula := Always(Implies(Now(predX), EventuallyWithinSteps(predY, 3)))
 	evaluator := NewEvaluator(formula)
@@ -107,8 +107,8 @@ func TestAlways_NowImpliesEventuallyWithin_HoldsWhenYInBound(t *testing.T) {
 	xValues := []bool{true, false, false}
 	yValues := []bool{false, false, true}
 	step := 0
-	predX := Thunk(func() bool { return xValues[step] })
-	predY := Thunk(func() bool { return yValues[step] })
+	predX := Thunk(func() (bool, error) { return xValues[step], nil })
+	predY := Thunk(func() (bool, error) { return yValues[step], nil })
 
 	formula := Always(Implies(Now(predX), EventuallyWithinSteps(predY, 3)))
 	evaluator := NewEvaluator(formula)
@@ -231,7 +231,7 @@ func TestMarshalJSON_NextAndThunkAndError(t *testing.T) {
 	if string(body) != `{"op":"next","arg":{"op":"true"}}` {
 		t.Errorf("next marshal wrong: %s", body)
 	}
-	body, _ = json.Marshal(Thunk(func() bool { return true }))
+	body, _ = json.Marshal(Thunk(func() (bool, error) { return true, nil }))
 	if string(body) != `{"op":"predicate"}` {
 		t.Errorf("thunk marshal wrong: %s", body)
 	}
