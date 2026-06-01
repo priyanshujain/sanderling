@@ -297,9 +297,6 @@ func (v *Verifier) formulaHandle(kind specKind, index int) *goja.Object {
 	handle := v.runtime.NewObject()
 	_ = handle.Set(tagFormula, true)
 	_ = handle.Set(tagFormulaSpecIndex, index)
-	// Keep __sanderlingIndex as an alias so older property shapes that read it keep
-	// working during backward-compat transitions.
-	_ = handle.Set("__sanderlingIndex", index)
 
 	_ = handle.Set("implies", v.binaryChain(index, specKindImplies))
 	_ = handle.Set("or", v.binaryChain(index, specKindOr))
