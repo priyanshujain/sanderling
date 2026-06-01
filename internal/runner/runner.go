@@ -166,6 +166,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// progressing.
 		var violations []string
 		var extractorChanges map[string]trace.ExtractorChange
+		var witnesses map[string]trace.Witness
+		skippedVerification := false
 		if !transitional {
 			if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
 				Tree:       tree,
@@ -186,13 +188,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			}
 			options.Verifier.EvaluateProperties()
 			violations = options.Verifier.NewlyViolatedProperties()
-			for _, name := range violations {
-				if predicateErr := options.Verifier.PredicateError(name); predicateErr != nil {
-					logger.Warn("predicate error", "step", stepIndex, "property", name, "err", predicateErr)
-				}
-			}
+			witnesses = collectWitnesses(options.Verifier, violations, logger, stepIndex)
 			extractorChanges = encodeExtractorChanges(options.Verifier.ChangedExtractors())
 		} else {
+			skippedVerification = true
 			logger.Warn("transitional tree after retry budget; skipping verifier",
 				"step", stepIndex, "screen", screen, "nodes", treeSize)
 		}
@@ -240,16 +239,18 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		step := trace.Step{
-			Index:            stepIndex,
-			Timestamp:        stepStart,
-			Screen:           screen,
-			NextAction:       traceAction,
-			Violations:       violations,
-			Hierarchy:        tree,
-			Residuals:        residuals,
-			Metrics:          metrics,
-			ExtractorChanges: extractorChanges,
-			Transitional:     transitional,
+			Index:               stepIndex,
+			Timestamp:           stepStart,
+			Screen:              screen,
+			NextAction:          traceAction,
+			Violations:          violations,
+			Hierarchy:           tree,
+			Residuals:           residuals,
+			Metrics:             metrics,
+			ExtractorChanges:    extractorChanges,
+			Transitional:        transitional,
+			SkippedVerification: skippedVerification,
+			Witnesses:           witnesses,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
@@ -273,6 +274,27 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				logger.Warn("wait_for_idle failed", "step", stepIndex, "err", idleErr)
 			}
 			idleCancel()
+		}
+	}
+
+	// Finalize each evaluator once the loop ends so liveness obligations that
+	// never discharged (an unbounded eventually that never fired, a strong
+	// next with no successor) are reported as violations rather than silently
+	// left pending. Properties already violated mid-run are not re-reported.
+	if ended := options.Verifier.Finalize(); len(ended) > 0 {
+		witnesses := collectWitnesses(options.Verifier, ended, logger, stepIndex)
+		summary.Violations = append(summary.Violations, ViolationRecord{
+			StepIndex:  stepIndex,
+			Properties: ended,
+		})
+		finalStep := trace.Step{
+			Index:      stepIndex,
+			Timestamp:  time.Now(),
+			Violations: ended,
+			Witnesses:  witnesses,
+		}
+		if err := options.TraceWriter.WriteStep(finalStep); err != nil {
+			return summary, fmt.Errorf("finalize trace: %w", err)
 		}
 	}
 
@@ -801,6 +823,33 @@ func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Actio
 	default:
 		return verifier.Action{}, verifier.ErrNoAction
 	}
+}
+
+// collectWitnesses gathers the violation witness for each newly-violated
+// property, logs its cause, and returns them keyed by property name for the
+// trace. Properties without a captured witness are skipped.
+func collectWitnesses(verifierInstance *verifier.Verifier, properties []string, logger *slog.Logger, stepIndex int) map[string]trace.Witness {
+	if len(properties) == 0 {
+		return nil
+	}
+	witnesses := map[string]trace.Witness{}
+	for _, name := range properties {
+		witness := verifierInstance.Witness(name)
+		if witness == nil {
+			continue
+		}
+		logger.Warn("property violated",
+			"step", stepIndex, "property", name, "reason", witness.Reason, "error", witness.IsError)
+		witnesses[name] = trace.Witness{
+			Reason:     witness.Reason,
+			IsError:    witness.IsError,
+			Extractors: witness.Extractors,
+		}
+	}
+	if len(witnesses) == 0 {
+		return nil
+	}
+	return witnesses
 }
 
 func encodeExtractorChanges(changes map[string]verifier.ExtractorChange) map[string]trace.ExtractorChange {
