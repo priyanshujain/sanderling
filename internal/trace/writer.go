@@ -1,3 +1,4 @@
+// Package trace records each run's steps, snapshots, and violations to disk for later inspection.
 package trace
 
 import (

@@ -1,3 +1,4 @@
+// Package verifier runs the spec's extractors and property formulas against each observed step.
 package verifier
 
 import (
