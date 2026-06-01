@@ -95,8 +95,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Pin stable: the action's default (latest) pulls a dev Chromium whose
+      # remote-debugging socket is flaky under the driver, even though the
+      # browser otherwise launches headless.
       - name: Set up Chrome
         uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
 
       # Ubuntu 24.04 (current ubuntu-latest) restricts unprivileged user
       # namespaces via AppArmor, which stops headless Chrome from starting even
