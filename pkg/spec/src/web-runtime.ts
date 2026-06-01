@@ -2,15 +2,22 @@
 
 // V8-side runtime for `sanderling test --platform web`.
 //
-// The user spec is bundled with this file as the first import so that
-// globalThis.__sanderling__ is installed before the spec evaluates. The host
-// invokes window.__sanderlingExtractors__() and window.__sanderlingNextAction__()
-// over CDP each tick. LTL predicates are intentionally stubbed: properties
-// run host-side in goja, which loads its own bundle of the same spec.
+// This file is the WEB Host. It installs globalThis.__sanderling__ (extract +
+// LTL formula binds) before the spec evaluates, implements the Host interface
+// (platform/seed/queryCandidates/reportUnsupported) over the live DOM, and then
+// delegates ALL action generation to the shared picker via installRuntime
+// (runtime-entry.ts -> pick.ts). The goja verifier runs the SAME picker over the
+// SAME Pcg, so a given seed yields an identical action stream by construction.
 //
-// Element references never cross V8/host. Action targets that reference an
-// AccessibilityElement collapse to `{x, y}` from getBoundingClientRect()
-// before serialization.
+// The host invokes window.__sanderlingExtractors__() and
+// window.__sanderlingNextAction__() over CDP each tick. LTL predicates are
+// stubbed: properties run host-side in goja, which loads its own bundle.
+//
+// Element references never cross V8/host. queryCandidates resolves each element
+// to a {x, y} Point via getBoundingClientRect before the picker sees it.
+
+import { installRuntime } from "./runtime-entry.ts";
+import type { BuiltinVerb, Candidate, Host } from "./action-tree.ts";
 
 interface Handle {
   current: unknown;
@@ -23,47 +30,12 @@ interface ExtractorEntry {
   name: string;
 }
 
-interface ActionGeneratorHandle {
-  __sanderlingActionGenerator: true;
-  __sanderlingKind: string;
-  generate?: () => unknown;
-  entries?: readonly [number, ActionGeneratorHandle][];
-}
-
 const extractors: ExtractorEntry[] = [];
-let actionsRoot: ActionGeneratorHandle | null = null;
 
-// Deterministic PRNG so `sanderling test --platform web --seed N` is
-// reproducible. The host computes a 64-bit seed and injects it via the bundle
-// define SANDERLING_SEED; web-runtime reads it at init. Bit-identical parity
-// with the goja PCG stream is deliberately out of scope here: this only
-// guarantees same-seed -> same-run on web.
-function deriveSeed32(raw: string | undefined): number {
-  if (!raw) return 0;
-  // Why: a 64-bit seed loses precision as a JS Number, so fold it to 32 bits
-  // off the decimal string without ever materializing the full value.
-  let hash = 0;
-  for (let index = 0; index < raw.length; index++) {
-    hash = (Math.imul(hash, 31) + raw.charCodeAt(index)) | 0;
-  }
-  return hash >>> 0;
-}
-
-// mulberry32: a small, well-known 32-bit PRNG. Returns a float in [0, 1).
-function mulberry32(seed: number): () => number {
-  let state = seed >>> 0;
-  return function next(): number {
-    state = (state + 0x6d2b79f5) | 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// esbuild Define replaces the exact member expression `process.env.SANDERLING_SEED`
-// with the host-injected seed string at bundle time. When unset (e.g. the
-// bundler unit tests or a non-test eval) it stays undefined and the seed is 0.
+// SANDERLING_SEED is the host-computed 64-bit seed, injected as a decimal
+// string via the bundle define. We parse it into a BigInt without ever going
+// through a JS Number (which loses precision above 2^53), matching the goja
+// side's rand.NewPCG(seed, 0): hi = seed, lo = 0.
 function injectedSeed(): string | undefined {
   try {
     return process.env.SANDERLING_SEED;
@@ -72,11 +44,17 @@ function injectedSeed(): string | undefined {
   }
 }
 
-const seededRandomValue = mulberry32(deriveSeed32(injectedSeed()));
-
-function random(): number {
-  return seededRandomValue();
+function seedBigInt(): bigint {
+  const raw = injectedSeed();
+  if (!raw) return 0n;
+  try {
+    return BigInt(raw);
+  } catch {
+    return 0n;
+  }
 }
+
+const SEED_HI = seedBigInt();
 
 function noopFormula(): unknown {
   const formula: Record<string, unknown> = { __sanderlingFormula: true };
@@ -350,72 +328,6 @@ const runtime = {
   now: noopFormula,
   next: noopFormula,
   eventually: noopFormula,
-  actions(generator: () => unknown): ActionGeneratorHandle {
-    const handle: ActionGeneratorHandle = {
-      __sanderlingActionGenerator: true,
-      __sanderlingKind: "actions",
-      generate: generator,
-    };
-    if (!actionsRoot) actionsRoot = handle;
-    return handle;
-  },
-  weighted(...entries: [number, ActionGeneratorHandle][]): ActionGeneratorHandle {
-    const handle: ActionGeneratorHandle = {
-      __sanderlingActionGenerator: true,
-      __sanderlingKind: "weighted",
-      entries,
-    };
-    actionsRoot = handle;
-    return handle;
-  },
-  from<T>(items: readonly T[]): { generate: () => T | undefined } {
-    return {
-      generate(): T | undefined {
-        if (items.length === 0) return undefined;
-        return items[Math.floor(random() * items.length)];
-      },
-    };
-  },
-  tap(p: { on: unknown }): unknown {
-    return { kind: "Tap", on: p.on };
-  },
-  doubleTap(p: { on: unknown }): unknown {
-    return { kind: "DoubleTap", on: p.on };
-  },
-  longPress(): unknown {
-    // Why: web has no long-press gesture for v1; the factory returns null so LongPress() calls no-op.
-    return null;
-  },
-  scroll(): unknown {
-    // Why: web has no native scroll gesture for v1; the factory returns null so Scroll() calls no-op.
-    return null;
-  },
-  inputText(p: { into: unknown; text: string }): unknown {
-    return { kind: "InputText", into: p.into, text: p.text };
-  },
-  swipe(_p: { from: unknown; to: unknown; durationMillis?: number }): unknown {
-    // Why: web has no swipe gesture; the factory returns null so Swipe() calls in specs no-op.
-    return null;
-  },
-  pressKey(p: { key: string }): unknown {
-    if (!WEB_PRESS_KEYS.includes(p.key)) {
-      throw new Error(
-        `pressKey: unsupported key ${JSON.stringify(p.key)} (allowed: ${WEB_PRESS_KEYS.join(", ")})`,
-      );
-    }
-    return { kind: "PressKey", key: p.key };
-  },
-  wait(p: { durationMillis: number }): unknown {
-    return { kind: "Wait", durationMillis: p.durationMillis };
-  },
-  taps: { __sanderlingActionGenerator: true, __sanderlingKind: "taps" } as ActionGeneratorHandle,
-  doubleTaps: { __sanderlingActionGenerator: true, __sanderlingKind: "doubleTaps" } as ActionGeneratorHandle,
-  longPresses: { __sanderlingActionGenerator: true, __sanderlingKind: "longPresses" } as ActionGeneratorHandle,
-  scrolls: { __sanderlingActionGenerator: true, __sanderlingKind: "scrolls" } as ActionGeneratorHandle,
-  typing: { __sanderlingActionGenerator: true, __sanderlingKind: "typing" } as ActionGeneratorHandle,
-  swipes: { __sanderlingActionGenerator: true, __sanderlingKind: "swipes" } as ActionGeneratorHandle,
-  waitOnce: { __sanderlingActionGenerator: true, __sanderlingKind: "waitOnce" } as ActionGeneratorHandle,
-  pressKeys: { __sanderlingActionGenerator: true, __sanderlingKind: "pressKey" } as ActionGeneratorHandle,
 };
 
 // Lock the runtime globals so a misbehaving (or malicious) page script can't
@@ -480,100 +392,21 @@ function sanitizeAt(value: unknown, depth: number, seen: WeakSet<object>): unkno
   return out;
 }
 
-function pickWeighted(
-  handle: ActionGeneratorHandle,
-  rand: () => number = random,
-): ActionGeneratorHandle | null {
-  const entries = handle.entries ?? [];
-  if (entries.length === 0) return null;
-  let total = 0;
-  for (const [weight] of entries) total += Math.max(0, weight);
-  if (total <= 0) return null;
-  const pick = rand() * total;
-  let cumulative = 0;
-  for (const [weight, generator] of entries) {
-    cumulative += Math.max(0, weight);
-    if (pick < cumulative) return generator;
-  }
-  return entries[entries.length - 1]?.[1] ?? null;
-}
-
-function resolveGenerator(handle: ActionGeneratorHandle): unknown {
-  switch (handle.__sanderlingKind) {
-    case "actions": {
-      const generated = handle.generate?.();
-      return pickFromArray(generated);
-    }
-    case "weighted": {
-      const inner = pickWeighted(handle);
-      if (!inner) return null;
-      return resolveGenerator(inner);
-    }
-    case "taps":
-      return randomTap("Tap");
-    case "doubleTaps":
-      return randomTap("DoubleTap");
-    case "typing":
-      return randomInput();
-    case "swipes":
-      return randomSwipe();
-    case "longPresses":
-    case "scrolls":
-      // Why: web has no long-press or native scroll gesture for v1; both no-op.
-      return null;
-    case "waitOnce":
-      return { kind: "Wait", durationMillis: 500 };
-    case "pressKey":
-      return randomPressKey();
-    default:
-      return null;
-  }
-}
-
-// Per-tick cache so the 16-attempt retry loop in __sanderlingNextAction__
-// doesn't re-walk the DOM and re-flush layout on every iteration.
-let randomTapCandidates: HTMLElement[] | null = null;
-
-function randomTap(kind: "Tap" | "DoubleTap"): unknown {
-  if (!randomTapCandidates) {
-    randomTapCandidates = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        'a, button, input, select, textarea, [role="button"], [onclick]',
-      ),
-    ).filter((element) => {
-      if ((element as HTMLButtonElement).disabled) return false;
-      const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
-    });
-  }
-  const candidates = randomTapCandidates;
-  if (candidates.length === 0) return null;
-  const picked = candidates[Math.floor(random() * candidates.length)];
-  if (!picked) return null;
-  const rect = picked.getBoundingClientRect();
-  return {
-    kind,
-    on: {
-      x: Math.round(rect.left + rect.width / 2),
-      y: Math.round(rect.top + rect.height / 2),
-    },
-  };
-}
-
-// Per-tick cache mirroring randomTapCandidates, reset each NextAction tick.
-let randomInputCandidates: HTMLElement[] | null = null;
+// Per-verb DOM selector sets. The tappable set backs taps/doubleTaps/longPresses
+// (every tappable element is also a valid long-press target); the editable set
+// backs typing; swipes/scrolls target the scrollable element.
+const TAPPABLE_SELECTOR = 'a, button, input, select, textarea, [role="button"], [onclick]';
+const EDITABLE_SELECTOR = "input, textarea, [contenteditable]";
 
 const NON_TEXT_INPUT_TYPES = [
   "button", "submit", "checkbox", "radio", "range", "color", "file", "image", "reset",
 ];
 
-// Edge-case input pool mirroring the goja-side inputCorpus: empty, whitespace,
-// overflow length, unicode, numeric boundaries, and common injection payloads.
-const WEB_INPUT_CORPUS = [
-  "", "a", "a".repeat(4096), "🙂🔥💸", "  ", "\t\n", "-1",
-  "999999999999999999999", "0.0000001", "1e10", "'; DROP TABLE--",
-  "<script>alert(1)</script>", "../../etc/passwd", "%s%n", "NaN",
-];
+function isVisible(element: HTMLElement): boolean {
+  if ((element as HTMLButtonElement).disabled) return false;
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
 
 function isEditableElement(element: HTMLElement): boolean {
   if (element.isContentEditable) return true;
@@ -586,156 +419,109 @@ function isEditableElement(element: HTMLElement): boolean {
   return false;
 }
 
-function randomInput(): unknown {
-  if (!randomInputCandidates) {
-    randomInputCandidates = Array.from(
-      document.querySelectorAll<HTMLElement>("input, textarea, [contenteditable]"),
-    ).filter((element) => {
-      if (!isEditableElement(element)) return false;
-      if ((element as HTMLInputElement).disabled) return false;
-      const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
-    });
-  }
-  const candidates = randomInputCandidates;
-  if (candidates.length === 0) return null;
-  const picked = candidates[Math.floor(random() * candidates.length)];
-  if (!picked) return null;
-  const rect = picked.getBoundingClientRect();
-  const text = WEB_INPUT_CORPUS[Math.floor(random() * WEB_INPUT_CORPUS.length)];
+function pointOf(element: Element): Candidate {
+  const rect = element.getBoundingClientRect();
   return {
-    kind: "InputText",
-    into: {
-      x: Math.round(rect.left + rect.width / 2),
-      y: Math.round(rect.top + rect.height / 2),
-    },
-    text,
+    x: Math.round(rect.left + rect.width / 2),
+    y: Math.round(rect.top + rect.height / 2),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
   };
 }
 
-function randomSwipe(): unknown {
-  // Why: web has no swipe gesture; pointer drags into empty divs are noise.
-  return null;
+function tappableCandidates(): Candidate[] {
+  return Array.from(document.querySelectorAll<HTMLElement>(TAPPABLE_SELECTOR))
+    .filter(isVisible)
+    .map(pointOf);
 }
 
-const WEB_PRESS_KEYS = ["enter", "tab", "escape", "up", "down", "left", "right"];
-
-function randomPressKey(): unknown {
-  // Why: only emit keys with meaningful browser semantics; "back"/"home" don't navigate.
-  const key = WEB_PRESS_KEYS[Math.floor(random() * WEB_PRESS_KEYS.length)];
-  return { kind: "PressKey", key };
+function editableCandidates(): Candidate[] {
+  return Array.from(document.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR))
+    .filter((element) => isEditableElement(element) && isVisible(element))
+    .map(pointOf);
 }
 
-function pickFromArray(value: unknown): unknown {
-  if (!value) return null;
-  if (!Array.isArray(value)) return value;
-  if (value.length === 0) return null;
-  return value[Math.floor(random() * value.length)];
-}
-
-function serializeAction(action: unknown): unknown {
-  if (!action || typeof action !== "object") return null;
-  const obj = action as Record<string, unknown>;
-  switch (obj.kind) {
-    case "Tap": {
-      const point = pointOf(obj.on);
-      if (!point) {
-        console.warn("[sanderling] Tap target did not resolve to coordinates");
-        return null;
-      }
-      return { kind: "Tap", x: point.x, y: point.y };
+// Scrollable candidates back swipe/scroll: elements that overflow their box,
+// plus the scrolling root so a page-level scroll always has a target.
+function scrollableCandidates(): Candidate[] {
+  const root = document.scrollingElement ?? document.documentElement;
+  const candidates: Candidate[] = root ? [pointOf(root)] : [];
+  for (const element of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
+    if (element === root) continue;
+    if (element.scrollHeight <= element.clientHeight && element.scrollWidth <= element.clientWidth) {
+      continue;
     }
-    case "DoubleTap": {
-      const point = pointOf(obj.on);
-      if (!point) {
-        console.warn("[sanderling] DoubleTap target did not resolve to coordinates");
-        return null;
-      }
-      return { kind: "DoubleTap", x: point.x, y: point.y };
-    }
-    case "InputText": {
-      const point = pointOf(obj.into);
-      if (!point) {
-        console.warn("[sanderling] InputText target did not resolve to coordinates");
-        return null;
-      }
-      return {
-        kind: "InputText",
-        x: point.x,
-        y: point.y,
-        text: obj.text ?? "",
-      };
-    }
-    case "Swipe": {
-      const from = pointOf(obj.from);
-      const to = pointOf(obj.to);
-      if (!from || !to) {
-        console.warn("[sanderling] Swipe endpoints did not resolve to coordinates");
-        return null;
-      }
-      return {
-        kind: "Swipe",
-        from_x: from.x,
-        from_y: from.y,
-        to_x: to.x,
-        to_y: to.y,
-        duration_millis: obj.durationMillis ?? 250,
-      };
-    }
-    case "LongPress":
-    case "Scroll":
-      // Why: web has no long-press or native scroll gesture for v1; drop the action.
-      return null;
-    case "PressKey":
-      return { kind: "PressKey", key: obj.key };
-    case "Wait":
-      return { kind: "Wait", duration_millis: obj.durationMillis ?? 0 };
-    default:
-      return null;
+    if (!isVisible(element)) continue;
+    candidates.push(pointOf(element));
   }
+  return candidates;
 }
 
-function pointOf(value: unknown): { x: number; y: number } | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const obj = value as Record<string, unknown>;
-  if (typeof obj.x === "number" && typeof obj.y === "number") {
-    return { x: obj.x, y: obj.y };
-  }
-  return undefined;
+// Per-tick candidate cache: the picker's 16-attempt retry re-queries the same
+// verb, so we avoid re-walking the DOM and re-flushing layout within one tick.
+// installRuntime resets it before each __sanderlingNextAction__ invocation.
+const candidateCache = new Map<BuiltinVerb, Candidate[]>();
+
+function resetCandidateCache(): void {
+  candidateCache.clear();
 }
 
-defineLockedGlobal("__sanderlingExtractors__", function (): Record<number, unknown> {
-  return evaluateExtractors();
-});
+const host: Host = {
+  platform: () => "web",
+  seedHi: () => SEED_HI,
+  // lo = 0 matches the goja side's rand.NewPCG(seed, 0).
+  seedLo: () => 0n,
+  queryCandidates(verb: BuiltinVerb): Candidate[] {
+    const cached = candidateCache.get(verb);
+    if (cached) return cached;
+    let candidates: Candidate[];
+    switch (verb) {
+      case "taps":
+      case "doubleTaps":
+      case "longPresses":
+        candidates = tappableCandidates();
+        break;
+      case "typing":
+        candidates = editableCandidates();
+        break;
+      case "swipes":
+      case "scrolls":
+        candidates = scrollableCandidates();
+        break;
+      default:
+        candidates = [];
+    }
+    candidateCache.set(verb, candidates);
+    return candidates;
+  },
+  reportUnsupported(verb: BuiltinVerb): void {
+    console.warn(`[sanderling] verb ${verb} is unsupported on web`);
+  },
+};
 
-defineLockedGlobal("__sanderlingNextAction__", function (): unknown {
-  // The spec assigns its root to globalThis.actions (a data tree from
-  // @sanderling/spec actions.ts that carries the legacy __sanderlingKind tags
-  // this picker reads). Fall back to a root captured via __sanderling__ for the
-  // bundler stub specs that still call the old factories.
-  const root = (globalThis as { actions?: ActionGeneratorHandle }).actions ?? actionsRoot;
-  if (!root) return null;
-  // Reset per-tick caches so each invocation gets a fresh DOM scan.
-  randomTapCandidates = null;
-  randomInputCandidates = null;
-  // Match the goja runtime: retry up to 16 times when a weighted entry's
-  // generator returns []. Otherwise on routes where most generators are
-  // gated to other pages, ~80% of ticks would emit no action.
-  for (let attempt = 0; attempt < 16; attempt++) {
-    const action = serializeAction(resolveGenerator(root));
-    if (action !== null) return action;
-  }
-  return null;
-});
+// The spec assigns its action root to globalThis.actions, and it runs AFTER
+// this module (the web bundle imports the runtime first). Resolve the root
+// lazily so installRuntime captures it once the spec has evaluated. The root
+// resolver runs once per __sanderlingNextAction__ tick (before the retry loop),
+// so it is also where we reset the per-tick candidate cache.
+installRuntime(
+  host,
+  () => {
+    resetCandidateCache();
+    return (globalThis as { actions?: import("./action-tree.ts").GeneratorNode }).actions ?? null;
+  },
+  evaluateExtractors,
+);
 
 // Test-only exports. The IIFE bundle the host installs has no export surface,
 // so these are stripped from production output; they only exist for unit tests.
 export const __testing__ = {
-  mulberry32,
-  deriveSeed32,
-  pickWeighted,
-  WEB_INPUT_CORPUS,
-  WEB_PRESS_KEYS,
+  host,
+  seedBigInt,
+  tappableCandidates,
+  editableCandidates,
+  scrollableCandidates,
+  resetCandidateCache,
 };
 
 export {};
