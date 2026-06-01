@@ -118,3 +118,47 @@ test("queryCandidates caches within a tick until reset", () => {
     },
   );
 });
+
+// evaluateExtractors builds State, which references document and window.
+const emptyDocument = {
+  querySelector: () => null,
+  querySelectorAll: () => [],
+};
+
+function withState(run: () => void) {
+  const g = globalThis as Record<string, unknown>;
+  const originalDocument = g.document;
+  const originalWindow = g.window;
+  g.document = emptyDocument;
+  g.window = {};
+  try {
+    run();
+  } finally {
+    g.document = originalDocument;
+    g.window = originalWindow;
+  }
+}
+
+test("named() sets the extractor's display name", () => {
+  const handle = __testing__.runtime.extract(() => "home").named("route");
+  const entry = __testing__.extractors.find((e) => e.handle === handle);
+  assert.equal(entry?.name, "route");
+});
+
+test("reading another extractor's current inside a getter throws", () => {
+  const first = __testing__.runtime.extract(() => 1);
+  let caught: Error | undefined;
+  __testing__.runtime.extract(() => {
+    try {
+      return first.current;
+    } catch (error) {
+      caught = error as Error;
+      return undefined;
+    }
+  });
+  withState(() => __testing__.evaluateExtractors());
+  assert.match(
+    caught?.message ?? "",
+    /inside another extractor is not allowed/,
+  );
+});
