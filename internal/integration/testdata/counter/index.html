@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>counter</title>
+  </head>
+  <body>
+    <button id="decrement">-</button>
+    <div id="counter">0</div>
+    <button id="increment">+</button>
+    <script>
+      let value = 0;
+      const display = document.getElementById("counter");
+      function render() {
+        display.textContent = String(value);
+      }
+      document.getElementById("increment").addEventListener("click", function () {
+        value += 1;
+        render();
+      });
+      document.getElementById("decrement").addEventListener("click", function () {
+        value -= 1;
+        render();
+      });
+    </script>
+  </body>
+</html>
