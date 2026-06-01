@@ -1,3 +1,4 @@
+// Package ltl evaluates linear temporal logic formulas incrementally over observed steps.
 package ltl
 
 import (
