@@ -24,37 +24,12 @@ import type {
 } from "./types.ts";
 import type { ActionDescriptor, BuiltinVerb, GeneratorNode } from "./action-tree.ts";
 
-// LEGACY GOJA BRIDGE. The new data-tree nodes carry the old goja picker's tags
-// (__sanderlingKind / entries / per-verb kind) so worker.go keeps walking them
-// unchanged until Phase 2 rewires goja onto pick.ts. pick.ts ignores these
-// fields. Delete this bridge (and the goja picker) in Phase 2.
-const VERB_LEGACY_KIND: Record<string, string> = {
-  taps: "taps",
-  doubleTaps: "doubleTaps",
-  longPresses: "longPresses",
-  scrolls: "scrolls",
-  typing: "typing",
-  swipes: "swipes",
-  waitOnce: "waitOnce",
-  pressKeys: "pressKey",
-};
-
 function builtinNode(verb: BuiltinVerb): GeneratorNode {
-  return {
-    kind: "builtin",
-    verb,
-    __sanderlingActionGenerator: true,
-    __sanderlingKind: VERB_LEGACY_KIND[verb],
-  } as GeneratorNode;
+  return { kind: "builtin", verb };
 }
 
 export function actions(generator: () => Action[]): GeneratorNode {
-  return {
-    kind: "actions",
-    generate: generator as () => ActionDescriptor[],
-    __sanderlingActionGenerator: true,
-    __sanderlingKind: "actions",
-  } as GeneratorNode;
+  return { kind: "actions", generate: generator as () => ActionDescriptor[] };
 }
 
 export function whenRoute(
@@ -71,13 +46,7 @@ export function whenRoute(
 }
 
 export function weighted(...entries: WeightedEntry[]): GeneratorNode {
-  return {
-    kind: "weighted",
-    branches: entries,
-    __sanderlingActionGenerator: true,
-    __sanderlingKind: "weighted",
-    entries,
-  } as GeneratorNode;
+  return { kind: "weighted", branches: entries };
 }
 
 // samplerRng is the picker's Pcg while it evaluates an `actions` node's
