@@ -1,4 +1,4 @@
-// Package hierarchy parses the TreeNode JSON produced by the Maestro sidecar
+// Package hierarchy parses the TreeNode JSON produced by the native sidecar
 // and resolves selectors against it.
 //
 // Selector grammar (v2.0):
@@ -83,7 +83,7 @@ type Tree struct {
 	Elements []*Element `json:"elements"`
 }
 
-// treeNodeJSON mirrors the Maestro TreeNode JSON structure.
+// treeNodeJSON mirrors the sidecar TreeNode JSON structure.
 type treeNodeJSON struct {
 	Attributes map[string]string `json:"attributes"`
 	Children   []treeNodeJSON    `json:"children"`
@@ -110,7 +110,7 @@ type AttrFilter struct {
 // in the TreeNode attributes map. Both directions are listed so cross-platform
 // matching works regardless of which name the caller uses.
 var attributeAliases = map[string][]string{
-	// Android XML legacy name; web driver uses content-desc; Maestro normalises to accessibilityText
+	// Android XML legacy name; web driver uses content-desc; the sidecar normalises to accessibilityText
 	"content-desc": {"accessibilityText"},
 	// iOS AXElement / UIKit names
 	"label":              {"accessibilityText"},
@@ -164,7 +164,7 @@ func matchSelector(element *Element, sel Selector) bool {
 	return true
 }
 
-// Parse parses a Maestro TreeNode JSON hierarchy.
+// Parse parses a sidecar TreeNode JSON hierarchy.
 func Parse(text string) (*Tree, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -550,7 +550,7 @@ func match(element *Element, kind, value string) bool {
 	}
 }
 
-// boundsPattern matches "[l,t,r,b]" (4-value Android/Maestro format).
+// boundsPattern matches "[l,t,r,b]" (4-value Android/sidecar format).
 var boundsPattern = regexp.MustCompile(`^\[(-?\d+),(-?\d+),(-?\d+),(-?\d+)\]$`)
 
 // boundsPatternTwo matches "[x1,y1][x2,y2]" (iOS XCUITest format).

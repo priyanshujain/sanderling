@@ -2,7 +2,7 @@ package hierarchy
 
 import "testing"
 
-// sampleDump is a Maestro TreeNode JSON equivalent of the old XML fixture.
+// sampleDump is a sidecar TreeNode JSON equivalent of the old XML fixture.
 const sampleDump = `{
   "attributes": {"class": "android.widget.LinearLayout", "package": "app", "bounds": "[0,0,1080,2340]"},
   "children": [
