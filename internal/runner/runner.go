@@ -21,11 +21,6 @@ import (
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
-// doubleTapGap is the inter-tap delay for ActionKindDoubleTap: short enough to
-// land both events inside a sub-100 ms race window, long enough for adb
-// `input tap` to serialize two MotionEvent streams.
-const doubleTapGap = 50 * time.Millisecond
-
 type Options struct {
 	Duration    time.Duration
 	IdleTimeout time.Duration
@@ -469,26 +464,13 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		return drv.Tap(ctx, x, y)
 	case verifier.ActionKindDoubleTap:
 		x, y, ok := resolveCoordinates(action, tree)
-		tap := func() error {
-			if !ok {
-				if action.On == "" {
-					return nil
-				}
-				return drv.TapSelector(ctx, action.On)
+		if !ok {
+			if action.On == "" {
+				return nil
 			}
-			return drv.Tap(ctx, x, y)
+			return drv.DoubleTapSelector(ctx, action.On)
 		}
-		if err := tap(); err != nil {
-			return err
-		}
-		timer := time.NewTimer(doubleTapGap)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timer.C:
-		}
-		return tap()
+		return drv.DoubleTap(ctx, x, y)
 	case verifier.ActionKindLongPress:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
