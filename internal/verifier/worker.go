@@ -43,6 +43,18 @@ type Verifier struct {
 	appPackage string
 	platform   string
 	seed       uint64
+
+	// unsupported collects verbs the picker requested but the platform cannot
+	// dispatch (reportUnsupported host callback), deduped and in first-seen
+	// order, so the runner can surface them in the run report.
+	unsupported     []string
+	unsupportedSeen map[string]bool
+}
+
+// UnsupportedVerbs returns the verbs the picker requested that this platform
+// cannot dispatch, deduped and in first-seen order.
+func (v *Verifier) UnsupportedVerbs() []string {
+	return v.unsupported
 }
 
 type Option func(*Verifier)
@@ -71,12 +83,13 @@ func WithAppPackage(appPackage string) Option {
 
 func New(options ...Option) (*Verifier, error) {
 	verifier := &Verifier{
-		runtime:       goja.New(),
-		properties:    map[string]int{},
-		evaluators:    map[string]*ltl.Evaluator{},
-		priorVerdicts: map[string]ltl.Verdict{},
-		witnesses:     map[string]Witness{},
-		platform:      "android",
+		runtime:         goja.New(),
+		properties:      map[string]int{},
+		evaluators:      map[string]*ltl.Evaluator{},
+		priorVerdicts:   map[string]ltl.Verdict{},
+		witnesses:       map[string]Witness{},
+		platform:        "android",
+		unsupportedSeen: map[string]bool{},
 	}
 	for _, option := range options {
 		option(verifier)
@@ -602,10 +615,12 @@ func selectorForElement(tree *hierarchy.Tree, element *hierarchy.Element) string
 // candidatesForVerb enumerates the host-side targets a builtin verb may draw
 // from, in v.lastTree.Elements ORDER (the order is part of the picker's parity
 // contract). The filters are LIFTED from the old Go picker:
-//   taps/doubleTaps/longPresses: clickable + enabled + positive bounds
-//   typing:                      editable + enabled + positive bounds
-//   scrolls:                     scrollable attribute + positive bounds
-//   swipes:                      any in-scope element
+//
+//	taps/doubleTaps/longPresses: clickable + enabled + positive bounds
+//	typing:                      editable + enabled + positive bounds
+//	scrolls:                     scrollable attribute + positive bounds
+//	swipes:                      any in-scope element
+//
 // Every candidate carries the resolving selector so the runner can re-route by
 // id/text. Out-of-scope nodes (the soft keyboard, system UI) are always dropped.
 func (v *Verifier) candidatesForVerb(verb string) []candidate {

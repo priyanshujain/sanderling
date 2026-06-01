@@ -2,7 +2,6 @@ package verifier
 
 import (
 	"fmt"
-	"log/slog"
 	"math/big"
 	"time"
 
@@ -91,7 +90,8 @@ func (v *Verifier) installRuntimeBindings() error {
 // installHost exposes globalThis.__sanderlingHost__ for the goja runtime entry.
 // The shared picker (pick.ts) draws against it: platform() drives the verb
 // matrix and press-key pool; seedHi/seedLo construct its Pcg; queryCandidates
-// enumerates targets over the hierarchy tree; reportUnsupported logs once.
+// enumerates targets over the hierarchy tree; reportUnsupported records the
+// verb for the run report.
 func (v *Verifier) installHost() error {
 	host := v.runtime.NewObject()
 	if err := host.Set("platform", func(goja.FunctionCall) goja.Value {
@@ -113,12 +113,22 @@ func (v *Verifier) installHost() error {
 		return err
 	}
 	if err := host.Set("reportUnsupported", func(call goja.FunctionCall) goja.Value {
-		slog.Warn("verb unsupported on platform", "verb", call.Argument(0).String(), "platform", v.platform)
+		v.recordUnsupported(call.Argument(0).String())
 		return goja.Undefined()
 	}); err != nil {
 		return err
 	}
 	return v.runtime.GlobalObject().Set("__sanderlingHost__", host)
+}
+
+// recordUnsupported notes a verb the picker requested that this platform
+// cannot dispatch, deduped and in first-seen order.
+func (v *Verifier) recordUnsupported(verb string) {
+	if verb == "" || v.unsupportedSeen[verb] {
+		return
+	}
+	v.unsupportedSeen[verb] = true
+	v.unsupported = append(v.unsupported, verb)
 }
 
 // bindQueryCandidates returns the host-enumerated targets for a verb as an
@@ -339,4 +349,3 @@ func (v *Verifier) extractSpecIndex(value goja.Value) (int, bool) {
 	}
 	return int(indexValue.ToInteger()), true
 }
-
