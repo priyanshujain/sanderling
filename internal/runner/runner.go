@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"time"
@@ -310,6 +311,25 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	summary.UnsupportedVerbs = options.Verifier.UnsupportedVerbs()
 	summary.EndTime = time.Now()
 	return summary, nil
+}
+
+// RenderSummary writes the human-facing run summary: step count, each violation
+// record, and any unsupported verbs. The wall-clock duration is excluded so the
+// output is deterministic and snapshot-testable; the CLI prints it separately.
+func RenderSummary(w io.Writer, summary Summary, platform string) {
+	fmt.Fprintf(w, "\nrun complete: %d steps\n", summary.Steps)
+	if len(summary.Violations) == 0 {
+		fmt.Fprintln(w, "no violations.")
+	} else {
+		fmt.Fprintf(w, "%d violation record(s):\n", len(summary.Violations))
+		for _, violation := range summary.Violations {
+			fmt.Fprintf(w, "  step %d: %v\n", violation.StepIndex, violation.Properties)
+		}
+	}
+	if len(summary.UnsupportedVerbs) > 0 {
+		fmt.Fprintf(w, "unsupported on %s: %s\n",
+			platform, strings.Join(summary.UnsupportedVerbs, ", "))
+	}
 }
 
 func validate(options Options) error {
