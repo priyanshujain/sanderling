@@ -16,6 +16,8 @@ type DeviceDriver interface {
 
 	Tap(ctx context.Context, x, y int) error
 	TapSelector(ctx context.Context, selector string) error
+	DoubleTap(ctx context.Context, x, y int) error
+	DoubleTapSelector(ctx context.Context, selector string) error
 	InputText(ctx context.Context, text string) error
 	Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error
 	PressKey(ctx context.Context, key string) error
