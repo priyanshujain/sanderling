@@ -14,7 +14,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 
-	"github.com/priyanshujain/sanderling/internal/sidecar"
+	"github.com/priyanshujain/sanderling/internal/sidecarassets"
 )
 
 type doctorCheck struct {
@@ -99,10 +99,10 @@ func checkChromiumLaunch(ctx context.Context) error {
 }
 
 func checkSidecarJAR(_ context.Context) error {
-	if sidecar.IsPlaceholder() {
+	if sidecarassets.IsPlaceholder() {
 		return fmt.Errorf("placeholder JAR embedded; run `make sidecar && make sanderling` to embed the real fat JAR")
 	}
-	if sidecar.EmbeddedSize() == 0 {
+	if sidecarassets.EmbeddedSize() == 0 {
 		return fmt.Errorf("embedded JAR is empty")
 	}
 	return nil
