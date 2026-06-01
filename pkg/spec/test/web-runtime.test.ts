@@ -162,3 +162,24 @@ test("reading another extractor's current inside a getter throws", () => {
     /inside another extractor is not allowed/,
   );
 });
+
+// An uncaught cross-extractor read must abort evaluateExtractors loudly, exactly
+// like goja's PushSnapshot. If the getter throw were swallowed, web would
+// silently yield undefined and the guard would be a no-op for real authors.
+test("an uncaught cross-extractor read aborts evaluateExtractors", () => {
+  __testing__.extractors.length = 0;
+  const first = __testing__.runtime.extract(() => 1);
+  __testing__.runtime.extract(() => first.previous);
+  let thrown: Error | undefined;
+  withState(() => {
+    try {
+      __testing__.evaluateExtractors();
+    } catch (error) {
+      thrown = error as Error;
+    }
+  });
+  assert.match(
+    thrown?.message ?? "",
+    /inside another extractor is not allowed/,
+  );
+});
