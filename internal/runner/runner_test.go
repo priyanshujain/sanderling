@@ -137,6 +137,29 @@ func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
 	}
 }
 
+func TestRunner_MaxStepsStopsAfterExactlyNSteps(t *testing.T) {
+	state := newHarness(t)
+
+	const maxSteps = 3
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// A long duration ensures MaxSteps, not the deadline, ends the run.
+	summary, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 10 * time.Millisecond,
+		MaxSteps:    maxSteps,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps != maxSteps {
+		t.Errorf("expected exactly %d steps, got %d", maxSteps, summary.Steps)
+	}
+}
+
 func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 
