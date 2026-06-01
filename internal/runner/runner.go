@@ -29,6 +29,11 @@ type Options struct {
 	Duration    time.Duration
 	IdleTimeout time.Duration
 
+	// MaxSteps caps the run at a fixed number of steps for reproducible
+	// bounded runs. 0 means unbounded (the duration deadline governs); a
+	// positive value stops the loop once that many steps have run.
+	MaxSteps int
+
 	BundleID    string
 	Driver      driver.DeviceDriver
 	Verifier    *verifier.Verifier
@@ -81,6 +86,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	var lastLogTime time.Time
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
+			break
+		}
+		if options.MaxSteps > 0 && stepIndex >= options.MaxSteps {
 			break
 		}
 		stepIndex++
