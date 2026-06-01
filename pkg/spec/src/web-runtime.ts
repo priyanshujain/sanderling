@@ -368,11 +368,16 @@ const runtime = {
 // the host invoking the extractor/next-action callbacks.
 defineLockedGlobal("__sanderling__", runtime);
 
+// writable:false stops a page script from shadowing the runtime via plain
+// assignment (the realistic in-page threat). configurable:true is required so
+// unit tests sharing one process can reinstall a fake via defineProperty; a
+// non-configurable lock would poison globalThis.__sanderling__ for every later
+// test in the run.
 function defineLockedGlobal(name: string, value: unknown): void {
   Object.defineProperty(globalThis, name, {
     value,
     writable: false,
-    configurable: false,
+    configurable: true,
     enumerable: false,
   });
 }
@@ -384,12 +389,14 @@ function evaluateExtractors(): Record<number, unknown> {
     const entry = extractors[i];
     if (!entry) continue;
     entry.previousValue = entry.currentValue;
+    // Let getter throws propagate, matching the goja side, where a getter
+    // error aborts PushSnapshot rather than yielding undefined. Swallowing
+    // here would silence the cross-extractor read guard (and every other
+    // author error) on web only, breaking cross-engine parity.
     let value: unknown;
     extracting = true;
     try {
       value = entry.getter(state);
-    } catch {
-      value = undefined;
     } finally {
       extracting = false;
     }
