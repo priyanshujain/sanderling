@@ -125,6 +125,7 @@ export interface WebState extends State {
 export interface Extracted<T> {
   readonly current: T;
   readonly previous: T | undefined;
+  named(name: string): Extracted<T>;
 }
 
 export interface Point {
