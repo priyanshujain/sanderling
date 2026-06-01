@@ -41,6 +41,10 @@ type Summary struct {
 	EndTime    time.Time
 	Steps      int
 	Violations []ViolationRecord
+	// UnsupportedVerbs lists verbs the picker requested that the platform
+	// could not dispatch, deduped, so the report can flag a spec exercising
+	// gestures this target does not support.
+	UnsupportedVerbs []string
 }
 
 type ViolationRecord struct {
@@ -64,6 +68,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	// action never fires against a leftover screen or a system dialog. Done
 	// before the deadline is set so the settle time does not eat the run.
 	waitForForeground(ctx, options, logger)
+
+	// Pick the action and extractor sources once from the driver's
+	// capabilities so the step loop runs one uniform path with no per-step
+	// driver type assertion.
+	actionSource, extractorSource := pickSources(options)
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -116,17 +125,15 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			return nil
 		})
 		var v8Overrides map[int]json.RawMessage
-		if web, ok := options.Driver.(driver.WebDriver); ok {
-			g.Go(func() error {
-				overrides, err := web.EvaluateExtractors(gctx)
-				if err != nil {
-					logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
-					return nil
-				}
-				v8Overrides = overrides
+		g.Go(func() error {
+			overrides, err := extractorSource.ExtractorOverrides(gctx)
+			if err != nil {
+				logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
 				return nil
-			})
-		}
+			}
+			v8Overrides = overrides
+			return nil
+		})
 		// All goroutines write to local variables and return nil, so the Wait
 		// error is always nil; ignored intentionally.
 		_ = g.Wait()
@@ -197,13 +204,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
 
-		var nextAction verifier.Action
-		var nextErr error
-		if web, ok := options.Driver.(driver.WebDriver); ok {
-			nextAction, nextErr = nextActionFromV8(ctx, web)
-		} else {
-			nextAction, nextErr = options.Verifier.NextAction()
-		}
+		nextAction, nextErr := actionSource.NextAction(ctx)
 		var traceAction *trace.Action
 		if nextErr == nil {
 			traceAction = traceActionFor(nextAction, tree)
@@ -298,6 +299,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 	}
 
+	summary.UnsupportedVerbs = options.Verifier.UnsupportedVerbs()
 	summary.EndTime = time.Now()
 	return summary, nil
 }
@@ -768,19 +770,6 @@ func captureMetrics(ctx context.Context, options Options, logger *slog.Logger, s
 		HeapBytes:        sample.HeapBytes,
 		TotalMemoryBytes: sample.TotalMemoryBytes,
 	}
-}
-
-// nextActionFromV8 invokes the V8-side action generator and decodes the
-// resulting JSON into a verifier.Action. ErrNoAction is returned when the
-// generator declined to act this tick.
-func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Action, error) {
-	raw, err := web.NextActionFromV8(ctx)
-	if err != nil {
-		return verifier.Action{}, fmt.Errorf("v8 next action: %w", err)
-	}
-	// Both engines emit the unified flat camelCase wire contract; one decoder
-	// reads it. A null payload means the generator declined to act this tick.
-	return verifier.DecodeAction(raw)
 }
 
 // collectWitnesses gathers the violation witness for each newly-violated
