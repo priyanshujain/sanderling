@@ -20,7 +20,7 @@ import {
   longPresses,
   next,
   now,
-  pressKey,
+  pressKeys,
   scrolls,
   swipes,
   taps,
@@ -282,7 +282,7 @@ test("builtin factories return builtin nodes carrying their verb", () => {
     [typing, "typing"],
     [swipes, "swipes"],
     [waitOnce, "waitOnce"],
-    [pressKey, "pressKeys"],
+    [pressKeys, "pressKeys"],
   ];
   for (const [node, verb] of cases) {
     assert.equal(node.kind, "builtin");
