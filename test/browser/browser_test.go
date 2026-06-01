@@ -169,7 +169,12 @@ func repoRoot(t *testing.T) string {
 }
 
 func testdataDir(t *testing.T) string {
-	return filepath.Join(repoRoot(t), "internal", "integration", "testdata")
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve caller path")
+	}
+	return filepath.Join(filepath.Dir(thisFile), "testdata")
 }
 
 func specSrcDir(t *testing.T) string {
