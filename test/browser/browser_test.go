@@ -1,13 +1,13 @@
 //go:build browser
 
-// Package integration drives small self-contained web fixtures through the real
+// Package browser_test drives small self-contained web fixtures through the real
 // bundle -> run -> verify pipeline against headless Chrome, proving the web path
 // surfaces a known violation by property name and leaves a correct page clean.
 //
 // The suite is gated behind the `browser` build tag so the default
 // `go test ./...` (which has no Chrome dependency) never runs it. Invoke it with
-// `go test -tags browser ./internal/integration/...` or `make test-browser`.
-package integration
+// `go test -tags browser ./test/browser/...` or `make test-browser`.
+package browser_test
 
 import (
 	"context"
