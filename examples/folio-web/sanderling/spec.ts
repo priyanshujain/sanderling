@@ -205,8 +205,7 @@ const openAccount = actions(() => {
   if (!onHomePage.current) return [];
   const cards = accountCards.current;
   if (cards.length === 0) return [];
-  const card = cards[Math.floor(Math.random() * cards.length)];
-  return [Tap({ on: card.element })];
+  return [Tap({ on: from(cards).generate().element })];
 });
 
 const openAddTxn = actions(() => {
@@ -252,10 +251,9 @@ const typeNote = actions(() => {
 
 const toggleTxnType = actions(() => {
   if (!onAddTxnPage.current) return [];
-  const credit = txnCreditButton.current;
-  const debit = txnDebitButton.current;
-  const target = Math.random() < 0.5 ? credit : debit;
-  return target ? [Tap({ on: target })] : [];
+  const targets = [txnCreditButton.current, txnDebitButton.current].filter(Boolean);
+  if (targets.length === 0) return [];
+  return [Tap({ on: from(targets).generate() })];
 });
 
 const submitTxn = actions(() => {
