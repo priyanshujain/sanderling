@@ -49,6 +49,11 @@ type Verifier struct {
 	// order, so the runner can surface them in the run report.
 	unsupported     []string
 	unsupportedSeen map[string]bool
+
+	// extracting is true only while an extractor getter is running. The handle's
+	// current/previous accessors consult it so a getter that reaches into
+	// another extractor's handle throws instead of reading a stale value.
+	extracting bool
 }
 
 // UnsupportedVerbs returns the verbs the picker requested that this platform
@@ -276,17 +281,25 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 	// Predicate thunks read these slots but never trigger advancement, so
 	// invoking a thunk multiple times between snapshots is value-stable.
 	for index, extractor := range v.extractors {
-		previous := extractor.handle.Get("current")
-		_ = extractor.handle.Set("previous", previous)
-		newValue, err := extractor.getter(goja.Undefined(), state)
+		extractor.previousValue = extractor.currentValue
+		newValue, err := v.runExtractor(extractor, state)
 		if err != nil {
 			return fmt.Errorf("extractor %d: %w", index, err)
 		}
-		_ = extractor.handle.Set("current", newValue)
+		extractor.currentValue = newValue
 		extractor.prev = extractor.curr
 		extractor.curr = encodeExtractorValue(newValue)
 	}
 	return nil
+}
+
+// runExtractor invokes an extractor's getter with the extracting flag set, so a
+// getter that reads another extractor's current/previous throws. The flag is
+// cleared even if the getter panics.
+func (v *Verifier) runExtractor(extractor *extractorState, state goja.Value) (goja.Value, error) {
+	v.extracting = true
+	defer func() { v.extracting = false }()
+	return extractor.getter(goja.Undefined(), state)
 }
 
 // encodeExtractorValue produces a stable JSON encoding of an extractor's
@@ -358,7 +371,7 @@ func (v *Verifier) OverrideExtractorValues(overrides map[int]json.RawMessage) (s
 		if conversionErr != nil {
 			return skipped, fmt.Errorf("extractor override %d: %w", index, conversionErr)
 		}
-		_ = v.extractors[index].handle.Set("current", value)
+		v.extractors[index].currentValue = value
 	}
 	return skipped, nil
 }

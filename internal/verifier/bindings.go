@@ -10,8 +10,10 @@ import (
 
 type extractorState struct {
 	getter goja.Callable
-	handle *goja.Object
 	name   string
+	// currentValue/previousValue back the handle's current/previous accessors.
+	currentValue  goja.Value
+	previousValue goja.Value
 	// prev/curr cache the JSON-encoded extractor values from the prior and
 	// current PushSnapshot, used by ChangedExtractors to surface per-step
 	// diffs in the trace.
@@ -170,12 +172,41 @@ func (v *Verifier) bindExtract(call goja.FunctionCall) goja.Value {
 		name = fmt.Sprintf("extractor_%d", len(v.extractors))
 	}
 
-	handle := v.runtime.NewObject()
-	_ = handle.Set("current", goja.Undefined())
-	_ = handle.Set("previous", goja.Undefined())
+	state := &extractorState{
+		getter:        getter,
+		name:          name,
+		currentValue:  goja.Undefined(),
+		previousValue: goja.Undefined(),
+	}
 
-	v.extractors = append(v.extractors, &extractorState{getter: getter, handle: handle, name: name})
+	handle := v.runtime.NewObject()
+	_ = handle.DefineAccessorProperty("current", v.runtime.ToValue(func(goja.FunctionCall) goja.Value {
+		v.checkNotExtracting("current")
+		return state.currentValue
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	_ = handle.DefineAccessorProperty("previous", v.runtime.ToValue(func(goja.FunctionCall) goja.Value {
+		v.checkNotExtracting("previous")
+		return state.previousValue
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	_ = handle.Set("named", func(call goja.FunctionCall) goja.Value {
+		state.name = call.Argument(0).String()
+		return handle
+	})
+
+	v.extractors = append(v.extractors, state)
 	return handle
+}
+
+// checkNotExtracting panics with a JS error when an extractor getter tries to
+// read another extractor handle's current/previous. The message is identical to
+// the web runtime's so authors see one diagnostic across engines.
+func (v *Verifier) checkNotExtracting(slot string) {
+	if v.extracting {
+		panic(v.runtime.NewGoError(fmt.Errorf(
+			"reading .%s of an extractor inside another extractor is not allowed; extractor getters may read only from the state argument",
+			slot,
+		)))
+	}
 }
 
 // bindAlways accepts either a predicate function (legacy shape) or a formula
