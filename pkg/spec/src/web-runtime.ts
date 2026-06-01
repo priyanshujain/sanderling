@@ -558,6 +558,9 @@ export const __testing__ = {
   editableCandidates,
   scrollableCandidates,
   resetCandidateCache,
+  runtime,
+  extractors,
+  evaluateExtractors,
 };
 
 export {};
