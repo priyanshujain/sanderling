@@ -1,3 +1,4 @@
+// Package inspect serves the embedded web UI for browsing recorded runs.
 package inspect
 
 import (

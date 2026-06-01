@@ -1,3 +1,4 @@
+// Package bundler compiles a TypeScript spec into a single JavaScript bundle via esbuild.
 package bundler
 
 import (
