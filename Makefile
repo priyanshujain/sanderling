@@ -74,10 +74,10 @@ test: test-go test-spec-api web-typecheck
 test-go:
 	$(GO) test $(GO_PACKAGES)
 
-# Drives small web fixtures through the real pipeline against headless Chrome.
+# Drives small web fixtures and the chrome driver through real headless Chrome.
 # Kept out of `test` because it needs a Chrome binary on PATH.
 test-browser:
-	$(GO) test -tags browser ./test/browser/...
+	$(GO) test -tags browser ./test/browser/... ./internal/driver/chrome/...
 
 test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test
