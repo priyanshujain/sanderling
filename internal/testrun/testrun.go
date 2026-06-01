@@ -1,3 +1,4 @@
+// Package testrun wires together the device, bundler, runner, and verifier into a single test pipeline.
 package testrun
 
 import (

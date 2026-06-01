@@ -1,3 +1,4 @@
+// Package runner drives the observe-decide-act loop that steps a spec against a device.
 package runner
 
 import (
