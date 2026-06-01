@@ -119,8 +119,17 @@ test("builtin Scroll carries the pre-computed to endpoint", () => {
   );
 });
 
-test("an unresolved (string) target drops the action", () => {
-  assert.equal(serializeAction({ kind: "Tap", on: "id:never-resolved" }), null);
+test("a string target serializes selector-only for the runner to re-resolve", () => {
+  assert.deepEqual(serializeAction({ kind: "Tap", on: "id:save" }), {
+    kind: "Tap",
+    x: 0,
+    y: 0,
+    selector: "id:save",
+  });
+});
+
+test("an empty target or null action is dropped", () => {
+  assert.equal(serializeAction({ kind: "Tap", on: "" }), null);
   assert.equal(serializeAction(null), null);
 });
 

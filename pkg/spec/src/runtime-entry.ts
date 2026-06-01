@@ -34,16 +34,23 @@ export type SerializedAction =
 
 const DEFAULT_SWIPE_DURATION = 250;
 
-// pointOf resolves a target to {x, y, selector?}. Builtins already supply a
-// Point; author targets that carry numeric x/y (or a resolved element handle)
-// collapse the same way. A string/selector target the host could not resolve
-// returns undefined so the action is dropped.
+// pointOf resolves a target to {x, y, selector?}. Builtins and resolved ax
+// elements carry numeric x/y; a bare selector string carries no geometry, so it
+// serializes with (0, 0) and the selector, leaving the native runner to
+// re-resolve coordinates by id/text. A target with neither shape (null, an
+// unrecognized object) returns undefined so the action is dropped.
 function pointOf(target: unknown): (Point & { selector?: string }) | undefined {
+  if (typeof target === "string") {
+    return target.length > 0 ? { x: 0, y: 0, selector: target } : undefined;
+  }
   if (!target || typeof target !== "object") return undefined;
   const obj = target as Record<string, unknown>;
   if (typeof obj.x === "number" && typeof obj.y === "number") {
     const point: Point & { selector?: string } = { x: obj.x, y: obj.y };
-    if (typeof obj.selector === "string") point.selector = obj.selector;
+    // The picker's builtin candidates carry `selector`; a goja ax element
+    // carries it under the runtime tag. Either lets the runner re-resolve.
+    const selector = obj.selector ?? obj.__sanderlingSelector;
+    if (typeof selector === "string" && selector.length > 0) point.selector = selector;
     return point;
   }
   return undefined;
