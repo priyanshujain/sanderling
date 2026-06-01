@@ -40,13 +40,14 @@ type Evaluator struct {
 
 // Violation is the witness for a latched verdict: the failing sub-formula, a
 // human-readable reason, and the observation step it fired at. A thrown
-// predicate carries the goja error text as its reason; a plain false carries
-// "predicate false"; Finalize fills it for liveness obligations that never
-// discharged.
+// predicate carries the goja error text as its reason and sets IsError; a plain
+// false carries "predicate false"; Finalize fills it for liveness obligations
+// that never discharged.
 type Violation struct {
 	Formula Formula
 	Reason  string
 	Step    int
+	IsError bool
 }
 
 func NewEvaluator(formula Formula) *Evaluator {
@@ -271,6 +272,16 @@ func violatedWith(formula Formula, reason string) reduceResult {
 	}
 }
 
+// violatedByError reports a violation caused by a predicate that threw. The
+// witness keeps the error text as its reason and flags IsError so callers can
+// render it as a thrown-predicate error rather than a plain false.
+func violatedByError(formula Formula, reason string) reduceResult {
+	return reduceResult{
+		status:  statusViolated,
+		witness: &Violation{Formula: formula, Reason: reason, IsError: true},
+	}
+}
+
 // violatedFrom propagates a child violation, preferring the child's witness so
 // the deepest failing leaf survives. When the child carried no witness the
 // fallback formula and reason describe this level instead.
@@ -296,7 +307,7 @@ func reduce(formula Formula, now time.Time) reduceResult {
 	case ThunkFormula:
 		result, err := concrete.Func()
 		if err != nil {
-			return violatedWith(concrete, err.Error())
+			return violatedByError(concrete, err.Error())
 		}
 		if result {
 			return holds()
