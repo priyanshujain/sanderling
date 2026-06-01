@@ -5,6 +5,7 @@ import {
   always,
   extract,
   from,
+  integers,
   next,
   weighted,
   whenRoute,
@@ -146,7 +147,7 @@ const addAccount = whenRoute(route, ["home", "add-account"], () => {
   return opts;
 });
 
-const amounts = from(["10", "50", "25", "100", "5"]);
+const amounts = integers().between(1, 500);
 
 const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
   if (route.current === "home") {
@@ -161,7 +162,7 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
   const field = txnAmountField.current;
   const submit = txnSubmit.current;
   const opts = [];
-  if (field) opts.push(InputText({ into: field, text: amounts.generate() }));
+  if (field) opts.push(InputText({ into: field, text: String(amounts.generate()) }));
   if (submit) opts.push(Tap({ on: submit }));
   return opts;
 });
