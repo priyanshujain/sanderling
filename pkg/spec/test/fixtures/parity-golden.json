@@ -1,0 +1,127 @@
+[
+  {
+    "kind": "Tap",
+    "x": 250,
+    "y": 260,
+    "selector": "id:gamma"
+  },
+  {
+    "kind": "Tap",
+    "x": 150,
+    "y": 160,
+    "selector": "id:beta"
+  },
+  {
+    "kind": "Tap",
+    "x": 50,
+    "y": 60,
+    "selector": "id:alpha"
+  },
+  {
+    "kind": "InputText",
+    "x": 150,
+    "y": 160,
+    "text": "a",
+    "selector": "id:beta"
+  },
+  {
+    "kind": "InputText",
+    "x": 50,
+    "y": 60,
+    "text": "\t\n",
+    "selector": "id:alpha"
+  },
+  {
+    "kind": "Tap",
+    "x": 250,
+    "y": 260,
+    "selector": "id:gamma"
+  },
+  {
+    "kind": "Tap",
+    "x": 150,
+    "y": 160,
+    "selector": "id:beta"
+  },
+  {
+    "kind": "Tap",
+    "x": 250,
+    "y": 260,
+    "selector": "id:gamma"
+  },
+  {
+    "kind": "Tap",
+    "x": 150,
+    "y": 160,
+    "selector": "id:beta"
+  },
+  {
+    "kind": "Tap",
+    "x": 250,
+    "y": 260,
+    "selector": "id:gamma"
+  },
+  {
+    "kind": "Tap",
+    "x": 250,
+    "y": 260,
+    "selector": "id:gamma"
+  },
+  {
+    "kind": "Tap",
+    "x": 150,
+    "y": 160,
+    "selector": "id:beta"
+  },
+  {
+    "kind": "Tap",
+    "x": 250,
+    "y": 260,
+    "selector": "id:gamma"
+  },
+  {
+    "kind": "Tap",
+    "x": 50,
+    "y": 60,
+    "selector": "id:alpha"
+  },
+  {
+    "kind": "InputText",
+    "x": 150,
+    "y": 160,
+    "text": "999999999999999999999",
+    "selector": "id:beta"
+  },
+  {
+    "kind": "InputText",
+    "x": 150,
+    "y": 160,
+    "text": "-1",
+    "selector": "id:beta"
+  },
+  {
+    "kind": "InputText",
+    "x": 250,
+    "y": 260,
+    "text": "-1",
+    "selector": "id:gamma"
+  },
+  {
+    "kind": "Tap",
+    "x": 50,
+    "y": 60,
+    "selector": "id:alpha"
+  },
+  {
+    "kind": "Tap",
+    "x": 250,
+    "y": 260,
+    "selector": "id:gamma"
+  },
+  {
+    "kind": "Tap",
+    "x": 50,
+    "y": 60,
+    "selector": "id:alpha"
+  }
+]
