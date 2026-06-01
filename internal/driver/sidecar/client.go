@@ -1,3 +1,4 @@
+// Package sidecar implements the device driver by talking to the native sidecar over gRPC.
 package sidecar
 
 import (

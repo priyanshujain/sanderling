@@ -1,3 +1,4 @@
+// Package mock provides an in-memory device driver that records actions for tests.
 package mock
 
 import (
