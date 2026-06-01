@@ -38,6 +38,9 @@ func New() *Driver {
 			chromedp.Flag("headless", true),
 			chromedp.Flag("disable-gpu", true),
 			chromedp.NoSandbox,
+			// CI runners give Chrome a tiny /dev/shm; without this the browser
+			// process hangs on startup and never reports its DevTools socket.
+			chromedp.Flag("disable-dev-shm-usage", true),
 		)...,
 	)
 	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
