@@ -181,7 +181,3 @@ export const actionsRoot = weighted(
   [30, addTxn],
   [20, defaultActions],
 );
-
-(globalThis as { actions?: unknown; properties?: unknown; setup?: unknown }).actions = actionsRoot;
-(globalThis as { properties?: unknown }).properties = properties;
-(globalThis as { setup?: unknown }).setup = setup;
