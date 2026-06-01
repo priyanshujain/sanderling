@@ -33,6 +33,51 @@ interface ActionGeneratorHandle {
 const extractors: ExtractorEntry[] = [];
 let actionsRoot: ActionGeneratorHandle | null = null;
 
+// Deterministic PRNG so `sanderling test --platform web --seed N` is
+// reproducible. The host computes a 64-bit seed and injects it via the bundle
+// define SANDERLING_SEED; web-runtime reads it at init. Bit-identical parity
+// with the goja PCG stream is deliberately out of scope here: this only
+// guarantees same-seed -> same-run on web.
+function deriveSeed32(raw: string | undefined): number {
+  if (!raw) return 0;
+  // Why: a 64-bit seed loses precision as a JS Number, so fold it to 32 bits
+  // off the decimal string without ever materializing the full value.
+  let hash = 0;
+  for (let index = 0; index < raw.length; index++) {
+    hash = (Math.imul(hash, 31) + raw.charCodeAt(index)) | 0;
+  }
+  return hash >>> 0;
+}
+
+// mulberry32: a small, well-known 32-bit PRNG. Returns a float in [0, 1).
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0;
+  return function next(): number {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// esbuild Define replaces the exact member expression `process.env.SANDERLING_SEED`
+// with the host-injected seed string at bundle time. When unset (e.g. the
+// bundler unit tests or a non-test eval) it stays undefined and the seed is 0.
+function injectedSeed(): string | undefined {
+  try {
+    return process.env.SANDERLING_SEED;
+  } catch {
+    return undefined;
+  }
+}
+
+const seededRandomValue = mulberry32(deriveSeed32(injectedSeed()));
+
+function random(): number {
+  return seededRandomValue();
+}
+
 function noopFormula(): unknown {
   const formula: Record<string, unknown> = { __sanderlingFormula: true };
   formula.implies = () => formula;
@@ -327,7 +372,7 @@ const runtime = {
     return {
       generate(): T | undefined {
         if (items.length === 0) return undefined;
-        return items[Math.floor(Math.random() * items.length)];
+        return items[Math.floor(random() * items.length)];
       },
     };
   },
@@ -435,16 +480,20 @@ function sanitizeAt(value: unknown, depth: number, seen: WeakSet<object>): unkno
   return out;
 }
 
-function pickWeighted(handle: ActionGeneratorHandle): ActionGeneratorHandle | null {
+function pickWeighted(
+  handle: ActionGeneratorHandle,
+  rand: () => number = random,
+): ActionGeneratorHandle | null {
   const entries = handle.entries ?? [];
   if (entries.length === 0) return null;
   let total = 0;
   for (const [weight] of entries) total += Math.max(0, weight);
   if (total <= 0) return null;
-  let pick = Math.random() * total;
+  const pick = rand() * total;
+  let cumulative = 0;
   for (const [weight, generator] of entries) {
-    pick -= Math.max(0, weight);
-    if (pick <= 0) return generator;
+    cumulative += Math.max(0, weight);
+    if (pick < cumulative) return generator;
   }
   return entries[entries.length - 1]?.[1] ?? null;
 }
@@ -499,7 +548,7 @@ function randomTap(kind: "Tap" | "DoubleTap"): unknown {
   }
   const candidates = randomTapCandidates;
   if (candidates.length === 0) return null;
-  const picked = candidates[Math.floor(Math.random() * candidates.length)];
+  const picked = candidates[Math.floor(random() * candidates.length)];
   if (!picked) return null;
   const rect = picked.getBoundingClientRect();
   return {
@@ -550,10 +599,10 @@ function randomInput(): unknown {
   }
   const candidates = randomInputCandidates;
   if (candidates.length === 0) return null;
-  const picked = candidates[Math.floor(Math.random() * candidates.length)];
+  const picked = candidates[Math.floor(random() * candidates.length)];
   if (!picked) return null;
   const rect = picked.getBoundingClientRect();
-  const text = WEB_INPUT_CORPUS[Math.floor(Math.random() * WEB_INPUT_CORPUS.length)];
+  const text = WEB_INPUT_CORPUS[Math.floor(random() * WEB_INPUT_CORPUS.length)];
   return {
     kind: "InputText",
     into: {
@@ -573,7 +622,7 @@ const WEB_PRESS_KEYS = ["enter", "tab", "escape", "up", "down", "left", "right"]
 
 function randomPressKey(): unknown {
   // Why: only emit keys with meaningful browser semantics; "back"/"home" don't navigate.
-  const key = WEB_PRESS_KEYS[Math.floor(Math.random() * WEB_PRESS_KEYS.length)];
+  const key = WEB_PRESS_KEYS[Math.floor(random() * WEB_PRESS_KEYS.length)];
   return { kind: "PressKey", key };
 }
 
@@ -581,7 +630,7 @@ function pickFromArray(value: unknown): unknown {
   if (!value) return null;
   if (!Array.isArray(value)) return value;
   if (value.length === 0) return null;
-  return value[Math.floor(Math.random() * value.length)];
+  return value[Math.floor(random() * value.length)];
 }
 
 function serializeAction(action: unknown): unknown {
@@ -673,5 +722,15 @@ defineLockedGlobal("__sanderlingNextAction__", function (): unknown {
   }
   return null;
 });
+
+// Test-only exports. The IIFE bundle the host installs has no export surface,
+// so these are stripped from production output; they only exist for unit tests.
+export const __testing__ = {
+  mulberry32,
+  deriveSeed32,
+  pickWeighted,
+  WEB_INPUT_CORPUS,
+  WEB_PRESS_KEYS,
+};
 
 export {};
