@@ -1,24 +1,28 @@
-import { doubleTaps, swipes, taps, typing, weighted } from "../actions.ts";
+import { doubleTaps, scrolls, swipes, taps, typing, weighted } from "../actions.ts";
 import type { ActionGenerator } from "../types.ts";
 
-export { doubleTaps, pressKeys, swipes, taps, typing, waitOnce } from "../actions.ts";
-// longPresses and scrolls are opt-in generators: not part of defaultActions,
-// but authors can include them in their own weighted() set.
-export { longPresses, scrolls } from "../actions.ts";
+export { doubleTaps, pressKeys, scrolls, swipes, taps, typing, waitOnce } from "../actions.ts";
+// longPresses is an opt-in generator: not part of defaultActions, but authors
+// can include it in their own weighted() set.
+export { longPresses } from "../actions.ts";
 
-// A broad exploration generator: tap things, type edge-case values into fields,
-// and swipe. Layer it under targeted depth flows so the fuzzer wanders the whole
-// app while still driving the paths an author wrote. It deliberately omits the
-// hardware back key: backing out past the app's root screen exits the app under
-// test, and exploration must stay within the app.
+// Broad exploration: tap, type edge-case values, scroll to reveal content, and
+// swipe. Layer it under targeted flows so the fuzzer wanders the whole app while
+// still driving the paths an author wrote. It omits the hardware back key:
+// backing out past the app's root exits the app under test, and exploration must
+// stay inside it.
 //
-// doubleTaps fires the same target twice ~50ms apart inside one step. Real users
-// double-tap (image zoom, like-to-favorite, play/pause); without this the fuzzer
-// can never produce sub-100ms event spacing, so race-window bugs (debounce gaps,
-// in-flight guards, init races) stay unreachable.
+// Weights are relative integers, not percentages: the picker scales each draw by
+// their total, so only the ratios matter and any one can be retuned on its own.
+// Tap and type are co-primary (typing variety is what exercises input
+// validation), scroll is the major reveal behavior at half a primary, swipe is a
+// secondary gesture, and doubleTaps is rare but kept because it is the only
+// default source of sub-100ms event spacing, which keeps race-window bugs
+// (double-submit, init races) reachable.
 export const defaultActions: ActionGenerator = weighted(
-  [45, taps],
-  [15, doubleTaps],
-  [25, typing],
-  [15, swipes],
+  [100, taps],
+  [100, typing],
+  [50, scrolls],
+  [25, swipes],
+  [10, doubleTaps],
 );
