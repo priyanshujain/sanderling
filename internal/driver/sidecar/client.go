@@ -1,3 +1,4 @@
+// Package sidecar implements the device driver by talking to the native sidecar over gRPC.
 package sidecar
 
 import (
@@ -101,6 +102,34 @@ func (c *Client) LongPress(ctx context.Context, x, y int) error {
 func (c *Client) TapSelector(ctx context.Context, selector string) error {
 	_, err := c.stub.TapSelector(ctx, &driverpb.Selector{Value: selector})
 	return err
+}
+
+// doubleTapGap is the inter-tap delay for DoubleTap: short enough to land both
+// events inside a sub-100 ms race window, long enough for the sidecar to
+// serialize two MotionEvent streams. The sidecar exposes no native double-tap
+// RPC, so the gesture is two Taps with this gap.
+const doubleTapGap = 50 * time.Millisecond
+
+func (c *Client) DoubleTap(ctx context.Context, x, y int) error {
+	return doubleTap(ctx, func() error { return c.Tap(ctx, x, y) })
+}
+
+func (c *Client) DoubleTapSelector(ctx context.Context, selector string) error {
+	return doubleTap(ctx, func() error { return c.TapSelector(ctx, selector) })
+}
+
+func doubleTap(ctx context.Context, tap func() error) error {
+	if err := tap(); err != nil {
+		return err
+	}
+	timer := time.NewTimer(doubleTapGap)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	return tap()
 }
 
 func (c *Client) InputText(ctx context.Context, text string) error {

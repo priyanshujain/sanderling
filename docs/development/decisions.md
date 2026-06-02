@@ -30,9 +30,9 @@ The `driver.go` file defines the `DeviceDriver` interface. Concrete implementati
 
 `bindings.go` currently holds shared types (`Action`, `ActionKind`, `LogEntry`, `Exception`) alongside JavaScript runtime wiring. The types half moves to `types.go` so the two concerns are separately navigable.
 
-### `internal/permissions/` stays as-is
+### `internal/permissions/` is deleted
 
-Android-only package but there is no iOS equivalent yet. Revisit if iOS gets similar permission setup.
+Dead code with zero importers. Removed. Reintroduce a permission helper only when a platform actually needs one.
 
 ---
 

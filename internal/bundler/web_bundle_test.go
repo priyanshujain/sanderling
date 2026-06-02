@@ -34,8 +34,8 @@ export {};
 
 const fakeSpec = `
 const handle = (globalThis as { __sanderling__: { extract: (g: () => unknown) => unknown } }).__sanderling__.extract(() => 42);
-(globalThis as { actions?: unknown }).actions = handle;
-export {};
+export const actionsRoot = handle;
+export const properties = "WEB_PROPS_MARKER";
 `
 
 func TestBundleWeb_RegistersExpectedGlobals(t *testing.T) {
@@ -61,6 +61,8 @@ func TestBundleWeb_RegistersExpectedGlobals(t *testing.T) {
 		"__sanderlingExtractors__",
 		"__sanderlingNextAction__",
 		"__sanderling__",
+		"WEB_PROPS_MARKER",
+		"globalThis.actions",
 	} {
 		if !strings.Contains(source, expected) {
 			t.Errorf("bundle missing %q\nsource head:\n%s", expected, head(source, 500))
@@ -119,6 +121,38 @@ func TestBundleWeb_IsDeterministic(t *testing.T) {
 		if repeat.SHA256 != first.SHA256 {
 			t.Fatalf("attempt %d: SHA changed (%s vs %s)", attempt, repeat.SHA256, first.SHA256)
 		}
+	}
+}
+
+// TestBundleWeb_InjectsSeedDefine asserts that a SANDERLING_SEED define is
+// inlined into the bundle so --seed reaches the web runtime PRNG. esbuild
+// replaces process.env.SANDERLING_SEED with the quoted literal at build time.
+func TestBundleWeb_InjectsSeedDefine(t *testing.T) {
+	directory := t.TempDir()
+	runtimePath := filepath.Join(directory, "web-runtime.ts")
+	specPath := filepath.Join(directory, "spec.ts")
+	runtime := fakeRuntime + "\n(globalThis as Record<string, unknown>).__seed = process.env.SANDERLING_SEED;\n"
+	if err := os.WriteFile(runtimePath, []byte(runtime), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(specPath, []byte(fakeSpec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := BundleWeb(WebOptions{
+		EntryFile:      specPath,
+		WebRuntimeFile: runtimePath,
+		Defines:        map[string]string{"SANDERLING_SEED": "8675309"},
+	})
+	if err != nil {
+		t.Fatalf("BundleWeb: %v", err)
+	}
+	source := string(result.JavaScript)
+	if !strings.Contains(source, "8675309") {
+		t.Errorf("seed literal not inlined into bundle\nsource head:\n%s", head(source, 500))
+	}
+	if strings.Contains(source, "process.env.SANDERLING_SEED") {
+		t.Errorf("define left unsubstituted in bundle")
 	}
 }
 

@@ -1,6 +1,6 @@
 # Action Space
 
-Inventory of user interaction primitives Sanderling currently supports, compared against the full set available through the Maestro driver layer.
+Inventory of user interaction primitives Sanderling currently supports, compared against the full set available through the native driver layer.
 
 ## Current Actions
 
@@ -15,9 +15,9 @@ Inventory of user interaction primitives Sanderling currently supports, compared
 | `PressKey` | `key` | back, home, enter, tab, up, down, left, right |
 | `Wait` | `durationMillis` | Sleep for N ms |
 
-## Gaps vs Maestro Driver
+## Gaps vs Native Driver
 
-The Maestro driver layer (both `AndroidDriver` and `IOSDriver`) already implements these actions. They are not yet surfaced in Sanderling's action model.
+The native driver layer (both `AndroidDriver` and `IOSDriver`) already implements these actions. They are not yet surfaced in Sanderling's action model.
 
 ### User Interaction Gaps
 
@@ -41,7 +41,7 @@ These are less about user gesture modeling and more about test environment setup
 
 ### Out of Scope
 
-These Maestro commands don't fit Sanderling's interaction model:
+These native driver commands don't fit Sanderling's interaction model:
 
 - `LaunchApp`, `StopApp`, `KillApp`, `ClearState` - app lifecycle, handled outside the action stream
 - `AssertVisible`, `AssertWithAI` - Sanderling has its own property and assertion model

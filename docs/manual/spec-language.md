@@ -191,7 +191,7 @@ On web, `"back"` maps to Backspace and `"home"` is not supported. All other keys
 | `taps` | Random tap on a clickable element |
 | `swipes` | Random swipe gesture |
 | `waitOnce` | Idles one step |
-| `pressKey` | Presses a random supported key |
+| `pressKeys` | Presses a random supported key |
 
 ### `actions(generator)`
 

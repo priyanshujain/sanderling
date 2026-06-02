@@ -7,7 +7,7 @@ BUF := buf
 
 GO_PACKAGES := ./...
 SIDECAR_JAR := sidecar/build/libs/sidecar-all.jar
-SIDECAR_EMBED := internal/sidecar/assets/sidecar-all.jar
+SIDECAR_EMBED := internal/sidecarassets/assets/sidecar-all.jar
 SIDECAR_SRC := $(shell find sidecar/src -type f \( -name '*.kt' -o -name '*.kts' \) 2>/dev/null) build.gradle.kts settings.gradle.kts
 SANDERLING_BIN := bin/sanderling
 
@@ -22,7 +22,7 @@ DOCS_TEMPLATE := docs/_template/page.html
 INSPECT_DIST := internal/inspect/dist
 WEB_DIST := inspect-ui/dist
 
-.PHONY: bootstrap proto sidecar sanderling install test test-go test-kotlin test-spec-api web-typecheck web-build web-dev inspect-dev docs clean release-cli release-npm-dry
+.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-kotlin test-spec-api web-typecheck web-build web-dev inspect-dev docs clean release-cli release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -73,6 +73,11 @@ test: test-go test-spec-api web-typecheck
 
 test-go:
 	$(GO) test $(GO_PACKAGES)
+
+# Drives small web fixtures and the chrome driver through real headless Chrome.
+# Kept out of `test` because it needs a Chrome binary on PATH.
+test-browser:
+	$(GO) test -tags browser ./test/browser/... ./internal/driver/chrome/...
 
 test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test

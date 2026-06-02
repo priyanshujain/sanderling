@@ -3,9 +3,11 @@ import {
   Tap,
   actions,
   always,
+  edgeCaseText,
   eventually,
   extract,
   from,
+  integers,
   next,
   now,
   taps,
@@ -15,11 +17,11 @@ import {
 import { noUncaughtExceptions } from "@sanderling/spec/defaults/properties";
 
 // Page-presence checks via stable element ids.
-const onLoginPage = extract((s) => !!s.ax.find({ id: "email" }));
-const onHomePage = extract((s) => !!s.ax.find({ id: "add-account" }));
-const onAddAccountPage = extract((s) => !!s.ax.find({ id: "account-name" }));
-const onLedgerPage = extract((s) => !!s.ax.find({ id: "ledger" }));
-const onAddTxnPage = extract((s) => !!s.ax.find({ id: "txn-amount" }));
+const onLoginPage = extract((s) => !!s.ax.find({ id: "email" })).named("onLoginPage");
+const onHomePage = extract((s) => !!s.ax.find({ id: "add-account" })).named("onHomePage");
+const onAddAccountPage = extract((s) => !!s.ax.find({ id: "account-name" })).named("onAddAccountPage");
+const onLedgerPage = extract((s) => !!s.ax.find({ id: "ledger" })).named("onLedgerPage");
+const onAddTxnPage = extract((s) => !!s.ax.find({ id: "txn-amount" })).named("onAddTxnPage");
 
 // Auth state: true on any authenticated page, false only on login page.
 const loggedIn = extract((s) => {
@@ -32,7 +34,7 @@ const loggedIn = extract((s) => {
     s.ax.find({ id: "txn-amount" }) ||
     s.ax.find({ id: "add-txn" })
   );
-});
+}).named("loggedIn");
 
 // Read raw cents off explicit data-cents attributes; no aria-label parsing.
 function readCents(value: string | undefined): number {
@@ -44,7 +46,7 @@ function readCents(value: string | undefined): number {
 const totalBalance = extract((s) => {
   const el = s.ax.find({ id: "total-balance" });
   return readCents(el?.attrs?.["data-cents"]);
-});
+}).named("totalBalance");
 
 // Account cards expose `data-account-id` + `data-balance` so the spec reads
 // structured data without parsing aria-label.
@@ -54,33 +56,33 @@ const accountCards = extract((s) => {
     id: el.attrs?.["data-account-id"] ?? "",
     balance: readCents(el.attrs?.["data-balance"]),
   }));
-});
+}).named("accountCards");
 
 const ledgerTxnCount = extract((s) => {
   const el = s.ax.find({ id: "ledger" });
   return readCents(el?.attrs?.["data-txn-count"]);
-});
+}).named("ledgerTxnCount");
 
 const ledgerBalance = extract((s) => {
   const el = s.ax.find({ id: "ledger-balance" });
   return readCents(el?.attrs?.["data-cents"]);
-});
+}).named("ledgerBalance");
 
 // UI element handles.
-const emailField = extract((s) => s.ax.find({ id: "email" }));
-const passwordField = extract((s) => s.ax.find({ id: "password" }));
-const loginSubmit = extract((s) => s.ax.find({ id: "login-submit" }));
-const logoutButton = extract((s) => s.ax.find({ id: "logout" }));
-const addAccountButton = extract((s) => s.ax.find({ id: "add-account" }));
-const accountNameField = extract((s) => s.ax.find({ id: "account-name" }));
-const addAccountSubmit = extract((s) => s.ax.find({ id: "add-account-submit" }));
-const addTxnButton = extract((s) => s.ax.find({ id: "add-txn" }));
-const txnAmountField = extract((s) => s.ax.find({ id: "txn-amount" }));
-const txnNoteField = extract((s) => s.ax.find({ id: "txn-note" }));
-const txnCreditButton = extract((s) => s.ax.find({ id: "txn-credit" }));
-const txnDebitButton = extract((s) => s.ax.find({ id: "txn-debit" }));
-const txnSubmit = extract((s) => s.ax.find({ id: "txn-submit" }));
-const backButton = extract((s) => s.ax.find({ id: "back" }));
+const emailField = extract((s) => s.ax.find({ id: "email" })).named("emailField");
+const passwordField = extract((s) => s.ax.find({ id: "password" })).named("passwordField");
+const loginSubmit = extract((s) => s.ax.find({ id: "login-submit" })).named("loginSubmit");
+const logoutButton = extract((s) => s.ax.find({ id: "logout" })).named("logoutButton");
+const addAccountButton = extract((s) => s.ax.find({ id: "add-account" })).named("addAccountButton");
+const accountNameField = extract((s) => s.ax.find({ id: "account-name" })).named("accountNameField");
+const addAccountSubmit = extract((s) => s.ax.find({ id: "add-account-submit" })).named("addAccountSubmit");
+const addTxnButton = extract((s) => s.ax.find({ id: "add-txn" })).named("addTxnButton");
+const txnAmountField = extract((s) => s.ax.find({ id: "txn-amount" })).named("txnAmountField");
+const txnNoteField = extract((s) => s.ax.find({ id: "txn-note" })).named("txnNoteField");
+const txnCreditButton = extract((s) => s.ax.find({ id: "txn-credit" })).named("txnCreditButton");
+const txnDebitButton = extract((s) => s.ax.find({ id: "txn-debit" })).named("txnDebitButton");
+const txnSubmit = extract((s) => s.ax.find({ id: "txn-submit" })).named("txnSubmit");
+const backButton = extract((s) => s.ax.find({ id: "back" })).named("backButton");
 
 // -- Properties --
 
@@ -175,7 +177,9 @@ const openAddAccount = actions(() => {
   return btn ? [Tap({ on: btn })] : [];
 });
 
-const accountNameSampler = from([
+// Readable enumeration keeps the demo legible; repeats over a run still
+// exercise duplicate-name handling.
+const accountNames = from([
   "Checking",
   "Savings",
   "Travel",
@@ -183,17 +187,19 @@ const accountNameSampler = from([
   "Emergency Fund",
   "Investments",
   "Groceries",
-  "  ",
-  "Checking",
-  "A".repeat(41),
   "Petty Cash",
 ]);
 
-const typeAccountName = actions(() => {
-  if (!onAddAccountPage.current) return [];
-  const field = accountNameField.current;
-  return field ? [InputText({ into: field, text: accountNameSampler.generate() })] : [];
-});
+function typeAccountNameWith(sampler: { generate(): string }) {
+  return actions(() => {
+    if (!onAddAccountPage.current) return [];
+    const field = accountNameField.current;
+    return field ? [InputText({ into: field, text: sampler.generate() })] : [];
+  });
+}
+
+const typeAccountName = typeAccountNameWith(accountNames);
+const typeAccountNameEdge = typeAccountNameWith(edgeCaseText());
 
 const submitAddAccount = actions(() => {
   if (!onAddAccountPage.current) return [];
@@ -205,8 +211,7 @@ const openAccount = actions(() => {
   if (!onHomePage.current) return [];
   const cards = accountCards.current;
   if (cards.length === 0) return [];
-  const card = cards[Math.floor(Math.random() * cards.length)];
-  return [Tap({ on: card.element })];
+  return [Tap({ on: from(cards).generate().element })];
 });
 
 const openAddTxn = actions(() => {
@@ -215,25 +220,20 @@ const openAddTxn = actions(() => {
   return btn ? [Tap({ on: btn })] : [];
 });
 
-const amountSampler = from([
-  "12.34",
-  "100",
-  "0.01",
-  "999.99",
-  "5.5",
-  "42",
-  "0",
-  "",
-  "1e4",
-  "0.001",
-  "-5",
-]);
+// Valid happy-path amounts keep the balance properties exercised; the edge
+// branch (weighted in actionsRoot) stresses parsing with the adversarial corpus.
+const validAmounts = integers().between(1, 99999);
 
-const typeAmount = actions(() => {
-  if (!onAddTxnPage.current) return [];
-  const field = txnAmountField.current;
-  return field ? [InputText({ into: field, text: amountSampler.generate() })] : [];
-});
+function typeAmountWith(sampler: { generate(): string }) {
+  return actions(() => {
+    if (!onAddTxnPage.current) return [];
+    const field = txnAmountField.current;
+    return field ? [InputText({ into: field, text: sampler.generate() })] : [];
+  });
+}
+
+const typeAmount = typeAmountWith({ generate: () => String(validAmounts.generate()) });
+const typeAmountEdge = typeAmountWith(edgeCaseText());
 
 const noteSampler = from([
   "Coffee",
@@ -252,10 +252,9 @@ const typeNote = actions(() => {
 
 const toggleTxnType = actions(() => {
   if (!onAddTxnPage.current) return [];
-  const credit = txnCreditButton.current;
-  const debit = txnDebitButton.current;
-  const target = Math.random() < 0.5 ? credit : debit;
-  return target ? [Tap({ on: target })] : [];
+  const targets = [txnCreditButton.current, txnDebitButton.current].filter(Boolean);
+  if (targets.length === 0) return [];
+  return [Tap({ on: from(targets).generate() })];
 });
 
 const submitTxn = actions(() => {
@@ -279,11 +278,13 @@ export const actionsRoot = weighted(
   [30, loginHelper],
   [2, adversarialLogin],
   [14, openAddAccount],
-  [18, typeAccountName],
+  [14, typeAccountName],
+  [4, typeAccountNameEdge],
   [14, submitAddAccount],
   [14, openAccount],
   [12, openAddTxn],
-  [18, typeAmount],
+  [14, typeAmount],
+  [4, typeAmountEdge],
   [8, typeNote],
   [6, toggleTxnType],
   [16, submitTxn],
@@ -292,6 +293,3 @@ export const actionsRoot = weighted(
   [4, taps],
   [2, waitOnce],
 );
-
-(globalThis as { actions?: unknown; properties?: unknown }).actions = actionsRoot;
-(globalThis as { properties?: unknown }).properties = properties;

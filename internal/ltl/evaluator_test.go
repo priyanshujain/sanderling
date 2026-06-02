@@ -36,10 +36,10 @@ func TestPure_FalseImmediatelyViolates(t *testing.T) {
 func TestThunk_TransitionFromHoldToViolate(t *testing.T) {
 	values := []bool{true, true, false, true, true}
 	step := 0
-	evaluator := NewEvaluator(Always(Thunk(func() bool {
+	evaluator := NewEvaluator(Always(Thunk(func() (bool, error) {
 		current := values[step]
 		step++
-		return current
+		return current, nil
 	})))
 
 	wantSequence := []Verdict{
@@ -59,7 +59,7 @@ func TestThunk_TransitionFromHoldToViolate(t *testing.T) {
 
 func TestEvaluator_StickinessAfterViolation(t *testing.T) {
 	state := true
-	evaluator := NewEvaluator(Always(Thunk(func() bool { return state })))
+	evaluator := NewEvaluator(Always(Thunk(func() (bool, error) { return state, nil })))
 
 	if got := evaluator.Observe(); got != VerdictHolds {
 		t.Fatalf("step 1: got %v, want holds", got)
@@ -83,7 +83,7 @@ func TestEvaluator_TopLevelPureCountedAtEachStep(t *testing.T) {
 
 func TestEvaluator_TopLevelThunkRespectsObservation(t *testing.T) {
 	state := true
-	evaluator := NewEvaluator(Thunk(func() bool { return state }))
+	evaluator := NewEvaluator(Thunk(func() (bool, error) { return state, nil }))
 	if got := evaluator.Observe(); got != VerdictHolds {
 		t.Errorf("expected holds, got %v", got)
 	}
@@ -93,21 +93,12 @@ func TestEvaluator_TopLevelThunkRespectsObservation(t *testing.T) {
 	}
 }
 
-func TestVerdict_String(t *testing.T) {
-	if VerdictHolds.String() != "holds" {
-		t.Errorf("VerdictHolds.String() = %q", VerdictHolds.String())
-	}
-	if VerdictViolated.String() != "violated" {
-		t.Errorf("VerdictViolated.String() = %q", VerdictViolated.String())
-	}
-}
-
 func TestDescribe(t *testing.T) {
 	formula := Always(Pure(true))
 	if got := Describe(formula); !strings.Contains(got, "Always") || !strings.Contains(got, "Pure(true)") {
 		t.Errorf("Describe wrong: %q", got)
 	}
-	thunk := Always(Thunk(func() bool { return true }))
+	thunk := Always(Thunk(func() (bool, error) { return true, nil }))
 	if got := Describe(thunk); !strings.Contains(got, "Thunk") {
 		t.Errorf("Describe(thunk) wrong: %q", got)
 	}

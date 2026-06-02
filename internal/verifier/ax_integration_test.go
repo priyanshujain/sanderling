@@ -61,7 +61,7 @@ func TestStateAxObjectSelectorTestTagAlias(t *testing.T) {
 
 // TestStateAxFindWorks verifies that a Parse+PushSnapshot+extract round trip
 // actually lets the spec resolve selectors through state.ax.find.
-// Reads /tmp/live-dump.json (Maestro TreeNode JSON format); skipped if absent.
+// Reads /tmp/live-dump.json (sidecar TreeNode JSON format); skipped if absent.
 func TestStateAxFindWorks(t *testing.T) {
 	jsonText, err := os.ReadFile("/tmp/live-dump.json")
 	if err != nil {

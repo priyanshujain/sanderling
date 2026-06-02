@@ -33,7 +33,10 @@ func pushTree(t *testing.T, v *Verifier, treeJSON string) {
 // the result lands on its center regardless of seed.
 func TestTaps_ExcludeOffAppPackage(t *testing.T) {
 	verifier := newVerifier(t, WithAppPackage("com.folio"))
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.taps;`)
+	loadActionSpec(t, verifier, `
+		import { taps } from "@sanderling/spec";
+		globalThis.actions = taps;
+	`)
 	pushTree(t, verifier, scopedTreeJSON)
 
 	action, err := verifier.NextAction()
@@ -56,7 +59,10 @@ func TestTyping_ExcludeOffAppPackage(t *testing.T) {
 	  ]
 	}`
 	verifier := newVerifier(t, WithAppPackage("com.folio"))
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.typing;`)
+	loadActionSpec(t, verifier, `
+		import { typing } from "@sanderling/spec";
+		globalThis.actions = typing;
+	`)
 	pushTree(t, verifier, treeJSON)
 
 	action, err := verifier.NextAction()
@@ -72,7 +78,10 @@ func TestTyping_ExcludeOffAppPackage(t *testing.T) {
 // exploration never scrolls the keyboard's emoji list instead of the app.
 func TestSwipes_ExcludeOffAppPackage(t *testing.T) {
 	verifier := newVerifier(t, WithAppPackage("com.folio"))
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.swipes;`)
+	loadActionSpec(t, verifier, `
+		import { swipes } from "@sanderling/spec";
+		globalThis.actions = swipes;
+	`)
 	pushTree(t, verifier, scopedTreeJSON)
 
 	// Both the root and SubmitButton (com.folio) are valid anchors; only the
@@ -103,7 +112,10 @@ func TestTaps_AllOffAppYieldsErrNoAction(t *testing.T) {
 	  ]
 	}`
 	verifier := newVerifier(t, WithAppPackage("com.folio"))
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.taps;`)
+	loadActionSpec(t, verifier, `
+		import { taps } from "@sanderling/spec";
+		globalThis.actions = taps;
+	`)
 	pushTree(t, verifier, treeJSON)
 
 	if _, err := verifier.NextAction(); !errors.Is(err, ErrNoAction) {
@@ -121,7 +133,10 @@ func TestTaps_UnsetAppPackageKeepsAllNodes(t *testing.T) {
 	  ]
 	}`
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.taps;`)
+	loadActionSpec(t, verifier, `
+		import { taps } from "@sanderling/spec";
+		globalThis.actions = taps;
+	`)
 	pushTree(t, verifier, treeJSON)
 
 	action, err := verifier.NextAction()
@@ -137,7 +152,10 @@ func TestTaps_UnsetAppPackageKeepsAllNodes(t *testing.T) {
 // mirrors taps: it yields a LongPress on the only clickable in-app node.
 func TestLongPresses_TargetsClickableElement(t *testing.T) {
 	verifier := newVerifier(t, WithAppPackage("com.folio"))
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.longPresses;`)
+	loadActionSpec(t, verifier, `
+		import { longPresses } from "@sanderling/spec";
+		globalThis.actions = longPresses;
+	`)
 	pushTree(t, verifier, scopedTreeJSON)
 
 	action, err := verifier.NextAction()
@@ -163,7 +181,10 @@ func TestScrolls_TargetsScrollableContainer(t *testing.T) {
 	  ]
 	}`
 	verifier := newVerifier(t, WithAppPackage("com.folio"))
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.scrolls;`)
+	loadActionSpec(t, verifier, `
+		import { scrolls } from "@sanderling/spec";
+		globalThis.actions = scrolls;
+	`)
 	pushTree(t, verifier, treeJSON)
 
 	for range 50 {
@@ -190,8 +211,8 @@ func TestScrolls_TargetsScrollableContainer(t *testing.T) {
 		default:
 			t.Fatalf("unexpected direction %q", action.Direction)
 		}
-		if action.DurationMillis != 300 {
-			t.Fatalf("durationMillis = %d, want 300", action.DurationMillis)
+		if action.DurationMillis != 250 {
+			t.Fatalf("durationMillis = %d, want 250", action.DurationMillis)
 		}
 	}
 }
@@ -200,7 +221,10 @@ func TestScrolls_TargetsScrollableContainer(t *testing.T) {
 // no scrollable container is present.
 func TestScrolls_NoScrollableYieldsErrNoAction(t *testing.T) {
 	verifier := newVerifier(t, WithAppPackage("com.folio"))
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.scrolls;`)
+	loadActionSpec(t, verifier, `
+		import { scrolls } from "@sanderling/spec";
+		globalThis.actions = scrolls;
+	`)
 	pushTree(t, verifier, scopedTreeJSON)
 
 	if _, err := verifier.NextAction(); !errors.Is(err, ErrNoAction) {
@@ -219,7 +243,10 @@ func TestTaps_EmptyPackageNodeStaysInScope(t *testing.T) {
 	  ]
 	}`
 	verifier := newVerifier(t, WithAppPackage("com.folio"))
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.taps;`)
+	loadActionSpec(t, verifier, `
+		import { taps } from "@sanderling/spec";
+		globalThis.actions = taps;
+	`)
 	pushTree(t, verifier, treeJSON)
 
 	action, err := verifier.NextAction()

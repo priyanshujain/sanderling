@@ -1,3 +1,4 @@
+// Package chrome implements the device driver for web targets by driving Chrome over the DevTools protocol.
 package chrome
 
 import (
@@ -37,6 +38,13 @@ func New() *Driver {
 			chromedp.Flag("headless", true),
 			chromedp.Flag("disable-gpu", true),
 			chromedp.NoSandbox,
+			// CI runners give Chrome a tiny /dev/shm; without this the browser
+			// process hangs on startup and never reports its DevTools socket.
+			chromedp.Flag("disable-dev-shm-usage", true),
+			// Cold-starting Chrome on a loaded CI runner can take longer than the
+			// 20s default to print its DevTools websocket URL; give it more room
+			// so launch does not flake with "websocket url timeout reached".
+			chromedp.WSURLReadTimeout(60*time.Second),
 		)...,
 	)
 	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
@@ -140,6 +148,33 @@ func (d *Driver) TapSelector(_ context.Context, selector string) error {
 		return chromedp.Run(d.tabCtx, chromedp.Click(target, chromedp.NodeVisible, chromedp.BySearch))
 	}
 	return chromedp.Run(d.tabCtx, chromedp.Click(target, chromedp.NodeVisible))
+}
+
+// doubleTapGap is the inter-tap delay for DoubleTap: short enough to land both
+// events inside a sub-100 ms race window. The browser has no single double-tap
+// primitive, so the gesture is two taps with this gap.
+const doubleTapGap = 50 * time.Millisecond
+
+func (d *Driver) DoubleTap(ctx context.Context, x, y int) error {
+	return webDoubleTap(ctx, func() error { return d.Tap(ctx, x, y) })
+}
+
+func (d *Driver) DoubleTapSelector(ctx context.Context, selector string) error {
+	return webDoubleTap(ctx, func() error { return d.TapSelector(ctx, selector) })
+}
+
+func webDoubleTap(ctx context.Context, tap func() error) error {
+	if err := tap(); err != nil {
+		return err
+	}
+	timer := time.NewTimer(doubleTapGap)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	return tap()
 }
 
 func (d *Driver) InputText(_ context.Context, text string) error {

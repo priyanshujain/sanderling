@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -26,18 +27,20 @@ import (
 )
 
 const fixtureSpec = `
-const balance = __sanderling__.extract(state => state.snapshots.balance ?? 0);
+import { actions, always, extract, Tap } from "@sanderling/spec";
+const balance = extract(state => state.snapshots.balance ?? 0);
 globalThis.properties = {
-  balanceNonNegative: __sanderling__.always(() => balance.current >= 0),
+  balanceNonNegative: always(() => balance.current >= 0),
 };
-globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:next" })]);
+globalThis.actions = actions(() => [Tap({ on: "id:next" })]);
 `
 
 const violationSpec = `
+import { actions, always } from "@sanderling/spec";
 globalThis.properties = {
-  balanceNonNegative: __sanderling__.always(() => false),
+  balanceNonNegative: always(() => false),
 };
-globalThis.actions = __sanderling__.actions(() => []);
+globalThis.actions = actions(() => []);
 `
 
 type harness struct {
@@ -48,6 +51,34 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	return newHarnessWithSpec(t, fixtureSpec)
+}
+
+// bundleSpec compiles an authored TS spec with the goja runtime entry so the
+// loaded bundle installs __sanderlingNextAction__ (the shared picker).
+func bundleSpec(t *testing.T, specSource string) string {
+	t.Helper()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.ts")
+	if err := os.WriteFile(specPath, []byte(specSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	apiPath, err := filepath.Abs("../../pkg/spec/src/index.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimePath, err := filepath.Abs("../../pkg/spec/src/goja-runtime.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := bundler.Bundle(bundler.Options{
+		EntryFile:   specPath,
+		RuntimeFile: runtimePath,
+		Aliases:     map[string]string{"@sanderling/spec": apiPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(bundle.JavaScript)
 }
 
 func newHarnessWithSpec(t *testing.T, spec string) *harness {
@@ -61,7 +92,7 @@ func newHarnessWithSpec(t *testing.T, spec string) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifierInstance.Load(spec); err != nil {
+	if err := verifierInstance.Load(bundleSpec(t, spec)); err != nil {
 		t.Fatal(err)
 	}
 	state := &harness{
@@ -94,10 +125,38 @@ func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
 	if len(summary.Violations) != 0 {
 		t.Errorf("no violations expected, got %v", summary.Violations)
 	}
+	// Every builtin verb is supported on every platform, so a clean run must
+	// report no unsupported verbs (the runner still wires the field through).
+	if len(summary.UnsupportedVerbs) != 0 {
+		t.Errorf("expected no unsupported verbs, got %v", summary.UnsupportedVerbs)
+	}
 
 	actions := state.mock.Actions()
 	if !containsAction(actions, mockdriver.ActionTapSelector, "id:next") {
 		t.Errorf("expected TapSelector with id:next, got %v", actions)
+	}
+}
+
+func TestRunner_MaxStepsStopsAfterExactlyNSteps(t *testing.T) {
+	state := newHarness(t)
+
+	const maxSteps = 3
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// A long duration ensures MaxSteps, not the deadline, ends the run.
+	summary, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 10 * time.Millisecond,
+		MaxSteps:    maxSteps,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps != maxSteps {
+		t.Errorf("expected exactly %d steps, got %d", maxSteps, summary.Steps)
 	}
 }
 
@@ -196,10 +255,11 @@ func TestRunner_ViolationSurfacesOnlyOnOnsetStep(t *testing.T) {
 
 func TestRunner_ThrowingPredicateIsLoggedNotPanic(t *testing.T) {
 	const throwingSpec = `
+import { actions, always, Tap } from "@sanderling/spec";
 globalThis.properties = {
-  broken: __sanderling__.always(() => { throw new Error("bad predicate"); }),
+  broken: always(() => { throw new Error("bad predicate"); }),
 };
-globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:next" })]);
+globalThis.actions = actions(() => [Tap({ on: "id:next" })]);
 `
 	state := newHarnessWithSpec(t, throwingSpec)
 
@@ -370,30 +430,25 @@ func TestApplyAction_V8InputTextAtOriginStillTaps(t *testing.T) {
 	}
 }
 
-func TestApplyAction_DoubleTapDispatchesTwoTapsAtCoordinates(t *testing.T) {
+func TestApplyAction_DoubleTapDispatchesDoubleTapAtCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, X: 100, Y: 200}
 
-	start := time.Now()
 	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
-	elapsed := time.Since(start)
-	if elapsed < 40*time.Millisecond {
-		t.Errorf("expected >= 40ms gap between taps, elapsed %v", elapsed)
-	}
 	taps := 0
 	for _, a := range driverMock.Actions() {
-		if a.Kind == mockdriver.ActionTap && a.X == 100 && a.Y == 200 {
+		if a.Kind == mockdriver.ActionDoubleTap && a.X == 100 && a.Y == 200 {
 			taps++
 		}
 	}
-	if taps != 2 {
-		t.Errorf("expected 2 Tap calls at (100,200), got %d in %v", taps, driverMock.Actions())
+	if taps != 1 {
+		t.Errorf("expected 1 DoubleTap call at (100,200), got %d in %v", taps, driverMock.Actions())
 	}
 }
 
-func TestApplyAction_DoubleTapDispatchesTwoSelectorTaps(t *testing.T) {
+func TestApplyAction_DoubleTapDispatchesDoubleTapSelector(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, On: "id:save"}
 
@@ -402,12 +457,12 @@ func TestApplyAction_DoubleTapDispatchesTwoSelectorTaps(t *testing.T) {
 	}
 	taps := 0
 	for _, a := range driverMock.Actions() {
-		if a.Kind == mockdriver.ActionTapSelector && a.Selector == "id:save" {
+		if a.Kind == mockdriver.ActionDoubleTapSelector && a.Selector == "id:save" {
 			taps++
 		}
 	}
-	if taps != 2 {
-		t.Errorf("expected 2 TapSelector calls with id:save, got %d in %v", taps, driverMock.Actions())
+	if taps != 1 {
+		t.Errorf("expected 1 DoubleTapSelector call with id:save, got %d in %v", taps, driverMock.Actions())
 	}
 }
 
@@ -962,7 +1017,8 @@ func TestIsTransientApplyError_Classification(t *testing.T) {
 // after a Wait action - the action already provides settling time.
 func TestRunner_WaitActionSkipsIdle(t *testing.T) {
 	const waitSpec = `
-globalThis.actions = __sanderling__.actions(() => [__sanderling__.wait({ durationMillis: 5 })]);
+import { actions, Wait } from "@sanderling/spec";
+globalThis.actions = actions(() => [Wait({ durationMillis: 5 })]);
 `
 	state := newHarnessWithSpec(t, waitSpec)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

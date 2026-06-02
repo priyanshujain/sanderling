@@ -14,7 +14,7 @@ import (
 	"github.com/priyanshujain/sanderling/internal/driver/chrome"
 	driverSidecar "github.com/priyanshujain/sanderling/internal/driver/sidecar"
 	"github.com/priyanshujain/sanderling/internal/ios"
-	"github.com/priyanshujain/sanderling/internal/sidecar"
+	"github.com/priyanshujain/sanderling/internal/sidecarassets"
 )
 
 // buildDriver creates the appropriate DeviceDriver for the platform and returns
@@ -30,11 +30,11 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	}
 
 	sidecarDirectory := os.TempDir() + "/sanderling-sidecar"
-	jarPath, err := sidecar.Extract(sidecarDirectory)
+	jarPath, err := sidecarassets.Extract(sidecarDirectory)
 	if err != nil {
 		return nil, nil, fmt.Errorf("extract sidecar: %w", err)
 	}
-	fmt.Fprintf(stdout, "sidecar JAR: %s (size=%d)\n", jarPath, sidecar.EmbeddedSize())
+	fmt.Fprintf(stdout, "sidecar JAR: %s (size=%d)\n", jarPath, sidecarassets.EmbeddedSize())
 
 	sidecarPort, err := pickFreePort()
 	if err != nil {

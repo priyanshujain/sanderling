@@ -17,7 +17,7 @@ var attrNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 // "descPrefix:bar") into a CSS selector or XPath expression usable from the
 // chrome driver's TapSelector fallback path. The boolean return is true when
 // the result is XPath rather than CSS. Unknown prefixes pass through to a CSS
-// attribute match by the same name so a Maestro-side addition (e.g. a future
+// attribute match by the same name so a sidecar-side addition (e.g. a future
 // "role:") works without a Sanderling release.
 func TranslateStringSelector(selector string) (string, bool, error) {
 	if selector == "" {

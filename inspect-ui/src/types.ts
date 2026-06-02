@@ -103,7 +103,8 @@ export interface Exception {
 export type ResidualNode =
   | { op: "true" }
   | { op: "false" }
-  | { op: "always" | "now" | "next" | "not"; arg: ResidualNode }
+  | { op: "now" | "next" | "not"; arg: ResidualNode }
+  | { op: "always"; arg: ResidualNode; within?: { amount: number; unit: string } }
   | { op: "eventually"; arg: ResidualNode; within?: { amount: number; unit: string } }
   | { op: "and" | "or" | "implies"; left: ResidualNode; right: ResidualNode }
   | { op: "predicate"; name?: string }

@@ -1,12 +1,13 @@
+// Package testrun wires together the device, bundler, runner, and verifier into a single test pipeline.
 package testrun
 
 import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/android"
@@ -53,14 +54,21 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		aliases["@sanderling/spec/defaults"] = filepath.Join(base, "defaults/index.ts")
 		aliases["@sanderling/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
 	}
+	seed := resolveSeed(options.Seed)
 	defines := map[string]string{
 		"SANDERLING_TEST_PHONE": os.Getenv("SANDERLING_TEST_PHONE"),
 		"SANDERLING_TEST_OTP":   os.Getenv("SANDERLING_TEST_OTP"),
+		"SANDERLING_SEED":       strconv.FormatInt(seed, 10),
+	}
+	gojaRuntimePath := resolveGojaRuntimePath(specAPIPath, options.Spec)
+	if gojaRuntimePath == "" {
+		return fmt.Errorf("goja-runtime.ts not found near %s; checkout pkg/spec or set @sanderling/spec alias", options.Spec)
 	}
 	bundle, err := bundler.Bundle(bundler.Options{
-		EntryFile: options.Spec,
-		Defines:   defines,
-		Aliases:   aliases,
+		EntryFile:   options.Spec,
+		RuntimeFile: gojaRuntimePath,
+		Defines:     defines,
+		Aliases:     aliases,
 	})
 	if err != nil {
 		return fmt.Errorf("bundle spec: %w", err)
@@ -101,12 +109,9 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		}
 	}
 
-	seed := options.Seed
-	if seed == 0 {
-		seed = time.Now().UnixNano()
-	}
 	verifierInstance, err := verifier.New(
-		verifier.WithRand(rand.New(rand.NewPCG(uint64(seed), 0))),
+		verifier.WithSeed(uint64(seed)),
+		verifier.WithPlatform(options.Platform),
 		verifier.WithAppPackage(options.BundleID),
 	)
 	if err != nil {
@@ -161,25 +166,38 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		return fmt.Errorf("runner: %w", err)
 	}
 
-	fmt.Fprintf(stdout, "\nrun complete: %d steps in %s\n", summary.Steps, summary.EndTime.Sub(summary.StartTime).Round(time.Millisecond))
-	if len(summary.Violations) == 0 {
-		fmt.Fprintln(stdout, "no violations.")
-	} else {
-		fmt.Fprintf(stdout, "%d violation record(s):\n", len(summary.Violations))
-		for _, violation := range summary.Violations {
-			fmt.Fprintf(stdout, "  step %d: %v\n", violation.StepIndex, violation.Properties)
-		}
-	}
+	fmt.Fprintf(stdout, "\nelapsed: %s\n", summary.EndTime.Sub(summary.StartTime).Round(time.Millisecond))
+	runner.RenderSummary(stdout, summary, options.Platform)
 	return nil
 }
 
+// resolveSeed returns the configured seed, or a time-derived one when unset.
+// The same value seeds both the goja PRNG and the web bundle's SANDERLING_SEED
+// define, so a single run is reproducible across both runtimes.
+func resolveSeed(configured int64) int64 {
+	if configured != 0 {
+		return configured
+	}
+	return time.Now().UnixNano()
+}
+
 // resolveWebRuntimePath returns the path to pkg/spec/src/web-runtime.ts.
-// Tries the spec-API checkout first (so monorepo development works without
-// publishing the package), then falls back to a sibling of the resolved
-// @sanderling/spec entry, and finally to a node_modules path.
 func resolveWebRuntimePath(specAPIPath, userSpecPath string) string {
+	return resolveRuntimeSibling(specAPIPath, userSpecPath, "web-runtime.ts")
+}
+
+// resolveGojaRuntimePath returns the path to pkg/spec/src/goja-runtime.ts, the
+// native verifier's runtime entry that installs __sanderlingNextAction__.
+func resolveGojaRuntimePath(specAPIPath, userSpecPath string) string {
+	return resolveRuntimeSibling(specAPIPath, userSpecPath, "goja-runtime.ts")
+}
+
+// resolveRuntimeSibling finds a runtime-entry file that sits beside the spec-API
+// index.ts. Tries the spec-API checkout first (so monorepo development works
+// without publishing the package), then falls back to a node_modules path.
+func resolveRuntimeSibling(specAPIPath, userSpecPath, filename string) string {
 	if specAPIPath != "" {
-		candidate := filepath.Join(filepath.Dir(specAPIPath), "web-runtime.ts")
+		candidate := filepath.Join(filepath.Dir(specAPIPath), filename)
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}
@@ -187,7 +205,7 @@ func resolveWebRuntimePath(specAPIPath, userSpecPath string) string {
 	if absoluteSpec, err := filepath.Abs(userSpecPath); err == nil {
 		directory := filepath.Dir(absoluteSpec)
 		for {
-			candidate := filepath.Join(directory, "node_modules", "@sanderling", "spec", "src", "web-runtime.ts")
+			candidate := filepath.Join(directory, "node_modules", "@sanderling", "spec", "src", filename)
 			if _, err := os.Stat(candidate); err == nil {
 				return candidate
 			}

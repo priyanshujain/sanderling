@@ -266,10 +266,10 @@ func selectorPathFromJS(runtime *goja.Runtime, arg goja.Value) ([]hierarchy.Sele
 }
 
 // selectorStringFromJS returns a string representation of the selector argument
-// for tagging returned element objects (used by selectorOf to reconstruct the
-// selector when the element is passed back as an action target). Output
-// follows the canonical hierarchy selector grammar: "k:v" pairs space-joined
-// per object, chains joined by " > ".
+// for tagging returned ax element objects (state.ax.find/findAll), so a spec
+// reading an element's selector sees the canonical form. Output follows the
+// hierarchy selector grammar: "k:v" pairs space-joined per object, chains
+// joined by " > ".
 func selectorStringFromJS(runtime *goja.Runtime, arg goja.Value) string {
 	if arg == nil || goja.IsUndefined(arg) || goja.IsNull(arg) {
 		return ""
@@ -414,132 +414,68 @@ func jsonToJSValue(runtime *goja.Runtime, raw json.RawMessage) (goja.Value, erro
 	return runtime.ToValue(generic), nil
 }
 
-// jsValueToAction converts a JS-side action object into a Go Action.
-func jsValueToAction(runtime *goja.Runtime, value goja.Value) (Action, error) {
-	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
-		return Action{}, fmt.Errorf("nil action")
+// wireAction is the unified flat wire contract both runtime entries emit
+// (runtime-entry.ts serializeAction). ONE decoder reads it on both the goja
+// (native) and the runner (web) sides, so a field rename cannot silently turn
+// an action into a no-op on one path only.
+type wireAction struct {
+	Kind           string `json:"kind"`
+	X              int    `json:"x"`
+	Y              int    `json:"y"`
+	Selector       string `json:"selector"`
+	Text           string `json:"text"`
+	Key            string `json:"key"`
+	Direction      string `json:"direction"`
+	FromX          int    `json:"fromX"`
+	FromY          int    `json:"fromY"`
+	ToX            int    `json:"toX"`
+	ToY            int    `json:"toY"`
+	DurationMillis int    `json:"durationMillis"`
+}
+
+// DecodeAction turns one serialized action (the flat camelCase wire contract)
+// into a Go Action. An empty payload or JSON "null" reports ErrNoAction.
+func DecodeAction(raw json.RawMessage) (Action, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return Action{}, ErrNoAction
 	}
-	object := value.ToObject(runtime)
-	kindValue := object.Get("kind")
-	if kindValue == nil {
-		return Action{}, fmt.Errorf("action missing kind")
+	var wire wireAction
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return Action{}, fmt.Errorf("decode action: %w", err)
 	}
-	kind := kindValue.String()
-	switch kind {
+	switch wire.Kind {
 	case "Tap":
-		on := object.Get("on")
-		x, y := coordinatesOf(runtime, on)
-		return Action{Kind: ActionKindTap, On: selectorOf(runtime, on), X: x, Y: y}, nil
+		return Action{Kind: ActionKindTap, On: wire.Selector, X: wire.X, Y: wire.Y}, nil
 	case "DoubleTap":
-		on := object.Get("on")
-		x, y := coordinatesOf(runtime, on)
-		return Action{Kind: ActionKindDoubleTap, On: selectorOf(runtime, on), X: x, Y: y}, nil
+		return Action{Kind: ActionKindDoubleTap, On: wire.Selector, X: wire.X, Y: wire.Y}, nil
+	case "LongPress":
+		return Action{Kind: ActionKindLongPress, On: wire.Selector, X: wire.X, Y: wire.Y}, nil
 	case "InputText":
-		into := object.Get("into")
-		text := object.Get("text")
-		x, y := coordinatesOf(runtime, into)
-		return Action{Kind: ActionKindInputText, On: selectorOf(runtime, into), Text: stringOf(text), X: x, Y: y}, nil
+		return Action{Kind: ActionKindInputText, On: wire.Selector, Text: wire.Text, X: wire.X, Y: wire.Y}, nil
 	case "Swipe":
-		from := object.Get("from")
-		to := object.Get("to")
-		fromX, fromY := coordinatesOf(runtime, from)
-		toX, toY := coordinatesOf(runtime, to)
-		if fromX == 0 && fromY == 0 {
-			fromX, fromY = pointCoordinates(runtime, from)
-		}
-		if toX == 0 && toY == 0 {
-			toX, toY = pointCoordinates(runtime, to)
-		}
 		return Action{
 			Kind:           ActionKindSwipe,
-			FromX:          fromX,
-			FromY:          fromY,
-			ToX:            toX,
-			ToY:            toY,
-			DurationMillis: intField(object, "durationMillis"),
+			FromX:          wire.FromX,
+			FromY:          wire.FromY,
+			ToX:            wire.ToX,
+			ToY:            wire.ToY,
+			DurationMillis: wire.DurationMillis,
 		}, nil
-	case "LongPress":
-		on := object.Get("on")
-		x, y := coordinatesOf(runtime, on)
-		return Action{Kind: ActionKindLongPress, On: selectorOf(runtime, on), X: x, Y: y}, nil
 	case "Scroll":
-		in := object.Get("in")
-		x, y := coordinatesOf(runtime, in)
 		return Action{
-			Kind:      ActionKindScroll,
-			Direction: stringOf(object.Get("direction")),
-			On:        selectorOf(runtime, in),
-			X:         x,
-			Y:         y,
+			Kind:           ActionKindScroll,
+			Direction:      wire.Direction,
+			FromX:          wire.FromX,
+			FromY:          wire.FromY,
+			ToX:            wire.ToX,
+			ToY:            wire.ToY,
+			DurationMillis: wire.DurationMillis,
 		}, nil
 	case "PressKey":
-		return Action{Kind: ActionKindPressKey, Key: stringOf(object.Get("key"))}, nil
+		return Action{Kind: ActionKindPressKey, Key: wire.Key}, nil
 	case "Wait":
-		return Action{Kind: ActionKindWait, DurationMillis: intField(object, "durationMillis")}, nil
+		return Action{Kind: ActionKindWait, DurationMillis: wire.DurationMillis}, nil
 	default:
-		return Action{}, fmt.Errorf("unknown action kind %q", kind)
+		return Action{}, fmt.Errorf("unknown action kind %q", wire.Kind)
 	}
-}
-
-// pointCoordinates reads a plain {x, y} literal (not an AX element), which is
-// how Swipe endpoints are commonly expressed in specs.
-func pointCoordinates(runtime *goja.Runtime, value goja.Value) (int, int) {
-	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
-		return 0, 0
-	}
-	object := value.ToObject(runtime)
-	if object == nil {
-		return 0, 0
-	}
-	x := object.Get("x")
-	y := object.Get("y")
-	if x == nil || y == nil {
-		return 0, 0
-	}
-	return int(x.ToInteger()), int(y.ToInteger())
-}
-
-func intField(object *goja.Object, name string) int {
-	value := object.Get(name)
-	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
-		return 0
-	}
-	return int(value.ToInteger())
-}
-
-func selectorOf(runtime *goja.Runtime, value goja.Value) string {
-	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
-		return ""
-	}
-	object := value.ToObject(runtime)
-	if object == nil {
-		return value.String()
-	}
-	if tag := object.Get(tagSelector); tag != nil && !goja.IsUndefined(tag) {
-		return tag.String()
-	}
-	return value.String()
-}
-
-func coordinatesOf(runtime *goja.Runtime, value goja.Value) (int, int) {
-	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
-		return 0, 0
-	}
-	object := value.ToObject(runtime)
-	if object == nil {
-		return 0, 0
-	}
-	xValue := object.Get("x")
-	yValue := object.Get("y")
-	if xValue == nil || yValue == nil || goja.IsUndefined(xValue) || goja.IsUndefined(yValue) {
-		return 0, 0
-	}
-	return int(xValue.ToInteger()), int(yValue.ToInteger())
-}
-
-func stringOf(value goja.Value) string {
-	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
-		return ""
-	}
-	return value.String()
 }

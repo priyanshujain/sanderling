@@ -83,3 +83,40 @@ jobs:
 
       - name: Run tests
         run: make test
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pin stable: the action's default (latest) pulls a dev Chromium whose
+      # remote-debugging socket is flaky under the driver, even though the
+      # browser otherwise launches headless.
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      # Ubuntu 24.04 (current ubuntu-latest) restricts unprivileged user
+      # namespaces via AppArmor, which stops headless Chrome from starting even
+      # with --no-sandbox: the process launches but never opens its DevTools
+      # socket. Re-enable them so the driver's Chrome can come up.
+      - name: Allow Chrome under unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # Fail here with Chrome's own stderr if the browser can't launch, instead
+      # of letting the driver report an opaque DevTools timeout downstream.
+      - name: Verify headless Chrome starts
+        run: |
+          chrome --version
+          chrome --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --dump-dom 'data:text/html,<title>ok</title>'
+
+      - name: Drive web fixtures through headless Chrome
+        run: make test-browser

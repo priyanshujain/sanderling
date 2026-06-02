@@ -1,3 +1,4 @@
+// Package runner drives the observe-decide-act loop that steps a spec against a device.
 package runner
 
 import (
@@ -5,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"time"
@@ -20,14 +22,14 @@ import (
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
-// doubleTapGap is the inter-tap delay for ActionKindDoubleTap: short enough to
-// land both events inside a sub-100 ms race window, long enough for adb
-// `input tap` to serialize two MotionEvent streams.
-const doubleTapGap = 50 * time.Millisecond
-
 type Options struct {
 	Duration    time.Duration
 	IdleTimeout time.Duration
+
+	// MaxSteps caps the run at a fixed number of steps for reproducible
+	// bounded runs. 0 means unbounded (the duration deadline governs); a
+	// positive value stops the loop once that many steps have run.
+	MaxSteps int
 
 	BundleID    string
 	Driver      driver.DeviceDriver
@@ -41,6 +43,10 @@ type Summary struct {
 	EndTime    time.Time
 	Steps      int
 	Violations []ViolationRecord
+	// UnsupportedVerbs lists verbs the picker requested that the platform
+	// could not dispatch, deduped, so the report can flag a spec exercising
+	// gestures this target does not support.
+	UnsupportedVerbs []string
 }
 
 type ViolationRecord struct {
@@ -65,6 +71,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	// before the deadline is set so the settle time does not eat the run.
 	waitForForeground(ctx, options, logger)
 
+	// Pick the action and extractor sources once from the driver's
+	// capabilities so the step loop runs one uniform path with no per-step
+	// driver type assertion.
+	actionSource, extractorSource := pickSources(options)
+
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
 	stepIndex := 0
@@ -72,6 +83,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	var lastLogTime time.Time
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
+			break
+		}
+		if options.MaxSteps > 0 && stepIndex >= options.MaxSteps {
 			break
 		}
 		stepIndex++
@@ -116,17 +130,15 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			return nil
 		})
 		var v8Overrides map[int]json.RawMessage
-		if web, ok := options.Driver.(driver.WebDriver); ok {
-			g.Go(func() error {
-				overrides, err := web.EvaluateExtractors(gctx)
-				if err != nil {
-					logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
-					return nil
-				}
-				v8Overrides = overrides
+		g.Go(func() error {
+			overrides, err := extractorSource.ExtractorOverrides(gctx)
+			if err != nil {
+				logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
 				return nil
-			})
-		}
+			}
+			v8Overrides = overrides
+			return nil
+		})
 		// All goroutines write to local variables and return nil, so the Wait
 		// error is always nil; ignored intentionally.
 		_ = g.Wait()
@@ -166,6 +178,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// progressing.
 		var violations []string
 		var extractorChanges map[string]trace.ExtractorChange
+		var witnesses map[string]trace.Witness
+		skippedVerification := false
 		if !transitional {
 			if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
 				Tree:       tree,
@@ -186,25 +200,16 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			}
 			options.Verifier.EvaluateProperties()
 			violations = options.Verifier.NewlyViolatedProperties()
-			for _, name := range violations {
-				if predicateErr := options.Verifier.PredicateError(name); predicateErr != nil {
-					logger.Warn("predicate error", "step", stepIndex, "property", name, "err", predicateErr)
-				}
-			}
+			witnesses = collectWitnesses(options.Verifier, violations, logger, stepIndex)
 			extractorChanges = encodeExtractorChanges(options.Verifier.ChangedExtractors())
 		} else {
+			skippedVerification = true
 			logger.Warn("transitional tree after retry budget; skipping verifier",
 				"step", stepIndex, "screen", screen, "nodes", treeSize)
 		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
 
-		var nextAction verifier.Action
-		var nextErr error
-		if web, ok := options.Driver.(driver.WebDriver); ok {
-			nextAction, nextErr = nextActionFromV8(ctx, web)
-		} else {
-			nextAction, nextErr = options.Verifier.NextAction()
-		}
+		nextAction, nextErr := actionSource.NextAction(ctx)
 		var traceAction *trace.Action
 		if nextErr == nil {
 			traceAction = traceActionFor(nextAction, tree)
@@ -240,16 +245,18 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		step := trace.Step{
-			Index:            stepIndex,
-			Timestamp:        stepStart,
-			Screen:           screen,
-			NextAction:       traceAction,
-			Violations:       violations,
-			Hierarchy:        tree,
-			Residuals:        residuals,
-			Metrics:          metrics,
-			ExtractorChanges: extractorChanges,
-			Transitional:     transitional,
+			Index:               stepIndex,
+			Timestamp:           stepStart,
+			Screen:              screen,
+			NextAction:          traceAction,
+			Violations:          violations,
+			Hierarchy:           tree,
+			Residuals:           residuals,
+			Metrics:             metrics,
+			ExtractorChanges:    extractorChanges,
+			Transitional:        transitional,
+			SkippedVerification: skippedVerification,
+			Witnesses:           witnesses,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
@@ -276,8 +283,49 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 	}
 
+	// Finalize each evaluator once the loop ends so liveness obligations that
+	// never discharged (an unbounded eventually that never fired, a strong
+	// next with no successor) are reported as violations rather than silently
+	// left pending. Properties already violated mid-run are not re-reported.
+	if ended := options.Verifier.Finalize(); len(ended) > 0 {
+		witnesses := collectWitnesses(options.Verifier, ended, logger, stepIndex)
+		summary.Violations = append(summary.Violations, ViolationRecord{
+			StepIndex:  stepIndex,
+			Properties: ended,
+		})
+		finalStep := trace.Step{
+			Index:      stepIndex,
+			Timestamp:  time.Now(),
+			Violations: ended,
+			Witnesses:  witnesses,
+		}
+		if err := options.TraceWriter.WriteStep(finalStep); err != nil {
+			return summary, fmt.Errorf("finalize trace: %w", err)
+		}
+	}
+
+	summary.UnsupportedVerbs = options.Verifier.UnsupportedVerbs()
 	summary.EndTime = time.Now()
 	return summary, nil
+}
+
+// RenderSummary writes the human-facing run summary: step count, each violation
+// record, and any unsupported verbs. The wall-clock duration is excluded so the
+// output is deterministic and snapshot-testable; the CLI prints it separately.
+func RenderSummary(w io.Writer, summary Summary, platform string) {
+	fmt.Fprintf(w, "\nrun complete: %d steps\n", summary.Steps)
+	if len(summary.Violations) == 0 {
+		fmt.Fprintln(w, "no violations.")
+	} else {
+		fmt.Fprintf(w, "%d violation record(s):\n", len(summary.Violations))
+		for _, violation := range summary.Violations {
+			fmt.Fprintf(w, "  step %d: %v\n", violation.StepIndex, violation.Properties)
+		}
+	}
+	if len(summary.UnsupportedVerbs) > 0 {
+		fmt.Fprintf(w, "unsupported on %s: %s\n",
+			platform, strings.Join(summary.UnsupportedVerbs, ", "))
+	}
 }
 
 func validate(options Options) error {
@@ -417,26 +465,13 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		return drv.Tap(ctx, x, y)
 	case verifier.ActionKindDoubleTap:
 		x, y, ok := resolveCoordinates(action, tree)
-		tap := func() error {
-			if !ok {
-				if action.On == "" {
-					return nil
-				}
-				return drv.TapSelector(ctx, action.On)
+		if !ok {
+			if action.On == "" {
+				return nil
 			}
-			return drv.Tap(ctx, x, y)
+			return drv.DoubleTapSelector(ctx, action.On)
 		}
-		if err := tap(); err != nil {
-			return err
-		}
-		timer := time.NewTimer(doubleTapGap)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timer.C:
-		}
-		return tap()
+		return drv.DoubleTap(ctx, x, y)
 	case verifier.ActionKindLongPress:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
@@ -748,59 +783,31 @@ func captureMetrics(ctx context.Context, options Options, logger *slog.Logger, s
 	}
 }
 
-// nextActionFromV8 invokes the V8-side action generator and decodes the
-// resulting JSON into a verifier.Action. ErrNoAction is returned when the
-// generator declined to act this tick.
-func nextActionFromV8(ctx context.Context, web driver.WebDriver) (verifier.Action, error) {
-	raw, err := web.NextActionFromV8(ctx)
-	if err != nil {
-		return verifier.Action{}, fmt.Errorf("v8 next action: %w", err)
+// collectWitnesses gathers the violation witness for each newly-violated
+// property, logs its cause, and returns them keyed by property name for the
+// trace. Properties without a captured witness are skipped.
+func collectWitnesses(verifierInstance *verifier.Verifier, properties []string, logger *slog.Logger, stepIndex int) map[string]trace.Witness {
+	if len(properties) == 0 {
+		return nil
 	}
-	if len(raw) == 0 || string(raw) == "null" {
-		return verifier.Action{}, verifier.ErrNoAction
+	witnesses := map[string]trace.Witness{}
+	for _, name := range properties {
+		witness := verifierInstance.Witness(name)
+		if witness == nil {
+			continue
+		}
+		logger.Warn("property violated",
+			"step", stepIndex, "property", name, "reason", witness.Reason, "error", witness.IsError)
+		witnesses[name] = trace.Witness{
+			Reason:     witness.Reason,
+			IsError:    witness.IsError,
+			Extractors: witness.Extractors,
+		}
 	}
-	var decoded struct {
-		Kind           string `json:"kind"`
-		X              int    `json:"x"`
-		Y              int    `json:"y"`
-		FromX          int    `json:"from_x"`
-		FromY          int    `json:"from_y"`
-		ToX            int    `json:"to_x"`
-		ToY            int    `json:"to_y"`
-		Key            string `json:"key"`
-		Text           string `json:"text"`
-		DurationMillis int    `json:"duration_millis"`
+	if len(witnesses) == 0 {
+		return nil
 	}
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return verifier.Action{}, fmt.Errorf("decode v8 action: %w", err)
-	}
-	switch decoded.Kind {
-	case "Tap":
-		return verifier.Action{Kind: verifier.ActionKindTap, X: decoded.X, Y: decoded.Y}, nil
-	case "DoubleTap":
-		return verifier.Action{Kind: verifier.ActionKindDoubleTap, X: decoded.X, Y: decoded.Y}, nil
-	case "InputText":
-		return verifier.Action{
-			Kind: verifier.ActionKindInputText,
-			X:    decoded.X, Y: decoded.Y,
-			Text: decoded.Text,
-		}, nil
-	case "Swipe":
-		return verifier.Action{
-			Kind:           verifier.ActionKindSwipe,
-			FromX:          decoded.FromX,
-			FromY:          decoded.FromY,
-			ToX:            decoded.ToX,
-			ToY:            decoded.ToY,
-			DurationMillis: decoded.DurationMillis,
-		}, nil
-	case "PressKey":
-		return verifier.Action{Kind: verifier.ActionKindPressKey, Key: decoded.Key}, nil
-	case "Wait":
-		return verifier.Action{Kind: verifier.ActionKindWait, DurationMillis: decoded.DurationMillis}, nil
-	default:
-		return verifier.Action{}, verifier.ErrNoAction
-	}
+	return witnesses
 }
 
 func encodeExtractorChanges(changes map[string]verifier.ExtractorChange) map[string]trace.ExtractorChange {

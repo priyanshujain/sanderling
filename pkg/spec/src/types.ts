@@ -125,6 +125,7 @@ export interface WebState extends State {
 export interface Extracted<T> {
   readonly current: T;
   readonly previous: T | undefined;
+  named(name: string): Extracted<T>;
 }
 
 export interface Point {
@@ -175,10 +176,10 @@ export type Key =
   | "left"
   | "right";
 
-export interface ActionGenerator {
-  readonly __sanderlingActionGenerator: true;
-  generate(): Action[];
-}
+// ActionGenerator is a node in the action-generator tree (see action-tree.ts).
+// Author specs treat it as an opaque handle they compose with weighted(); the
+// shared picker walks the underlying GeneratorNode.
+export type ActionGenerator = GeneratorNode;
 
 export interface Formula {
   readonly __sanderlingFormula: true;
@@ -196,44 +197,20 @@ export interface Sampler<T> {
   generate(): T;
 }
 
+// SanderlingRuntime is the host-bound surface that stays on
+// globalThis.__sanderling__: extract plus the LTL formula constructors. Action
+// factories no longer live here; they return plain data trees (see actions.ts).
 export interface SanderlingRuntime {
   extract: <T>(getter: (state: State) => T, name?: string) => Extracted<T>;
   always: (predicateOrFormula: (() => boolean) | Formula) => Formula;
   now: (predicate: () => boolean) => Formula;
   next: (predicate: () => boolean) => Formula;
   eventually: (predicate: () => boolean) => EventuallyFormula;
-  actions: (generator: () => Action[]) => ActionGenerator;
-  weighted: (...entries: WeightedEntry[]) => ActionGenerator;
-  from: <T>(items: readonly T[]) => Sampler<T>;
-  tap: (parameters: { on: string | AccessibilityElement }) => TapAction;
-  doubleTap: (parameters: { on: string | AccessibilityElement }) => DoubleTapAction;
-  longPress: (parameters: { on: string | AccessibilityElement }) => LongPressAction;
-  scroll: (parameters: {
-    direction: Direction;
-    in?: string | AccessibilityElement;
-  }) => ScrollAction;
-  inputText: (parameters: {
-    into: string | AccessibilityElement;
-    text: string;
-  }) => InputTextAction;
-  swipe: (parameters: {
-    from: Point | AccessibilityElement;
-    to: Point | AccessibilityElement;
-    durationMillis?: number;
-  }) => SwipeAction;
-  pressKey: (parameters: { key: Key }) => PressKeyAction;
-  wait: (parameters: { durationMillis: number }) => WaitAction;
-  taps: ActionGenerator;
-  doubleTaps: ActionGenerator;
-  longPresses: ActionGenerator;
-  scrolls: ActionGenerator;
-  typing: ActionGenerator;
-  swipes: ActionGenerator;
-  waitOnce: ActionGenerator;
-  pressKeys: ActionGenerator;
 }
 
 export type WeightedEntry = readonly [number, ActionGenerator];
+
+import type { GeneratorNode } from "./action-tree.ts";
 
 declare global {
   // eslint-disable-next-line no-var

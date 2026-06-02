@@ -33,14 +33,18 @@ export { always, eventually, next, now } from "./ltl.ts";
 export {
   DoubleTap,
   InputText,
+  LongPress,
   PressKey,
+  Scroll,
   Swipe,
   Tap,
   Wait,
   actions,
   doubleTaps,
   from,
-  pressKey,
+  longPresses,
+  pressKeys,
+  scrolls,
   swipes,
   taps,
   typing,
@@ -48,3 +52,4 @@ export {
   weighted,
   whenRoute,
 } from "./actions.ts";
+export { edgeCaseText, emails, integers, strings } from "./values.ts";

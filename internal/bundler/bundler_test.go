@@ -146,6 +146,59 @@ func TestBundle_ImportResolution(t *testing.T) {
 	}
 }
 
+func TestBundle_RegistersNamedExportsOnGlobalThis(t *testing.T) {
+	directory := t.TempDir()
+	runtimePath := filepath.Join(directory, "runtime.ts")
+	specPath := filepath.Join(directory, "spec.ts")
+	if err := os.WriteFile(runtimePath, []byte(`export {};`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := `
+		export const properties = "PROPS_MARKER";
+		export const actionsRoot = "ACTIONS_MARKER";
+		export const setup = "SETUP_MARKER";
+	`
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Bundle(Options{EntryFile: specPath, RuntimeFile: runtimePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(result.JavaScript)
+	for _, marker := range []string{"PROPS_MARKER", "ACTIONS_MARKER", "SETUP_MARKER"} {
+		if !strings.Contains(body, marker) {
+			t.Errorf("named export %q not registered in bundle:\n%s", marker, body)
+		}
+	}
+	if !strings.Contains(body, "globalThis.actions") {
+		t.Errorf("trailer should assign globalThis.actions:\n%s", body)
+	}
+}
+
+func TestBundle_RegistersWithoutSetupExport(t *testing.T) {
+	directory := t.TempDir()
+	runtimePath := filepath.Join(directory, "runtime.ts")
+	specPath := filepath.Join(directory, "spec.ts")
+	if err := os.WriteFile(runtimePath, []byte(`export {};`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := `
+		export const properties = "PROPS_MARKER";
+		export const actionsRoot = "ACTIONS_MARKER";
+	`
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Bundle(Options{EntryFile: specPath, RuntimeFile: runtimePath})
+	if err != nil {
+		t.Fatalf("spec without setup export should still bundle: %v", err)
+	}
+	if !strings.Contains(string(result.JavaScript), "PROPS_MARKER") {
+		t.Errorf("properties export not registered")
+	}
+}
+
 func TestBundle_ReportsSyntaxErrors(t *testing.T) {
 	entry := writeFixture(t, "broken.ts", `const x = ;`)
 	_, err := Bundle(Options{EntryFile: entry})

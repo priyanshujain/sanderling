@@ -1,3 +1,4 @@
+// Package ios boots and prepares an iOS simulator for testing via simctl.
 package ios
 
 import (

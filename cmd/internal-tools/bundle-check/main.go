@@ -1,3 +1,4 @@
+// Command bundle-check is a developer tool that bundles a spec file to confirm it compiles.
 package main
 
 import (

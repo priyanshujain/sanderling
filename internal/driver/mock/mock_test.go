@@ -9,22 +9,6 @@ import (
 	"github.com/priyanshujain/sanderling/internal/driver"
 )
 
-func TestNew_Defaults(t *testing.T) {
-	mock := New()
-	if !mock.HealthInfo.Ready {
-		t.Errorf("default HealthInfo should be ready")
-	}
-	if mock.HealthInfo.Platform != "android" {
-		t.Errorf("default platform: got %q", mock.HealthInfo.Platform)
-	}
-	if mock.HierarchyJSON == "" {
-		t.Errorf("default hierarchy should be a non-empty JSON")
-	}
-	if len(mock.Actions()) != 0 {
-		t.Errorf("fresh mock should have zero recorded actions")
-	}
-}
-
 func TestRecordsAllActionsInOrder(t *testing.T) {
 	mock := New()
 	ctx := context.Background()

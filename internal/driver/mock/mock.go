@@ -1,3 +1,4 @@
+// Package mock provides an in-memory device driver that records actions for tests.
 package mock
 
 import (
@@ -11,37 +12,39 @@ import (
 type ActionKind string
 
 const (
-	ActionLaunch      ActionKind = "launch"
-	ActionTerminate   ActionKind = "terminate"
-	ActionTap         ActionKind = "tap"
-	ActionTapSelector ActionKind = "tap_selector"
-	ActionInputText   ActionKind = "input_text"
-	ActionSwipe       ActionKind = "swipe"
-	ActionPressKey    ActionKind = "press_key"
-	ActionLongPress   ActionKind = "long_press"
-	ActionHierarchy   ActionKind = "hierarchy"
-	ActionScreenshot  ActionKind = "screenshot"
-	ActionSnapshot    ActionKind = "snapshot"
-	ActionRecentLogs  ActionKind = "recent_logs"
-	ActionWaitForIdle ActionKind = "wait_for_idle"
-	ActionHealth      ActionKind = "health"
-	ActionMetrics     ActionKind = "metrics"
+	ActionLaunch            ActionKind = "launch"
+	ActionTerminate         ActionKind = "terminate"
+	ActionTap               ActionKind = "tap"
+	ActionTapSelector       ActionKind = "tap_selector"
+	ActionDoubleTap         ActionKind = "double_tap"
+	ActionDoubleTapSelector ActionKind = "double_tap_selector"
+	ActionInputText         ActionKind = "input_text"
+	ActionSwipe             ActionKind = "swipe"
+	ActionPressKey          ActionKind = "press_key"
+	ActionLongPress         ActionKind = "long_press"
+	ActionHierarchy         ActionKind = "hierarchy"
+	ActionScreenshot        ActionKind = "screenshot"
+	ActionSnapshot          ActionKind = "snapshot"
+	ActionRecentLogs        ActionKind = "recent_logs"
+	ActionWaitForIdle       ActionKind = "wait_for_idle"
+	ActionHealth            ActionKind = "health"
+	ActionMetrics           ActionKind = "metrics"
 )
 
 type Action struct {
-	Kind       ActionKind
-	BundleID   string
-	ClearState bool
-	X, Y       int
+	Kind         ActionKind
+	BundleID     string
+	ClearState   bool
+	X, Y         int
 	FromX, FromY int
-	ToX, ToY   int
-	Duration   time.Duration
-	Selector   string
-	Text       string
-	Key        string
-	LogLevel   string
-	LogSince   time.Time
-	Idle       time.Duration
+	ToX, ToY     int
+	Duration     time.Duration
+	Selector     string
+	Text         string
+	Key          string
+	LogLevel     string
+	LogSince     time.Time
+	Idle         time.Duration
 }
 
 // Driver is an in-memory Driver implementation for unit tests.
@@ -180,6 +183,22 @@ func (d *Driver) TapSelector(ctx context.Context, selector string) error {
 		return err
 	}
 	d.record(Action{Kind: ActionTapSelector, Selector: selector})
+	return nil
+}
+
+func (d *Driver) DoubleTap(ctx context.Context, x, y int) error {
+	if err := d.failure(ActionDoubleTap); err != nil {
+		return err
+	}
+	d.record(Action{Kind: ActionDoubleTap, X: x, Y: y})
+	return nil
+}
+
+func (d *Driver) DoubleTapSelector(ctx context.Context, selector string) error {
+	if err := d.failure(ActionDoubleTapSelector); err != nil {
+		return err
+	}
+	d.record(Action{Kind: ActionDoubleTapSelector, Selector: selector})
 	return nil
 }
 

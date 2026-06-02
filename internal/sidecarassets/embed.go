@@ -1,4 +1,5 @@
-package sidecar
+// Package sidecarassets embeds the native sidecar JAR and extracts it to disk at runtime.
+package sidecarassets
 
 import (
 	"crypto/sha256"

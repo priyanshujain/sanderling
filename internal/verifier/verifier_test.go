@@ -3,13 +3,15 @@ package verifier
 import (
 	"encoding/json"
 	"errors"
-	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dop251/goja"
 
+	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
 	"github.com/priyanshujain/sanderling/internal/ltl"
 )
@@ -30,6 +32,43 @@ func mustLoad(t *testing.T, verifier *Verifier, source string) {
 	}
 }
 
+// bundleActionSpec bundles an inline TS spec authored against @sanderling/spec
+// together with the goja runtime entry, so loading it installs
+// __sanderlingNextAction__ (the shared picker). Action targets must be resolved
+// ax elements (carrying x/y) or builtins; raw selector strings no longer
+// resolve to coordinates in the unified contract.
+func bundleActionSpec(t *testing.T, specSource string) string {
+	t.Helper()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.ts")
+	if err := os.WriteFile(specPath, []byte(specSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	apiPath, err := filepath.Abs("../../pkg/spec/src/index.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimePath, err := filepath.Abs("../../pkg/spec/src/goja-runtime.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := bundler.Bundle(bundler.Options{
+		EntryFile:   specPath,
+		RuntimeFile: runtimePath,
+		Aliases:     map[string]string{"@sanderling/spec": apiPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(bundle.JavaScript)
+}
+
+// loadActionSpec bundles and loads an inline authored spec into the verifier.
+func loadActionSpec(t *testing.T, verifier *Verifier, specSource string) {
+	t.Helper()
+	mustLoad(t, verifier, bundleActionSpec(t, specSource))
+}
+
 const helloSpec = `
 const screen = __sanderling__.extract(state => state.snapshots.screen ?? "");
 const balance = __sanderling__.extract(state => state.snapshots["ledger.balance"] ?? 0);
@@ -40,10 +79,6 @@ globalThis.balance = balance;
 globalThis.properties = {
   balanceNonNegative: __sanderling__.always(() => balance.current >= 0),
 };
-
-globalThis.actions = __sanderling__.actions(() => [
-  __sanderling__.tap({ on: "id:home_button" }),
-]);
 `
 
 func TestLoad_ExposesRuntimeBindings(t *testing.T) {
@@ -231,9 +266,25 @@ globalThis.properties = {
 }
 
 func TestNextAction_FromActionsGenerator(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"resource-id": "home_button", "bounds": "[0,40,100,80]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, helloSpec)
-	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+	loadActionSpec(t, verifier, `
+		import { actions, Tap } from "@sanderling/spec";
+		globalThis.actions = actions(() => {
+			const home = state.ax.find("id:home_button");
+			return home ? [Tap({ on: home })] : [];
+		});
+	`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree})
 
 	action, err := verifier.NextAction()
 	if err != nil {
@@ -248,16 +299,31 @@ func TestNextAction_FromActionsGenerator(t *testing.T) {
 }
 
 func TestNextAction_WeightedSelectsByWeight(t *testing.T) {
-	verifier := newVerifier(t, WithRand(rand.New(rand.NewPCG(42, 0))))
-	mustLoad(t, verifier, `
-		const tapHome = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:home" })]);
-		const tapAway = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:away" })]);
-		globalThis.actions = __sanderling__.weighted(
-			[1, tapHome],
-			[99, tapAway],
-		);
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"resource-id": "home", "bounds": "[0,0,100,40]"}, "clickable": true, "enabled": true, "children": []},
+	    {"attributes": {"resource-id": "away", "bounds": "[0,40,100,80]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t, WithSeed(42))
+	loadActionSpec(t, verifier, `
+		import { actions, weighted, Tap } from "@sanderling/spec";
+		const tapHome = actions(() => {
+			const home = state.ax.find("id:home");
+			return home ? [Tap({ on: home })] : [];
+		});
+		const tapAway = actions(() => {
+			const away = state.ax.find("id:away");
+			return away ? [Tap({ on: away })] : [];
+		});
+		globalThis.actions = weighted([1, tapHome], [99, tapAway]);
 	`)
-	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree})
 
 	awayCount := 0
 	homeCount := 0
@@ -280,8 +346,9 @@ func TestNextAction_WeightedSelectsByWeight(t *testing.T) {
 
 func TestNextAction_EmptyGeneratorReturnsErrNoAction(t *testing.T) {
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `
-		globalThis.actions = __sanderling__.actions(() => []);
+	loadActionSpec(t, verifier, `
+		import { actions } from "@sanderling/spec";
+		globalThis.actions = actions(() => []);
 	`)
 	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
 
@@ -291,13 +358,34 @@ func TestNextAction_EmptyGeneratorReturnsErrNoAction(t *testing.T) {
 	}
 }
 
+// setupTree carries the three targets the setup-precedence tests resolve.
+const setupTree = `{
+  "attributes": {"resource-id": "root", "bounds": "[0,0,100,120]"},
+  "children": [
+    {"attributes": {"resource-id": "setup", "bounds": "[0,0,100,40]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "main", "bounds": "[0,40,100,80]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "login", "bounds": "[0,80,100,120]"}, "clickable": true, "enabled": true, "children": []}
+  ]
+}`
+
 func TestNextAction_SetupTakesPrecedenceWhenYielding(t *testing.T) {
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `
-		globalThis.setup = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:setup" })]);
-		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	loadActionSpec(t, verifier, `
+		import { actions, Tap } from "@sanderling/spec";
+		globalThis.setup = actions(() => {
+			const target = state.ax.find("id:setup");
+			return target ? [Tap({ on: target })] : [];
+		});
+		globalThis.actions = actions(() => {
+			const target = state.ax.find("id:main");
+			return target ? [Tap({ on: target })] : [];
+		});
 	`)
-	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+	tree, err := hierarchy.Parse(setupTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree})
 
 	action, err := verifier.NextAction()
 	if err != nil {
@@ -310,11 +398,19 @@ func TestNextAction_SetupTakesPrecedenceWhenYielding(t *testing.T) {
 
 func TestNextAction_FallsThroughToActionsWhenSetupEmpty(t *testing.T) {
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `
-		globalThis.setup = __sanderling__.actions(() => []);
-		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	loadActionSpec(t, verifier, `
+		import { actions, Tap } from "@sanderling/spec";
+		globalThis.setup = actions(() => []);
+		globalThis.actions = actions(() => {
+			const target = state.ax.find("id:main");
+			return target ? [Tap({ on: target })] : [];
+		});
 	`)
-	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+	tree, err := hierarchy.Parse(setupTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree})
 
 	action, err := verifier.NextAction()
 	if err != nil {
@@ -327,21 +423,30 @@ func TestNextAction_FallsThroughToActionsWhenSetupEmpty(t *testing.T) {
 
 func TestNextAction_SetupReengagesAfterRegression(t *testing.T) {
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `
-		globalThis.loggedIn = __sanderling__.extract(state => state.snapshots["loggedIn"] === true);
-		globalThis.setup = __sanderling__.actions(() => {
+	loadActionSpec(t, verifier, `
+		import { actions, extract, Tap } from "@sanderling/spec";
+		const loggedIn = extract(state => state.snapshots["loggedIn"] === true);
+		globalThis.setup = actions(() => {
 			if (loggedIn.current) return [];
-			return [__sanderling__.tap({ on: "id:login" })];
+			const target = state.ax.find("id:login");
+			return target ? [Tap({ on: target })] : [];
 		});
-		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+		globalThis.actions = actions(() => {
+			const target = state.ax.find("id:main");
+			return target ? [Tap({ on: target })] : [];
+		});
 	`)
+	tree, err := hierarchy.Parse(setupTree)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	push := func(loggedIn bool) {
 		raw := json.RawMessage(`false`)
 		if loggedIn {
 			raw = json.RawMessage(`true`)
 		}
-		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"loggedIn": raw}}); err != nil {
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"loggedIn": raw}, Tree: tree}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -376,14 +481,19 @@ func TestNextAction_SetupReengagesAfterRegression(t *testing.T) {
 
 func TestNextAction_NoSetupRegistered(t *testing.T) {
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `
-		globalThis.actions = __sanderling__.actions(() => [__sanderling__.tap({ on: "id:main" })]);
+	loadActionSpec(t, verifier, `
+		import { actions, Tap } from "@sanderling/spec";
+		globalThis.actions = actions(() => {
+			const target = state.ax.find("id:main");
+			return target ? [Tap({ on: target })] : [];
+		});
 	`)
-	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
-
-	if verifier.setupGenerator != nil {
-		t.Errorf("setupGenerator should be nil when spec does not export setup")
+	tree, err := hierarchy.Parse(setupTree)
+	if err != nil {
+		t.Fatal(err)
 	}
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree})
+
 	action, err := verifier.NextAction()
 	if err != nil {
 		t.Fatal(err)
@@ -403,7 +513,10 @@ func TestDoubleTapsBuiltin_TargetsClickable(t *testing.T) {
 	  ]
 	}`
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.doubleTaps;`)
+	loadActionSpec(t, verifier, `
+		import { doubleTaps } from "@sanderling/spec";
+		globalThis.actions = doubleTaps;
+	`)
 	tree, err := hierarchy.Parse(treeJSON)
 	if err != nil {
 		t.Fatal(err)
@@ -442,13 +555,25 @@ func TestDoubleTapsBuiltin_TargetsClickable(t *testing.T) {
 }
 
 func TestDoubleTap_RoundTrip(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"resource-id": "save", "bounds": "[0,0,100,40]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `
-		globalThis.actions = __sanderling__.actions(() => [
-			__sanderling__.doubleTap({ on: "id:save" }),
-		]);
+	loadActionSpec(t, verifier, `
+		import { actions, DoubleTap } from "@sanderling/spec";
+		globalThis.actions = actions(() => {
+			const save = state.ax.find("id:save");
+			return save ? [DoubleTap({ on: save })] : [];
+		});
 	`)
-	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree})
 
 	action, err := verifier.NextAction()
 	if err != nil {
@@ -463,13 +588,25 @@ func TestDoubleTap_RoundTrip(t *testing.T) {
 }
 
 func TestInputText_RoundTrip(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,100]"},
+	  "children": [
+	    {"attributes": {"resource-id": "phone", "bounds": "[0,0,100,40]"}, "editable": true, "enabled": true, "children": []}
+	  ]
+	}`
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `
-		globalThis.actions = __sanderling__.actions(() => [
-			__sanderling__.inputText({ into: "id:phone", text: "+919876543210" }),
-		]);
+	loadActionSpec(t, verifier, `
+		import { actions, InputText } from "@sanderling/spec";
+		globalThis.actions = actions(() => {
+			const phone = state.ax.find("id:phone");
+			return phone ? [InputText({ into: phone, text: "+919876543210" })] : [];
+		});
 	`)
-	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree})
 
 	action, err := verifier.NextAction()
 	if err != nil {
@@ -495,7 +632,10 @@ func TestTypingBuiltin_TargetsEditableField(t *testing.T) {
 	  ]
 	}`
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.typing;`)
+	loadActionSpec(t, verifier, `
+		import { typing } from "@sanderling/spec";
+		globalThis.actions = typing;
+	`)
 	tree, err := hierarchy.Parse(treeJSON)
 	if err != nil {
 		t.Fatal(err)
@@ -513,9 +653,19 @@ func TestTypingBuiltin_TargetsEditableField(t *testing.T) {
 	if action.X != 50 || action.Y != 20 {
 		t.Errorf("coords = (%d,%d), want (50,20) at EmailField center", action.X, action.Y)
 	}
-	if !slices.Contains(inputCorpus, action.Text) {
-		t.Errorf("text %q not drawn from inputCorpus", action.Text)
+	// The typing builtin draws from corpus.ts INPUT_CORPUS; the single editable
+	// field means any draw lands here, so the text must be a corpus member.
+	if !slices.Contains(testInputCorpus, action.Text) {
+		t.Errorf("text %q not drawn from the input corpus", action.Text)
 	}
+}
+
+// testInputCorpus mirrors pkg/spec/src/corpus.ts INPUT_CORPUS so the typing
+// builtin's emitted text can be asserted to come from the shared pool.
+var testInputCorpus = []string{
+	"", "a", strings.Repeat("a", 4096), "🙂🔥💸", "  ", "\t\n", "-1",
+	"999999999999999999999", "0.0000001", "1e10", "'; DROP TABLE--",
+	"<script>alert(1)</script>", "../../etc/passwd", "%s%n", "NaN",
 }
 
 // TestTypingBuiltin_NoEditableYieldsErrNoAction verifies the typing generator
@@ -529,7 +679,10 @@ func TestTypingBuiltin_NoEditableYieldsErrNoAction(t *testing.T) {
 	  ]
 	}`
 	verifier := newVerifier(t)
-	mustLoad(t, verifier, `globalThis.actions = __sanderling__.typing;`)
+	loadActionSpec(t, verifier, `
+		import { typing } from "@sanderling/spec";
+		globalThis.actions = typing;
+	`)
 	tree, err := hierarchy.Parse(treeJSON)
 	if err != nil {
 		t.Fatal(err)
@@ -582,12 +735,50 @@ globalThis.properties = {
 		t.Errorf("verdict: got %v, want %v", got, ltl.VerdictViolated)
 	}
 
-	predicateErr := verifier.PredicateError("broken")
-	if predicateErr == nil {
-		t.Fatal("PredicateError: got nil, want non-nil")
+	witness := verifier.Witness("broken")
+	if witness == nil {
+		t.Fatal("Witness: got nil, want non-nil")
 	}
-	if !strings.Contains(predicateErr.Error(), "bad predicate") {
-		t.Errorf("PredicateError message: got %q, want to contain %q", predicateErr.Error(), "bad predicate")
+	if !witness.IsError {
+		t.Errorf("Witness.IsError = false, want true for a thrown predicate")
+	}
+	if !strings.Contains(witness.Reason, "bad predicate") {
+		t.Errorf("Witness.Reason: got %q, want to contain %q", witness.Reason, "bad predicate")
+	}
+}
+
+// An unbounded eventually that never fires stays pending during the run and is
+// only reported by Finalize at run end. The witness records why it failed.
+func TestFinalize_UnmetEventuallyReportedWithWitness(t *testing.T) {
+	const spec = `
+globalThis.flag = __sanderling__.extract(state => state.snapshots["flag"] ?? false, "flag");
+globalThis.properties = {
+  flagEventuallyTrue: __sanderling__.always(__sanderling__.eventually(() => flag.current === true)),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	for step := 0; step < 3; step++ {
+		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"flag": json.RawMessage(`false`)}}); err != nil {
+			t.Fatal(err)
+		}
+		verdicts := verifier.EvaluateProperties()
+		if got := verdicts["flagEventuallyTrue"]; got != ltl.VerdictPending {
+			t.Fatalf("step %d: verdict = %v, want pending", step, got)
+		}
+	}
+
+	ended := verifier.Finalize()
+	if !slices.Contains(ended, "flagEventuallyTrue") {
+		t.Fatalf("Finalize ended = %v, want to contain flagEventuallyTrue", ended)
+	}
+	witness := verifier.Witness("flagEventuallyTrue")
+	if witness == nil {
+		t.Fatal("Witness = nil after Finalize, want non-nil")
+	}
+	if !strings.Contains(witness.Reason, "eventually") {
+		t.Errorf("Witness.Reason = %q, want to mention eventually", witness.Reason)
 	}
 }
 
@@ -702,15 +893,30 @@ func TestSelector_BooleanValue(t *testing.T) {
 // dynamic array picks the same element under the same seed across runs. The
 // folio spec relies on this to replace Math.random() in account-card taps.
 func TestFrom_SeededReplayIsDeterministic(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,200]"},
+	  "children": [
+	    {"attributes": {"resource-id": "card_a", "bounds": "[0,0,100,40]"}, "clickable": true, "enabled": true, "children": []},
+	    {"attributes": {"resource-id": "card_b", "bounds": "[0,40,100,80]"}, "clickable": true, "enabled": true, "children": []},
+	    {"attributes": {"resource-id": "card_c", "bounds": "[0,80,100,120]"}, "clickable": true, "enabled": true, "children": []},
+	    {"attributes": {"resource-id": "card_d", "bounds": "[0,120,100,160]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
 	pickedSequence := func(seed uint64) []string {
-		verifier := newVerifier(t, WithRand(rand.New(rand.NewPCG(seed, 0))))
-		mustLoad(t, verifier, `
-			globalThis.actions = __sanderling__.actions(() => {
-				const cards = ["card_a", "card_b", "card_c", "card_d"];
-				return [__sanderling__.tap({ on: __sanderling__.from(cards).generate() })];
+		verifier := newVerifier(t, WithSeed(seed))
+		loadActionSpec(t, verifier, `
+			import { actions, from, Tap } from "@sanderling/spec";
+			const cards = ["id:card_a", "id:card_b", "id:card_c", "id:card_d"];
+			globalThis.actions = actions(() => {
+				const target = state.ax.find(from(cards).generate());
+				return target ? [Tap({ on: target })] : [];
 			});
 		`)
-		_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}})
+		_ = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree})
 		var picks []string
 		for range 20 {
 			action, err := verifier.NextAction()
@@ -741,13 +947,14 @@ func TestFrom_SeededReplayIsDeterministic(t *testing.T) {
 	}
 }
 
-// PredicateError must reflect the most recent step's predicate result, not a
-// latched first-step error. The runner logs PredicateError once per step; if it
-// stays pinned to step 1 forever, downstream debugging looks frozen even though
-// the underlying state is changing.
-func TestPredicateError_ReflectsCurrentStepNotFirstStep(t *testing.T) {
+// A thrown predicate is a witnessed violation at the step it first throws, and
+// the property latches violated thereafter (sticky always semantics). The
+// witness captures the onset step's error text (count=1) and the extractor
+// snapshot at that step; it does not keep updating to later counts because the
+// verdict has latched.
+func TestThrowingPredicate_WitnessCapturesOnsetStep(t *testing.T) {
 	const spec = `
-globalThis.counter = __sanderling__.extract(state => state.snapshots["count"]);
+globalThis.counter = __sanderling__.extract(state => state.snapshots["count"], "counter");
 globalThis.properties = {
   reportsCounter: __sanderling__.always(() => { throw new Error("count=" + counter.current); }),
 };
@@ -760,16 +967,24 @@ globalThis.properties = {
 		if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"count": raw}}); err != nil {
 			t.Fatal(err)
 		}
-		_ = verifier.EvaluateProperties()
+		verdicts := verifier.EvaluateProperties()
+		if got := verdicts["reportsCounter"]; got != ltl.VerdictViolated {
+			t.Fatalf("step %d: verdict = %v, want violated", step, got)
+		}
+	}
 
-		got := verifier.PredicateError("reportsCounter")
-		if got == nil {
-			t.Fatalf("step %d: PredicateError = nil, want non-nil", step)
-		}
-		want := "count=" + string(rune('0'+step))
-		if !strings.Contains(got.Error(), want) {
-			t.Errorf("step %d: PredicateError = %q, want to contain %q", step, got.Error(), want)
-		}
+	witness := verifier.Witness("reportsCounter")
+	if witness == nil {
+		t.Fatal("Witness = nil, want non-nil")
+	}
+	if witness.Step != 1 {
+		t.Errorf("Witness.Step = %d, want 1 (onset)", witness.Step)
+	}
+	if !strings.Contains(witness.Reason, "count=1") {
+		t.Errorf("Witness.Reason = %q, want to contain %q", witness.Reason, "count=1")
+	}
+	if got := string(witness.Extractors["counter"]); got != `"1"` {
+		t.Errorf("Witness.Extractors[counter] = %s, want %q", got, `"1"`)
 	}
 }
 
@@ -845,8 +1060,6 @@ globalThis.card = card;
 globalThis.properties = {
   hasTestTag: __sanderling__.always(() => typeof card.current.attrs.testTag === "string"),
 };
-
-globalThis.actions = __sanderling__.actions(() => []);
 `
 
 // TestSelectorStringFromJS_CanonicalGrammar guarantees the selector tag stamped
@@ -1017,5 +1230,29 @@ func TestOverrideExtractorValues_PropagatesNestedObjectFields(t *testing.T) {
 	}
 	if got := current.Get("balance").ToInteger(); got != 12345 {
 		t.Errorf("scalar field missing: card.current.balance = %d, want 12345", got)
+	}
+}
+
+// TestUnsupportedVerbs_CollectedDedupedInOrder drives the real host binding the
+// shared picker invokes (__sanderlingHost__.reportUnsupported) and asserts the
+// verifier collects each verb once, in first-seen order, for the run report.
+func TestUnsupportedVerbs_CollectedDedupedInOrder(t *testing.T) {
+	verifier := newVerifier(t)
+	report, ok := goja.AssertFunction(
+		verifier.runtime.GlobalObject().Get("__sanderlingHost__").
+			ToObject(verifier.runtime).Get("reportUnsupported"),
+	)
+	if !ok {
+		t.Fatal("reportUnsupported host binding missing")
+	}
+	for _, verb := range []string{"scrolls", "swipes", "scrolls", "longPresses"} {
+		if _, err := report(goja.Undefined(), verifier.runtime.ToValue(verb)); err != nil {
+			t.Fatalf("reportUnsupported(%q): %v", verb, err)
+		}
+	}
+	got := verifier.UnsupportedVerbs()
+	want := []string{"scrolls", "swipes", "longPresses"}
+	if !slices.Equal(got, want) {
+		t.Errorf("UnsupportedVerbs = %v, want %v", got, want)
 	}
 }

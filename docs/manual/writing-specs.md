@@ -126,7 +126,7 @@ Action generators return a list of actions to perform. The runner samples one fr
 - `taps` - autonomous random taps on clickable elements.
 - `swipes` - autonomous random swipe gestures.
 - `waitOnce` - idles one step.
-- `pressKey` - presses a random supported key.
+- `pressKeys` - presses a random supported key.
 
 **Action constructors:**
 

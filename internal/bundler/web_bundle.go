@@ -3,6 +3,7 @@ package bundler
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -47,12 +48,14 @@ func BundleWeb(options WebOptions) (Result, error) {
 
 	defines := map[string]string{}
 	for key, value := range options.Defines {
-		defines["process.env."+key] = quoteJSString(value)
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return Result{}, fmt.Errorf("encode define %q: %w", key, err)
+		}
+		defines["process.env."+key] = string(encoded)
 	}
 
-	stdinContents := fmt.Sprintf(`import %q;
-import %q;
-`, runtimeAbs, specAbs)
+	stdinContents := fmt.Sprintf("import %q;\n%s", runtimeAbs, registrationEntry(specAbs))
 
 	output := esbuild.Build(esbuild.BuildOptions{
 		Stdin: &esbuild.StdinOptions{
@@ -87,27 +90,4 @@ import %q;
 		JavaScript: javascript,
 		SHA256:     hex.EncodeToString(sum[:]),
 	}, nil
-}
-
-func quoteJSString(value string) string {
-	var builder strings.Builder
-	builder.WriteByte('"')
-	for index := 0; index < len(value); index++ {
-		c := value[index]
-		switch c {
-		case '"', '\\':
-			builder.WriteByte('\\')
-			builder.WriteByte(c)
-		case '\n':
-			builder.WriteString("\\n")
-		case '\r':
-			builder.WriteString("\\r")
-		case '\t':
-			builder.WriteString("\\t")
-		default:
-			builder.WriteByte(c)
-		}
-	}
-	builder.WriteByte('"')
-	return builder.String()
 }

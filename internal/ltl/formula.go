@@ -13,9 +13,9 @@ type Formula interface {
 	describe() string
 }
 
-// PredicateLabel lets a ThunkFormula carry a human-readable name for the
-// closure it wraps. Verifier wires this in when the spec gives the predicate
-// a property name; otherwise it stays empty and serializes without a name.
+// PredicateLabel lets a ThunkFormula expose the identity of the closure it
+// wraps. ThunkFormula satisfies it through its Name field; an empty name
+// serializes without a name.
 type PredicateLabel interface {
 	PredicateName() string
 }
@@ -33,17 +33,34 @@ func (e ErrorFormula) describe() string {
 	return fmt.Sprintf("Error(%q)", e.Message)
 }
 
+// AlwaysFormula obliges its inner formula to hold at every step. A bounded
+// Always (the dual of a bounded Eventually) holds for the steps inside its
+// window and is vacuously satisfied once the window closes. An unbounded
+// Always carries no bound fields and is checked at every observed step.
 type AlwaysFormula struct {
-	Inner Formula
+	Inner        Formula
+	StepBound    int
+	HasStepBound bool
+	Duration     time.Duration
+	Deadline     time.Time
+	HasDeadline  bool
 }
 
 type PureFormula struct {
 	Value bool
 }
 
+// ThunkFormula wraps an opaque predicate closure. Func returns the predicate's
+// boolean result and a non-nil error when the predicate threw; a thrown
+// predicate is a witnessed violation distinct from a plain false. Name carries
+// the predicate's identity so two distinct predicates produce distinct
+// describe() keys and are never merged during obligation collapse.
 type ThunkFormula struct {
-	Func func() bool
+	Func func() (bool, error)
+	Name string
 }
+
+func (t ThunkFormula) PredicateName() string { return t.Name }
 
 // NowFormula marks its inner formula for evaluation at the current step only.
 // Primarily used so that now(...).implies(...) parses unambiguously.
@@ -96,7 +113,11 @@ func Always(inner Formula) Formula { return AlwaysFormula{Inner: inner} }
 
 func Pure(value bool) Formula { return PureFormula{Value: value} }
 
-func Thunk(function func() bool) Formula { return ThunkFormula{Func: function} }
+func Thunk(function func() (bool, error)) Formula { return ThunkFormula{Func: function} }
+
+func ThunkNamed(name string, function func() (bool, error)) Formula {
+	return ThunkFormula{Func: function, Name: name}
+}
 
 func Now(inner Formula) Formula { return NowFormula{Inner: inner} }
 
@@ -137,11 +158,27 @@ func (OrFormula) isFormula()         {}
 func (AndFormula) isFormula()        {}
 func (NotFormula) isFormula()        {}
 
-func (a AlwaysFormula) describe() string { return "Always(" + a.Inner.describe() + ")" }
-func (p PureFormula) describe() string   { return fmt.Sprintf("Pure(%t)", p.Value) }
-func (ThunkFormula) describe() string    { return "Thunk(...)" }
-func (n NowFormula) describe() string    { return "Now(" + n.Inner.describe() + ")" }
-func (n NextFormula) describe() string   { return "Next(" + n.Inner.describe() + ")" }
+func (a AlwaysFormula) describe() string {
+	parts := []string{a.Inner.describe()}
+	if a.HasStepBound {
+		parts = append(parts, fmt.Sprintf("steps=%d", a.StepBound))
+	}
+	if a.HasDeadline {
+		parts = append(parts, "deadline="+a.Deadline.Format(time.RFC3339Nano))
+	} else if a.Duration > 0 {
+		parts = append(parts, "within="+a.Duration.String())
+	}
+	return "Always(" + strings.Join(parts, ", ") + ")"
+}
+func (p PureFormula) describe() string { return fmt.Sprintf("Pure(%t)", p.Value) }
+func (t ThunkFormula) describe() string {
+	if t.Name != "" {
+		return "Thunk(" + t.Name + ")"
+	}
+	return "Thunk(...)"
+}
+func (n NowFormula) describe() string  { return "Now(" + n.Inner.describe() + ")" }
+func (n NextFormula) describe() string { return "Next(" + n.Inner.describe() + ")" }
 func (e EventuallyFormula) describe() string {
 	parts := []string{e.Inner.describe()}
 	if e.HasStepBound {
@@ -176,10 +213,20 @@ type withinNode struct {
 }
 
 func (a AlwaysFormula) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Op  string  `json:"op"`
-		Arg Formula `json:"arg"`
-	}{"always", a.Inner})
+	payload := struct {
+		Op     string      `json:"op"`
+		Arg    Formula     `json:"arg"`
+		Within *withinNode `json:"within,omitempty"`
+	}{Op: "always", Arg: a.Inner}
+	switch {
+	case a.HasStepBound:
+		payload.Within = &withinNode{Amount: int64(a.StepBound), Unit: "steps"}
+	case a.Duration > 0:
+		payload.Within = &withinNode{Amount: a.Duration.Milliseconds(), Unit: "milliseconds"}
+	case a.HasDeadline:
+		payload.Within = &withinNode{Amount: a.Deadline.UnixMilli(), Unit: "deadline"}
+	}
+	return json.Marshal(payload)
 }
 
 func (n NowFormula) MarshalJSON() ([]byte, error) {

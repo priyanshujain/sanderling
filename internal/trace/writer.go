@@ -1,3 +1,4 @@
+// Package trace records each run's steps, snapshots, and violations to disk for later inspection.
 package trace
 
 import (
@@ -13,23 +14,38 @@ import (
 )
 
 type Step struct {
-	Index             int                        `json:"step"`
-	Timestamp         time.Time                  `json:"timestamp"`
-	Screen            string                     `json:"screen,omitempty"`
-	Snapshots         map[string]json.RawMessage `json:"snapshots,omitempty"`
+	Index     int                        `json:"step"`
+	Timestamp time.Time                  `json:"timestamp"`
+	Screen    string                     `json:"screen,omitempty"`
+	Snapshots map[string]json.RawMessage `json:"snapshots,omitempty"`
 	// NextAction is the action chosen for the next iteration based on observing this step.
-	NextAction        *Action                    `json:"next_action,omitempty"`
-	Exceptions        []Exception                `json:"exceptions,omitempty"`
-	Violations        []string                   `json:"violations,omitempty"`
-	Hierarchy         *hierarchy.Tree            `json:"hierarchy,omitempty"`
-	Residuals         map[string]json.RawMessage `json:"residuals,omitempty"`
-	Metrics           *Metrics                   `json:"metrics,omitempty"`
-	ExtractorChanges  map[string]ExtractorChange `json:"extractor_changes,omitempty"`
+	NextAction       *Action                    `json:"next_action,omitempty"`
+	Exceptions       []Exception                `json:"exceptions,omitempty"`
+	Violations       []string                   `json:"violations,omitempty"`
+	Hierarchy        *hierarchy.Tree            `json:"hierarchy,omitempty"`
+	Residuals        map[string]json.RawMessage `json:"residuals,omitempty"`
+	Metrics          *Metrics                   `json:"metrics,omitempty"`
+	ExtractorChanges map[string]ExtractorChange `json:"extractor_changes,omitempty"`
 	// Transitional marks a step whose hierarchy still showed a NavHost
 	// cross-fade (multiple route-level *Screen ids) after the runner's
 	// retry budget. The verifier is skipped for these steps so transient
 	// state does not poison the previous/current extractor advance.
 	Transitional bool `json:"transitional,omitempty"`
+	// SkippedVerification is set true exactly when the verifier was skipped
+	// for this step, so downstream tooling can tell a deliberately-skipped
+	// step from one that was verified and came back clean.
+	SkippedVerification bool `json:"skipped_verification,omitempty"`
+	// Witnesses records the violation witness for each property that newly
+	// violated at this step: the cause and the extractor values at onset.
+	Witnesses map[string]Witness `json:"witnesses,omitempty"`
+}
+
+// Witness is the trace-side record of a property violation: why it fired and a
+// snapshot of every extractor's value at the violating step.
+type Witness struct {
+	Reason     string                     `json:"reason,omitempty"`
+	IsError    bool                       `json:"is_error,omitempty"`
+	Extractors map[string]json.RawMessage `json:"extractors,omitempty"`
 }
 
 // ExtractorChange records the prev/curr JSON values of an extractor whose
@@ -83,14 +99,14 @@ type Exception struct {
 }
 
 type Meta struct {
-	Seed         int64      `json:"seed"`
-	SpecPath     string     `json:"spec_path"`
-	BundleSHA256 string     `json:"bundle_sha256"`
-	Platform     string     `json:"platform"`
-	BundleID     string     `json:"bundle_id"`
-	StartedAt    time.Time  `json:"started_at"`
-	EndedAt      *time.Time `json:"ended_at,omitempty"`
-	SanderlingVersion  string     `json:"sanderling_version"`
+	Seed              int64      `json:"seed"`
+	SpecPath          string     `json:"spec_path"`
+	BundleSHA256      string     `json:"bundle_sha256"`
+	Platform          string     `json:"platform"`
+	BundleID          string     `json:"bundle_id"`
+	StartedAt         time.Time  `json:"started_at"`
+	EndedAt           *time.Time `json:"ended_at,omitempty"`
+	SanderlingVersion string     `json:"sanderling_version"`
 }
 
 type Writer struct {
