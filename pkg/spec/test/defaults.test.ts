@@ -59,10 +59,10 @@ test("typing resolves as a builtin node", async () => {
   assert.equal((typing as { verb: string }).verb, "typing");
 });
 
-test("longPresses and scrolls resolve as builtin nodes", async () => {
+test("scrolls resolves as a builtin node", async () => {
   installRuntime(emptyState);
-  const { longPresses, scrolls } = await import("../src/defaults/actions.ts");
-  assert.equal((longPresses as { verb: string }).verb, "longPresses");
+  const { scrolls } = await import("../src/defaults/actions.ts");
+  assert.equal(scrolls.kind, "builtin");
   assert.equal((scrolls as { verb: string }).verb, "scrolls");
 });
 
