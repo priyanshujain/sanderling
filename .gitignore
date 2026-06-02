@@ -30,7 +30,7 @@ node_modules/
 
 # Sidecar fat JAR. Build artifact copied in by `make sanderling` before
 # `go build -tags withsidecar`. Never commit: it's ~130 MB.
-internal/sidecar/assets/sidecar-all.jar
+internal/sidecarassets/assets/sidecar-all.jar
 
 # spec-api compiled output
 pkg/spec/dist/

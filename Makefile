@@ -7,7 +7,7 @@ BUF := buf
 
 GO_PACKAGES := ./...
 SIDECAR_JAR := sidecar/build/libs/sidecar-all.jar
-SIDECAR_EMBED := internal/sidecar/assets/sidecar-all.jar
+SIDECAR_EMBED := internal/sidecarassets/assets/sidecar-all.jar
 SIDECAR_SRC := $(shell find sidecar/src -type f \( -name '*.kt' -o -name '*.kts' \) 2>/dev/null) build.gradle.kts settings.gradle.kts
 SANDERLING_BIN := bin/sanderling
 
