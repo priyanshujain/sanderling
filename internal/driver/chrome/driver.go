@@ -41,6 +41,10 @@ func New() *Driver {
 			// CI runners give Chrome a tiny /dev/shm; without this the browser
 			// process hangs on startup and never reports its DevTools socket.
 			chromedp.Flag("disable-dev-shm-usage", true),
+			// Cold-starting Chrome on a loaded CI runner can take longer than the
+			// 20s default to print its DevTools websocket URL; give it more room
+			// so launch does not flake with "websocket url timeout reached".
+			chromedp.WSURLReadTimeout(60*time.Second),
 		)...,
 	)
 	tabCtx, tabCancel := chromedp.NewContext(allocCtx)
