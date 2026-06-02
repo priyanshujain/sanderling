@@ -1,8 +1,8 @@
 # sanderling
 
-Autonomous property-based testing for mobile and web apps. Specs in TypeScript. Core in Go.
+Autonomous property-based testing for mobile and web apps.
 
-> Alpha. Android, iOS, and web (Chrome). Full scope in the [v0.1.0 roadmap](https://github.com/priyanshujain/sanderling/issues/4).
+> Alpha. Android, iOS, and web (Chrome driver only). Full scope in the [v0.1.0 roadmap](https://github.com/priyanshujain/sanderling/milestone/1).
 
 ## Docs
 
