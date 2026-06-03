@@ -265,7 +265,7 @@ func violated() reduceResult { return reduceResult{status: statusViolated} }
 
 // violatedWith reports a violation that originates at the given sub-formula
 // with the given reason. The reason distinguishes a thrown predicate from a
-// plain false so callers (and the inspect UI) can render the cause.
+// plain false so callers (and the replay UI) can render the cause.
 func violatedWith(formula Formula, reason string) reduceResult {
 	return reduceResult{
 		status:  statusViolated,

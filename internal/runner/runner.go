@@ -172,7 +172,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// one would poison the verifier's previous/current extractor
 		// advance, so the next clean step would compare against this
 		// transient state and emit false-positive violations. We still
-		// record the step (hierarchy + screenshot) for inspect-side
+		// record the step (hierarchy + screenshot) for replay-side
 		// debugging, but skip the verifier entirely and pick the next
 		// action against the unchanged prior state to keep the loop
 		// progressing.

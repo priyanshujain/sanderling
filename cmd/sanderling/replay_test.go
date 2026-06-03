@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-func TestParseInspectArgs_Defaults(t *testing.T) {
-	options, err := parseInspectArgs(nil, io.Discard)
+func TestParseReplayArgs_Defaults(t *testing.T) {
+	options, err := parseReplayArgs(nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -17,8 +17,8 @@ func TestParseInspectArgs_Defaults(t *testing.T) {
 	}
 }
 
-func TestParseInspectArgs_AllFlags(t *testing.T) {
-	options, err := parseInspectArgs([]string{"--port", "9090", "--no-open", "--dev", "/tmp/runs"}, io.Discard)
+func TestParseReplayArgs_AllFlags(t *testing.T) {
+	options, err := parseReplayArgs([]string{"--port", "9090", "--no-open", "--dev", "/tmp/runs"}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,19 +27,19 @@ func TestParseInspectArgs_AllFlags(t *testing.T) {
 	}
 }
 
-func TestParseInspectArgs_RejectsTooManyPositional(t *testing.T) {
-	_, err := parseInspectArgs([]string{"a", "b"}, io.Discard)
+func TestParseReplayArgs_RejectsTooManyPositional(t *testing.T) {
+	_, err := parseReplayArgs([]string{"a", "b"}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "at most one") {
 		t.Fatalf("expected too-many-args error, got %v", err)
 	}
 }
 
-func TestRun_HelpListsInspectCommand(t *testing.T) {
+func TestRun_HelpListsReplayCommand(t *testing.T) {
 	var stdout bytes.Buffer
 	if err := run([]string{"sanderling"}, &stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "inspect") {
-		t.Errorf("usage missing inspect command: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "replay") {
+		t.Errorf("usage missing replay command: %q", stdout.String())
 	}
 }

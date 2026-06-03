@@ -321,7 +321,7 @@ func encodeExtractorValue(value goja.Value) []byte {
 
 // ChangedExtractors returns the named extractors whose value changed between
 // the prior PushSnapshot and the current one. The map is keyed by extractor
-// name; unnamed extractors (extractor_N fallback) are included so the inspect
+// name; unnamed extractors (extractor_N fallback) are included so the replay
 // UI can still display them under a numeric label. The very first snapshot
 // emits every non-null extractor as a change (Prev=null, Curr=current) since
 // the runner can otherwise misread "no diff yet" as "nothing initialized".
@@ -525,7 +525,7 @@ func (v *Verifier) NewlyViolatedProperties() []string {
 // Residuals returns the residual formula for each registered property after
 // the most recent EvaluateProperties call. Properties whose violation was
 // caused by a thrown predicate surface as ErrorFormula, sourced from the
-// captured witness, so the inspect UI can render "predicate threw" inline.
+// captured witness, so the replay UI can render "predicate threw" inline.
 func (v *Verifier) Residuals() map[string]ltl.Formula {
 	residuals := map[string]ltl.Formula{}
 	for name, evaluator := range v.evaluators {

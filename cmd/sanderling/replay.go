@@ -14,29 +14,29 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/priyanshujain/sanderling/internal/inspect"
+	"github.com/priyanshujain/sanderling/internal/replay"
 )
 
-type inspectOptions struct {
+type replayOptions struct {
 	port      int
 	noOpen    bool
 	dev       bool
 	directory string
 }
 
-func parseInspectArgs(args []string, stderr io.Writer) (inspectOptions, error) {
-	flagSet := flag.NewFlagSet("inspect", flag.ContinueOnError)
+func parseReplayArgs(args []string, stderr io.Writer) (replayOptions, error) {
+	flagSet := flag.NewFlagSet("replay", flag.ContinueOnError)
 	flagSet.SetOutput(stderr)
-	var options inspectOptions
+	var options replayOptions
 	flagSet.IntVar(&options.port, "port", 0, "TCP port to listen on (0 = ephemeral)")
 	flagSet.BoolVar(&options.noOpen, "no-open", false, "do not open the default browser on startup")
-	flagSet.BoolVar(&options.dev, "dev", false, "reverse-proxy non-API requests to "+inspect.DevTarget)
+	flagSet.BoolVar(&options.dev, "dev", false, "reverse-proxy non-API requests to "+replay.DevTarget)
 	if err := flagSet.Parse(args); err != nil {
-		return inspectOptions{}, err
+		return replayOptions{}, err
 	}
 	rest := flagSet.Args()
 	if len(rest) > 1 {
-		return inspectOptions{}, errors.New("inspect takes at most one positional argument (run or runs directory)")
+		return replayOptions{}, errors.New("replay takes at most one positional argument (run or runs directory)")
 	}
 	if len(rest) == 1 {
 		options.directory = rest[0]
@@ -44,16 +44,16 @@ func parseInspectArgs(args []string, stderr io.Writer) (inspectOptions, error) {
 	return options, nil
 }
 
-func runInspect(options inspectOptions, stdout io.Writer) error {
-	runsDirectory, deepLinkID, err := inspect.ResolveRunsDirectory(options.directory)
+func runReplay(options replayOptions, stdout io.Writer) error {
+	runsDirectory, deepLinkID, err := replay.ResolveRunsDirectory(options.directory)
 	if err != nil {
 		return err
 	}
 	devTarget := ""
 	if options.dev {
-		devTarget = inspect.DevTarget
+		devTarget = replay.DevTarget
 	}
-	server, err := inspect.NewServer(inspect.ServerOptions{
+	server, err := replay.NewServer(replay.ServerOptions{
 		RunsDirectory: runsDirectory,
 		DevTarget:     devTarget,
 	})
@@ -67,7 +67,7 @@ func runInspect(options inspectOptions, stdout io.Writer) error {
 	}
 	address := listener.Addr().(*net.TCPAddr)
 	browseURL := buildBrowseURL(address, deepLinkID)
-	fmt.Fprintf(stdout, "sanderling inspect listening on %s (runs=%s)\n", browseURL, runsDirectory)
+	fmt.Fprintf(stdout, "sanderling replay listening on %s (runs=%s)\n", browseURL, runsDirectory)
 
 	context, cancel := context.WithCancel(context.Background())
 	defer cancel()

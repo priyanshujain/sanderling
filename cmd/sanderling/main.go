@@ -34,7 +34,7 @@ Usage:
 
 Commands:
   test     Run a spec against an app for a fixed duration.
-  inspect  Serve a local web UI for browsing runs/.
+  replay   Serve a local web UI for browsing runs/.
   doctor   Check that the host environment is ready to run sanderling.
   version  Print the sanderling version.
 
@@ -98,12 +98,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		return runTest(options, stdout)
-	case "inspect":
-		options, err := parseInspectArgs(args[2:], stderr)
+	case "replay":
+		options, err := parseReplayArgs(args[2:], stderr)
 		if err != nil {
 			return err
 		}
-		return runInspect(options, stdout)
+		return runReplay(options, stdout)
 	case "doctor":
 		return runDoctor(args[2:], stdout, stderr)
 	case "version", "-v", "--version":

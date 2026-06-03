@@ -10,9 +10,9 @@ Architectural and organizational decisions worth recording. Each entry states th
 
 ## Directory and Package Organization
 
-### `web/` renamed to `inspect-ui/`
+### `web/` renamed to `replay-ui/`
 
-The directory containing the React/TypeScript frontend is `inspect-ui/`, not `web/`. The name `web/` was ambiguous (the project also has a web/Chrome driver target). `inspect-ui/` makes the purpose explicit: this is the UI for the `sanderling inspect` command.
+The directory containing the React/TypeScript frontend is `replay-ui/`, not `web/`. The name `web/` was ambiguous (the project also has a web/Chrome driver target). `replay-ui/` makes the purpose explicit: this is the UI for the `sanderling replay` command.
 
 ### Keep `internal/`
 
@@ -22,9 +22,9 @@ Go's `internal/` directory restriction prevents any code outside this module fro
 
 The `driver.go` file defines the `DeviceDriver` interface. Concrete implementations live in subdirectories: `sidecar/` (gRPC to the native sidecar), `chrome/` (CDP), `mock/` (tests). This pattern keeps the runner and verifier decoupled from any specific platform.
 
-### `internal/verifier/marshal.go` moves to `internal/inspect/`
+### `internal/verifier/marshal.go` moves to `internal/replay/`
 
-`marshal.go` serializes LTL formulas to JSON for the inspect UI. That is an inspect concern, not a verifier concern. Verifier should not know inspect exists.
+`marshal.go` serializes LTL formulas to JSON for the replay UI. That is a replay concern, not a verifier concern. Verifier should not know replay exists.
 
 ### `internal/verifier/bindings.go` splits into `types.go` + `bindings.go`
 
@@ -44,7 +44,7 @@ Android device enumeration, AVD selection, and emulator boot logic moves to `int
 
 Driver setup, agent connection, verifier init, trace setup, and runner orchestration extract to `internal/testrun/`. `cmd/sanderling/` wires CLI flags to `testrun` calls and nothing more.
 
-### `internal/inspect/runs.go` splits into multiple files
+### `internal/replay/runs.go` splits into multiple files
 
 429 LOC with mixed concerns (cache, file I/O, JSON decoding, summary types) splits into at least `runs_cache.go` and `runs_decode.go` within the same package.
 
