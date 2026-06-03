@@ -15,6 +15,11 @@ import { useStep } from "../hooks/useStep";
 import { useKeyboardNav } from "../hooks/useKeyboardNav";
 import { useTheme } from "../hooks/useTheme";
 
+function basename(specPath: string): string {
+  const index = specPath.lastIndexOf("/");
+  return index >= 0 ? specPath.slice(index + 1) : specPath;
+}
+
 interface RunHistory {
   names: string[];
   lanes: PropertyLane[];
@@ -242,7 +247,7 @@ export default function RunDetail() {
           <Link to="/">runs</Link>
           <span>{run.id}</span>
           <span>
-            <strong>{run.spec_path}</strong> seed={run.seed}
+            <strong title={run.spec_path}>{basename(run.spec_path)}</strong> seed={run.seed}
           </span>
           <span>
             step {stepIndex} / {stepCount ?? 0}
