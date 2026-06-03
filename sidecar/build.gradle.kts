@@ -4,7 +4,7 @@ plugins {
     kotlin("jvm") version "2.1.21"
     application
     id("com.gradleup.shadow") version "9.0.0-rc2"
-    id("com.google.protobuf") version "0.9.5"
+    id("com.google.protobuf") version "0.10.0"
 }
 
 version = findProperty("sanderling.version") as String? ?: "0.0.0-dev"
