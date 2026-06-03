@@ -23,7 +23,7 @@ type PredicateLabel interface {
 // ErrorFormula represents a thunk that threw during evaluation. The verifier
 // substitutes one of these into the residual when MarshalJSON would otherwise
 // have to encode an opaque thunk that already errored. It exists so that the
-// inspect UI can render "predicate threw" inline.
+// replay UI can render "predicate threw" inline.
 type ErrorFormula struct {
 	Message string
 }

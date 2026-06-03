@@ -50,7 +50,7 @@ type Witness struct {
 
 // ExtractorChange records the prev/curr JSON values of an extractor whose
 // observation differed between two consecutive steps. Surfaced under
-// violation rows in the inspect UI as a "what changed at this step"
+// violation rows in the replay UI as a "what changed at this step"
 // breadcrumb.
 type ExtractorChange struct {
 	Prev json.RawMessage `json:"prev"`

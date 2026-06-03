@@ -12,7 +12,7 @@ Alpha: Scope of v0.1.0 is tracked in [issue #4](https://github.com/priyanshujain
 - [Getting started](./manual/getting-started/)
 - [Writing specs](./manual/writing-specs/)
 - [Runs](./manual/runs/)
-- [Inspect](./manual/inspect/)
+- [Replay](./manual/replay/)
 - [CLI reference](./manual/cli/)
 
 ---

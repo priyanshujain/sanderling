@@ -28,6 +28,11 @@ function formatStartedAt(value: string): string {
   return date.toLocaleString();
 }
 
+function basename(specPath: string): string {
+  const index = specPath.lastIndexOf("/");
+  return index >= 0 ? specPath.slice(index + 1) : specPath;
+}
+
 export default function RunList() {
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +81,7 @@ export default function RunList() {
             <td>
               <Link to={`/runs/${run.id}`}>{formatStartedAt(run.started_at)}</Link>
             </td>
-            <td>{run.spec_path}</td>
+            <td title={run.spec_path}>{basename(run.spec_path)}</td>
             <td>{run.seed}</td>
             <td>{run.platform}</td>
             <td>{formatDuration(run.duration_millis)}</td>

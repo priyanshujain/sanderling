@@ -19,10 +19,10 @@ PAGE_OUT      := $(patsubst docs/%.md,build/site/%/index.html,$(PAGE_SRC))
 DOCS_OUT      := $(INDEX_OUT) $(PAGE_OUT)
 DOCS_TEMPLATE := docs/_template/page.html
 
-INSPECT_DIST := internal/inspect/dist
-WEB_DIST := inspect-ui/dist
+REPLAY_DIST := internal/replay/dist
+WEB_DIST := replay-ui/dist
 
-.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-kotlin test-spec-api web-typecheck web-build web-dev inspect-dev docs clean release-cli release-npm-dry
+.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-kotlin test-spec-api web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -48,19 +48,19 @@ install: $(SIDECAR_EMBED) web-build
 	@dest="$$($(GO) env GOBIN)"; [ -n "$$dest" ] || dest="$$($(GO) env GOPATH)/bin"; echo "installed sanderling to $$dest"
 
 web-build:
-	cd inspect-ui && bun install --frozen-lockfile && bun run build
-	mkdir -p $(INSPECT_DIST)
-	rm -rf $(INSPECT_DIST)/assets $(INSPECT_DIST)/fonts
-	cp -R $(WEB_DIST)/. $(INSPECT_DIST)/
+	cd replay-ui && bun install --frozen-lockfile && bun run build
+	mkdir -p $(REPLAY_DIST)
+	rm -rf $(REPLAY_DIST)/assets $(REPLAY_DIST)/fonts
+	cp -R $(WEB_DIST)/. $(REPLAY_DIST)/
 
 web-dev:
-	cd inspect-ui && bun run dev
+	cd replay-ui && bun run dev
 
-inspect-dev: $(SIDECAR_EMBED)
-	$(GO) run -tags withsidecar ./cmd/sanderling inspect --dev
+replay-dev: $(SIDECAR_EMBED)
+	$(GO) run -tags withsidecar ./cmd/sanderling replay --dev
 
 web-typecheck:
-	cd inspect-ui && bun install --frozen-lockfile && bun run typecheck
+	cd replay-ui && bun install --frozen-lockfile && bun run typecheck
 
 $(SIDECAR_JAR): $(SIDECAR_SRC)
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:shadowJar

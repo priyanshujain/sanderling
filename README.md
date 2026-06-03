@@ -8,11 +8,11 @@ Autonomous property-based testing for mobile and web apps.
 
 - [Getting started](https://priyanshujain.github.io/sanderling/manual/getting-started.html)
 - [Writing specs](https://priyanshujain.github.io/sanderling/manual/writing-specs.html)
-- [`sanderling inspect` UI](https://priyanshujain.github.io/sanderling/manual/inspect.html)
+- [`sanderling replay` UI](https://priyanshujain.github.io/sanderling/manual/replay.html)
 - Examples: [folio](https://github.com/priyanshujain/sanderling/tree/master/examples/folio) (KMP, Android/iOS/web), [folio-web](https://github.com/priyanshujain/sanderling/tree/master/examples/folio-web) (React + Vite)
 - [Architecture](https://priyanshujain.github.io/sanderling/development/architecture.html)
 
-After a `sanderling test` run, browse traces locally with `sanderling inspect`. It opens a web UI for stepping through actions, screenshots, snapshots, residual formulas, and exceptions.
+After a `sanderling test` run, browse traces locally with `sanderling replay`. It opens a web UI for stepping through actions, screenshots, snapshots, residual formulas, and exceptions.
 
 ---
 

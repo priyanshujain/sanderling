@@ -53,7 +53,7 @@ type Exception struct {
 
 // ExtractorChange records a single extractor's value transition across one
 // step. Used to surface "what changed at this step" breadcrumbs at violation
-// markers in the inspect UI.
+// markers in the replay UI.
 type ExtractorChange struct {
 	Prev []byte
 	Curr []byte

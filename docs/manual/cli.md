@@ -25,7 +25,7 @@ Run a spec against an app for a fixed duration.
 | `--output` | `./runs` | Output directory for traces. |
 | `--clear-data` | `false` | Clear app data before launching so the run starts from a fresh install. |
 
-## `sanderling inspect [run-or-runs-dir]`
+## `sanderling replay [run-or-runs-dir]`
 
 Serve a local web UI for browsing traces. The positional argument is optional and may point at either a runs directory (the parent of many runs) or a single run directory (auto-detected by the presence of `meta.json`). Defaults to `./runs`.
 
@@ -35,7 +35,7 @@ Serve a local web UI for browsing traces. The positional argument is optional an
 | `--no-open` | `false` | Skip opening the default browser on startup. |
 | `--dev` | `false` | Reverse-proxy non-API requests to the Vite dev server on `127.0.0.1:5173`. |
 
-See [the inspect UI page](./inspect/) for the panel reference and keyboard shortcuts.
+See [the replay UI page](./replay/) for the panel reference and keyboard shortcuts.
 
 ## `sanderling doctor`
 

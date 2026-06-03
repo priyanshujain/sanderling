@@ -18,7 +18,7 @@ flowchart TB
     DC["Device / Emulator"]
     CH["Chrome (CDP)"]
     RD[("runs/")]
-    IN["sanderling inspect\nHTTP + SSE"]
+    IN["sanderling replay\nHTTP + SSE"]
     UI["Web UI (React)"]
 
     D -->|gRPC| SC
@@ -45,9 +45,9 @@ flowchart TB
 
 On native, the transport split exists because only real UI events need to cross process and OS-API boundaries. Introspection is cheap, frequent, and lives on a fast local socket directly to the app. On web, CDP handles both.
 
-## Inspect UI
+## Replay UI
 
-`sanderling inspect` is a separate mode of the same Go binary. It serves an embedded React bundle and reads `runs/` from disk, streaming file-watcher events over SSE so the UI updates as new steps land. It has no connection to any driver; it only consumes the trace artifacts.
+`sanderling replay` is a separate mode of the same Go binary. It serves an embedded React bundle and reads `runs/` from disk, streaming file-watcher events over SSE so the UI updates as new steps land. It has no connection to any driver; it only consumes the trace artifacts.
 
 ## Per-step cycle
 

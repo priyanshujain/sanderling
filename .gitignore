@@ -38,15 +38,15 @@ pkg/spec/dist/
 # goreleaser local output
 /dist/
 
-# inspect web bundle output; built by `make web-build` before go build.
+# replay web bundle output; built by `make web-build` before go build.
 # Only .gitkeep is tracked so //go:embed all:dist compiles on a fresh checkout.
-/internal/inspect/dist/*
-!/internal/inspect/dist/.gitkeep
+/internal/replay/dist/*
+!/internal/replay/dist/.gitkeep
 
-# inspect web frontend
-inspect-ui/node_modules/
-inspect-ui/dist/
-inspect-ui/.vite/
+# replay web frontend
+replay-ui/node_modules/
+replay-ui/dist/
+replay-ui/.vite/
 
 # folio-web frontend
 examples/folio-web/node_modules/
@@ -59,3 +59,5 @@ examples/folio-web/.vite/
 
 # Personal research notes
 /research/
+
+/talk/

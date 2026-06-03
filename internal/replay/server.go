@@ -1,4 +1,4 @@
-package inspect
+package replay
 
 import (
 	"encoding/json"
@@ -22,7 +22,7 @@ type ServerOptions struct {
 	AssetsFS fs.FS
 }
 
-// Server holds the HTTP handlers for `sanderling inspect`.
+// Server holds the HTTP handlers for `sanderling replay`.
 type Server struct {
 	options ServerOptions
 	cache   *Cache
