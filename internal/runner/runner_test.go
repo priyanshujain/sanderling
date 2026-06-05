@@ -1031,17 +1031,18 @@ func TestIsTransitionalHierarchy_DetectsMultipleScreens(t *testing.T) {
 	}
 }
 
-// TestRunner_TransitionalSkipsVerifier feeds a driver whose hierarchy stays
-// transitional (multiple route-level *Screen ids) on every Snapshot call.
-// Every step must be marked transitional in the trace, no violations may be
-// emitted (the verifier never ran), and the summary must stay clean even
-// though the spec is a guaranteed always-false predicate.
-func TestRunner_TransitionalSkipsVerifier(t *testing.T) {
+// TestRunner_StableTransitionalTreeIsVerified feeds a driver whose hierarchy
+// constantly carries two route-level *Screen ids but never changes between
+// retry attempts. Such a tree is a settled state that merely matches the
+// transitional heuristic, so the runner must verify it (the always-false
+// predicate's violation surfaces) instead of skipping the verifier forever.
+func TestRunner_StableTransitionalTreeIsVerified(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"root"},"children":[
 	  {"attributes":{"resource-id":"AddAccountScreen"},"children":[]},
 	  {"attributes":{"resource-id":"HomeScreen"},"children":[]}
 	]}`
+	state.mock.ImageData = driver.Image{PNG: []byte("fakepng"), Width: 100, Height: 200}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1058,8 +1059,77 @@ func TestRunner_TransitionalSkipsVerifier(t *testing.T) {
 	if summary.Steps == 0 {
 		t.Fatal("expected at least one step")
 	}
+	if !containsProperty(summary.Violations, "balanceNonNegative") {
+		t.Fatalf("expected verifier to run on a stable two-screen tree, got %v", summary.Violations)
+	}
+
+	type traceLine struct {
+		Step         int  `json:"step"`
+		Transitional bool `json:"transitional"`
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var line traceLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		if line.Transitional {
+			t.Errorf("step %d: stable tree must not be marked transitional", line.Step)
+		}
+	}
+
+	// The early break must still persist the step's screenshot.
+	screenshotPath := filepath.Join(state.writer.Directory(), "screenshots", "step-00001.png")
+	if _, err := os.Stat(screenshotPath); err != nil {
+		t.Errorf("expected screenshot for step 1 at %s: %v", screenshotPath, err)
+	}
+}
+
+// snapshotCrossFade wraps a mock driver so every Snapshot call returns a
+// transitional two-screen tree whose JSON differs from the previous call,
+// mimicking a genuine cross-fade in flight.
+type snapshotCrossFade struct {
+	*mockdriver.Driver
+	calls int
+}
+
+func (d *snapshotCrossFade) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	d.calls++
+	_, image, err := d.Driver.Snapshot(ctx)
+	hierarchyJSON := fmt.Sprintf(`{"attributes":{"resource-id":"root"},"children":[
+	  {"attributes":{"resource-id":"AddAccountScreen","text":"frame-%d"},"children":[]},
+	  {"attributes":{"resource-id":"HomeScreen"},"children":[]}
+	]}`, d.calls)
+	return hierarchyJSON, image, err
+}
+
+// TestRunner_GenuineCrossFadeStillRetried pins the existing behavior for real
+// transitions: a tree that keeps changing between retry attempts exhausts the
+// budget, stays transitional, and the verifier is skipped for the step.
+func TestRunner_GenuineCrossFadeStillRetried(t *testing.T) {
+	state := newHarnessWithSpec(t, violationSpec)
+	wrapped := &snapshotCrossFade{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    200 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps == 0 {
+		t.Fatal("expected at least one step")
+	}
 	if len(summary.Violations) != 0 {
-		t.Fatalf("verifier must be skipped on transitional steps; got %v", summary.Violations)
+		t.Fatalf("verifier must be skipped on cross-fade steps; got %v", summary.Violations)
 	}
 
 	type traceLine struct {

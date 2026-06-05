@@ -692,6 +692,7 @@ const (
 // transient state.
 func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (tree *hierarchy.Tree, transitional bool, err error) {
 	var pngBytes []byte
+	var previousJSON string
 retryLoop:
 	for attempt := range transitionalRetryAttempts {
 		hierarchyJSON, image, snapshotErr := options.Driver.Snapshot(ctx)
@@ -705,6 +706,14 @@ retryLoop:
 		if err != nil || !isTransitionalHierarchy(tree) {
 			break
 		}
+		// A tree unchanged since the previous attempt is a settled state
+		// that merely matches the heuristic (persistent overlay, both route
+		// ids alive at rest), not a cross-fade in flight: verify it instead
+		// of burning the retry budget and skipping the verifier forever.
+		if attempt > 0 && hierarchyJSON == previousJSON {
+			break
+		}
+		previousJSON = hierarchyJSON
 		if attempt == transitionalRetryAttempts-1 {
 			transitional = true
 			break
