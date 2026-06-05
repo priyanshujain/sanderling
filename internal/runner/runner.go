@@ -760,29 +760,23 @@ func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action 
 	return traceAction
 }
 
-// stampSelectorTarget mirrors applyAction's coordinate-resolution rule so the
-// trace records the same point the runner taps.
+// stampSelectorTarget records the element bounds the selector resolved to and
+// derives the tap point through resolveCoordinates, the same rule applyAction
+// dispatches with, so the trace can never record a different point than the
+// one tapped.
 func stampSelectorTarget(traceAction *trace.Action, action verifier.Action, tree *hierarchy.Tree) {
-	if action.X > 0 && action.Y > 0 {
-		traceAction.TapPoint = &trace.PointRecord{X: action.X, Y: action.Y}
-		return
+	if action.On != "" && tree != nil {
+		if element := tree.Find(action.On); element != nil {
+			bounds := element.Bounds
+			traceAction.ResolvedBounds = &trace.BoundsRecord{
+				X:      bounds.Left,
+				Y:      bounds.Top,
+				Width:  bounds.Width(),
+				Height: bounds.Height(),
+			}
+		}
 	}
-	if tree == nil || action.On == "" {
-		return
-	}
-	element := tree.Find(action.On)
-	if element == nil {
-		return
-	}
-	bounds := element.Bounds
-	traceAction.ResolvedBounds = &trace.BoundsRecord{
-		X:      bounds.Left,
-		Y:      bounds.Top,
-		Width:  bounds.Width(),
-		Height: bounds.Height(),
-	}
-	x, y := bounds.Center()
-	if x > 0 && y > 0 {
+	if x, y, ok := resolveCoordinates(action, tree); ok {
 		traceAction.TapPoint = &trace.PointRecord{X: x, Y: y}
 	}
 }

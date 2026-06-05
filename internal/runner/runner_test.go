@@ -522,6 +522,36 @@ func TestRunner_StampsHierarchyResolvedBoundsAndResiduals(t *testing.T) {
 	}
 }
 
+// TestTraceActionFor_StaleCoordinatesDoNotOverrideTreeCenter pins the stamp
+// to applyAction's resolution rule: when On resolves in the tree, the trace
+// tap point must be the tree center even if the action carries stale X/Y
+// from an earlier tick.
+func TestTraceActionFor_StaleCoordinatesDoNotOverrideTreeCenter(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"resource-id":"next","bounds":"[100,200,300,400]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	action := verifier.Action{Kind: verifier.ActionKindTap, On: "id:next", X: 50, Y: 60}
+
+	traceAction := traceActionFor(action, tree)
+	if traceAction.TapPoint == nil {
+		t.Fatal("expected a tap point")
+	}
+	if traceAction.TapPoint.X != 200 || traceAction.TapPoint.Y != 300 {
+		t.Errorf("tap point = (%d,%d), want tree center (200,300)",
+			traceAction.TapPoint.X, traceAction.TapPoint.Y)
+	}
+	if traceAction.ResolvedBounds == nil {
+		t.Fatal("expected resolved bounds")
+	}
+	if traceAction.ResolvedBounds.X != 100 || traceAction.ResolvedBounds.Y != 200 {
+		t.Errorf("resolved bounds origin = (%d,%d), want (100,200)",
+			traceAction.ResolvedBounds.X, traceAction.ResolvedBounds.Y)
+	}
+}
+
 func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 	state := newHarness(t)
 	state.mock.Failures[mockdriver.ActionWaitForIdle] = errors.New("sidecar lost gRPC stream")
