@@ -24,6 +24,7 @@ const (
 	Driver_Tap_FullMethodName         = "/sanderling.driver.v1.Driver/Tap"
 	Driver_TapSelector_FullMethodName = "/sanderling.driver.v1.Driver/TapSelector"
 	Driver_InputText_FullMethodName   = "/sanderling.driver.v1.Driver/InputText"
+	Driver_EraseText_FullMethodName   = "/sanderling.driver.v1.Driver/EraseText"
 	Driver_Swipe_FullMethodName       = "/sanderling.driver.v1.Driver/Swipe"
 	Driver_PressKey_FullMethodName    = "/sanderling.driver.v1.Driver/PressKey"
 	Driver_LongPress_FullMethodName   = "/sanderling.driver.v1.Driver/LongPress"
@@ -45,6 +46,9 @@ type DriverClient interface {
 	Tap(ctx context.Context, in *Point, opts ...grpc.CallOption) (*Empty, error)
 	TapSelector(ctx context.Context, in *Selector, opts ...grpc.CallOption) (*Empty, error)
 	InputText(ctx context.Context, in *Text, opts ...grpc.CallOption) (*Empty, error)
+	// EraseText deletes characters from the focused field so InputText can
+	// replace existing content instead of appending to it.
+	EraseText(ctx context.Context, in *EraseTextRequest, opts ...grpc.CallOption) (*Empty, error)
 	Swipe(ctx context.Context, in *SwipeRequest, opts ...grpc.CallOption) (*Empty, error)
 	PressKey(ctx context.Context, in *PressKeyRequest, opts ...grpc.CallOption) (*Empty, error)
 	LongPress(ctx context.Context, in *Point, opts ...grpc.CallOption) (*Empty, error)
@@ -112,6 +116,16 @@ func (c *driverClient) InputText(ctx context.Context, in *Text, opts ...grpc.Cal
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Empty)
 	err := c.cc.Invoke(ctx, Driver_InputText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *driverClient) EraseText(ctx context.Context, in *EraseTextRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Driver_EraseText_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +241,9 @@ type DriverServer interface {
 	Tap(context.Context, *Point) (*Empty, error)
 	TapSelector(context.Context, *Selector) (*Empty, error)
 	InputText(context.Context, *Text) (*Empty, error)
+	// EraseText deletes characters from the focused field so InputText can
+	// replace existing content instead of appending to it.
+	EraseText(context.Context, *EraseTextRequest) (*Empty, error)
 	Swipe(context.Context, *SwipeRequest) (*Empty, error)
 	PressKey(context.Context, *PressKeyRequest) (*Empty, error)
 	LongPress(context.Context, *Point) (*Empty, error)
@@ -264,6 +281,9 @@ func (UnimplementedDriverServer) TapSelector(context.Context, *Selector) (*Empty
 }
 func (UnimplementedDriverServer) InputText(context.Context, *Text) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method InputText not implemented")
+}
+func (UnimplementedDriverServer) EraseText(context.Context, *EraseTextRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method EraseText not implemented")
 }
 func (UnimplementedDriverServer) Swipe(context.Context, *SwipeRequest) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method Swipe not implemented")
@@ -402,6 +422,24 @@ func _Driver_InputText_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DriverServer).InputText(ctx, req.(*Text))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Driver_EraseText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EraseTextRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DriverServer).EraseText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Driver_EraseText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DriverServer).EraseText(ctx, req.(*EraseTextRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -612,6 +650,10 @@ var Driver_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InputText",
 			Handler:    _Driver_InputText_Handler,
+		},
+		{
+			MethodName: "EraseText",
+			Handler:    _Driver_EraseText_Handler,
 		},
 		{
 			MethodName: "Swipe",
