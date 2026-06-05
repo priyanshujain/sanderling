@@ -184,6 +184,6 @@ export const setup = login;
 export const actionsRoot = weighted(
   [25, addAccount],
   [45, addTxn],
-  [10, doubleTaps],
-  [20, defaultActions],
+  [5, doubleTaps],
+  [25, defaultActions],
 );
