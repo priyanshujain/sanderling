@@ -60,6 +60,7 @@ class SnapshotHandlerTest {
             override fun tap(x: Int, y: Int) {}
             override fun tapSelector(selector: String) {}
             override fun inputText(text: String) {}
+            override fun eraseText(characterCount: Int) {}
             override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {}
             override fun pressKey(key: String) {}
             override fun longPress(x: Int, y: Int) {}

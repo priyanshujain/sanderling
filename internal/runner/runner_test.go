@@ -550,6 +550,52 @@ func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 	}
 }
 
+func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"resource-id":"username","text":"stale-value","bounds":"[10,10,500,100]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
+
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+		t.Fatalf("applyAction: %v", err)
+	}
+	actions := driverMock.Actions()
+	if len(actions) != 3 {
+		t.Fatalf("want tap, erase, input; got %v", actions)
+	}
+	if actions[0].Kind != mockdriver.ActionTap {
+		t.Errorf("first action = %v, want tap", actions[0].Kind)
+	}
+	if actions[1].Kind != mockdriver.ActionEraseText || actions[1].CharacterCount != len("stale-value") {
+		t.Errorf("second action = %+v, want erase_text of %d characters", actions[1], len("stale-value"))
+	}
+	if actions[2].Kind != mockdriver.ActionInputText || actions[2].Text != "alice" {
+		t.Errorf("third action = %+v, want input_text alice", actions[2])
+	}
+}
+
+func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"resource-id":"username","bounds":"[10,10,500,100]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
+
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+		t.Fatalf("applyAction: %v", err)
+	}
+	if containsAction(driverMock.Actions(), mockdriver.ActionEraseText, "") {
+		t.Errorf("empty field must not be erased: %v", driverMock.Actions())
+	}
+}
+
 func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 	t.Run("selector focus tap fails", func(t *testing.T) {
 		driverMock := mockdriver.New()

@@ -193,6 +193,23 @@ func (d *Driver) InputText(_ context.Context, text string) error {
 	)
 }
 
+// EraseText clears the focused field. InputText above already replaces via
+// select-all, so the character count is not needed to bound the deletion.
+func (d *Driver) EraseText(_ context.Context, _ int) error {
+	return chromedp.Run(d.tabCtx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			if err := chromedp.Evaluate(`
+				(function() {
+					const el = document.activeElement;
+					if (el && typeof el.select === 'function') el.select();
+				})()`, nil).Do(ctx); err != nil {
+				return err
+			}
+			return input.InsertText("").Do(ctx)
+		}),
+	)
+}
+
 func (d *Driver) Swipe(_ context.Context, fromX, fromY, toX, toY int, duration time.Duration) error {
 	millis := max(duration.Milliseconds(), 50)
 	script := fmt.Sprintf(`

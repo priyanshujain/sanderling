@@ -15,6 +15,18 @@ class InputTextTest {
         assertEquals(listOf(listOf("shell", "input", "text", "Emergency%sFund")), commands)
     }
 
+    @Test fun eraseTextSendsOneDeleteKeyPerCharacter() {
+        val commands = mutableListOf<List<String>>()
+        val backend = StubDriverBackend("android") { commands.add(it) }
+
+        backend.eraseText(3)
+
+        assertEquals(
+            List(3) { listOf("shell", "input", "keyevent", "KEYCODE_DEL") },
+            commands,
+        )
+    }
+
     @Test fun escapeForAdbInputTextSubstitutesSpaces() {
         assertEquals("hello%sworld", StubDriverBackend.escapeForAdbInputText("hello world"))
     }

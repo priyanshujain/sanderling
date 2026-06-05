@@ -75,6 +75,7 @@ type Element struct {
 type Node struct {
 	Element
 	Children []*Node `json:"-"`
+	tree     *Tree
 }
 
 // Tree is a flat collection of every node in a hierarchy dump, in pre-order.
@@ -180,7 +181,7 @@ func Parse(text string) (*Tree, error) {
 }
 
 func walkNode(node *treeNodeJSON, tree *Tree) *Node {
-	n := &Node{Element: *elementFromNode(node)}
+	n := &Node{Element: *elementFromNode(node), tree: tree}
 	tree.Elements = append(tree.Elements, &n.Element)
 	for i := range node.Children {
 		n.Children = append(n.Children, walkNode(&node.Children[i], tree))
@@ -333,69 +334,50 @@ func (t *Tree) FindAllBySelectorPath(path []Selector) []*Node {
 	return t.Root.FindAllBySelectorPath(path)
 }
 
-// Find returns the first Node in this node's subtree (descendants only) matching
-// the string selector. Path queries within the selector are not supported here.
+// Find returns the first Node scoped to this node (descendants, with spatial
+// fallback) matching the string selector. Path queries within the selector are
+// not supported here.
 func (n *Node) Find(selector string) *Node {
-	kind, value, ok := parseSelector(selector)
-	if !ok {
-		return nil
-	}
-	for _, child := range n.Children {
-		if nodes := searchSubtree(child, kind, value); len(nodes) > 0 {
-			return nodes[0]
-		}
-	}
-	return nil
+	return firstNode(n.FindAll(selector))
 }
 
-// FindAll returns all Nodes in this node's subtree (descendants only) matching
-// the string selector.
+// FindAll returns all Nodes scoped to this node (descendants, with spatial
+// fallback) matching the string selector.
 func (n *Node) FindAll(selector string) []*Node {
 	kind, value, ok := parseSelector(selector)
 	if !ok {
 		return nil
 	}
-	var result []*Node
-	for _, child := range n.Children {
-		result = append(result, searchSubtree(child, kind, value)...)
-	}
-	return result
+	return n.scopedNodes(func(element *Element) bool {
+		return match(element, kind, value)
+	})
 }
 
-// FindBySelector returns the first Node in this node's subtree matching sel (AND semantics).
+// FindBySelector returns the first Node scoped to this node matching sel (AND semantics).
 func (n *Node) FindBySelector(sel Selector) *Node {
-	for _, child := range n.Children {
-		if nodes := searchSubtreeBySelector(child, sel); len(nodes) > 0 {
-			return nodes[0]
-		}
-	}
-	return nil
+	return firstNode(n.FindAllBySelector(sel))
 }
 
-// FindAllBySelector returns all Nodes in this node's subtree matching sel (AND semantics).
+// FindAllBySelector returns all Nodes scoped to this node matching sel (AND semantics).
 func (n *Node) FindAllBySelector(sel Selector) []*Node {
-	var result []*Node
-	for _, child := range n.Children {
-		result = append(result, searchSubtreeBySelector(child, sel)...)
-	}
-	return result
+	return n.scopedNodes(func(element *Element) bool {
+		return matchSelector(element, sel)
+	})
 }
 
 // FindBySelectorPath walks a chain of selectors. The first selector is matched
-// against descendants of the receiver; each subsequent selector is matched
-// against descendants of the previous match. Returns the deepest match or nil.
+// in the receiver's scope; each subsequent selector is matched in the scope of
+// the previous match. Returns the deepest match or nil.
 func (n *Node) FindBySelectorPath(path []Selector) *Node {
 	if len(path) == 0 {
 		return nil
 	}
-	for _, child := range n.Children {
-		for _, candidate := range searchSubtreeBySelector(child, path[0]) {
-			if len(path) == 1 {
-				return candidate
-			}
-			if deeper := candidate.FindBySelectorPath(path[1:]); deeper != nil {
-				return deeper
-			}
+	for _, candidate := range n.FindAllBySelector(path[0]) {
+		if len(path) == 1 {
+			return candidate
+		}
+		if deeper := candidate.FindBySelectorPath(path[1:]); deeper != nil {
+			return deeper
 		}
 	}
 	return nil
@@ -408,16 +390,83 @@ func (n *Node) FindAllBySelectorPath(path []Selector) []*Node {
 		return nil
 	}
 	var result []*Node
+	for _, candidate := range n.FindAllBySelector(path[0]) {
+		if len(path) == 1 {
+			result = append(result, candidate)
+			continue
+		}
+		result = append(result, candidate.FindAllBySelectorPath(path[1:])...)
+	}
+	return result
+}
+
+func firstNode(nodes []*Node) *Node {
+	if len(nodes) == 0 {
+		return nil
+	}
+	return nodes[0]
+}
+
+// scopedNodes returns this node's descendants matching accept, in pre-order.
+// When no descendant matches, nodes spatially contained in this node's bounds
+// are matched instead. Compose on iOS emits a testTag node as an empty leaf
+// sibling of the content it labels rather than as an ancestor, so descendant
+// search under the tagged node finds nothing; bounds containment recovers the
+// intended scope.
+func (n *Node) scopedNodes(accept func(*Element) bool) []*Node {
+	var result []*Node
 	for _, child := range n.Children {
-		for _, candidate := range searchSubtreeBySelector(child, path[0]) {
-			if len(path) == 1 {
-				result = append(result, candidate)
-				continue
-			}
-			result = append(result, candidate.FindAllBySelectorPath(path[1:])...)
+		collectMatches(child, accept, &result)
+	}
+	if len(result) > 0 {
+		return result
+	}
+	for _, candidate := range n.spatialScope() {
+		if accept(&candidate.Element) {
+			result = append(result, candidate)
 		}
 	}
 	return result
+}
+
+func collectMatches(node *Node, accept func(*Element) bool, result *[]*Node) {
+	if accept(&node.Element) {
+		*result = append(*result, node)
+	}
+	for _, child := range node.Children {
+		collectMatches(child, accept, result)
+	}
+}
+
+// spatialScope returns every node in the tree, in pre-order, whose positive
+// bounds lie fully inside this node's bounds, excluding the node itself.
+func (n *Node) spatialScope() []*Node {
+	if n.tree == nil || n.tree.Root == nil {
+		return nil
+	}
+	if n.Bounds.Width() <= 0 || n.Bounds.Height() <= 0 {
+		return nil
+	}
+	var result []*Node
+	var walk func(*Node)
+	walk = func(candidate *Node) {
+		if candidate != n &&
+			candidate.Bounds.Width() > 0 && candidate.Bounds.Height() > 0 &&
+			containsBounds(n.Bounds, candidate.Bounds) {
+			result = append(result, candidate)
+		}
+		for _, child := range candidate.Children {
+			walk(child)
+		}
+	}
+	walk(n.tree.Root)
+	return result
+}
+
+// containsBounds reports whether outer fully contains inner (inclusive).
+func containsBounds(outer, inner Bounds) bool {
+	return inner.Left >= outer.Left && inner.Top >= outer.Top &&
+		inner.Right <= outer.Right && inner.Bottom <= outer.Bottom
 }
 
 func findPathNode(root *Node, segments []string) *Node {
@@ -440,18 +489,12 @@ func findPathNode(root *Node, segments []string) *Node {
 }
 
 func findPathDescendantsNode(root *Node, segments []string) *Node {
-	kind, value, ok := parseSelector(segments[0])
-	if !ok {
-		return nil
-	}
-	for _, child := range root.Children {
-		for _, node := range searchSubtree(child, kind, value) {
-			if len(segments) == 1 {
-				return node
-			}
-			if result := findPathDescendantsNode(node, segments[1:]); result != nil {
-				return result
-			}
+	for _, node := range root.FindAll(segments[0]) {
+		if len(segments) == 1 {
+			return node
+		}
+		if result := findPathDescendantsNode(node, segments[1:]); result != nil {
+			return result
 		}
 	}
 	return nil
@@ -477,19 +520,13 @@ func findPathAllNodes(root *Node, segments []string) []*Node {
 }
 
 func findPathAllDescendantsNodes(root *Node, segments []string) []*Node {
-	kind, value, ok := parseSelector(segments[0])
-	if !ok {
-		return nil
-	}
 	var result []*Node
-	for _, child := range root.Children {
-		for _, node := range searchSubtree(child, kind, value) {
-			if len(segments) == 1 {
-				result = append(result, node)
-				continue
-			}
-			result = append(result, findPathAllDescendantsNodes(node, segments[1:])...)
+	for _, node := range root.FindAll(segments[0]) {
+		if len(segments) == 1 {
+			result = append(result, node)
+			continue
 		}
+		result = append(result, findPathAllDescendantsNodes(node, segments[1:])...)
 	}
 	return result
 }

@@ -19,6 +19,7 @@ const (
 	ActionDoubleTap         ActionKind = "double_tap"
 	ActionDoubleTapSelector ActionKind = "double_tap_selector"
 	ActionInputText         ActionKind = "input_text"
+	ActionEraseText         ActionKind = "erase_text"
 	ActionSwipe             ActionKind = "swipe"
 	ActionPressKey          ActionKind = "press_key"
 	ActionLongPress         ActionKind = "long_press"
@@ -32,19 +33,20 @@ const (
 )
 
 type Action struct {
-	Kind         ActionKind
-	BundleID     string
-	ClearState   bool
-	X, Y         int
-	FromX, FromY int
-	ToX, ToY     int
-	Duration     time.Duration
-	Selector     string
-	Text         string
-	Key          string
-	LogLevel     string
-	LogSince     time.Time
-	Idle         time.Duration
+	Kind           ActionKind
+	BundleID       string
+	ClearState     bool
+	X, Y           int
+	FromX, FromY   int
+	ToX, ToY       int
+	Duration       time.Duration
+	Selector       string
+	Text           string
+	CharacterCount int
+	Key            string
+	LogLevel       string
+	LogSince       time.Time
+	Idle           time.Duration
 }
 
 // Driver is an in-memory Driver implementation for unit tests.
@@ -207,6 +209,14 @@ func (d *Driver) InputText(ctx context.Context, text string) error {
 		return err
 	}
 	d.record(Action{Kind: ActionInputText, Text: text})
+	return nil
+}
+
+func (d *Driver) EraseText(ctx context.Context, characterCount int) error {
+	if err := d.failure(ActionEraseText); err != nil {
+		return err
+	}
+	d.record(Action{Kind: ActionEraseText, CharacterCount: characterCount})
 	return nil
 }
 
