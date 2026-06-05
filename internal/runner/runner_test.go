@@ -590,21 +590,41 @@ func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
 		t.Fatalf("applyAction: %v", err)
 	}
 	actions := driverMock.Actions()
-	if len(actions) != 3 {
-		t.Fatalf("want tap, erase, input; got %v", actions)
+	if len(actions) != 4 {
+		t.Fatalf("want tap, wait_for_idle, erase, input; got %v", actions)
 	}
 	if actions[0].Kind != mockdriver.ActionTap {
 		t.Errorf("first action = %v, want tap", actions[0].Kind)
 	}
-	if actions[1].Kind != mockdriver.ActionEraseText || actions[1].CharacterCount != len("stale-value") {
-		t.Errorf("second action = %+v, want erase_text of %d characters", actions[1], len("stale-value"))
+	if actions[1].Kind != mockdriver.ActionWaitForIdle {
+		t.Errorf("second action = %v, want wait_for_idle (settle after focus tap)", actions[1].Kind)
 	}
-	if actions[2].Kind != mockdriver.ActionInputText || actions[2].Text != "alice" {
-		t.Errorf("third action = %+v, want input_text alice", actions[2])
+	if actions[2].Kind != mockdriver.ActionEraseText || actions[2].CharacterCount != len("stale-value") {
+		t.Errorf("third action = %+v, want erase_text of %d characters", actions[2], len("stale-value"))
+	}
+	if actions[3].Kind != mockdriver.ActionInputText || actions[3].Text != "alice" {
+		t.Errorf("fourth action = %+v, want input_text alice", actions[3])
+	}
+}
+
+// TestApplyAction_InputTextWithoutTargetSkipsSettle pins that the post-tap
+// settle only runs when a focus tap actually happened: with no resolvable
+// target there is no keyboard animation to absorb.
+func TestApplyAction_InputTextWithoutTargetSkipsSettle(t *testing.T) {
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindInputText, X: -1, Y: -1, Text: "alice"}
+
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
+		t.Fatalf("applyAction: %v", err)
+	}
+	for _, recorded := range driverMock.Actions() {
+		if recorded.Kind == mockdriver.ActionWaitForIdle {
+			t.Errorf("no focus tap happened; settle must be skipped: %v", driverMock.Actions())
+		}
 	}
 }
 
@@ -618,7 +638,7 @@ func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
 		t.Fatalf("applyAction: %v", err)
 	}
 	if containsAction(driverMock.Actions(), mockdriver.ActionEraseText, "") {
@@ -632,7 +652,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 		driverMock.Failures[mockdriver.ActionTapSelector] = errors.New("adb unreachable")
 		action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-		err := applyAction(context.Background(), driverMock, action, nil)
+		err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond)
 		if err == nil {
 			t.Fatalf("expected focus tap failure to surface, got nil")
 		}
@@ -645,7 +665,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 		driverMock.Failures[mockdriver.ActionTap] = errors.New("tap driver error")
 		action := verifier.Action{Kind: verifier.ActionKindInputText, X: 10, Y: 20, Text: "alice"}
 
-		err := applyAction(context.Background(), driverMock, action, nil)
+		err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond)
 		if err == nil {
 			t.Fatalf("expected focus tap failure to surface, got nil")
 		}
@@ -659,7 +679,7 @@ func TestApplyAction_V8InputTextTapsAtCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 50, Y: 100, Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	actions := driverMock.Actions()
@@ -678,7 +698,7 @@ func TestApplyAction_V8InputTextAtOriginStillTaps(t *testing.T) {
 	// InputText with (0,0) is a deliberate edge tap, not a sentinel).
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 0, Y: 0, Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	if !containsAction(driverMock.Actions(), mockdriver.ActionTap, "") {
@@ -690,7 +710,7 @@ func TestApplyAction_DoubleTapDispatchesDoubleTapAtCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, X: 100, Y: 200}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	taps := 0
@@ -708,7 +728,7 @@ func TestApplyAction_DoubleTapDispatchesDoubleTapSelector(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, On: "id:save"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	taps := 0
@@ -726,7 +746,7 @@ func TestApplyAction_LongPressDispatchesAtResolvedCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindLongPress, X: 120, Y: 240}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	found := false
@@ -752,7 +772,7 @@ func TestApplyAction_ScrollWithPrecomputedEndpointsSwipes(t *testing.T) {
 		DurationMillis: 300,
 	}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	found := false
@@ -775,7 +795,7 @@ func TestApplyAction_ScrollDirectionUsesInversion(t *testing.T) {
 	}
 	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "down", On: "id:list"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	var swipe *mockdriver.Action
@@ -804,7 +824,7 @@ func TestApplyAction_ScrollScreenFallback(t *testing.T) {
 	// On unset: container falls back to whole-screen (root) bounds.
 	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "up"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	var swipe *mockdriver.Action

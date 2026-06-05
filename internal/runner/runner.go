@@ -227,7 +227,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 
 		applySkipped := false
 		if nextErr == nil {
-			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
+			if err := applyAction(ctx, options.Driver, nextAction, tree, options.IdleTimeout); err != nil {
 				if isWDADrop(err) {
 					return summary, fmt.Errorf("step %d: iOS XCTest runner lost connection - known WDA startup flake, re-run the test: %w", stepIndex, err)
 				}
@@ -452,7 +452,7 @@ func settleForForeground(ctx context.Context, options Options) {
 	cancel()
 }
 
-func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
+func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree, idleTimeout time.Duration) error {
 	switch action.Kind {
 	case verifier.ActionKindTap:
 		x, y, ok := resolveCoordinates(action, tree)
@@ -488,14 +488,25 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		}
 		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindInputText:
+		tapped := false
 		if x, y, ok := resolveCoordinates(action, tree); ok {
 			if err := drv.Tap(ctx, x, y); err != nil {
 				return err
 			}
+			tapped = true
 		} else if action.On != "" {
 			if err := drv.TapSelector(ctx, action.On); err != nil {
 				return err
 			}
+			tapped = true
+		}
+		// The focus tap raises the keyboard. Settle before sending key
+		// events so the keyboard animation cannot race them into the wrong
+		// field (or drop them entirely).
+		if tapped {
+			idleCtx, idleCancel := context.WithTimeout(ctx, idleTimeout)
+			_ = drv.WaitForIdle(idleCtx, idleTimeout)
+			idleCancel()
 		}
 		// InputText replaces the field's content: erase what the target
 		// holds before typing. Appending instead lets repeated draws grow
