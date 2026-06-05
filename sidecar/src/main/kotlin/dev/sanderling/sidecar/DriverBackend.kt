@@ -744,13 +744,17 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
 
     override fun tap(x: Int, y: Int) = withReconnect { driver.tap(maestro.Point(x, y)) }
 
-    // Both taps inside one reconnect scope, with nothing between them: the
-    // XCTest transport adds hundreds of milliseconds per round trip, so any
-    // client-side composition spreads the taps wide enough for the app to
-    // navigate between them.
-    override fun doubleTap(x: Int, y: Int) = withReconnect {
-        driver.tap(maestro.Point(x, y))
-        driver.tap(maestro.Point(x, y))
+    // The second tap request is already queued at the XCTest runner while the
+    // first executes, so the on-device gap collapses to the runner's
+    // turnaround instead of a full transport round trip. Sequential requests
+    // leave a gap wide enough for the app to navigate between the taps.
+    override fun doubleTap(x: Int, y: Int): Unit = withReconnect {
+        val point = maestro.Point(x, y)
+        val firstTap = java.util.concurrent.CompletableFuture.runAsync { driver.tap(point) }
+        Thread.sleep(40)
+        driver.tap(point)
+        firstTap.join()
+        Unit
     }
 
     override fun longPress(x: Int, y: Int) = withReconnect { driver.longPress(maestro.Point(x, y)) }
