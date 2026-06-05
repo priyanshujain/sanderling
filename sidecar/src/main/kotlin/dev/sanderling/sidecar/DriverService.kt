@@ -190,6 +190,11 @@ class DriverService(
         try {
             observer.onNext(block())
             observer.onCompleted()
+        } catch (cause: io.grpc.StatusRuntimeException) {
+            // A backend that already chose a status code (e.g. UNAVAILABLE for
+            // a dropped-mid-action connection) keeps it, so the runner can
+            // tell transient failures from fatal ones.
+            observer.onError(cause)
         } catch (cause: Exception) {
             observer.onError(io.grpc.Status.INTERNAL.withDescription(cause.toString())
                 .withCause(cause).asRuntimeException())

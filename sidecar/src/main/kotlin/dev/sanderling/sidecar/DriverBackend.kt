@@ -714,7 +714,13 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
         warmupErr?.let { throw IllegalStateException("WDA warmup failed after 3 attempts: $it") }
     }
 
-    private fun <T> withReconnect(block: () -> T): T {
+    // withReconnect recovers from a dropped WDA connection. replay re-runs
+    // the block after reconnecting and is only safe for idempotent reads:
+    // an action call can fail client-side (e.g. a read timeout mid-typing)
+    // after the device already applied it, so replaying types text or taps
+    // twice. Non-idempotent actions reconnect for the next RPC's benefit but
+    // surface UNAVAILABLE, which the runner treats as transient.
+    private fun <T> withReconnect(replay: Boolean = true, block: () -> T): T {
         return try {
             block()
         } catch (e: Exception) {
@@ -730,6 +736,11 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
             } finally {
                 reconnectLock.unlock()
             }
+            if (!replay) {
+                throw io.grpc.Status.UNAVAILABLE
+                    .withDescription("WDA connection dropped mid-action; the action may have applied, reconnected: $e")
+                    .withCause(e).asRuntimeException()
+            }
             block()
         }
     }
@@ -742,13 +753,13 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
 
     override fun terminate(bundleId: String) = withReconnect { driver.stopApp(bundleId) }
 
-    override fun tap(x: Int, y: Int) = withReconnect { driver.tap(maestro.Point(x, y)) }
+    override fun tap(x: Int, y: Int) = withReconnect(replay = false) { driver.tap(maestro.Point(x, y)) }
 
     // The second tap request is already queued at the XCTest runner while the
     // first executes, so the on-device gap collapses to the runner's
     // turnaround instead of a full transport round trip. Sequential requests
     // leave a gap wide enough for the app to navigate between the taps.
-    override fun doubleTap(x: Int, y: Int): Unit = withReconnect {
+    override fun doubleTap(x: Int, y: Int): Unit = withReconnect(replay = false) {
         val point = maestro.Point(x, y)
         val firstTap = java.util.concurrent.CompletableFuture.runAsync { driver.tap(point) }
         Thread.sleep(40)
@@ -757,23 +768,23 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
         Unit
     }
 
-    override fun longPress(x: Int, y: Int) = withReconnect { driver.longPress(maestro.Point(x, y)) }
+    override fun longPress(x: Int, y: Int) = withReconnect(replay = false) { driver.longPress(maestro.Point(x, y)) }
 
-    override fun tapSelector(selector: String) = withReconnect {
+    override fun tapSelector(selector: String) = withReconnect(replay = false) {
         val root = driver.contentDescriptor(false)
         val bounds = findBoundsBySelector(root, selector) ?: return@withReconnect
         driver.tap(maestro.Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2))
     }
 
-    override fun inputText(text: String) = withReconnect { driver.inputText(text) }
+    override fun inputText(text: String) = withReconnect(replay = false) { driver.inputText(text) }
 
-    override fun eraseText(characterCount: Int) = withReconnect { driver.eraseText(characterCount) }
+    override fun eraseText(characterCount: Int) = withReconnect(replay = false) { driver.eraseText(characterCount) }
 
-    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) = withReconnect {
+    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) = withReconnect(replay = false) {
         driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))
     }
 
-    override fun pressKey(key: String) = withReconnect {
+    override fun pressKey(key: String) = withReconnect(replay = false) {
         StubDriverBackend.KEY_MAP[key]?.let { keyCode ->
             keyCodeToMaestro(keyCode)?.let { driver.pressKey(it) }
         }

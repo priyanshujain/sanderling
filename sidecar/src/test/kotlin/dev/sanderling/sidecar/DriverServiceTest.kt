@@ -83,6 +83,25 @@ class DriverServiceTest {
         assertEquals("hello world", backend.lastInputText)
     }
 
+    // A backend that already chose a status code (the iOS backend surfaces
+    // UNAVAILABLE when the connection dropped mid-action) must keep it, so
+    // the runner can tell transient failures from fatal ones.
+    @Test fun backendStatusCodePassesThrough() {
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun inputText(text: String) {
+                throw io.grpc.Status.UNAVAILABLE
+                    .withDescription("connection dropped mid-action")
+                    .asRuntimeException()
+            }
+        }
+        val client = newClient(backend)
+
+        val thrown = kotlin.test.assertFailsWith<io.grpc.StatusRuntimeException> {
+            client.inputText(Text.newBuilder().setValue("hello").build())
+        }
+        assertEquals(io.grpc.Status.Code.UNAVAILABLE, thrown.status.code)
+    }
+
     @Test fun doubleTapDefaultComposesTwoTaps() {
         // Interface delegation would bind the default doubleTap to the
         // delegate, bypassing the tap override, so implement the interface
