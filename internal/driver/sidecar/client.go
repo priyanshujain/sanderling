@@ -137,6 +137,11 @@ func (c *Client) InputText(ctx context.Context, text string) error {
 	return err
 }
 
+func (c *Client) EraseText(ctx context.Context, characterCount int) error {
+	_, err := c.stub.EraseText(ctx, &driverpb.EraseTextRequest{CharacterCount: int32(characterCount)})
+	return err
+}
+
 func (c *Client) Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error {
 	_, err := c.stub.Swipe(ctx, &driverpb.SwipeRequest{
 		From:           &driverpb.Point{X: int32(fromX), Y: int32(fromY)},

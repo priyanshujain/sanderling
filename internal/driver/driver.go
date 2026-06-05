@@ -20,6 +20,10 @@ type DeviceDriver interface {
 	DoubleTap(ctx context.Context, x, y int) error
 	DoubleTapSelector(ctx context.Context, selector string) error
 	InputText(ctx context.Context, text string) error
+	// EraseText deletes characterCount characters from the focused field.
+	// The runner calls it before InputText so the verb replaces existing
+	// content instead of appending to it.
+	EraseText(ctx context.Context, characterCount int) error
 	Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error
 	PressKey(ctx context.Context, key string) error
 	LongPress(ctx context.Context, x, y int) error
