@@ -128,20 +128,23 @@ func TestViolationLatchIsMonotonic(t *testing.T) {
 }
 
 func TestCollapse_IdenticalObligationsMerge(t *testing.T) {
-	merged := collapse([]Formula{
-		Next(Pure(true)),
-		Next(Pure(true)),
-		Next(Pure(true)),
+	merged := collapse([]obligation{
+		{formula: Next(Pure(true)), origin: 1},
+		{formula: Next(Pure(true)), origin: 2},
+		{formula: Next(Pure(true)), origin: 3},
 	})
 	if len(merged) != 1 {
 		t.Errorf("expected 1 obligation after collapse, got %d", len(merged))
 	}
+	if merged[0].origin != 1 {
+		t.Errorf("collapse must keep the earliest origin, got %d", merged[0].origin)
+	}
 }
 
 func TestCollapse_DistinctPredicatesDoNotMerge(t *testing.T) {
-	merged := collapse([]Formula{
-		Eventually(ThunkNamed("p3", func() (bool, error) { return false, nil })),
-		Eventually(ThunkNamed("p4", func() (bool, error) { return false, nil })),
+	merged := collapse([]obligation{
+		{formula: Eventually(ThunkNamed("p3", func() (bool, error) { return false, nil }))},
+		{formula: Eventually(ThunkNamed("p4", func() (bool, error) { return false, nil }))},
 	})
 	if len(merged) != 2 {
 		t.Errorf("distinct predicates must not merge, got %d", len(merged))
