@@ -730,3 +730,145 @@ func TestExplicitPackageAttributeWins(t *testing.T) {
 		t.Errorf("package = %q, want app.folio (explicit attr should win)", got)
 	}
 }
+
+// iosFlatDump mirrors the Compose-on-iOS accessibility shape: the testTag node
+// surfaces as an empty leaf SIBLING of the container holding the content it
+// labels, with equal bounds, instead of as an ancestor.
+const iosFlatDump = `{
+  "attributes": {"bounds": "[0,0][402,874]"},
+  "children": [
+    {
+      "attributes": {"accessibilityText": "Folio", "bounds": "[0,0][402,874]"},
+      "children": [
+        {
+          "attributes": {"resource-id": "LoginScreen", "bounds": "[0,62][402,840]"},
+          "children": []
+        },
+        {
+          "attributes": {"bounds": "[0,62][402,840]"},
+          "children": [
+            {
+              "attributes": {"accessibilityText": "EMAIL", "bounds": "[20,106][60,120]"},
+              "children": []
+            },
+            {
+              "attributes": {"resource-id": "LoginEmail", "accessibilityText": "Email", "bounds": "[34,125][368,173]"},
+              "children": [
+                {"attributes": {"bounds": "[34,125][368,173]"}, "children": []}
+              ]
+            },
+            {
+              "attributes": {"resource-id": "LoginPassword", "accessibilityText": "Password", "bounds": "[34,205][368,253]"},
+              "children": []
+            },
+            {
+              "attributes": {"text": "Sign in", "bounds": "[20,297][382,345]"},
+              "children": []
+            },
+            {
+              "attributes": {"resource-id": "LoginSubmit", "accessibilityText": "Sign in", "bounds": "[20,297][382,345]"},
+              "children": [
+                {"attributes": {"text": "Sign in", "resource-id": "SubmitLabel", "bounds": "[168,312][233,330]"}, "children": []}
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "attributes": {"bounds": "[0,0][402,54]"},
+      "children": [
+        {
+          "attributes": {"resource-id": "StatusClock", "accessibilityText": "3:24 PM", "bounds": "[55,22][92,42]"},
+          "children": []
+        }
+      ]
+    }
+  ]
+}`
+
+func TestIOSFlatSelectorPathFallsBackToBounds(t *testing.T) {
+	tree, err := Parse(iosFlatDump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	path := []Selector{
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "LoginScreen"}}},
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "LoginEmail"}}},
+	}
+	node := tree.FindBySelectorPath(path)
+	if node == nil {
+		t.Fatal("expected LoginEmail via bounds containment under leaf LoginScreen")
+	}
+	if node.ResourceID != "LoginEmail" {
+		t.Fatalf("got %q, want LoginEmail", node.ResourceID)
+	}
+}
+
+func TestIOSFlatStringPathFallsBackToBounds(t *testing.T) {
+	tree, _ := Parse(iosFlatDump)
+	element := tree.Find("id:LoginScreen > id:LoginSubmit")
+	if element == nil {
+		t.Fatal("expected LoginSubmit via bounds containment under leaf LoginScreen")
+	}
+	if element.ResourceID != "LoginSubmit" {
+		t.Fatalf("got %q, want LoginSubmit", element.ResourceID)
+	}
+}
+
+func TestIOSFlatScopedNodeFindFallsBackToBounds(t *testing.T) {
+	tree, _ := Parse(iosFlatDump)
+	screen := tree.FindNode("id:LoginScreen")
+	if screen == nil {
+		t.Fatal("expected LoginScreen node")
+	}
+	node := screen.Find("id:LoginPassword")
+	if node == nil {
+		t.Fatal("expected LoginPassword via bounds containment")
+	}
+	if node.ResourceID != "LoginPassword" {
+		t.Fatalf("got %q, want LoginPassword", node.ResourceID)
+	}
+}
+
+func TestIOSFlatFindAllBySelectorPathReturnsEachField(t *testing.T) {
+	tree, _ := Parse(iosFlatDump)
+	path := []Selector{
+		{Filters: []AttrFilter{{Attr: "testTag", Value: "LoginScreen"}}},
+		{Filters: []AttrFilter{{Attr: "label", Value: "word"}}},
+	}
+	// label "word" substring-matches "Password" only.
+	nodes := tree.FindAllBySelectorPath(path)
+	if len(nodes) != 1 {
+		t.Fatalf("got %d nodes, want 1", len(nodes))
+	}
+	if nodes[0].ResourceID != "LoginPassword" {
+		t.Fatalf("got %q, want LoginPassword", nodes[0].ResourceID)
+	}
+}
+
+func TestIOSFlatSpatialScopeExcludesOutsideBounds(t *testing.T) {
+	tree, _ := Parse(iosFlatDump)
+	// StatusClock sits in the status bar above LoginScreen's bounds; the
+	// spatial fallback must not leak it into the screen's scope.
+	if tree.Find("id:LoginScreen > id:StatusClock") != nil {
+		t.Fatal("StatusClock is outside LoginScreen bounds, expected nil")
+	}
+}
+
+func TestIOSFlatStructuralChildStillPreferred(t *testing.T) {
+	tree, _ := Parse(iosFlatDump)
+	submit := tree.FindNode("id:LoginSubmit")
+	if submit == nil {
+		t.Fatal("expected LoginSubmit node")
+	}
+	// "Sign in" exists as the structural child of LoginSubmit and as an
+	// equal-bounds sibling decoration; the structural child must win.
+	node := submit.Find("text:Sign in")
+	if node == nil {
+		t.Fatal("expected structural child match")
+	}
+	if node.ResourceID != "SubmitLabel" {
+		t.Fatalf("expected the structural child SubmitLabel, got id=%q", node.ResourceID)
+	}
+}
