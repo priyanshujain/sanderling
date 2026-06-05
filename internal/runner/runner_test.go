@@ -628,6 +628,31 @@ func TestApplyAction_InputTextWithoutTargetSkipsSettle(t *testing.T) {
 	}
 }
 
+// TestApplyAction_InputTextSkipsEraseForReplacingDriver pins that a driver
+// asserting the TextReplacer capability never pays the pre-erase round-trip:
+// its InputText already replaces the field's content.
+func TestApplyAction_InputTextSkipsEraseForReplacingDriver(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"resource-id":"username","text":"stale-value","bounds":"[10,10,500,100]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.ReplacesText = true
+	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
+
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
+		t.Fatalf("applyAction: %v", err)
+	}
+	if containsAction(driverMock.Actions(), mockdriver.ActionEraseText, "") {
+		t.Errorf("replacing driver must not be asked to erase: %v", driverMock.Actions())
+	}
+	if !containsAction(driverMock.Actions(), mockdriver.ActionInputText, "") {
+		t.Errorf("expected InputText, got %v", driverMock.Actions())
+	}
+}
+
 func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
 	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
 		{"attributes":{"resource-id":"username","bounds":"[10,10,500,100]"},"children":[]}

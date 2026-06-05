@@ -512,9 +512,12 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		// holds before typing. Appending instead lets repeated draws grow
 		// the field without bound (e.g. into a max-length validation error
 		// the fuzzer can never escape) and makes retried typing land twice.
-		if count := existingTextLength(action, tree); count > 0 {
-			if err := drv.EraseText(ctx, count); err != nil {
-				return err
+		// Drivers whose InputText already replaces skip the erase entirely.
+		if !inputReplacesText(drv) {
+			if count := existingTextLength(action, tree); count > 0 {
+				if err := drv.EraseText(ctx, count); err != nil {
+					return err
+				}
 			}
 		}
 		return drv.InputText(ctx, action.Text)
@@ -565,6 +568,13 @@ func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) 
 		})
 	}
 	return result
+}
+
+// inputReplacesText reports whether the driver's InputText replaces existing
+// content, making the runner's pre-erase redundant.
+func inputReplacesText(drv driver.DeviceDriver) bool {
+	replacer, ok := drv.(driver.TextReplacer)
+	return ok && replacer.ReplacesTextOnInput()
 }
 
 // existingTextLength returns the character count of the InputText target's

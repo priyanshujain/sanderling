@@ -193,6 +193,12 @@ func (d *Driver) InputText(_ context.Context, text string) error {
 	)
 }
 
+// ReplacesTextOnInput reports that InputText replaces existing content via
+// select-all, so the runner skips its pre-erase.
+func (d *Driver) ReplacesTextOnInput() bool {
+	return true
+}
+
 // EraseText clears the focused field. InputText above already replaces via
 // select-all, so the character count is not needed to bound the deletion.
 func (d *Driver) EraseText(_ context.Context, _ int) error {

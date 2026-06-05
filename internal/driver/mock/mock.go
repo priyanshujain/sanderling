@@ -63,6 +63,10 @@ type Driver struct {
 	MetricsData   driver.Metrics
 	Failures      map[ActionKind]error
 
+	// ReplacesText makes the mock assert the TextReplacer capability, so
+	// tests cover both the erase-before-type and replace-on-input paths.
+	ReplacesText bool
+
 	// ForegroundResults is consumed one entry per ForegroundApp call (the
 	// last entry repeats). Empty yields "", which disables the runner's
 	// app-scope guard so tests that don't care are unaffected.
@@ -210,6 +214,12 @@ func (d *Driver) InputText(ctx context.Context, text string) error {
 	}
 	d.record(Action{Kind: ActionInputText, Text: text})
 	return nil
+}
+
+func (d *Driver) ReplacesTextOnInput() bool {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	return d.ReplacesText
 }
 
 func (d *Driver) EraseText(ctx context.Context, characterCount int) error {
