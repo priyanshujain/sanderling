@@ -629,6 +629,7 @@ private fun pngHeight(bytes: ByteArray): Int {
 
 class IosDriverBackend(private val udid: String) : DriverBackend {
     private lateinit var driver: maestro.drivers.IOSDriver
+    private lateinit var localDevice: ios.LocalIOSDevice
     private val reconnectLock = java.util.concurrent.locks.ReentrantLock()
 
     init {
@@ -670,6 +671,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
             deviceController = simctlDevice,
             insights = maestro.utils.NoopInsights,
         )
+        localDevice = device
         driver = maestro.drivers.IOSDriver(device, maestro.utils.NoopInsights)
         driver.open()
         warmup()
@@ -750,7 +752,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
 
     override fun hierarchy(): String = withReconnect {
         com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
-            .writeValueAsString(driver.contentDescriptor(false))
+            .writeValueAsString(iosAxElementToTreeNode(localDevice.viewHierarchy(false).axElement))
     }
 
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> = emptyList()
@@ -783,4 +785,108 @@ private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? {
         "KEYCODE_DPAD_RIGHT" -> maestro.KeyCode.REMOTE_RIGHT
         else -> null
     }
+}
+
+// XCUIElementType raw values that accept a tap. The XCTest hierarchy carries
+// no clickable flag, so tappability is derived from the element type that
+// XCUITest itself derives from the accessibility traits.
+internal val IOS_CLICKABLE_ELEMENT_TYPES = setOf(
+    9,  // button
+    10, // radioButton
+    12, // checkBox
+    14, // popUpButton
+    15, // comboBox
+    16, // menuButton
+    17, // toolbarButton
+    20, // key
+    37, // segmentedControl
+    40, // switch
+    41, // toggle
+    42, // link
+    54, // menuItem
+    75, // cell
+    79, // stepper
+    80, // tab
+)
+
+// XCUIElementType raw values that accept text input.
+internal val IOS_EDITABLE_ELEMENT_TYPES = setOf(
+    45, // searchField
+    49, // textField
+    50, // secureTextField
+    52, // textView
+)
+
+// XCUIElementType raw values that scroll.
+internal val IOS_SCROLLABLE_ELEMENT_TYPES = setOf(
+    26, // table
+    32, // collectionView
+    46, // scrollView
+    58, // webView
+)
+
+// Checkable element types and the value convention ("1" when on) mirror the
+// upstream content-descriptor mapping.
+internal val IOS_CHECKABLE_ELEMENT_TYPES = setOf(
+    12, // checkBox
+    40, // switch
+    41, // toggle
+)
+
+private val IOS_ELEMENT_TYPE_NAMES = arrayOf(
+    "Any", "Other", "Application", "Group", "Window", "Sheet", "Drawer",
+    "Alert", "Dialog", "Button", "RadioButton", "RadioGroup", "CheckBox",
+    "DisclosureTriangle", "PopUpButton", "ComboBox", "MenuButton",
+    "ToolbarButton", "Popover", "Keyboard", "Key", "NavigationBar", "TabBar",
+    "TabGroup", "Toolbar", "StatusBar", "Table", "TableRow", "TableColumn",
+    "Outline", "OutlineRow", "Browser", "CollectionView", "Slider",
+    "PageIndicator", "ProgressIndicator", "ActivityIndicator",
+    "SegmentedControl", "Picker", "PickerWheel", "Switch", "Toggle", "Link",
+    "Image", "Icon", "SearchField", "ScrollView", "ScrollBar", "StaticText",
+    "TextField", "SecureTextField", "DatePicker", "TextView", "Menu",
+    "MenuItem", "MenuBar", "MenuBarItem", "Map", "WebView", "IncrementArrow",
+    "DecrementArrow", "Timeline", "RatingIndicator", "ValueIndicator",
+    "SplitGroup", "Splitter", "RelevanceIndicator", "ColorWell", "HelpTag",
+    "Matte", "DockItem", "Ruler", "RulerMarker", "Grid", "LevelIndicator",
+    "Cell", "LayoutArea", "LayoutItem", "Handle", "Stepper", "Tab",
+    "TouchBar", "StatusItem",
+)
+
+internal fun iosElementTypeName(elementType: Int): String =
+    IOS_ELEMENT_TYPE_NAMES.getOrElse(elementType) { "Other" }
+
+// iosAxElementToTreeNode maps the raw XCTest accessibility tree to the
+// TreeNode JSON shape the runner parses. The upstream content-descriptor
+// mapping drops the element type, leaving no way to tell buttons and text
+// fields apart, so fuzz verbs found no tap or typing candidates on iOS.
+internal fun iosAxElementToTreeNode(element: hierarchy.AXElement): Map<String, Any?> {
+    val elementType = element.elementType
+    val title = element.title.orEmpty()
+    val value = element.value.orEmpty()
+    val checked = elementType in IOS_CHECKABLE_ELEMENT_TYPES && value == "1"
+    val attributes = linkedMapOf(
+        "accessibilityText" to element.label.orEmpty(),
+        "title" to title,
+        "value" to value,
+        "text" to title.ifEmpty { value },
+        "hintText" to element.placeholderValue.orEmpty(),
+        "resource-id" to element.identifier.orEmpty(),
+        "bounds" to element.frame.boundsString,
+        "class" to iosElementTypeName(elementType),
+        "enabled" to element.enabled.toString(),
+        "focused" to element.hasFocus.toString(),
+        "selected" to element.selected.toString(),
+        "checked" to checked.toString(),
+        "scrollable" to (elementType in IOS_SCROLLABLE_ELEMENT_TYPES).toString(),
+    )
+    return linkedMapOf(
+        "attributes" to attributes,
+        "children" to element.children.map { iosAxElementToTreeNode(it) },
+        "clickable" to (elementType in IOS_CLICKABLE_ELEMENT_TYPES),
+        "enabled" to element.enabled,
+        "focused" to element.hasFocus,
+        "checked" to checked,
+        "selected" to element.selected,
+        "editable" to (elementType in IOS_EDITABLE_ELEMENT_TYPES),
+    )
 }
