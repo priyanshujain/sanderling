@@ -100,11 +100,14 @@ func TestViolation_NextAttributesOriginStep(t *testing.T) {
 }
 
 func TestViolation_FinalizeAttributesOriginStep(t *testing.T) {
-	evaluator := NewEvaluator(Always(Next(ThunkNamed("p", func() (bool, error) {
-		return true, nil
-	}))))
+	// An eventually that never fires is reported by Finalize at the step the
+	// obligation was first spawned (collapse keeps the earliest origin).
+	evaluator := NewEvaluator(Eventually(ThunkNamed("p", func() (bool, error) {
+		return false, nil
+	})))
 	evaluator.ObserveAt(time.Unix(0, 0))
 	evaluator.ObserveAt(time.Unix(1, 0))
+	evaluator.ObserveAt(time.Unix(2, 0))
 	if got := evaluator.Finalize(); got != VerdictViolated {
 		t.Fatalf("Finalize = %v, want violated", got)
 	}
@@ -112,8 +115,8 @@ func TestViolation_FinalizeAttributesOriginStep(t *testing.T) {
 	if witness == nil {
 		t.Fatal("Violation = nil after Finalize, want non-nil")
 	}
-	if witness.Step != 2 {
-		t.Errorf("Step = %d, want 2 (the step whose next obligation has no successor)", witness.Step)
+	if witness.Step != 1 {
+		t.Errorf("Step = %d, want 1 (the step the eventually obligation was spawned)", witness.Step)
 	}
 }
 

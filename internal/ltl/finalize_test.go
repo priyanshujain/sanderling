@@ -18,13 +18,32 @@ func TestFinalize_UnboundedEventuallyUnmetIsViolated(t *testing.T) {
 	}
 }
 
-func TestFinalize_FinalStepNextIsViolated(t *testing.T) {
+func TestFinalize_FinalStepNextIsVacuouslyHolds(t *testing.T) {
+	// A next obligation pending at run end has no successor state to check;
+	// the run ending before the check is not a failure (weak next at the
+	// trace boundary).
 	evaluator := NewEvaluator(Next(ThunkNamed("p", func() (bool, error) { return true, nil })))
 	if got := evaluator.Observe(); got != VerdictPending {
 		t.Fatalf("step 1: got %v, want pending", got)
 	}
-	if got := evaluator.Finalize(); got != VerdictViolated {
-		t.Errorf("Finalize = %v, want violated", got)
+	if got := evaluator.Finalize(); got != VerdictHolds {
+		t.Errorf("Finalize = %v, want holds", got)
+	}
+	if witness := evaluator.Violation(); witness != nil {
+		t.Errorf("Violation = %+v, want nil for a vacuous next", witness)
+	}
+}
+
+func TestFinalize_AlwaysNextNeverReportsAtRunEnd(t *testing.T) {
+	// always(next(p)): every step spawns a deferred check and the last one is
+	// always pending when the run ends. That residue must not surface as an
+	// end-of-run violation.
+	evaluator := NewEvaluator(Always(Next(ThunkNamed("p", func() (bool, error) { return true, nil }))))
+	for index := range 3 {
+		evaluator.ObserveAt(time.Unix(int64(index), 0))
+	}
+	if got := evaluator.Finalize(); got != VerdictHolds {
+		t.Errorf("Finalize = %v, want holds", got)
 	}
 }
 

@@ -140,10 +140,11 @@ func collapse(obligations []obligation) []obligation {
 	return result
 }
 
-// Finalize reports the terminal verdict for the run. Pending obligations that
-// can never be discharged by a future step (an unbounded eventually that never
-// fired, a strong next with no successor) resolve to Violated; safety
-// obligations that were never breached resolve to Holds.
+// Finalize reports the terminal verdict for the run. A liveness promise that
+// never discharged (an eventually that never fired) resolves to Violated. A
+// deferred state check (the residue of a next) has no successor state to
+// evaluate against, so it is indefinite and resolves vacuously to Holds: the
+// run ended before the obligation could be checked, which is not a failure.
 func (e *Evaluator) Finalize() Verdict {
 	if e.violated {
 		return VerdictViolated
@@ -177,17 +178,18 @@ func finalizeReason(formula Formula) string {
 	switch formula.(type) {
 	case EventuallyFormula:
 		return "eventually never satisfied"
-	case NextFormula:
-		return "next obligation unmet at run end"
-	case ThunkFormula:
-		return "obligation unmet at run end"
 	default:
 		return "liveness obligation unmet at run end"
 	}
 }
 
 // finalize collapses a pending obligation to its terminal status assuming no
-// further steps will occur.
+// further steps will occur. Three-valued: a pending thunk or next is the
+// residue of a deferred state check with no state left to check, so it is
+// indefinite (statusPending) rather than violated; only a liveness promise
+// (an eventually that never fired) is a definite end-of-run violation.
+// Connectives combine with Kleene semantics so an indefinite sub-formula
+// never manufactures a definite verdict.
 func finalize(formula Formula) residualStatus {
 	switch concrete := formula.(type) {
 	case PureFormula:
@@ -196,11 +198,11 @@ func finalize(formula Formula) residualStatus {
 		}
 		return statusViolated
 	case ThunkFormula:
-		return statusViolated
+		return statusPending
 	case EventuallyFormula:
 		return statusViolated
 	case NextFormula:
-		return statusViolated
+		return statusPending
 	case AlwaysFormula:
 		return statusHolds
 	case NowFormula:
@@ -209,24 +211,34 @@ func finalize(formula Formula) residualStatus {
 		switch finalize(concrete.Inner) {
 		case statusViolated:
 			return statusHolds
-		default:
+		case statusHolds:
 			return statusViolated
+		default:
+			return statusPending
 		}
 	case AndFormula:
-		if finalize(concrete.Left) == statusViolated || finalize(concrete.Right) == statusViolated {
+		left, right := finalize(concrete.Left), finalize(concrete.Right)
+		if left == statusViolated || right == statusViolated {
 			return statusViolated
+		}
+		if left == statusPending || right == statusPending {
+			return statusPending
 		}
 		return statusHolds
 	case OrFormula:
-		if finalize(concrete.Left) == statusHolds || finalize(concrete.Right) == statusHolds {
+		left, right := finalize(concrete.Left), finalize(concrete.Right)
+		if left == statusHolds || right == statusHolds {
 			return statusHolds
+		}
+		if left == statusPending || right == statusPending {
+			return statusPending
 		}
 		return statusViolated
 	case ImpliesFormula:
-		if finalize(concrete.Antecedent) == statusViolated {
-			return statusHolds
-		}
-		return finalize(concrete.Consequent)
+		return finalize(OrFormula{
+			Left:  NotFormula{Inner: concrete.Antecedent},
+			Right: concrete.Consequent,
+		})
 	default:
 		return statusHolds
 	}
