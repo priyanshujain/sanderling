@@ -782,6 +782,46 @@ globalThis.properties = {
 	}
 }
 
+// A next obligation spawned at step k and checked against step k+1's state is
+// attributed to step k, the step that caused it. StepIndex from SnapshotInput
+// labels the evaluator observations so the witness carries runner step numbers.
+func TestEvaluateProperties_NextViolationCarriesOriginStepIndex(t *testing.T) {
+	const spec = `
+globalThis.flag = __sanderling__.extract(state => state.snapshots["flag"] ?? false, "flag");
+globalThis.properties = {
+  flagStaysTrue: __sanderling__.always(__sanderling__.next(() => flag.current === true)),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, spec)
+
+	push := func(stepIndex int, flag string) map[string]ltl.Verdict {
+		t.Helper()
+		if err := verifier.PushSnapshot(SnapshotInput{
+			Snapshots: Snapshots{"flag": json.RawMessage(flag)},
+			StepIndex: stepIndex,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return verifier.EvaluateProperties()
+	}
+
+	push(7, `true`)
+	push(8, `true`)
+	verdicts := push(9, `false`)
+	if got := verdicts["flagStaysTrue"]; got != ltl.VerdictViolated {
+		t.Fatalf("step 9: verdict = %v, want violated", got)
+	}
+
+	witness := verifier.Witness("flagStaysTrue")
+	if witness == nil {
+		t.Fatal("Witness = nil, want non-nil")
+	}
+	if witness.Step != 8 {
+		t.Errorf("Witness.Step = %d, want 8 (the step that spawned the next obligation)", witness.Step)
+	}
+}
+
 func TestLoad_AcceptsSpecWithoutPropertiesOrActions(t *testing.T) {
 	verifier := newVerifier(t)
 	if err := verifier.Load(`const noop = 1;`); err != nil {

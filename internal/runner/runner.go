@@ -185,6 +185,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				Tree:       tree,
 				LastAction: lastAction,
 				StepTime:   stepStart,
+				StepIndex:  stepIndex,
 				RunStart:   summary.StartTime,
 				Logs:       logs,
 			}); err != nil {
