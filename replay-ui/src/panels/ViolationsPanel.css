@@ -97,6 +97,57 @@
   font-size: 13px;
 }
 
+.violations-panel-witness {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.violations-panel-witness-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+}
+
+.violations-panel-witness-key {
+  flex-shrink: 0;
+  min-width: 96px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
+.violations-panel-witness-value {
+  word-break: break-all;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.violations-panel-witness-step {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.violations-panel-witness-step:hover {
+  border-color: var(--border-strong);
+}
+
+.violations-panel-witness-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+}
+
 .violations-panel-residual {
   margin-top: 6px;
   font-size: 12px;
