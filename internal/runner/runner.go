@@ -284,14 +284,17 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	}
 
 	// Finalize each evaluator once the loop ends so liveness obligations that
-	// never discharged (an unbounded eventually that never fired, a strong
-	// next with no successor) are reported as violations rather than silently
-	// left pending. Properties already violated mid-run are not re-reported.
+	// never discharged (an eventually that never fired) are reported as
+	// violations rather than silently left pending. Properties already
+	// violated mid-run are not re-reported. The synthetic record gets its own
+	// step index so no two trace lines share one; witnesses still attribute
+	// the violation to the step that spawned the obligation.
 	if ended := options.Verifier.Finalize(); len(ended) > 0 {
-		witnesses := collectWitnesses(options.Verifier, ended, logger, stepIndex)
-		summary.Violations = append(summary.Violations, violationRecords(ended, witnesses, stepIndex)...)
+		finalIndex := stepIndex + 1
+		witnesses := collectWitnesses(options.Verifier, ended, logger, finalIndex)
+		summary.Violations = append(summary.Violations, violationRecords(ended, witnesses, finalIndex)...)
 		finalStep := trace.Step{
-			Index:      stepIndex,
+			Index:      finalIndex,
 			Timestamp:  time.Now(),
 			Violations: ended,
 			Witnesses:  witnesses,
