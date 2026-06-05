@@ -39,6 +39,7 @@ type Verifier struct {
 	lastLogs       []LogEntry
 	lastExceptions []Exception
 	stepTime       time.Time
+	stepIndex      int
 	runStart       time.Time
 
 	appPackage string
@@ -259,6 +260,7 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 	v.lastLogs = input.Logs
 	v.lastExceptions = input.Exceptions
 	v.stepTime = input.StepTime
+	v.stepIndex = input.StepIndex
 	if v.runStart.IsZero() {
 		v.runStart = input.RunStart
 	}
@@ -385,6 +387,11 @@ type SnapshotInput struct {
 	Tree       *hierarchy.Tree
 	LastAction *Action
 	StepTime   time.Time
+	// StepIndex is the runner's step number for this snapshot. Evaluators label
+	// observations with it so violation witnesses carry runner step numbers even
+	// when transitional steps were skipped. Zero means unlabeled; evaluators
+	// then fall back to their internal counter.
+	StepIndex  int
 	RunStart   time.Time
 	Logs       []LogEntry
 	Exceptions []Exception
@@ -404,7 +411,11 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 		stepTime = time.Now()
 	}
 	for name, evaluator := range v.evaluators {
-		verdicts[name] = evaluator.ObserveAt(stepTime)
+		if v.stepIndex > 0 {
+			verdicts[name] = evaluator.ObserveAtStep(stepTime, v.stepIndex)
+		} else {
+			verdicts[name] = evaluator.ObserveAt(stepTime)
+		}
 	}
 
 	var onset []string

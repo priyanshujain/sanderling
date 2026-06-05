@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -185,6 +187,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				Tree:       tree,
 				LastAction: lastAction,
 				StepTime:   stepStart,
+				StepIndex:  stepIndex,
 				RunStart:   summary.StartTime,
 				Logs:       logs,
 			}); err != nil {
@@ -263,10 +266,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 		summary.Steps = stepIndex
 		if len(violations) > 0 {
-			summary.Violations = append(summary.Violations, ViolationRecord{
-				StepIndex:  stepIndex,
-				Properties: violations,
-			})
+			summary.Violations = append(summary.Violations, violationRecords(violations, witnesses, stepIndex)...)
 		}
 		// Wait actions are themselves a settling: skip the idle poll. Actions
 		// that mutate the UI fall through to WaitForIdle so the next step's
@@ -284,17 +284,17 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	}
 
 	// Finalize each evaluator once the loop ends so liveness obligations that
-	// never discharged (an unbounded eventually that never fired, a strong
-	// next with no successor) are reported as violations rather than silently
-	// left pending. Properties already violated mid-run are not re-reported.
+	// never discharged (an eventually that never fired) are reported as
+	// violations rather than silently left pending. Properties already
+	// violated mid-run are not re-reported. The synthetic record gets its own
+	// step index so no two trace lines share one; witnesses still attribute
+	// the violation to the step that spawned the obligation.
 	if ended := options.Verifier.Finalize(); len(ended) > 0 {
-		witnesses := collectWitnesses(options.Verifier, ended, logger, stepIndex)
-		summary.Violations = append(summary.Violations, ViolationRecord{
-			StepIndex:  stepIndex,
-			Properties: ended,
-		})
+		finalIndex := stepIndex + 1
+		witnesses := collectWitnesses(options.Verifier, ended, logger, finalIndex)
+		summary.Violations = append(summary.Violations, violationRecords(ended, witnesses, finalIndex)...)
 		finalStep := trace.Step{
-			Index:      stepIndex,
+			Index:      finalIndex,
 			Timestamp:  time.Now(),
 			Violations: ended,
 			Witnesses:  witnesses,
@@ -806,6 +806,26 @@ func captureMetrics(ctx context.Context, options Options, logger *slog.Logger, s
 	}
 }
 
+// violationRecords groups newly-violated properties by the step their witness
+// attributes the violation to (the causing step), falling back to the
+// detection step for properties without a witness. Records are ordered by
+// step; properties keep the sorted order NewlyViolatedProperties produced.
+func violationRecords(properties []string, witnesses map[string]trace.Witness, detectionStep int) []ViolationRecord {
+	byStep := map[int][]string{}
+	for _, name := range properties {
+		step := detectionStep
+		if witness, ok := witnesses[name]; ok && witness.Step > 0 {
+			step = witness.Step
+		}
+		byStep[step] = append(byStep[step], name)
+	}
+	records := make([]ViolationRecord, 0, len(byStep))
+	for _, step := range slices.Sorted(maps.Keys(byStep)) {
+		records = append(records, ViolationRecord{StepIndex: step, Properties: byStep[step]})
+	}
+	return records
+}
+
 // collectWitnesses gathers the violation witness for each newly-violated
 // property, logs its cause, and returns them keyed by property name for the
 // trace. Properties without a captured witness are skipped.
@@ -820,10 +840,12 @@ func collectWitnesses(verifierInstance *verifier.Verifier, properties []string, 
 			continue
 		}
 		logger.Warn("property violated",
-			"step", stepIndex, "property", name, "reason", witness.Reason, "error", witness.IsError)
+			"step", witness.Step, "detected_step", stepIndex,
+			"property", name, "reason", witness.Reason, "error", witness.IsError)
 		witnesses[name] = trace.Witness{
 			Reason:     witness.Reason,
 			IsError:    witness.IsError,
+			Step:       witness.Step,
 			Extractors: witness.Extractors,
 		}
 	}

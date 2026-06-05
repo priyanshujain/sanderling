@@ -91,7 +91,7 @@ func scanSteps(tracePath string) ([]StepSummary, []int64, int, time.Time, error)
 	reader := bufio.NewReaderSize(file, 64*1024)
 	steps := []StepSummary{}
 	offsets := []int64{}
-	violationCount := 0
+	attributions := []violationAttribution{}
 	var offset int64
 	for {
 		lineStart := offset
@@ -102,19 +102,20 @@ func scanSteps(tracePath string) ([]StepSummary, []int64, int, time.Time, error)
 			trimmed = trimmed[:len(trimmed)-1]
 		}
 		if len(trimmed) > 0 {
-			summary, partial, decodeErr := decodeStepSummary(trimmed)
+			summary, lineAttributions, decodeErr := decodeStepSummary(trimmed)
 			if decodeErr != nil {
 				return nil, nil, 0, time.Time{}, decodeErr
 			}
 			steps = append(steps, summary)
 			offsets = append(offsets, lineStart)
-			violationCount += partial
+			attributions = append(attributions, lineAttributions...)
 		}
 		if err != nil {
 			break
 		}
 	}
-	return steps, offsets, violationCount, info.ModTime(), nil
+	markViolations(steps, attributions)
+	return steps, offsets, len(attributions), info.ModTime(), nil
 }
 
 // Step decodes the full Step record at index n (1-based, matching trace.Step.Index).

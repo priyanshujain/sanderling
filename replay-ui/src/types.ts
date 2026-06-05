@@ -121,6 +121,16 @@ export interface ExtractorChange {
   curr: unknown;
 }
 
+export interface Witness {
+  reason?: string;
+  is_error?: boolean;
+  // step is the step the failed obligation originated at: the causing step,
+  // which for deferred obligations (next, eventually) is earlier than the
+  // step whose record carries the witness.
+  step?: number;
+  extractors?: Record<string, unknown>;
+}
+
 export interface Step {
   step: number;
   timestamp: string;
@@ -134,4 +144,5 @@ export interface Step {
   residuals?: Record<string, ResidualNode>;
   metrics?: Metrics;
   extractor_changes?: Record<string, ExtractorChange>;
+  witnesses?: Record<string, Witness>;
 }

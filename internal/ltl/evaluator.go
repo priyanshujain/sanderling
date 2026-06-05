@@ -33,17 +33,27 @@ func (v Verdict) String() string {
 // violates, the overall verdict latches to Violated.
 type Evaluator struct {
 	root      Formula
-	pending   []Formula
+	pending   []obligation
 	violated  bool
 	steps     int
 	violation *Violation
 }
 
+// obligation pairs a residual formula with the step that spawned it, so a
+// deferred check (a next, a pending eventually) that fails on a later step can
+// be attributed to the step that created the obligation.
+type obligation struct {
+	formula Formula
+	origin  int
+}
+
 // Violation is the witness for a latched verdict: the failing sub-formula, a
-// human-readable reason, and the observation step it fired at. A thrown
-// predicate carries the goja error text as its reason and sets IsError; a plain
-// false carries "predicate false"; Finalize fills it for liveness obligations
-// that never discharged.
+// human-readable reason, and the step the failed obligation originated at. For
+// an immediate predicate failure that is the observation step itself; for a
+// deferred obligation (next, eventually) it is the earlier step that spawned
+// it, the one that caused the violation. A thrown predicate carries the goja
+// error text as its reason and sets IsError; a plain false carries "predicate
+// false"; Finalize fills it for liveness obligations that never discharged.
 type Violation struct {
 	Formula Formula
 	Reason  string
@@ -62,19 +72,29 @@ func (e *Evaluator) Observe() Verdict {
 	return e.ObserveAt(time.Now())
 }
 
-// ObserveAt is like Observe but takes the current step time explicitly.
+// ObserveAt is like Observe but takes the current step time explicitly. Steps
+// are numbered by an internal counter starting at 1; callers whose step
+// numbering can skip observations should use ObserveAtStep instead.
 func (e *Evaluator) ObserveAt(now time.Time) Verdict {
+	return e.ObserveAtStep(now, e.steps+1)
+}
+
+// ObserveAtStep is like ObserveAt but labels the observation with the caller's
+// step index, so violation witnesses carry the caller's numbering even when
+// some steps were never observed (for example transitional steps the verifier
+// skips).
+func (e *Evaluator) ObserveAtStep(now time.Time, step int) Verdict {
 	if e.violated {
 		return VerdictViolated
 	}
-	e.steps++
+	e.steps = step
 
-	fresh := rootObligation(e.root)
+	fresh := obligation{formula: rootObligation(e.root), origin: step}
 	obligations := append(e.pending, fresh)
 	e.pending = e.pending[:0]
 
-	for _, obligation := range obligations {
-		result := reduce(obligation, now)
+	for _, entry := range obligations {
+		result := reduce(entry.formula, now)
 		switch result.status {
 		case statusHolds:
 			// drop
@@ -83,11 +103,11 @@ func (e *Evaluator) ObserveAt(now time.Time) Verdict {
 			e.pending = nil
 			e.violation = result.witness
 			if e.violation != nil {
-				e.violation.Step = e.steps
+				e.violation.Step = entry.origin
 			}
 			return VerdictViolated
 		case statusPending:
-			e.pending = append(e.pending, result.formula)
+			e.pending = append(e.pending, obligation{formula: result.formula, origin: entry.origin})
 		}
 	}
 
@@ -100,41 +120,43 @@ func (e *Evaluator) ObserveAt(now time.Time) Verdict {
 }
 
 // collapse removes structurally-identical obligations, keeping the first
-// occurrence in order. Distinct predicates never merge because ThunkFormula's
-// name participates in its describe() key, so deduping cannot hide a violation.
-func collapse(obligations []Formula) []Formula {
+// occurrence in order so the surviving entry carries the earliest origin step.
+// Distinct predicates never merge because ThunkFormula's name participates in
+// its describe() key, so deduping cannot hide a violation.
+func collapse(obligations []obligation) []obligation {
 	if len(obligations) < 2 {
 		return obligations
 	}
 	seen := make(map[string]struct{}, len(obligations))
 	result := obligations[:0]
-	for _, obligation := range obligations {
-		key := obligation.describe()
+	for _, entry := range obligations {
+		key := entry.formula.describe()
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		result = append(result, obligation)
+		result = append(result, entry)
 	}
 	return result
 }
 
-// Finalize reports the terminal verdict for the run. Pending obligations that
-// can never be discharged by a future step (an unbounded eventually that never
-// fired, a strong next with no successor) resolve to Violated; safety
-// obligations that were never breached resolve to Holds.
+// Finalize reports the terminal verdict for the run. A liveness promise that
+// never discharged (an eventually that never fired) resolves to Violated. A
+// deferred state check (the residue of a next) has no successor state to
+// evaluate against, so it is indefinite and resolves vacuously to Holds: the
+// run ended before the obligation could be checked, which is not a failure.
 func (e *Evaluator) Finalize() Verdict {
 	if e.violated {
 		return VerdictViolated
 	}
-	for _, obligation := range e.pending {
-		if finalize(obligation) == statusViolated {
+	for _, entry := range e.pending {
+		if finalize(entry.formula) == statusViolated {
 			e.violated = true
 			e.pending = nil
 			e.violation = &Violation{
-				Formula: obligation,
-				Reason:  finalizeReason(obligation),
-				Step:    e.steps,
+				Formula: entry.formula,
+				Reason:  finalizeReason(entry.formula),
+				Step:    entry.origin,
 			}
 			return VerdictViolated
 		}
@@ -156,17 +178,18 @@ func finalizeReason(formula Formula) string {
 	switch formula.(type) {
 	case EventuallyFormula:
 		return "eventually never satisfied"
-	case NextFormula:
-		return "next obligation unmet at run end"
-	case ThunkFormula:
-		return "obligation unmet at run end"
 	default:
 		return "liveness obligation unmet at run end"
 	}
 }
 
 // finalize collapses a pending obligation to its terminal status assuming no
-// further steps will occur.
+// further steps will occur. Three-valued: a pending thunk or next is the
+// residue of a deferred state check with no state left to check, so it is
+// indefinite (statusPending) rather than violated; only a liveness promise
+// (an eventually that never fired) is a definite end-of-run violation.
+// Connectives combine with Kleene semantics so an indefinite sub-formula
+// never manufactures a definite verdict.
 func finalize(formula Formula) residualStatus {
 	switch concrete := formula.(type) {
 	case PureFormula:
@@ -175,11 +198,11 @@ func finalize(formula Formula) residualStatus {
 		}
 		return statusViolated
 	case ThunkFormula:
-		return statusViolated
+		return statusPending
 	case EventuallyFormula:
 		return statusViolated
 	case NextFormula:
-		return statusViolated
+		return statusPending
 	case AlwaysFormula:
 		return statusHolds
 	case NowFormula:
@@ -188,24 +211,34 @@ func finalize(formula Formula) residualStatus {
 		switch finalize(concrete.Inner) {
 		case statusViolated:
 			return statusHolds
-		default:
+		case statusHolds:
 			return statusViolated
+		default:
+			return statusPending
 		}
 	case AndFormula:
-		if finalize(concrete.Left) == statusViolated || finalize(concrete.Right) == statusViolated {
+		left, right := finalize(concrete.Left), finalize(concrete.Right)
+		if left == statusViolated || right == statusViolated {
 			return statusViolated
+		}
+		if left == statusPending || right == statusPending {
+			return statusPending
 		}
 		return statusHolds
 	case OrFormula:
-		if finalize(concrete.Left) == statusHolds || finalize(concrete.Right) == statusHolds {
+		left, right := finalize(concrete.Left), finalize(concrete.Right)
+		if left == statusHolds || right == statusHolds {
 			return statusHolds
+		}
+		if left == statusPending || right == statusPending {
+			return statusPending
 		}
 		return statusViolated
 	case ImpliesFormula:
-		if finalize(concrete.Antecedent) == statusViolated {
-			return statusHolds
-		}
-		return finalize(concrete.Consequent)
+		return finalize(OrFormula{
+			Left:  NotFormula{Inner: concrete.Antecedent},
+			Right: concrete.Consequent,
+		})
 	default:
 		return statusHolds
 	}
@@ -224,9 +257,9 @@ func (e *Evaluator) Residual() Formula {
 	if len(e.pending) == 0 {
 		return PureFormula{Value: true}
 	}
-	combined := e.pending[0]
-	for _, formula := range e.pending[1:] {
-		combined = AndFormula{Left: combined, Right: formula}
+	combined := e.pending[0].formula
+	for _, entry := range e.pending[1:] {
+		combined = AndFormula{Left: combined, Right: entry.formula}
 	}
 	return combined
 }
@@ -257,11 +290,6 @@ type reduceResult struct {
 }
 
 func holds() reduceResult { return reduceResult{status: statusHolds} }
-
-// violated reports a violation without an attached witness. Used where the
-// failing sub-formula is recovered from a child result whose own witness is
-// carried up by violatedFrom.
-func violated() reduceResult { return reduceResult{status: statusViolated} }
 
 // violatedWith reports a violation that originates at the given sub-formula
 // with the given reason. The reason distinguishes a thrown predicate from a

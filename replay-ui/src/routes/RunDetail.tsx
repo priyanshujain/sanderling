@@ -126,6 +126,8 @@ export default function RunDetail() {
   const violationsAfter = nextStep?.violations ?? violationsBefore;
   const residualsBefore = currentStep?.residuals;
   const residualsAfter = nextStep?.residuals ?? residualsBefore;
+  const witnessesBefore = currentStep?.witnesses;
+  const witnessesAfter = nextStep?.witnesses ?? witnessesBefore;
   const exceptionsForStep = currentStep?.exceptions;
 
   const beforeTabs: TabDefinition[] = [
@@ -157,8 +159,10 @@ export default function RunDetail() {
           propertyNames={history?.names ?? []}
           violations={violationsBefore}
           residuals={residualsBefore}
+          witnesses={witnessesBefore}
           onJumpToFirstViolation={jumpToFirstViolation}
           hasFirstViolation={history?.firstViolationStep !== undefined}
+          onJumpToStep={goTo}
         />
       ),
     },
@@ -176,8 +180,10 @@ export default function RunDetail() {
           propertyNames={history?.names ?? []}
           violations={violationsBefore}
           residuals={residualsBefore}
+          witnesses={witnessesBefore}
           onJumpToFirstViolation={jumpToFirstViolation}
           hasFirstViolation={history?.firstViolationStep !== undefined}
+          onJumpToStep={goTo}
           violationsOnly
         />
       ),
@@ -213,8 +219,10 @@ export default function RunDetail() {
           propertyNames={history?.names ?? []}
           violations={violationsAfter}
           residuals={residualsAfter}
+          witnesses={witnessesAfter}
           onJumpToFirstViolation={jumpToFirstViolation}
           hasFirstViolation={history?.firstViolationStep !== undefined}
+          onJumpToStep={goTo}
         />
       ),
     },
@@ -232,8 +240,10 @@ export default function RunDetail() {
           propertyNames={history?.names ?? []}
           violations={violationsAfter}
           residuals={residualsAfter}
+          witnesses={witnessesAfter}
           onJumpToFirstViolation={jumpToFirstViolation}
           hasFirstViolation={history?.firstViolationStep !== undefined}
+          onJumpToStep={goTo}
           violationsOnly
         />
       ),

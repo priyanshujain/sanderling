@@ -138,6 +138,66 @@ func TestCacheStep_LazyDecodeReturnsFullStep(t *testing.T) {
 	}
 }
 
+func TestCacheOpen_ViolationMarkerMovesToCausingStep(t *testing.T) {
+	// The violation is detected at step 3 but its witness attributes it to
+	// step 2 (the step that spawned the next obligation). The action-list
+	// marker belongs on step 2; the full step 3 payload keeps the violation
+	// record itself.
+	root := t.TempDir()
+	startedAt := time.Now().UTC()
+	steps := []trace.Step{
+		{Index: 1, Timestamp: startedAt},
+		{Index: 2, Timestamp: startedAt.Add(time.Second)},
+		{
+			Index:      3,
+			Timestamp:  startedAt.Add(2 * time.Second),
+			Violations: []string{"prop1"},
+			Witnesses:  map[string]trace.Witness{"prop1": {Reason: "predicate false", Step: 2}},
+		},
+	}
+	writeRun(t, root, "r1", trace.Meta{StartedAt: startedAt, EndedAt: timePointer(startedAt.Add(3 * time.Second))}, steps)
+
+	cache := NewCache(root)
+	run, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !run.Steps[1].HasViolations {
+		t.Error("step 2 (causing step) should carry the violation marker")
+	}
+	if run.Steps[2].HasViolations {
+		t.Error("step 3 (detection step) should not carry the marker")
+	}
+	full, err := cache.Step(run, 3)
+	if err != nil {
+		t.Fatalf("Step(3): %v", err)
+	}
+	if len(full.Violations) != 1 || full.Violations[0] != "prop1" {
+		t.Errorf("step 3 payload violations = %v, want [prop1]", full.Violations)
+	}
+}
+
+func TestCacheOpen_ViolationWithoutWitnessStepKeepsDetectionStep(t *testing.T) {
+	// Traces written before witnesses carried a step field fall back to
+	// marking the detection step, the old behavior.
+	root := t.TempDir()
+	startedAt := time.Now().UTC()
+	steps := []trace.Step{
+		{Index: 1, Timestamp: startedAt},
+		{Index: 2, Timestamp: startedAt.Add(time.Second), Violations: []string{"prop1"}},
+	}
+	writeRun(t, root, "r1", trace.Meta{StartedAt: startedAt, EndedAt: timePointer(startedAt.Add(2 * time.Second))}, steps)
+
+	cache := NewCache(root)
+	run, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !run.Steps[1].HasViolations {
+		t.Error("step 2 should keep the marker when the witness has no step")
+	}
+}
+
 func TestDecodeStepSummary_ActionLabelPerKind(t *testing.T) {
 	cases := []struct {
 		line      string

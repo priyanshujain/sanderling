@@ -18,13 +18,32 @@ func TestFinalize_UnboundedEventuallyUnmetIsViolated(t *testing.T) {
 	}
 }
 
-func TestFinalize_FinalStepNextIsViolated(t *testing.T) {
+func TestFinalize_FinalStepNextIsVacuouslyHolds(t *testing.T) {
+	// A next obligation pending at run end has no successor state to check;
+	// the run ending before the check is not a failure (weak next at the
+	// trace boundary).
 	evaluator := NewEvaluator(Next(ThunkNamed("p", func() (bool, error) { return true, nil })))
 	if got := evaluator.Observe(); got != VerdictPending {
 		t.Fatalf("step 1: got %v, want pending", got)
 	}
-	if got := evaluator.Finalize(); got != VerdictViolated {
-		t.Errorf("Finalize = %v, want violated", got)
+	if got := evaluator.Finalize(); got != VerdictHolds {
+		t.Errorf("Finalize = %v, want holds", got)
+	}
+	if witness := evaluator.Violation(); witness != nil {
+		t.Errorf("Violation = %+v, want nil for a vacuous next", witness)
+	}
+}
+
+func TestFinalize_AlwaysNextNeverReportsAtRunEnd(t *testing.T) {
+	// always(next(p)): every step spawns a deferred check and the last one is
+	// always pending when the run ends. That residue must not surface as an
+	// end-of-run violation.
+	evaluator := NewEvaluator(Always(Next(ThunkNamed("p", func() (bool, error) { return true, nil }))))
+	for index := range 3 {
+		evaluator.ObserveAt(time.Unix(int64(index), 0))
+	}
+	if got := evaluator.Finalize(); got != VerdictHolds {
+		t.Errorf("Finalize = %v, want holds", got)
 	}
 }
 
@@ -128,20 +147,23 @@ func TestViolationLatchIsMonotonic(t *testing.T) {
 }
 
 func TestCollapse_IdenticalObligationsMerge(t *testing.T) {
-	merged := collapse([]Formula{
-		Next(Pure(true)),
-		Next(Pure(true)),
-		Next(Pure(true)),
+	merged := collapse([]obligation{
+		{formula: Next(Pure(true)), origin: 1},
+		{formula: Next(Pure(true)), origin: 2},
+		{formula: Next(Pure(true)), origin: 3},
 	})
 	if len(merged) != 1 {
 		t.Errorf("expected 1 obligation after collapse, got %d", len(merged))
 	}
+	if merged[0].origin != 1 {
+		t.Errorf("collapse must keep the earliest origin, got %d", merged[0].origin)
+	}
 }
 
 func TestCollapse_DistinctPredicatesDoNotMerge(t *testing.T) {
-	merged := collapse([]Formula{
-		Eventually(ThunkNamed("p3", func() (bool, error) { return false, nil })),
-		Eventually(ThunkNamed("p4", func() (bool, error) { return false, nil })),
+	merged := collapse([]obligation{
+		{formula: Eventually(ThunkNamed("p3", func() (bool, error) { return false, nil }))},
+		{formula: Eventually(ThunkNamed("p4", func() (bool, error) { return false, nil }))},
 	})
 	if len(merged) != 2 {
 		t.Errorf("distinct predicates must not merge, got %d", len(merged))
