@@ -856,6 +856,74 @@ func TestIOSFlatSpatialScopeExcludesOutsideBounds(t *testing.T) {
 	}
 }
 
+// spatialSpecificityDump scopes a leaf testTag (iOS-flat pattern) over a
+// screen where both a screen-sized container and the small element inside it
+// match the same attribute, plus two equal-bounds siblings for tie ordering.
+const spatialSpecificityDump = `{
+  "attributes": {"bounds": "[0,0][402,874]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "FormScreen", "bounds": "[0,62][402,840]"},
+      "children": []
+    },
+    {
+      "attributes": {"resource-id": "FieldContainer", "accessibilityText": "Amount", "bounds": "[0,62][402,840]"},
+      "children": [
+        {
+          "attributes": {"resource-id": "AmountField", "accessibilityText": "Amount", "bounds": "[34,125][368,173]"},
+          "children": []
+        },
+        {
+          "attributes": {"resource-id": "FirstTab", "accessibilityText": "Tab", "bounds": "[20,297][382,345]"},
+          "children": []
+        },
+        {
+          "attributes": {"resource-id": "SecondTab", "accessibilityText": "Tab", "bounds": "[20,297][382,345]"},
+          "children": []
+        }
+      ]
+    }
+  ]
+}`
+
+func TestSpatialFallbackPrefersSmallestContainingMatch(t *testing.T) {
+	tree, err := Parse(spatialSpecificityDump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	screen := tree.FindNode("id:FormScreen")
+	if screen == nil {
+		t.Fatal("expected FormScreen node")
+	}
+	// Both FieldContainer (screen-sized, earlier in pre-order) and
+	// AmountField (small) match; the most specific match must win.
+	node := screen.Find("desc:Amount")
+	if node == nil {
+		t.Fatal("expected a spatial-fallback match")
+	}
+	if node.ResourceID != "AmountField" {
+		t.Fatalf("expected the smallest containing match AmountField, got id=%q", node.ResourceID)
+	}
+}
+
+func TestSpatialFallbackEqualAreaKeepsPreOrder(t *testing.T) {
+	tree, err := Parse(spatialSpecificityDump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	screen := tree.FindNode("id:FormScreen")
+	if screen == nil {
+		t.Fatal("expected FormScreen node")
+	}
+	node := screen.Find("desc:Tab")
+	if node == nil {
+		t.Fatal("expected a spatial-fallback match")
+	}
+	if node.ResourceID != "FirstTab" {
+		t.Fatalf("equal-area matches must keep pre-order, got id=%q", node.ResourceID)
+	}
+}
+
 func TestIOSFlatStructuralChildStillPreferred(t *testing.T) {
 	tree, _ := Parse(iosFlatDump)
 	submit := tree.FindNode("id:LoginSubmit")

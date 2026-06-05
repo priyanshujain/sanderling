@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -426,7 +427,20 @@ func (n *Node) scopedNodes(accept func(*Element) bool) []*Node {
 			result = append(result, candidate)
 		}
 	}
+	// Spatial containment alone lets a large container outrank the intended
+	// small element; the most specific (smallest) match wins instead.
+	sortBySpecificity(result)
 	return result
+}
+
+// sortBySpecificity orders nodes ascending by bounds area, so the smallest
+// (most specific) containing match comes first. Equal-area nodes keep their
+// pre-order position.
+func sortBySpecificity(nodes []*Node) {
+	sort.SliceStable(nodes, func(i, j int) bool {
+		return nodes[i].Bounds.Width()*nodes[i].Bounds.Height() <
+			nodes[j].Bounds.Width()*nodes[j].Bounds.Height()
+	})
 }
 
 func collectMatches(node *Node, accept func(*Element) bool, result *[]*Node) {
