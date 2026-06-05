@@ -134,8 +134,15 @@ const login = actions(() => {
 
 const accountNames = from(["Checking", "Savings", "Travel", "Emergency Fund", "Investments"]);
 
+// Saturation gate: a few accounts are enough to exercise every balance
+// property. Without the gate the short add-account loop (2-3 steps, back to
+// home) outcompetes the 5-step transaction chain at every re-draw and the
+// run fills with account creation instead of transactions.
+const ACCOUNTS_ENOUGH = 3;
+
 const addAccount = whenRoute(route, ["home", "add-account"], () => {
   if (route.current === "home") {
+    if (accounts.current.length >= ACCOUNTS_ENOUGH) return [];
     const btn = addAccountButton.current;
     return btn ? [Tap({ on: btn })] : [];
   }
