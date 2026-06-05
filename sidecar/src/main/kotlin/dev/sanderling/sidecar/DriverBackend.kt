@@ -878,12 +878,20 @@ internal fun iosAxElementToTreeNode(element: hierarchy.AXElement): Map<String, A
     val elementType = element.elementType
     val title = element.title.orEmpty()
     val value = element.value.orEmpty()
+    val label = element.label.orEmpty()
+    val editable = elementType in IOS_EDITABLE_ELEMENT_TYPES
     val checked = elementType in IOS_CHECKABLE_ELEMENT_TYPES && value == "1"
+    // text carries the element's visible string, matching what Android
+    // surfaces in its text attribute. Editable fields expose only their
+    // typed content: their label is the field caption (e.g. "Email"), and
+    // leaking it into text would make an empty field look filled. Static
+    // text and buttons carry the visible string in the label.
+    val text = if (editable) value else title.ifEmpty { value }.ifEmpty { label }
     val attributes = linkedMapOf(
-        "accessibilityText" to element.label.orEmpty(),
+        "accessibilityText" to label,
         "title" to title,
         "value" to value,
-        "text" to title.ifEmpty { value },
+        "text" to text,
         "hintText" to element.placeholderValue.orEmpty(),
         "resource-id" to element.identifier.orEmpty(),
         "bounds" to element.frame.boundsString,
@@ -902,6 +910,6 @@ internal fun iosAxElementToTreeNode(element: hierarchy.AXElement): Map<String, A
         "focused" to element.hasFocus,
         "checked" to checked,
         "selected" to element.selected,
-        "editable" to (elementType in IOS_EDITABLE_ELEMENT_TYPES),
+        "editable" to editable,
     )
 }

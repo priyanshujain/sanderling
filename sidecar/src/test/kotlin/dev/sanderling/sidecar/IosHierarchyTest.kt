@@ -67,6 +67,31 @@ class IosHierarchyTest {
     }
 
     @Test
+    fun staticTextFallsBackToLabelForText() {
+        val node = iosAxElementToTreeNode(element(elementType = 48, label = "$1,234.00"))
+        @Suppress("UNCHECKED_CAST")
+        val attributes = node["attributes"] as Map<String, String>
+        assertEquals("$1,234.00", attributes["text"])
+    }
+
+    @Test
+    fun buttonFallsBackToLabelForText() {
+        val node = iosAxElementToTreeNode(element(elementType = 9, label = "Sign in"))
+        @Suppress("UNCHECKED_CAST")
+        val attributes = node["attributes"] as Map<String, String>
+        assertEquals("Sign in", attributes["text"])
+    }
+
+    @Test
+    fun emptyTextFieldDoesNotLeakLabelIntoText() {
+        val node = iosAxElementToTreeNode(element(elementType = 49, label = "Email"))
+        @Suppress("UNCHECKED_CAST")
+        val attributes = node["attributes"] as Map<String, String>
+        assertEquals("", attributes["text"])
+        assertEquals("Email", attributes["accessibilityText"])
+    }
+
+    @Test
     fun switchOnIsChecked() {
         val node = iosAxElementToTreeNode(element(elementType = 40, value = "1"))
         assertEquals(true, node["checked"])
