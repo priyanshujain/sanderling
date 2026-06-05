@@ -56,7 +56,16 @@ func tallyTrace(tracePath string) (steps, violations int, err error) {
 	return steps, violations, nil
 }
 
-func decodeStepSummary(line []byte) (StepSummary, int, error) {
+// violationAttribution maps one recorded violation to the step the marker
+// belongs on: the causing step its witness names, falling back to the step
+// whose trace line carries it (the detection step) for witnesses written
+// before the step field existed.
+type violationAttribution struct {
+	attributedStep int
+	detectedStep   int
+}
+
+func decodeStepSummary(line []byte) (StepSummary, []violationAttribution, error) {
 	var partial struct {
 		Index     int       `json:"step"`
 		Timestamp time.Time `json:"timestamp"`
@@ -76,15 +85,28 @@ func decodeStepSummary(line []byte) (StepSummary, int, error) {
 		} `json:"next_action,omitempty"`
 		Exceptions []json.RawMessage `json:"exceptions,omitempty"`
 		Violations []string          `json:"violations,omitempty"`
+		Witnesses  map[string]struct {
+			Step int `json:"step"`
+		} `json:"witnesses,omitempty"`
 	}
 	if err := json.Unmarshal(line, &partial); err != nil {
-		return StepSummary{}, 0, fmt.Errorf("decode step: %w", err)
+		return StepSummary{}, nil, fmt.Errorf("decode step: %w", err)
+	}
+	var attributions []violationAttribution
+	for _, name := range partial.Violations {
+		attribution := violationAttribution{
+			attributedStep: partial.Index,
+			detectedStep:   partial.Index,
+		}
+		if witness, ok := partial.Witnesses[name]; ok && witness.Step > 0 {
+			attribution.attributedStep = witness.Step
+		}
+		attributions = append(attributions, attribution)
 	}
 	summary := StepSummary{
 		Index:         partial.Index,
 		Timestamp:     partial.Timestamp,
 		Screen:        partial.Screen,
-		HasViolations: len(partial.Violations) > 0,
 		HasExceptions: len(partial.Exceptions) > 0,
 	}
 	if partial.NextAction != nil {
@@ -113,7 +135,33 @@ func decodeStepSummary(line []byte) (StepSummary, int, error) {
 			}
 		}
 	}
-	return summary, len(partial.Violations), nil
+	return summary, attributions, nil
+}
+
+// markViolations sets HasViolations on the step each attribution points at.
+// The marker goes on the causing step; when that index is missing from the
+// trace the detection step keeps it. Duplicate indices (a finalize line echoes
+// the last step's index) resolve to the first occurrence, the real step.
+func markViolations(steps []StepSummary, attributions []violationAttribution) {
+	if len(attributions) == 0 {
+		return
+	}
+	positionOf := make(map[int]int, len(steps))
+	for position, step := range steps {
+		if _, ok := positionOf[step.Index]; !ok {
+			positionOf[step.Index] = position
+		}
+	}
+	for _, attribution := range attributions {
+		position, ok := positionOf[attribution.attributedStep]
+		if !ok {
+			position, ok = positionOf[attribution.detectedStep]
+			if !ok {
+				continue
+			}
+		}
+		steps[position].HasViolations = true
+	}
 }
 
 func swipeDirectionLabel(fromX, fromY, toX, toY int) string {
