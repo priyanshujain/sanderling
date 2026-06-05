@@ -3,6 +3,7 @@ package dev.sanderling.sidecar
 import dev.sanderling.driver.v1.DriverGrpc
 import dev.sanderling.driver.v1.Duration
 import dev.sanderling.driver.v1.Empty
+import dev.sanderling.driver.v1.EraseTextRequest
 import dev.sanderling.driver.v1.LaunchRequest
 import dev.sanderling.driver.v1.Point
 import dev.sanderling.driver.v1.PressKeyRequest
@@ -80,6 +81,42 @@ class DriverServiceTest {
 
         client.inputText(Text.newBuilder().setValue("hello world").build())
         assertEquals("hello world", backend.lastInputText)
+    }
+
+    @Test fun doubleTapDefaultComposesTwoTaps() {
+        // Interface delegation would bind the default doubleTap to the
+        // delegate, bypassing the tap override, so implement the interface
+        // directly.
+        val taps = mutableListOf<Pair<Int, Int>>()
+        val backend = object : DriverBackend {
+            override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {}
+            override fun terminate(bundleId: String) {}
+            override fun tap(x: Int, y: Int) { taps.add(x to y) }
+            override fun tapSelector(selector: String) {}
+            override fun inputText(text: String) {}
+            override fun eraseText(characterCount: Int) {}
+            override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {}
+            override fun pressKey(key: String) {}
+            override fun longPress(x: Int, y: Int) {}
+            override fun screenshot(): Triple<ByteArray, Int, Int> = Triple(byteArrayOf(), 0, 0)
+            override fun hierarchy(): String = "{}"
+            override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> = emptyList()
+            override fun waitForIdle(durationMillis: Long) {}
+            override fun healthy(): Boolean = true
+            override fun metrics(bundleId: String): MetricsSample = MetricsSample(0.0, 0L, 0L)
+        }
+        val client = newClient(backend)
+
+        client.doubleTap(Point.newBuilder().setX(120).setY(340).build())
+        assertEquals(listOf(120 to 340, 120 to 340), taps)
+    }
+
+    @Test fun eraseTextForwardsCharacterCount() {
+        val backend = StubDriverBackend("android")
+        val client = newClient(backend)
+
+        client.eraseText(EraseTextRequest.newBuilder().setCharacterCount(11).build())
+        assertEquals(11, backend.lastEraseCharacterCount)
     }
 
     @Test fun screenshotReturnsBackendBytes() {

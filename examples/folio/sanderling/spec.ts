@@ -10,7 +10,7 @@ import {
   weighted,
   whenRoute,
 } from "@sanderling/spec";
-import { defaultActions } from "@sanderling/spec/defaults";
+import { defaultActions, doubleTaps } from "@sanderling/spec/defaults";
 import {
   computeHomeTotalBalance,
   parseTypedAmount,
@@ -174,11 +174,16 @@ export const properties = {
 
 export const setup = login;
 
-// Targeted depth (addAccount / addTxn) drives the deep flows; defaultActions
-// adds breadth so the fuzzer wanders the whole app and types edge-case values
-// into every field, stressing the balance invariants above.
+// Weights declare testing intent. The transaction chain is the focus: it is
+// the deepest flow and both balance properties observe it. Account creation
+// stays in the mix because newAccountBalanceIsZero needs fresh accounts to
+// fire. doubleTaps gets explicit weight on every screen because rapid
+// double-submission is a failure mode these forms must be idempotent under.
+// defaultActions adds breadth so the fuzzer wanders the whole app and types
+// edge-case values into every field.
 export const actionsRoot = weighted(
-  [50, addAccount],
-  [30, addTxn],
-  [20, defaultActions],
+  [25, addAccount],
+  [45, addTxn],
+  [5, doubleTaps],
+  [25, defaultActions],
 );

@@ -497,6 +497,15 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 				return err
 			}
 		}
+		// InputText replaces the field's content: erase what the target
+		// holds before typing. Appending instead lets repeated draws grow
+		// the field without bound (e.g. into a max-length validation error
+		// the fuzzer can never escape) and makes retried typing land twice.
+		if count := existingTextLength(action, tree); count > 0 {
+			if err := drv.EraseText(ctx, count); err != nil {
+				return err
+			}
+		}
 		return drv.InputText(ctx, action.Text)
 	case verifier.ActionKindSwipe:
 		duration := time.Duration(action.DurationMillis) * time.Millisecond
@@ -545,6 +554,20 @@ func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) 
 		})
 	}
 	return result
+}
+
+// existingTextLength returns the character count of the InputText target's
+// current text, so the runner can erase it before typing. Zero when the
+// target cannot be resolved or holds no text.
+func existingTextLength(action verifier.Action, tree *hierarchy.Tree) int {
+	if action.On == "" || tree == nil {
+		return 0
+	}
+	element := tree.Find(action.On)
+	if element == nil {
+		return 0
+	}
+	return len([]rune(element.Text))
 }
 
 func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int, bool) {

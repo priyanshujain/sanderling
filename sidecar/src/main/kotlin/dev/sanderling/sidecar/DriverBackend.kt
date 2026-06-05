@@ -4,8 +4,18 @@ interface DriverBackend {
     fun launch(bundleId: String, clearState: Boolean, env: Map<String, String> = emptyMap())
     fun terminate(bundleId: String)
     fun tap(x: Int, y: Int)
+
+    // doubleTap lands two taps as close together as the platform allows.
+    // The default composes two taps back-to-back; backends with higher
+    // per-tap latency override to tighten the gap.
+    fun doubleTap(x: Int, y: Int) {
+        tap(x, y)
+        tap(x, y)
+    }
+
     fun tapSelector(selector: String)
     fun inputText(text: String)
+    fun eraseText(characterCount: Int)
     fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long)
     fun pressKey(key: String)
     fun longPress(x: Int, y: Int)
@@ -402,6 +412,16 @@ class StubDriverBackend(
         runAdb(listOf("shell", "input", "text", escapeForAdbInputText(text)))
     }
 
+    @Volatile var lastEraseCharacterCount: Int? = null
+        private set
+
+    override fun eraseText(characterCount: Int) {
+        lastEraseCharacterCount = characterCount
+        repeat(characterCount) {
+            runAdb(listOf("shell", "input", "keyevent", "KEYCODE_DEL"))
+        }
+    }
+
     @Volatile var lastSwipe: SwipeRecord? = null
         private set
     @Volatile var lastKey: String? = null
@@ -531,6 +551,8 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
 
     override fun inputText(text: String) = driver.inputText(text)
 
+    override fun eraseText(characterCount: Int) = driver.eraseText(characterCount)
+
     override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) =
         driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))
 
@@ -629,6 +651,7 @@ private fun pngHeight(bytes: ByteArray): Int {
 
 class IosDriverBackend(private val udid: String) : DriverBackend {
     private lateinit var driver: maestro.drivers.IOSDriver
+    private lateinit var localDevice: ios.LocalIOSDevice
     private val reconnectLock = java.util.concurrent.locks.ReentrantLock()
 
     init {
@@ -670,6 +693,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
             deviceController = simctlDevice,
             insights = maestro.utils.NoopInsights,
         )
+        localDevice = device
         driver = maestro.drivers.IOSDriver(device, maestro.utils.NoopInsights)
         driver.open()
         warmup()
@@ -720,6 +744,19 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
 
     override fun tap(x: Int, y: Int) = withReconnect { driver.tap(maestro.Point(x, y)) }
 
+    // The second tap request is already queued at the XCTest runner while the
+    // first executes, so the on-device gap collapses to the runner's
+    // turnaround instead of a full transport round trip. Sequential requests
+    // leave a gap wide enough for the app to navigate between the taps.
+    override fun doubleTap(x: Int, y: Int): Unit = withReconnect {
+        val point = maestro.Point(x, y)
+        val firstTap = java.util.concurrent.CompletableFuture.runAsync { driver.tap(point) }
+        Thread.sleep(40)
+        driver.tap(point)
+        firstTap.join()
+        Unit
+    }
+
     override fun longPress(x: Int, y: Int) = withReconnect { driver.longPress(maestro.Point(x, y)) }
 
     override fun tapSelector(selector: String) = withReconnect {
@@ -729,6 +766,8 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     }
 
     override fun inputText(text: String) = withReconnect { driver.inputText(text) }
+
+    override fun eraseText(characterCount: Int) = withReconnect { driver.eraseText(characterCount) }
 
     override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) = withReconnect {
         driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))
@@ -750,7 +789,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
 
     override fun hierarchy(): String = withReconnect {
         com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
-            .writeValueAsString(driver.contentDescriptor(false))
+            .writeValueAsString(iosAxElementToTreeNode(localDevice.viewHierarchy(false).axElement))
     }
 
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> = emptyList()
@@ -783,4 +822,116 @@ private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? {
         "KEYCODE_DPAD_RIGHT" -> maestro.KeyCode.REMOTE_RIGHT
         else -> null
     }
+}
+
+// XCUIElementType raw values that accept a tap. The XCTest hierarchy carries
+// no clickable flag, so tappability is derived from the element type that
+// XCUITest itself derives from the accessibility traits.
+internal val IOS_CLICKABLE_ELEMENT_TYPES = setOf(
+    9,  // button
+    10, // radioButton
+    12, // checkBox
+    14, // popUpButton
+    15, // comboBox
+    16, // menuButton
+    17, // toolbarButton
+    20, // key
+    37, // segmentedControl
+    40, // switch
+    41, // toggle
+    42, // link
+    54, // menuItem
+    75, // cell
+    79, // stepper
+    80, // tab
+)
+
+// XCUIElementType raw values that accept text input.
+internal val IOS_EDITABLE_ELEMENT_TYPES = setOf(
+    45, // searchField
+    49, // textField
+    50, // secureTextField
+    52, // textView
+)
+
+// XCUIElementType raw values that scroll.
+internal val IOS_SCROLLABLE_ELEMENT_TYPES = setOf(
+    26, // table
+    32, // collectionView
+    46, // scrollView
+    58, // webView
+)
+
+// Checkable element types and the value convention ("1" when on) mirror the
+// upstream content-descriptor mapping.
+internal val IOS_CHECKABLE_ELEMENT_TYPES = setOf(
+    12, // checkBox
+    40, // switch
+    41, // toggle
+)
+
+private val IOS_ELEMENT_TYPE_NAMES = arrayOf(
+    "Any", "Other", "Application", "Group", "Window", "Sheet", "Drawer",
+    "Alert", "Dialog", "Button", "RadioButton", "RadioGroup", "CheckBox",
+    "DisclosureTriangle", "PopUpButton", "ComboBox", "MenuButton",
+    "ToolbarButton", "Popover", "Keyboard", "Key", "NavigationBar", "TabBar",
+    "TabGroup", "Toolbar", "StatusBar", "Table", "TableRow", "TableColumn",
+    "Outline", "OutlineRow", "Browser", "CollectionView", "Slider",
+    "PageIndicator", "ProgressIndicator", "ActivityIndicator",
+    "SegmentedControl", "Picker", "PickerWheel", "Switch", "Toggle", "Link",
+    "Image", "Icon", "SearchField", "ScrollView", "ScrollBar", "StaticText",
+    "TextField", "SecureTextField", "DatePicker", "TextView", "Menu",
+    "MenuItem", "MenuBar", "MenuBarItem", "Map", "WebView", "IncrementArrow",
+    "DecrementArrow", "Timeline", "RatingIndicator", "ValueIndicator",
+    "SplitGroup", "Splitter", "RelevanceIndicator", "ColorWell", "HelpTag",
+    "Matte", "DockItem", "Ruler", "RulerMarker", "Grid", "LevelIndicator",
+    "Cell", "LayoutArea", "LayoutItem", "Handle", "Stepper", "Tab",
+    "TouchBar", "StatusItem",
+)
+
+internal fun iosElementTypeName(elementType: Int): String =
+    IOS_ELEMENT_TYPE_NAMES.getOrElse(elementType) { "Other" }
+
+// iosAxElementToTreeNode maps the raw XCTest accessibility tree to the
+// TreeNode JSON shape the runner parses. The upstream content-descriptor
+// mapping drops the element type, leaving no way to tell buttons and text
+// fields apart, so fuzz verbs found no tap or typing candidates on iOS.
+internal fun iosAxElementToTreeNode(element: hierarchy.AXElement): Map<String, Any?> {
+    val elementType = element.elementType
+    val title = element.title.orEmpty()
+    val value = element.value.orEmpty()
+    val label = element.label.orEmpty()
+    val editable = elementType in IOS_EDITABLE_ELEMENT_TYPES
+    val checked = elementType in IOS_CHECKABLE_ELEMENT_TYPES && value == "1"
+    // text carries the element's visible string, matching what Android
+    // surfaces in its text attribute. Editable fields expose only their
+    // typed content: their label is the field caption (e.g. "Email"), and
+    // leaking it into text would make an empty field look filled. Static
+    // text and buttons carry the visible string in the label.
+    val text = if (editable) value else title.ifEmpty { value }.ifEmpty { label }
+    val attributes = linkedMapOf(
+        "accessibilityText" to label,
+        "title" to title,
+        "value" to value,
+        "text" to text,
+        "hintText" to element.placeholderValue.orEmpty(),
+        "resource-id" to element.identifier.orEmpty(),
+        "bounds" to element.frame.boundsString,
+        "class" to iosElementTypeName(elementType),
+        "enabled" to element.enabled.toString(),
+        "focused" to element.hasFocus.toString(),
+        "selected" to element.selected.toString(),
+        "checked" to checked.toString(),
+        "scrollable" to (elementType in IOS_SCROLLABLE_ELEMENT_TYPES).toString(),
+    )
+    return linkedMapOf(
+        "attributes" to attributes,
+        "children" to element.children.map { iosAxElementToTreeNode(it) },
+        "clickable" to (elementType in IOS_CLICKABLE_ELEMENT_TYPES),
+        "enabled" to element.enabled,
+        "focused" to element.hasFocus,
+        "checked" to checked,
+        "selected" to element.selected,
+        "editable" to editable,
+    )
 }
