@@ -253,6 +253,89 @@ func TestRunner_ViolationSurfacesOnlyOnOnsetStep(t *testing.T) {
 	}
 }
 
+func TestRunner_NextViolationAttributedToCausingStep(t *testing.T) {
+	// always(next(p)): the obligation spawned at step 2 fails against step 3's
+	// state. The summary record and the trace witness must attribute the
+	// violation to step 2 (the causing step); the trace line that carries it is
+	// still step 3, where the failure was detected.
+	const nextViolationSpec = `
+import { actions, always, next, extract } from "@sanderling/spec";
+let observed = 0;
+const tick = extract(() => ++observed);
+globalThis.properties = {
+  nextHolds: always(next(() => tick.current < 3)),
+};
+globalThis.actions = actions(() => []);
+`
+	state := newHarnessWithSpec(t, nextViolationSpec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    5,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(summary.Violations) != 1 {
+		t.Fatalf("expected exactly one ViolationRecord, got %d: %v",
+			len(summary.Violations), summary.Violations)
+	}
+	if summary.Violations[0].StepIndex != 2 {
+		t.Errorf("summary step: got %d, want 2 (the step that spawned the next obligation)",
+			summary.Violations[0].StepIndex)
+	}
+	if !slices.Equal(summary.Violations[0].Properties, []string{"nextHolds"}) {
+		t.Errorf("properties: got %v, want [nextHolds]", summary.Violations[0].Properties)
+	}
+
+	file, err := os.Open(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	type traceLine struct {
+		Step       int                      `json:"step"`
+		Violations []string                 `json:"violations"`
+		Witnesses  map[string]trace.Witness `json:"witnesses"`
+	}
+	found := false
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var line traceLine
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			t.Fatalf("trace line decode: %v", err)
+		}
+		if len(line.Violations) == 0 {
+			continue
+		}
+		found = true
+		if line.Step != 3 {
+			t.Errorf("violation detected on step %d, want 3", line.Step)
+		}
+		witness, ok := line.Witnesses["nextHolds"]
+		if !ok {
+			t.Fatalf("step %d carries no witness for nextHolds", line.Step)
+		}
+		if witness.Step != 2 {
+			t.Errorf("witness step: got %d, want 2 (causing step)", witness.Step)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan trace: %v", err)
+	}
+	if !found {
+		t.Error("no trace line carried the violation")
+	}
+}
+
 func TestRunner_ThrowingPredicateIsLoggedNotPanic(t *testing.T) {
 	const throwingSpec = `
 import { actions, always, Tap } from "@sanderling/spec";
