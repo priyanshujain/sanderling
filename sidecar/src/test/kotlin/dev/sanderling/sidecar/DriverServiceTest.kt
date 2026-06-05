@@ -3,6 +3,7 @@ package dev.sanderling.sidecar
 import dev.sanderling.driver.v1.DriverGrpc
 import dev.sanderling.driver.v1.Duration
 import dev.sanderling.driver.v1.Empty
+import dev.sanderling.driver.v1.EraseTextRequest
 import dev.sanderling.driver.v1.LaunchRequest
 import dev.sanderling.driver.v1.Point
 import dev.sanderling.driver.v1.PressKeyRequest
@@ -80,6 +81,14 @@ class DriverServiceTest {
 
         client.inputText(Text.newBuilder().setValue("hello world").build())
         assertEquals("hello world", backend.lastInputText)
+    }
+
+    @Test fun eraseTextForwardsCharacterCount() {
+        val backend = StubDriverBackend("android")
+        val client = newClient(backend)
+
+        client.eraseText(EraseTextRequest.newBuilder().setCharacterCount(11).build())
+        assertEquals(11, backend.lastEraseCharacterCount)
     }
 
     @Test fun screenshotReturnsBackendBytes() {

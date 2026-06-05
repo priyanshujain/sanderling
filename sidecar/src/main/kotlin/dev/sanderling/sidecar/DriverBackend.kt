@@ -6,6 +6,7 @@ interface DriverBackend {
     fun tap(x: Int, y: Int)
     fun tapSelector(selector: String)
     fun inputText(text: String)
+    fun eraseText(characterCount: Int)
     fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long)
     fun pressKey(key: String)
     fun longPress(x: Int, y: Int)
@@ -402,6 +403,16 @@ class StubDriverBackend(
         runAdb(listOf("shell", "input", "text", escapeForAdbInputText(text)))
     }
 
+    @Volatile var lastEraseCharacterCount: Int? = null
+        private set
+
+    override fun eraseText(characterCount: Int) {
+        lastEraseCharacterCount = characterCount
+        repeat(characterCount) {
+            runAdb(listOf("shell", "input", "keyevent", "KEYCODE_DEL"))
+        }
+    }
+
     @Volatile var lastSwipe: SwipeRecord? = null
         private set
     @Volatile var lastKey: String? = null
@@ -530,6 +541,8 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     }
 
     override fun inputText(text: String) = driver.inputText(text)
+
+    override fun eraseText(characterCount: Int) = driver.eraseText(characterCount)
 
     override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) =
         driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))
@@ -731,6 +744,8 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     }
 
     override fun inputText(text: String) = withReconnect { driver.inputText(text) }
+
+    override fun eraseText(characterCount: Int) = withReconnect { driver.eraseText(characterCount) }
 
     override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) = withReconnect {
         driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))

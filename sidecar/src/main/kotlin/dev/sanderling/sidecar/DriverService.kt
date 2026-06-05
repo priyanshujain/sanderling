@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString
 import dev.sanderling.driver.v1.DriverGrpc
 import dev.sanderling.driver.v1.Duration
 import dev.sanderling.driver.v1.Empty
+import dev.sanderling.driver.v1.EraseTextRequest
 import dev.sanderling.driver.v1.HealthStatus
 import dev.sanderling.driver.v1.HierarchyJSON
 import dev.sanderling.driver.v1.Image
@@ -70,6 +71,13 @@ class DriverService(
     override fun inputText(request: Text, responseObserver: StreamObserver<Empty>) {
         runRpc(responseObserver) {
             backend.inputText(request.value)
+            Empty.getDefaultInstance()
+        }
+    }
+
+    override fun eraseText(request: EraseTextRequest, responseObserver: StreamObserver<Empty>) {
+        runRpc(responseObserver) {
+            backend.eraseText(request.characterCount)
             Empty.getDefaultInstance()
         }
     }
