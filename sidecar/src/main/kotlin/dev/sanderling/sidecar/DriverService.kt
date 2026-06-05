@@ -54,6 +54,13 @@ class DriverService(
         }
     }
 
+    override fun doubleTap(request: Point, responseObserver: StreamObserver<Empty>) {
+        runRpc(responseObserver) {
+            backend.doubleTap(request.x, request.y)
+            Empty.getDefaultInstance()
+        }
+    }
+
     override fun longPress(request: Point, responseObserver: StreamObserver<Empty>) {
         runRpc(responseObserver) {
             backend.longPress(request.x, request.y)

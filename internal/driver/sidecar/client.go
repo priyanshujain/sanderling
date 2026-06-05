@@ -104,14 +104,18 @@ func (c *Client) TapSelector(ctx context.Context, selector string) error {
 	return err
 }
 
-// doubleTapGap is the inter-tap delay for DoubleTap: short enough to land both
-// events inside a sub-100 ms race window, long enough for the sidecar to
-// serialize two MotionEvent streams. The sidecar exposes no native double-tap
-// RPC, so the gesture is two Taps with this gap.
+// doubleTapGap is the inter-tap delay for the selector fallback: short enough
+// to land both events inside a sub-100 ms race window, long enough for the
+// sidecar to serialize two MotionEvent streams.
 const doubleTapGap = 50 * time.Millisecond
 
+// DoubleTap dispatches the native RPC so the backend can land both taps as
+// close together as the platform allows. Composing two Tap round trips from
+// here spreads them by hundreds of milliseconds on iOS, wide enough for
+// navigation to interleave between the taps.
 func (c *Client) DoubleTap(ctx context.Context, x, y int) error {
-	return doubleTap(ctx, func() error { return c.Tap(ctx, x, y) })
+	_, err := c.stub.DoubleTap(ctx, &driverpb.Point{X: int32(x), Y: int32(y)})
+	return err
 }
 
 func (c *Client) DoubleTapSelector(ctx context.Context, selector string) error {

@@ -11,6 +11,11 @@ service Driver {
   rpc Terminate(Empty) returns (Empty);
 
   rpc Tap(Point) returns (Empty);
+  // DoubleTap lands two taps as close together as the platform allows.
+  // Composing two Tap calls from the client spreads them by hundreds of
+  // milliseconds on iOS, wide enough for navigation to interleave, which
+  // defeats double-submission testing.
+  rpc DoubleTap(Point) returns (Empty);
   rpc TapSelector(Selector) returns (Empty);
   rpc InputText(Text) returns (Empty);
   // EraseText deletes characters from the focused field so InputText can

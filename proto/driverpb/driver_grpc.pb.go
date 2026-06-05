@@ -22,6 +22,7 @@ const (
 	Driver_Launch_FullMethodName      = "/sanderling.driver.v1.Driver/Launch"
 	Driver_Terminate_FullMethodName   = "/sanderling.driver.v1.Driver/Terminate"
 	Driver_Tap_FullMethodName         = "/sanderling.driver.v1.Driver/Tap"
+	Driver_DoubleTap_FullMethodName   = "/sanderling.driver.v1.Driver/DoubleTap"
 	Driver_TapSelector_FullMethodName = "/sanderling.driver.v1.Driver/TapSelector"
 	Driver_InputText_FullMethodName   = "/sanderling.driver.v1.Driver/InputText"
 	Driver_EraseText_FullMethodName   = "/sanderling.driver.v1.Driver/EraseText"
@@ -44,6 +45,11 @@ type DriverClient interface {
 	Launch(ctx context.Context, in *LaunchRequest, opts ...grpc.CallOption) (*Empty, error)
 	Terminate(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Empty, error)
 	Tap(ctx context.Context, in *Point, opts ...grpc.CallOption) (*Empty, error)
+	// DoubleTap lands two taps as close together as the platform allows.
+	// Composing two Tap calls from the client spreads them by hundreds of
+	// milliseconds on iOS, wide enough for navigation to interleave, which
+	// defeats double-submission testing.
+	DoubleTap(ctx context.Context, in *Point, opts ...grpc.CallOption) (*Empty, error)
 	TapSelector(ctx context.Context, in *Selector, opts ...grpc.CallOption) (*Empty, error)
 	InputText(ctx context.Context, in *Text, opts ...grpc.CallOption) (*Empty, error)
 	// EraseText deletes characters from the focused field so InputText can
@@ -96,6 +102,16 @@ func (c *driverClient) Tap(ctx context.Context, in *Point, opts ...grpc.CallOpti
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Empty)
 	err := c.cc.Invoke(ctx, Driver_Tap_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *driverClient) DoubleTap(ctx context.Context, in *Point, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Driver_DoubleTap_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -239,6 +255,11 @@ type DriverServer interface {
 	Launch(context.Context, *LaunchRequest) (*Empty, error)
 	Terminate(context.Context, *Empty) (*Empty, error)
 	Tap(context.Context, *Point) (*Empty, error)
+	// DoubleTap lands two taps as close together as the platform allows.
+	// Composing two Tap calls from the client spreads them by hundreds of
+	// milliseconds on iOS, wide enough for navigation to interleave, which
+	// defeats double-submission testing.
+	DoubleTap(context.Context, *Point) (*Empty, error)
 	TapSelector(context.Context, *Selector) (*Empty, error)
 	InputText(context.Context, *Text) (*Empty, error)
 	// EraseText deletes characters from the focused field so InputText can
@@ -275,6 +296,9 @@ func (UnimplementedDriverServer) Terminate(context.Context, *Empty) (*Empty, err
 }
 func (UnimplementedDriverServer) Tap(context.Context, *Point) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method Tap not implemented")
+}
+func (UnimplementedDriverServer) DoubleTap(context.Context, *Point) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DoubleTap not implemented")
 }
 func (UnimplementedDriverServer) TapSelector(context.Context, *Selector) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method TapSelector not implemented")
@@ -386,6 +410,24 @@ func _Driver_Tap_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DriverServer).Tap(ctx, req.(*Point))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Driver_DoubleTap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Point)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DriverServer).DoubleTap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Driver_DoubleTap_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DriverServer).DoubleTap(ctx, req.(*Point))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -642,6 +684,10 @@ var Driver_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Tap",
 			Handler:    _Driver_Tap_Handler,
+		},
+		{
+			MethodName: "DoubleTap",
+			Handler:    _Driver_DoubleTap_Handler,
 		},
 		{
 			MethodName: "TapSelector",

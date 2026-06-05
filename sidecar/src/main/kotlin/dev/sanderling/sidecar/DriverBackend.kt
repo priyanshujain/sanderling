@@ -4,6 +4,15 @@ interface DriverBackend {
     fun launch(bundleId: String, clearState: Boolean, env: Map<String, String> = emptyMap())
     fun terminate(bundleId: String)
     fun tap(x: Int, y: Int)
+
+    // doubleTap lands two taps as close together as the platform allows.
+    // The default composes two taps back-to-back; backends with higher
+    // per-tap latency override to tighten the gap.
+    fun doubleTap(x: Int, y: Int) {
+        tap(x, y)
+        tap(x, y)
+    }
+
     fun tapSelector(selector: String)
     fun inputText(text: String)
     fun eraseText(characterCount: Int)
@@ -734,6 +743,15 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     override fun terminate(bundleId: String) = withReconnect { driver.stopApp(bundleId) }
 
     override fun tap(x: Int, y: Int) = withReconnect { driver.tap(maestro.Point(x, y)) }
+
+    // Both taps inside one reconnect scope, with nothing between them: the
+    // XCTest transport adds hundreds of milliseconds per round trip, so any
+    // client-side composition spreads the taps wide enough for the app to
+    // navigate between them.
+    override fun doubleTap(x: Int, y: Int) = withReconnect {
+        driver.tap(maestro.Point(x, y))
+        driver.tap(maestro.Point(x, y))
+    }
 
     override fun longPress(x: Int, y: Int) = withReconnect { driver.longPress(maestro.Point(x, y)) }
 
