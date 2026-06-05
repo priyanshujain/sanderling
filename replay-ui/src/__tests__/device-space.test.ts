@@ -33,4 +33,15 @@ describe("deviceSpaceOf", () => {
     expect(deviceSpaceOf(hierarchyWithRoot(393, 0))).toBeUndefined();
     expect(deviceSpaceOf(hierarchyWithRoot(-1, -1))).toBeUndefined();
   });
+
+  it("skips the iOS synthetic zero-bounds root", () => {
+    const hierarchy: Hierarchy = {
+      elements: [
+        { bounds: { left: 0, top: 0, right: 0, bottom: 0 } },
+        { bounds: { left: 0, top: 0, right: 402, bottom: 874 } },
+        { bounds: { left: 20, top: 100, right: 380, bottom: 150 } },
+      ],
+    };
+    expect(deviceSpaceOf(hierarchy)).toEqual({ width: 402, height: 874 });
+  });
 });
