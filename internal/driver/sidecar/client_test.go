@@ -35,6 +35,16 @@ type fakeServer struct {
 	imageWidth       int32
 	imageHeight      int32
 
+	longPresses    []int32
+	doubleTaps     []int32
+	swipes         []*driverpb.SwipeRequest
+	erases         []int32
+	pressedKeys    []string
+	metricsBundles []string
+	logsRequests   []*driverpb.RecentLogsRequest
+	logEntries     []*driverpb.LogEntry
+	metrics        *driverpb.MetricsResponse
+
 	healthError error
 }
 
@@ -93,6 +103,58 @@ func (s *fakeServer) WaitForIdle(_ context.Context, duration *driverpb.Duration)
 	defer s.mutex.Unlock()
 	s.idleMillis = append(s.idleMillis, duration.GetMillis())
 	return &driverpb.Empty{}, nil
+}
+
+func (s *fakeServer) LongPress(_ context.Context, point *driverpb.Point) (*driverpb.Empty, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.longPresses = append(s.longPresses, point.GetX(), point.GetY())
+	return &driverpb.Empty{}, nil
+}
+
+func (s *fakeServer) DoubleTap(_ context.Context, point *driverpb.Point) (*driverpb.Empty, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.doubleTaps = append(s.doubleTaps, point.GetX(), point.GetY())
+	return &driverpb.Empty{}, nil
+}
+
+func (s *fakeServer) Swipe(_ context.Context, request *driverpb.SwipeRequest) (*driverpb.Empty, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.swipes = append(s.swipes, request)
+	return &driverpb.Empty{}, nil
+}
+
+func (s *fakeServer) EraseText(_ context.Context, request *driverpb.EraseTextRequest) (*driverpb.Empty, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.erases = append(s.erases, request.GetCharacterCount())
+	return &driverpb.Empty{}, nil
+}
+
+func (s *fakeServer) PressKey(_ context.Context, request *driverpb.PressKeyRequest) (*driverpb.Empty, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.pressedKeys = append(s.pressedKeys, request.GetKey())
+	return &driverpb.Empty{}, nil
+}
+
+func (s *fakeServer) RecentLogs(_ context.Context, request *driverpb.RecentLogsRequest) (*driverpb.LogEntries, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.logsRequests = append(s.logsRequests, request)
+	return &driverpb.LogEntries{Entries: s.logEntries}, nil
+}
+
+func (s *fakeServer) Metrics(_ context.Context, request *driverpb.MetricsRequest) (*driverpb.MetricsResponse, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.metricsBundles = append(s.metricsBundles, request.GetBundleId())
+	if s.metrics != nil {
+		return s.metrics, nil
+	}
+	return &driverpb.MetricsResponse{}, nil
 }
 
 func (s *fakeServer) Hierarchy(_ context.Context, _ *driverpb.Empty) (*driverpb.HierarchyJSON, error) {
@@ -316,5 +378,153 @@ func TestClient_WaitForIdleForwardsMillis(t *testing.T) {
 	}
 	if len(state.fake.idleMillis) != 1 || state.fake.idleMillis[0] != 250 {
 		t.Errorf("idleMillis wrong: %v", state.fake.idleMillis)
+	}
+}
+
+// TestClient_SwipeForwardsEndpointsInOrder pins down that From keeps the start
+// point and To the end point. A from/to transposition would send the swipe in
+// the reverse direction on-device while every other assertion still passed.
+func TestClient_SwipeForwardsEndpointsInOrder(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+
+	if err := client.Swipe(context.Background(), 10, 20, 300, 400, 150*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.fake.swipes) != 1 {
+		t.Fatalf("expected 1 swipe, got %d", len(state.fake.swipes))
+	}
+	got := state.fake.swipes[0]
+	if got.GetFrom().GetX() != 10 || got.GetFrom().GetY() != 20 {
+		t.Errorf("from wrong: %+v", got.GetFrom())
+	}
+	if got.GetTo().GetX() != 300 || got.GetTo().GetY() != 400 {
+		t.Errorf("to wrong: %+v", got.GetTo())
+	}
+	if got.GetDurationMillis() != 150 {
+		t.Errorf("duration wrong: %d", got.GetDurationMillis())
+	}
+}
+
+// TestClient_PointRPCsForwardCoordinates guards against x/y swaps in the point
+// RPCs that have no other field to disambiguate which axis is which.
+func TestClient_PointRPCsForwardCoordinates(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(c *Client) error
+		got  func(s *fakeServer) []int32
+	}{
+		{"LongPress", func(c *Client) error { return c.LongPress(context.Background(), 12, 34) }, func(s *fakeServer) []int32 { return s.longPresses }},
+		{"DoubleTap", func(c *Client) error { return c.DoubleTap(context.Background(), 12, 34) }, func(s *fakeServer) []int32 { return s.doubleTaps }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newHarness(t)
+			client, _ := Dial(state.address)
+			defer client.Close()
+			if err := tt.call(client); err != nil {
+				t.Fatal(err)
+			}
+			got := tt.got(state.fake)
+			if len(got) != 2 || got[0] != 12 || got[1] != 34 {
+				t.Errorf("coordinates wrong: %v", got)
+			}
+		})
+	}
+}
+
+// TestClient_EraseTextForwardsCount catches a count dropped or mistyped on the
+// way to EraseTextRequest.
+func TestClient_EraseTextForwardsCount(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+
+	if err := client.EraseText(context.Background(), 7); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.fake.erases) != 1 || state.fake.erases[0] != 7 {
+		t.Errorf("erase count wrong: %v", state.fake.erases)
+	}
+}
+
+// TestClient_PressKeyForwardsKey catches the logical key name being dropped or
+// rewritten before it reaches the sidecar.
+func TestClient_PressKeyForwardsKey(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+
+	if err := client.PressKey(context.Background(), "back"); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.fake.pressedKeys) != 1 || state.fake.pressedKeys[0] != "back" {
+		t.Errorf("pressed key wrong: %v", state.fake.pressedKeys)
+	}
+}
+
+// TestClient_MetricsMapsResponseFields catches CPU/heap/total being read off
+// the wrong proto field, which would mislabel a memory regression as CPU.
+func TestClient_MetricsMapsResponseFields(t *testing.T) {
+	state := newHarness(t)
+	state.fake.mutex.Lock()
+	state.fake.metrics = &driverpb.MetricsResponse{CpuPercent: 12.5, HeapBytes: 100, TotalMemoryBytes: 200}
+	state.fake.mutex.Unlock()
+	client, _ := Dial(state.address)
+	defer client.Close()
+
+	got, err := client.Metrics(context.Background(), "com.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CPUPercent != 12.5 || got.HeapBytes != 100 || got.TotalMemoryBytes != 200 {
+		t.Errorf("metrics mapping wrong: %+v", got)
+	}
+	if len(state.fake.metricsBundles) != 1 || state.fake.metricsBundles[0] != "com.example" {
+		t.Errorf("bundle id not forwarded: %v", state.fake.metricsBundles)
+	}
+}
+
+// TestClient_RecentLogsSinceBranches pins both arms of the zero-time guard: a
+// zero time must send sinceMillis=0 (don't accidentally floor to epoch via
+// UnixMilli of a zero Time, which is a huge negative number), a real time must
+// forward its unix-millis. The response decode is checked alongside.
+func TestClient_RecentLogsSinceBranches(t *testing.T) {
+	realTime := time.UnixMilli(1_700_000_000_000)
+	tests := []struct {
+		name      string
+		since     time.Time
+		wantMilli int64
+	}{
+		{"zero time forwards 0", time.Time{}, 0},
+		{"real time forwards unix millis", realTime, realTime.UnixMilli()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newHarness(t)
+			state.fake.mutex.Lock()
+			state.fake.logEntries = []*driverpb.LogEntry{{UnixMillis: 5, Level: "E", Tag: "t", Message: "boom"}}
+			state.fake.mutex.Unlock()
+			client, _ := Dial(state.address)
+			defer client.Close()
+
+			logs, err := client.RecentLogs(context.Background(), tt.since, "E")
+			if err != nil {
+				t.Fatal(err)
+			}
+			state.fake.mutex.Lock()
+			defer state.fake.mutex.Unlock()
+			req := state.fake.logsRequests[len(state.fake.logsRequests)-1]
+			if req.GetSinceUnixMillis() != tt.wantMilli {
+				t.Errorf("sinceUnixMillis = %d, want %d", req.GetSinceUnixMillis(), tt.wantMilli)
+			}
+			if req.GetLevelAtLeast() != "E" {
+				t.Errorf("levelAtLeast = %q, want E", req.GetLevelAtLeast())
+			}
+			if len(logs) != 1 || logs[0].Level != "E" || logs[0].Message != "boom" || logs[0].UnixMillis != 5 || logs[0].Tag != "t" {
+				t.Errorf("decoded logs wrong: %+v", logs)
+			}
+		})
 	}
 }
