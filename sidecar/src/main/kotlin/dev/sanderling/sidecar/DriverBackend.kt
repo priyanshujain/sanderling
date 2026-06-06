@@ -31,6 +31,11 @@ interface DriverBackend {
     // serialized pair from the same on-device frame. Backends may override
     // to fuse the two reads more tightly when their native API allows.
     fun snapshot(): SnapshotSample = SnapshotSample(hierarchy(), screenshot())
+
+    // close releases device-side resources on shutdown. The iOS backend must
+    // stop its XCTest runner here: an orphaned runner session auto-restarts
+    // later and hijacks the simulator's gesture daemon mid-run.
+    fun close() {}
 }
 
 data class SnapshotSample(
@@ -177,6 +182,29 @@ private fun walkForStructuralHash(node: com.fasterxml.jackson.databind.JsonNode,
         for (child in children) walkForStructuralHash(child, out)
     }
     out.append(')')
+}
+
+// overlappedDoubleTap fires the second tap while the first is still in
+// flight, so the on-device gap stays tight on transports with high per-tap
+// latency. The overlap can collide with the other tap still executing ("only
+// one gesture can be performed at a time") on either leg; the colliding leg
+// then lands sequentially after the surviving one instead of failing the
+// step.
+internal fun overlappedDoubleTap(tapAction: () -> Unit) {
+    val firstTap = java.util.concurrent.CompletableFuture.runAsync { tapAction() }
+    Thread.sleep(40)
+    try {
+        tapAction()
+    } catch (_: Throwable) {
+        runCatching { firstTap.join() }
+        tapAction()
+        return
+    }
+    try {
+        firstTap.join()
+    } catch (_: Throwable) {
+        tapAction()
+    }
 }
 
 data class MetricsSample(
@@ -595,6 +623,11 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
 
     override fun metrics(bundleId: String) = readProcMetrics(serial, bundleId)
+
+    override fun close() {
+        runCatching { driver.close() }
+        runCatching { dadb.close() }
+    }
 }
 
 private fun buildDadb(serial: String?): dadb.Dadb {
@@ -649,12 +682,103 @@ private fun pngHeight(bytes: ByteArray): Int {
         (bytes[22].toInt() and 0xFF shl 8) or (bytes[23].toInt() and 0xFF)
 }
 
+internal const val IOS_XCTEST_RUNNER_BUNDLE_ID = "dev.mobile.maestro-driver-iosUITests.xctrunner"
+
+// reapOrphanIosRunners kills XCTest runner sessions left over from a prior
+// run. A sidecar that died without its shutdown hook leaves its xcodebuild
+// session alive; xcodebuild later restarts its dead runner, which terminates
+// the active run's session and steals the simulator's gesture daemon. Returns
+// true when an orphaned xcodebuild session was found and killed.
+internal fun reapOrphanIosRunners(udid: String, execute: (List<String>) -> Int): Boolean {
+    val killed = execute(listOf("pkill", "-f", "xcodebuild.*test-without-building.*$udid")) == 0
+    execute(listOf("xcrun", "simctl", "terminate", udid, IOS_XCTEST_RUNNER_BUNDLE_ID))
+    return killed
+}
+
+// WdaRecovery serializes XCTest runner recovery across concurrent RPCs. An
+// IOException on one call does not prove the runner is down (an overlapped
+// gesture can reset a single connection), and a full runner restart costs
+// around 50 seconds of downtime, so recovery probes channel liveness first
+// and only restarts a dead channel. The probe re-runs under the lock so
+// threads queued behind an in-flight restart do not restart again.
+internal class WdaRecovery(
+    private val isAlive: () -> Boolean,
+    private val restart: () -> Unit,
+    private val log: (String) -> Unit = ::println,
+) {
+    private val lock = java.util.concurrent.locks.ReentrantLock()
+
+    // run executes block, recovering the channel on IO failure. replay re-runs
+    // the block afterwards and is only safe for idempotent reads: an action
+    // can fail client-side after the device already applied it, so replaying
+    // types text or taps twice. Non-idempotent actions surface UNAVAILABLE,
+    // which the runner treats as transient.
+    fun <T> run(replay: Boolean, block: () -> T): T {
+        return try {
+            block()
+        } catch (e: Exception) {
+            if (!isIoFailure(e)) throw e
+            recover(e)
+            if (!replay) {
+                throw io.grpc.Status.UNAVAILABLE
+                    .withDescription("connection dropped mid-action; the action may have applied: ${e.message}")
+                    .withCause(e).asRuntimeException()
+            }
+            try {
+                block()
+            } catch (retryErr: Exception) {
+                if (!isIoFailure(retryErr)) throw retryErr
+                throw io.grpc.Status.UNAVAILABLE
+                    .withDescription("read retry failed after channel recovery: ${retryErr.message}")
+                    .withCause(retryErr).asRuntimeException()
+            }
+        }
+    }
+
+    private fun isIoFailure(e: Exception): Boolean =
+        generateSequence(e as Throwable) { it.cause }.any { it is java.io.IOException }
+
+    private fun recover(cause: Exception) {
+        lock.lock()
+        try {
+            if (isAlive()) {
+                log("channel alive after $cause; skipping runner restart")
+                return
+            }
+            log("channel dead after $cause; restarting the XCTest runner")
+            val startedAt = System.currentTimeMillis()
+            try {
+                restart()
+            } catch (restartErr: Exception) {
+                throw IllegalStateException("WDA reconnect failed: $restartErr", cause)
+            }
+            log("XCTest runner restarted in ${System.currentTimeMillis() - startedAt} ms")
+        } finally {
+            lock.unlock()
+        }
+    }
+}
+
 class IosDriverBackend(private val udid: String) : DriverBackend {
     private lateinit var driver: maestro.drivers.IOSDriver
     private lateinit var localDevice: ios.LocalIOSDevice
-    private val reconnectLock = java.util.concurrent.locks.ReentrantLock()
+    private lateinit var installer: xcuitest.installer.LocalXCTestInstaller
+    private val recovery by lazy {
+        WdaRecovery(
+            isAlive = { runCatching { installer.isChannelAlive() }.getOrElse { false } },
+            restart = { driver.open(); warmup() },
+        )
+    }
 
     init {
+        val reaped = reapOrphanIosRunners(udid) { command ->
+            runCatching { ProcessBuilder(command).start().waitFor() }.getOrDefault(1)
+        }
+        if (reaped) {
+            println("terminated orphaned XCTest runner session for $udid")
+            // Give the killed session a beat to tear down before installing ours.
+            Thread.sleep(1000)
+        }
         val wdaPort = maestro.utils.SocketUtils.nextFreePort(22000, 23000)
         val tempFileHandler = maestro.utils.TempFileHandler()
         val simctlDevice = device.SimctlIOSDevice(
@@ -667,7 +791,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
             context = xcuitest.installer.Context.CLI,
             snapshotKeyHonorModalViews = null,
         )
-        val installer = xcuitest.installer.LocalXCTestInstaller(
+        installer = xcuitest.installer.LocalXCTestInstaller(
             deviceId = udid,
             host = "127.0.0.1",
             deviceType = util.IOSDeviceType.SIMULATOR,
@@ -714,25 +838,8 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
         warmupErr?.let { throw IllegalStateException("WDA warmup failed after 3 attempts: $it") }
     }
 
-    private fun <T> withReconnect(block: () -> T): T {
-        return try {
-            block()
-        } catch (e: Exception) {
-            val isIoFailure = generateSequence(e as Throwable) { it.cause }
-                .any { it is java.io.IOException }
-            if (!isIoFailure) throw e
-            reconnectLock.lock()
-            try {
-                try { driver.open(); warmup() }
-                catch (reconnectErr: Exception) {
-                    throw IllegalStateException("WDA reconnect failed: $reconnectErr", e)
-                }
-            } finally {
-                reconnectLock.unlock()
-            }
-            block()
-        }
-    }
+    private fun <T> withReconnect(replay: Boolean = true, block: () -> T): T =
+        recovery.run(replay, block)
 
     override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) = withReconnect {
         runCatching { driver.stopApp(bundleId) }
@@ -742,38 +849,33 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
 
     override fun terminate(bundleId: String) = withReconnect { driver.stopApp(bundleId) }
 
-    override fun tap(x: Int, y: Int) = withReconnect { driver.tap(maestro.Point(x, y)) }
+    override fun tap(x: Int, y: Int) = withReconnect(replay = false) { driver.tap(maestro.Point(x, y)) }
 
     // The second tap request is already queued at the XCTest runner while the
     // first executes, so the on-device gap collapses to the runner's
     // turnaround instead of a full transport round trip. Sequential requests
     // leave a gap wide enough for the app to navigate between the taps.
-    override fun doubleTap(x: Int, y: Int): Unit = withReconnect {
-        val point = maestro.Point(x, y)
-        val firstTap = java.util.concurrent.CompletableFuture.runAsync { driver.tap(point) }
-        Thread.sleep(40)
-        driver.tap(point)
-        firstTap.join()
-        Unit
+    override fun doubleTap(x: Int, y: Int): Unit = withReconnect(replay = false) {
+        overlappedDoubleTap { driver.tap(maestro.Point(x, y)) }
     }
 
-    override fun longPress(x: Int, y: Int) = withReconnect { driver.longPress(maestro.Point(x, y)) }
+    override fun longPress(x: Int, y: Int) = withReconnect(replay = false) { driver.longPress(maestro.Point(x, y)) }
 
-    override fun tapSelector(selector: String) = withReconnect {
+    override fun tapSelector(selector: String) = withReconnect(replay = false) {
         val root = driver.contentDescriptor(false)
         val bounds = findBoundsBySelector(root, selector) ?: return@withReconnect
         driver.tap(maestro.Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2))
     }
 
-    override fun inputText(text: String) = withReconnect { driver.inputText(text) }
+    override fun inputText(text: String) = withReconnect(replay = false) { driver.inputText(text) }
 
-    override fun eraseText(characterCount: Int) = withReconnect { driver.eraseText(characterCount) }
+    override fun eraseText(characterCount: Int) = withReconnect(replay = false) { driver.eraseText(characterCount) }
 
-    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) = withReconnect {
+    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) = withReconnect(replay = false) {
         driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))
     }
 
-    override fun pressKey(key: String) = withReconnect {
+    override fun pressKey(key: String) = withReconnect(replay = false) {
         StubDriverBackend.KEY_MAP[key]?.let { keyCode ->
             keyCodeToMaestro(keyCode)?.let { driver.pressKey(it) }
         }
@@ -808,6 +910,13 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
 
     override fun metrics(bundleId: String) = MetricsSample(0.0, 0L, 0L)
+
+    // close stops the XCTest runner session (kills the xcodebuild process and
+    // uninstalls the runner app). Skipping this leaves an orphaned session
+    // that xcodebuild later restarts, killing the next run's session.
+    override fun close() {
+        runCatching { driver.close() }
+    }
 }
 
 private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? {

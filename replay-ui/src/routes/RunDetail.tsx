@@ -14,6 +14,7 @@ import Tabs, { type TabDefinition } from "../components/Tabs";
 import { useStep } from "../hooks/useStep";
 import { useKeyboardNav } from "../hooks/useKeyboardNav";
 import { useTheme } from "../hooks/useTheme";
+import { deviceSpaceOf } from "../lib/device-space";
 
 function basename(specPath: string): string {
   const index = specPath.lastIndexOf("/");
@@ -129,12 +130,21 @@ export default function RunDetail() {
   const witnessesBefore = currentStep?.witnesses;
   const witnessesAfter = nextStep?.witnesses ?? witnessesBefore;
   const exceptionsForStep = currentStep?.exceptions;
+  const beforeSpace = deviceSpaceOf(currentStep?.hierarchy);
+  const afterSpace = deviceSpaceOf(nextStep?.hierarchy ?? currentStep?.hierarchy);
 
   const beforeTabs: TabDefinition[] = [
     {
       id: "screenshot",
       label: "Screenshot",
-      content: <Screenshot src={beforeScreenshot} action={currentStep?.next_action} />,
+      content: (
+        <Screenshot
+          src={beforeScreenshot}
+          action={currentStep?.next_action}
+          deviceWidth={beforeSpace?.width}
+          deviceHeight={beforeSpace?.height}
+        />
+      ),
     },
     {
       id: "snapshots",
@@ -194,7 +204,14 @@ export default function RunDetail() {
     {
       id: "screenshot",
       label: "Screenshot",
-      content: <Screenshot src={afterScreenshot} action={undefined} />,
+      content: (
+        <Screenshot
+          src={afterScreenshot}
+          action={undefined}
+          deviceWidth={afterSpace?.width}
+          deviceHeight={afterSpace?.height}
+        />
+      ),
     },
     {
       id: "snapshots",

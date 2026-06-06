@@ -522,6 +522,36 @@ func TestRunner_StampsHierarchyResolvedBoundsAndResiduals(t *testing.T) {
 	}
 }
 
+// TestTraceActionFor_StaleCoordinatesDoNotOverrideTreeCenter pins the stamp
+// to applyAction's resolution rule: when On resolves in the tree, the trace
+// tap point must be the tree center even if the action carries stale X/Y
+// from an earlier tick.
+func TestTraceActionFor_StaleCoordinatesDoNotOverrideTreeCenter(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"resource-id":"next","bounds":"[100,200,300,400]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	action := verifier.Action{Kind: verifier.ActionKindTap, On: "id:next", X: 50, Y: 60}
+
+	traceAction := traceActionFor(action, tree)
+	if traceAction.TapPoint == nil {
+		t.Fatal("expected a tap point")
+	}
+	if traceAction.TapPoint.X != 200 || traceAction.TapPoint.Y != 300 {
+		t.Errorf("tap point = (%d,%d), want tree center (200,300)",
+			traceAction.TapPoint.X, traceAction.TapPoint.Y)
+	}
+	if traceAction.ResolvedBounds == nil {
+		t.Fatal("expected resolved bounds")
+	}
+	if traceAction.ResolvedBounds.X != 100 || traceAction.ResolvedBounds.Y != 200 {
+		t.Errorf("resolved bounds origin = (%d,%d), want (100,200)",
+			traceAction.ResolvedBounds.X, traceAction.ResolvedBounds.Y)
+	}
+}
+
 func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 	state := newHarness(t)
 	state.mock.Failures[mockdriver.ActionWaitForIdle] = errors.New("sidecar lost gRPC stream")
@@ -560,21 +590,66 @@ func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
 		t.Fatalf("applyAction: %v", err)
 	}
 	actions := driverMock.Actions()
-	if len(actions) != 3 {
-		t.Fatalf("want tap, erase, input; got %v", actions)
+	if len(actions) != 4 {
+		t.Fatalf("want tap, wait_for_idle, erase, input; got %v", actions)
 	}
 	if actions[0].Kind != mockdriver.ActionTap {
 		t.Errorf("first action = %v, want tap", actions[0].Kind)
 	}
-	if actions[1].Kind != mockdriver.ActionEraseText || actions[1].CharacterCount != len("stale-value") {
-		t.Errorf("second action = %+v, want erase_text of %d characters", actions[1], len("stale-value"))
+	if actions[1].Kind != mockdriver.ActionWaitForIdle {
+		t.Errorf("second action = %v, want wait_for_idle (settle after focus tap)", actions[1].Kind)
 	}
-	if actions[2].Kind != mockdriver.ActionInputText || actions[2].Text != "alice" {
-		t.Errorf("third action = %+v, want input_text alice", actions[2])
+	if actions[2].Kind != mockdriver.ActionEraseText || actions[2].CharacterCount != len("stale-value") {
+		t.Errorf("third action = %+v, want erase_text of %d characters", actions[2], len("stale-value"))
+	}
+	if actions[3].Kind != mockdriver.ActionInputText || actions[3].Text != "alice" {
+		t.Errorf("fourth action = %+v, want input_text alice", actions[3])
+	}
+}
+
+// TestApplyAction_InputTextWithoutTargetSkipsSettle pins that the post-tap
+// settle only runs when a focus tap actually happened: with no resolvable
+// target there is no keyboard animation to absorb.
+func TestApplyAction_InputTextWithoutTargetSkipsSettle(t *testing.T) {
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindInputText, X: -1, Y: -1, Text: "alice"}
+
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
+		t.Fatalf("applyAction: %v", err)
+	}
+	for _, recorded := range driverMock.Actions() {
+		if recorded.Kind == mockdriver.ActionWaitForIdle {
+			t.Errorf("no focus tap happened; settle must be skipped: %v", driverMock.Actions())
+		}
+	}
+}
+
+// TestApplyAction_InputTextSkipsEraseForReplacingDriver pins that a driver
+// asserting the TextReplacer capability never pays the pre-erase round-trip:
+// its InputText already replaces the field's content.
+func TestApplyAction_InputTextSkipsEraseForReplacingDriver(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"resource-id":"username","text":"stale-value","bounds":"[10,10,500,100]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.ReplacesText = true
+	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
+
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
+		t.Fatalf("applyAction: %v", err)
+	}
+	if containsAction(driverMock.Actions(), mockdriver.ActionEraseText, "") {
+		t.Errorf("replacing driver must not be asked to erase: %v", driverMock.Actions())
+	}
+	if !containsAction(driverMock.Actions(), mockdriver.ActionInputText, "") {
+		t.Errorf("expected InputText, got %v", driverMock.Actions())
 	}
 }
 
@@ -588,7 +663,7 @@ func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
 		t.Fatalf("applyAction: %v", err)
 	}
 	if containsAction(driverMock.Actions(), mockdriver.ActionEraseText, "") {
@@ -602,7 +677,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 		driverMock.Failures[mockdriver.ActionTapSelector] = errors.New("adb unreachable")
 		action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-		err := applyAction(context.Background(), driverMock, action, nil)
+		err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond)
 		if err == nil {
 			t.Fatalf("expected focus tap failure to surface, got nil")
 		}
@@ -615,7 +690,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 		driverMock.Failures[mockdriver.ActionTap] = errors.New("tap driver error")
 		action := verifier.Action{Kind: verifier.ActionKindInputText, X: 10, Y: 20, Text: "alice"}
 
-		err := applyAction(context.Background(), driverMock, action, nil)
+		err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond)
 		if err == nil {
 			t.Fatalf("expected focus tap failure to surface, got nil")
 		}
@@ -629,7 +704,7 @@ func TestApplyAction_V8InputTextTapsAtCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 50, Y: 100, Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	actions := driverMock.Actions()
@@ -648,7 +723,7 @@ func TestApplyAction_V8InputTextAtOriginStillTaps(t *testing.T) {
 	// InputText with (0,0) is a deliberate edge tap, not a sentinel).
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 0, Y: 0, Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	if !containsAction(driverMock.Actions(), mockdriver.ActionTap, "") {
@@ -660,7 +735,7 @@ func TestApplyAction_DoubleTapDispatchesDoubleTapAtCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, X: 100, Y: 200}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	taps := 0
@@ -678,7 +753,7 @@ func TestApplyAction_DoubleTapDispatchesDoubleTapSelector(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, On: "id:save"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	taps := 0
@@ -696,7 +771,7 @@ func TestApplyAction_LongPressDispatchesAtResolvedCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindLongPress, X: 120, Y: 240}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	found := false
@@ -722,7 +797,7 @@ func TestApplyAction_ScrollWithPrecomputedEndpointsSwipes(t *testing.T) {
 		DurationMillis: 300,
 	}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	found := false
@@ -745,7 +820,7 @@ func TestApplyAction_ScrollDirectionUsesInversion(t *testing.T) {
 	}
 	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "down", On: "id:list"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	var swipe *mockdriver.Action
@@ -774,7 +849,7 @@ func TestApplyAction_ScrollScreenFallback(t *testing.T) {
 	// On unset: container falls back to whole-screen (root) bounds.
 	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "up"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	var swipe *mockdriver.Action
@@ -956,17 +1031,18 @@ func TestIsTransitionalHierarchy_DetectsMultipleScreens(t *testing.T) {
 	}
 }
 
-// TestRunner_TransitionalSkipsVerifier feeds a driver whose hierarchy stays
-// transitional (multiple route-level *Screen ids) on every Snapshot call.
-// Every step must be marked transitional in the trace, no violations may be
-// emitted (the verifier never ran), and the summary must stay clean even
-// though the spec is a guaranteed always-false predicate.
-func TestRunner_TransitionalSkipsVerifier(t *testing.T) {
+// TestRunner_StableTransitionalTreeIsVerified feeds a driver whose hierarchy
+// constantly carries two route-level *Screen ids but never changes between
+// retry attempts. Such a tree is a settled state that merely matches the
+// transitional heuristic, so the runner must verify it (the always-false
+// predicate's violation surfaces) instead of skipping the verifier forever.
+func TestRunner_StableTransitionalTreeIsVerified(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"root"},"children":[
 	  {"attributes":{"resource-id":"AddAccountScreen"},"children":[]},
 	  {"attributes":{"resource-id":"HomeScreen"},"children":[]}
 	]}`
+	state.mock.ImageData = driver.Image{PNG: []byte("fakepng"), Width: 100, Height: 200}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -983,8 +1059,77 @@ func TestRunner_TransitionalSkipsVerifier(t *testing.T) {
 	if summary.Steps == 0 {
 		t.Fatal("expected at least one step")
 	}
+	if !containsProperty(summary.Violations, "balanceNonNegative") {
+		t.Fatalf("expected verifier to run on a stable two-screen tree, got %v", summary.Violations)
+	}
+
+	type traceLine struct {
+		Step         int  `json:"step"`
+		Transitional bool `json:"transitional"`
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var line traceLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		if line.Transitional {
+			t.Errorf("step %d: stable tree must not be marked transitional", line.Step)
+		}
+	}
+
+	// The early break must still persist the step's screenshot.
+	screenshotPath := filepath.Join(state.writer.Directory(), "screenshots", "step-00001.png")
+	if _, err := os.Stat(screenshotPath); err != nil {
+		t.Errorf("expected screenshot for step 1 at %s: %v", screenshotPath, err)
+	}
+}
+
+// snapshotCrossFade wraps a mock driver so every Snapshot call returns a
+// transitional two-screen tree whose JSON differs from the previous call,
+// mimicking a genuine cross-fade in flight.
+type snapshotCrossFade struct {
+	*mockdriver.Driver
+	calls int
+}
+
+func (d *snapshotCrossFade) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	d.calls++
+	_, image, err := d.Driver.Snapshot(ctx)
+	hierarchyJSON := fmt.Sprintf(`{"attributes":{"resource-id":"root"},"children":[
+	  {"attributes":{"resource-id":"AddAccountScreen","text":"frame-%d"},"children":[]},
+	  {"attributes":{"resource-id":"HomeScreen"},"children":[]}
+	]}`, d.calls)
+	return hierarchyJSON, image, err
+}
+
+// TestRunner_GenuineCrossFadeStillRetried pins the existing behavior for real
+// transitions: a tree that keeps changing between retry attempts exhausts the
+// budget, stays transitional, and the verifier is skipped for the step.
+func TestRunner_GenuineCrossFadeStillRetried(t *testing.T) {
+	state := newHarnessWithSpec(t, violationSpec)
+	wrapped := &snapshotCrossFade{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    200 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps == 0 {
+		t.Fatal("expected at least one step")
+	}
 	if len(summary.Violations) != 0 {
-		t.Fatalf("verifier must be skipped on transitional steps; got %v", summary.Violations)
+		t.Fatalf("verifier must be skipped on cross-fade steps; got %v", summary.Violations)
 	}
 
 	type traceLine struct {
@@ -1176,8 +1321,8 @@ func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
 	if len(summary.Violations) != 0 {
 		t.Errorf("transient apply error must not surface as a violation, got %v", summary.Violations)
 	}
-	if !strings.Contains(logBuf.String(), "transient apply error") {
-		t.Errorf("expected transient-apply WARN log, got %q", logBuf.String())
+	if !strings.Contains(logBuf.String(), "apply error; marking step transitional") {
+		t.Errorf("expected apply-error WARN log, got %q", logBuf.String())
 	}
 
 	type traceLine struct {
@@ -1208,34 +1353,116 @@ func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
 	}
 }
 
-// TestIsTransientApplyError_Classification covers the helper's matching rules
-// directly so future code changes don't quietly drop a transient case.
-func TestIsTransientApplyError_Classification(t *testing.T) {
-	cleanCtx := context.Background()
-	cancelledCtx, cancel := context.WithCancel(context.Background())
-	cancel()
+// internalApplyErrorFailFirst wraps a mock driver so the first InputText call
+// fails with the bare Internal error the iOS runner's input handler emits
+// when it chokes (HTTP 500 with an empty body), then recovers.
+type internalApplyErrorFailFirst struct {
+	*mockdriver.Driver
+	calls int
+}
 
+func (d *internalApplyErrorFailFirst) TapSelector(ctx context.Context, selector string) error {
+	d.calls++
+	if d.calls == 1 {
+		return status.Error(codes.Internal, "UnknownFailure(errorResponse=Request for inputText failed, code: 500, body: )")
+	}
+	return d.Driver.TapSelector(ctx, selector)
+}
+
+// TestRunner_InternalApplyErrorMarksTransitional pins the policy that a
+// one-off device-side failure (e.g. the iOS input handler's bare 500) is
+// absorbed as a transitional step instead of killing the run. Persistent
+// failure is covered by the consecutive-failure cap.
+func TestRunner_InternalApplyErrorMarksTransitional(t *testing.T) {
+	state := newHarness(t)
+	wrapped := &internalApplyErrorFailFirst{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    300 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run must not return on a one-off internal apply error, got %v", err)
+	}
+	if summary.Steps < 2 {
+		t.Fatalf("need at least 2 steps to prove the loop continued, got %d", summary.Steps)
+	}
+}
+
+// TestIsWDADrop_Classification pins the fatal-vs-recoverable boundary: only
+// the sidecar's explicit reconnect-failure signal is a drop. A structured
+// UNAVAILABLE that happens to embed raw exception text (e.g. ConnectException
+// from the original failure) means the sidecar already recovered and the run
+// must continue.
+func TestIsWDADrop_Classification(t *testing.T) {
 	cases := []struct {
 		name string
-		ctx  context.Context
 		err  error
 		want bool
 	}{
-		{"nil error", cleanCtx, nil, false},
-		{"deadline exceeded", cleanCtx, status.Error(codes.DeadlineExceeded, "boom"), true},
-		{"unavailable", cleanCtx, status.Error(codes.Unavailable, "boom"), true},
-		{"internal wrapping deadline", cleanCtx, status.Error(codes.Internal, "io.grpc.StatusRuntimeException: DEADLINE_EXCEEDED: ..."), true},
-		{"internal wrapping unavailable", cleanCtx, status.Error(codes.Internal, "io.grpc.StatusRuntimeException: UNAVAILABLE: ..."), true},
-		{"internal generic", cleanCtx, status.Error(codes.Internal, "boom"), false},
-		{"raw context deadline", cleanCtx, context.DeadlineExceeded, true},
-		{"run context cancelled overrides", cancelledCtx, status.Error(codes.DeadlineExceeded, "boom"), false},
+		{
+			"unavailable with embedded ConnectException is recovered",
+			status.Error(codes.Unavailable, "connection dropped mid-action; the action may have applied: java.net.ConnectException: Failed to connect to /127.0.0.1:22161"),
+			false,
+		},
+		{
+			"reconnect failure is a drop",
+			status.Error(codes.Internal, "java.lang.IllegalStateException: WDA reconnect failed: IOSDriverTimeoutException"),
+			true,
+		},
+		{"generic internal is not a drop", status.Error(codes.Internal, "boom"), false},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if got := isTransientApplyError(testCase.ctx, testCase.err); got != testCase.want {
+			if got := isWDADrop(testCase.err); got != testCase.want {
 				t.Errorf("got %v, want %v", got, testCase.want)
 			}
 		})
+	}
+}
+
+// tapSelectorAlwaysUnavailable wraps a mock driver so every TapSelector call
+// fails with a transient Unavailable error, mimicking a device whose channel
+// never recovers between steps.
+type tapSelectorAlwaysUnavailable struct {
+	*mockdriver.Driver
+}
+
+func (d *tapSelectorAlwaysUnavailable) TapSelector(ctx context.Context, selector string) error {
+	return status.Error(codes.Unavailable, "connection dropped mid-action; the action may have applied")
+}
+
+// TestRunner_ConsecutiveTransientApplyFailuresAbort verifies the run fails
+// fast once transient apply errors form an unbroken streak instead of burning
+// the whole budget on a wedged device.
+func TestRunner_ConsecutiveTransientApplyFailuresAbort(t *testing.T) {
+	state := newHarness(t)
+	wrapped := &tapSelectorAlwaysUnavailable{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err == nil {
+		t.Fatal("Run must abort after consecutive transient apply failures")
+	}
+	if !strings.Contains(err.Error(), "consecutive failures") {
+		t.Errorf("expected consecutive-failure abort, got %v", err)
+	}
+	// The aborting step returns before it is recorded, so the summary holds
+	// the steps before the cap-hitting one.
+	if summary.Steps != maxConsecutiveApplyFailures-1 {
+		t.Errorf("run must stop at the failure cap, got %d recorded steps", summary.Steps)
 	}
 }
 

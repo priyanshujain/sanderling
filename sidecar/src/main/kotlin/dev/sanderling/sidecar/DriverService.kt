@@ -186,11 +186,29 @@ class DriverService(
         }
     }
 
+    // shutdown runs on the JVM shutdown path (SIGTERM from the runner). It
+    // terminates the app under test so the simulator is not left showing a
+    // stale session, then closes the backend so the iOS XCTest runner process
+    // dies with us instead of being orphaned.
+    fun shutdown() {
+        runCatching { launchedBundleId.getAndSet(null)?.let { backend.terminate(it) } }
+        runCatching { backend.close() }
+    }
+
     private inline fun <T> runRpc(observer: StreamObserver<T>, block: () -> T) {
         try {
             observer.onNext(block())
             observer.onCompleted()
-        } catch (cause: Exception) {
+        } catch (cause: io.grpc.StatusRuntimeException) {
+            // A backend that already chose a status code (e.g. UNAVAILABLE for
+            // a dropped-mid-action connection) keeps it, so the runner can
+            // tell transient failures from fatal ones.
+            observer.onError(cause)
+        } catch (cause: Throwable) {
+            // Throwable, not Exception: the vendored iOS client throws
+            // failures that do not extend Exception, and an uncaught one
+            // kills the RPC as a channel-level Unknown instead of a status
+            // the runner can classify.
             observer.onError(io.grpc.Status.INTERNAL.withDescription(cause.toString())
                 .withCause(cause).asRuntimeException())
         }

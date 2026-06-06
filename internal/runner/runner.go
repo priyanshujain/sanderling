@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -81,6 +79,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
 	stepIndex := 0
+	consecutiveApplyFailures := 0
 	var lastAction *verifier.Action
 	var lastLogTime time.Time
 	for time.Now().Before(deadline) {
@@ -227,19 +226,29 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 
 		applySkipped := false
 		if nextErr == nil {
-			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
+			if err := applyAction(ctx, options.Driver, nextAction, tree, options.IdleTimeout); err != nil {
 				if isWDADrop(err) {
-					return summary, fmt.Errorf("step %d: iOS XCTest runner lost connection - known WDA startup flake, re-run the test: %w", stepIndex, err)
+					return summary, fmt.Errorf("step %d: the iOS XCTest runner could not be restarted - re-run the test: %w", stepIndex, err)
 				}
-				if isTransientApplyError(ctx, err) {
-					logger.Warn("transient apply error; marking step transitional", "step", stepIndex, "err", err)
-					transitional = true
-					applySkipped = true
-					lastAction = nil
-				} else {
+				if ctx.Err() != nil {
 					return summary, fmt.Errorf("step %d apply: %w", stepIndex, err)
 				}
+				// Every apply error is a device-side condition (a dropped
+				// gesture, a typing request the runner's input handler choked
+				// on, an RPC deadline). None of them individually justify
+				// killing a fuzz run; what does is an unbroken streak, which
+				// means the device is wedged. The step is marked transitional
+				// so the verifier never sees a state the action did not reach.
+				consecutiveApplyFailures++
+				if consecutiveApplyFailures >= maxConsecutiveApplyFailures {
+					return summary, fmt.Errorf("step %d apply: %d consecutive failures; the device is not recovering: %w", stepIndex, consecutiveApplyFailures, err)
+				}
+				logger.Warn("apply error; marking step transitional", "step", stepIndex, "err", err)
+				transitional = true
+				applySkipped = true
+				lastAction = nil
 			} else {
+				consecutiveApplyFailures = 0
 				actionCopy := nextAction
 				lastAction = &actionCopy
 			}
@@ -452,7 +461,7 @@ func settleForForeground(ctx context.Context, options Options) {
 	cancel()
 }
 
-func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
+func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree, idleTimeout time.Duration) error {
 	switch action.Kind {
 	case verifier.ActionKindTap:
 		x, y, ok := resolveCoordinates(action, tree)
@@ -488,22 +497,36 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		}
 		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindInputText:
+		tapped := false
 		if x, y, ok := resolveCoordinates(action, tree); ok {
 			if err := drv.Tap(ctx, x, y); err != nil {
 				return err
 			}
+			tapped = true
 		} else if action.On != "" {
 			if err := drv.TapSelector(ctx, action.On); err != nil {
 				return err
 			}
+			tapped = true
+		}
+		// The focus tap raises the keyboard. Settle before sending key
+		// events so the keyboard animation cannot race them into the wrong
+		// field (or drop them entirely).
+		if tapped {
+			idleCtx, idleCancel := context.WithTimeout(ctx, idleTimeout)
+			_ = drv.WaitForIdle(idleCtx, idleTimeout)
+			idleCancel()
 		}
 		// InputText replaces the field's content: erase what the target
 		// holds before typing. Appending instead lets repeated draws grow
 		// the field without bound (e.g. into a max-length validation error
 		// the fuzzer can never escape) and makes retried typing land twice.
-		if count := existingTextLength(action, tree); count > 0 {
-			if err := drv.EraseText(ctx, count); err != nil {
-				return err
+		// Drivers whose InputText already replaces skip the erase entirely.
+		if !inputReplacesText(drv) {
+			if count := existingTextLength(action, tree); count > 0 {
+				if err := drv.EraseText(ctx, count); err != nil {
+					return err
+				}
 			}
 		}
 		return drv.InputText(ctx, action.Text)
@@ -554,6 +577,13 @@ func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) 
 		})
 	}
 	return result
+}
+
+// inputReplacesText reports whether the driver's InputText replaces existing
+// content, making the runner's pre-erase redundant.
+func inputReplacesText(drv driver.DeviceDriver) bool {
+	replacer, ok := drv.(driver.TextReplacer)
+	return ok && replacer.ReplacesTextOnInput()
 }
 
 // existingTextLength returns the character count of the InputText target's
@@ -671,6 +701,7 @@ const (
 // transient state.
 func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (tree *hierarchy.Tree, transitional bool, err error) {
 	var pngBytes []byte
+	var previousJSON string
 retryLoop:
 	for attempt := range transitionalRetryAttempts {
 		hierarchyJSON, image, snapshotErr := options.Driver.Snapshot(ctx)
@@ -684,6 +715,14 @@ retryLoop:
 		if err != nil || !isTransitionalHierarchy(tree) {
 			break
 		}
+		// A tree unchanged since the previous attempt is a settled state
+		// that merely matches the heuristic (persistent overlay, both route
+		// ids alive at rest), not a cross-fade in flight: verify it instead
+		// of burning the retry budget and skipping the verifier forever.
+		if attempt > 0 && hierarchyJSON == previousJSON {
+			break
+		}
+		previousJSON = hierarchyJSON
 		if attempt == transitionalRetryAttempts-1 {
 			transitional = true
 			break
@@ -760,29 +799,23 @@ func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action 
 	return traceAction
 }
 
-// stampSelectorTarget mirrors applyAction's coordinate-resolution rule so the
-// trace records the same point the runner taps.
+// stampSelectorTarget records the element bounds the selector resolved to and
+// derives the tap point through resolveCoordinates, the same rule applyAction
+// dispatches with, so the trace can never record a different point than the
+// one tapped.
 func stampSelectorTarget(traceAction *trace.Action, action verifier.Action, tree *hierarchy.Tree) {
-	if action.X > 0 && action.Y > 0 {
-		traceAction.TapPoint = &trace.PointRecord{X: action.X, Y: action.Y}
-		return
+	if action.On != "" && tree != nil {
+		if element := tree.Find(action.On); element != nil {
+			bounds := element.Bounds
+			traceAction.ResolvedBounds = &trace.BoundsRecord{
+				X:      bounds.Left,
+				Y:      bounds.Top,
+				Width:  bounds.Width(),
+				Height: bounds.Height(),
+			}
+		}
 	}
-	if tree == nil || action.On == "" {
-		return
-	}
-	element := tree.Find(action.On)
-	if element == nil {
-		return
-	}
-	bounds := element.Bounds
-	traceAction.ResolvedBounds = &trace.BoundsRecord{
-		X:      bounds.Left,
-		Y:      bounds.Top,
-		Width:  bounds.Width(),
-		Height: bounds.Height(),
-	}
-	x, y := bounds.Center()
-	if x > 0 && y > 0 {
+	if x, y, ok := resolveCoordinates(action, tree); ok {
 		traceAction.TapPoint = &trace.PointRecord{X: x, Y: y}
 	}
 }
@@ -888,34 +921,18 @@ func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessa
 	return encoded, firstErr
 }
 
+// maxConsecutiveApplyFailures bounds how many transient apply failures in a
+// row the run tolerates before aborting. One or two absorb a runner restart;
+// an unbroken streak means the device is wedged and the rest of the budget
+// would be spent doing nothing.
+const maxConsecutiveApplyFailures = 3
+
+// isWDADrop reports that the sidecar could not restart the iOS XCTest
+// runner: the channel is gone for good and the run must abort. Transient
+// drops are classified by the sidecar itself (it reconnects and surfaces
+// UNAVAILABLE), so matching on raw exception text like "ConnectException"
+// here would kill runs the sidecar already recovered.
 func isWDADrop(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "ConnectException") ||
-		(strings.Contains(msg, "code = Internal") && strings.Contains(msg, "SocketException"))
+	return strings.Contains(err.Error(), "WDA reconnect failed")
 }
 
-// isTransientApplyError reports whether an applyAction failure is a transient
-// device-side hang (sidecar RPC deadline, momentary unavailability) rather than
-// a fatal condition. Such steps are recorded as transitional and the loop
-// continues. The run context being cancelled is never transient: it means the
-// caller wants to stop.
-func isTransientApplyError(runCtx context.Context, err error) bool {
-	if err == nil || runCtx.Err() != nil {
-		return false
-	}
-	if s, ok := status.FromError(err); ok {
-		switch s.Code() {
-		case codes.DeadlineExceeded, codes.Unavailable:
-			return true
-		case codes.Internal:
-			message := s.Message()
-			if strings.Contains(message, "DEADLINE_EXCEEDED") || strings.Contains(message, "UNAVAILABLE") {
-				return true
-			}
-		}
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	return false
-}

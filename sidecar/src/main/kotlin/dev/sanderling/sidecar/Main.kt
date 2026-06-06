@@ -30,11 +30,33 @@ class SidecarServer(
 
     fun stop() {
         grpcServer?.shutdown()
+        service.shutdown()
         shutdownLatch.countDown()
     }
 }
 
+// quietExpectedDriverNoise silences vendored loggers whose ERROR lines fire
+// on expected paths: CommandLineUtils logs every nonzero simctl exit even
+// when the caller absorbs it (terminating an app that is not running), and
+// XCTestDriverClient logs every non-2xx response including gesture
+// collisions the double-tap path retries. AndroidDriver logs an ERROR for
+// every view-hierarchy fetch the on-device server cancels or times out, which
+// happens routinely while the UI is animating; stabilitySnapshot polls the
+// hierarchy on a sub-second cadence and swallows those throws to keep polling,
+// so each absorbed failure produces a log line with no effect on the run.
+// Real failures still reach the runner as gRPC status errors, so nothing is
+// lost from run output.
+private fun quietExpectedDriverNoise() {
+    org.apache.logging.log4j.core.config.Configurator.setLevel(
+        "util.CommandLineUtils", org.apache.logging.log4j.Level.OFF)
+    org.apache.logging.log4j.core.config.Configurator.setLevel(
+        "xcuitest.XCTestDriverClient", org.apache.logging.log4j.Level.OFF)
+    org.apache.logging.log4j.core.config.Configurator.setLevel(
+        "maestro.drivers.AndroidDriver", org.apache.logging.log4j.Level.OFF)
+}
+
 fun main(arguments: Array<String>) {
+    quietExpectedDriverNoise()
     val port = arguments.indexOf("--port").let { index ->
         if (index >= 0 && index + 1 < arguments.size) arguments[index + 1].toInt() else 0
     }

@@ -54,6 +54,45 @@ class DriverServiceTest {
         assertEquals(null, backend.lastBundleId)
     }
 
+    @Test fun shutdownTerminatesLaunchedAppAndClosesBackend() {
+        var terminated: String? = null
+        var closed = false
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun terminate(bundleId: String) { terminated = bundleId }
+            override fun close() { closed = true }
+        }
+        val serverName = InProcessServerBuilder.generateName()
+        val service = DriverService(platform = "android", backend = backend)
+        grpcCleanup.register(
+            InProcessServerBuilder.forName(serverName).directExecutor().addService(service).build().start()
+        )
+        val channel: ManagedChannel = grpcCleanup.register(
+            InProcessChannelBuilder.forName(serverName).directExecutor().build()
+        )
+        val client = DriverGrpc.newBlockingStub(channel)
+
+        client.launch(LaunchRequest.newBuilder().setBundleId("com.example").build())
+        service.shutdown()
+
+        assertEquals("com.example", terminated)
+        assertTrue(closed)
+    }
+
+    @Test fun shutdownWithoutLaunchedAppStillClosesBackend() {
+        var terminated: String? = null
+        var closed = false
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun terminate(bundleId: String) { terminated = bundleId }
+            override fun close() { closed = true }
+        }
+        val service = DriverService(platform = "android", backend = backend)
+
+        service.shutdown()
+
+        assertEquals(null, terminated)
+        assertTrue(closed)
+    }
+
     @Test fun tapForwardsCoordinates() {
         val backend = StubDriverBackend("android")
         val client = newClient(backend)
@@ -81,6 +120,103 @@ class DriverServiceTest {
 
         client.inputText(Text.newBuilder().setValue("hello world").build())
         assertEquals("hello world", backend.lastInputText)
+    }
+
+    // A backend that already chose a status code (the iOS backend surfaces
+    // UNAVAILABLE when the connection dropped mid-action) must keep it, so
+    // the runner can tell transient failures from fatal ones.
+    @Test fun backendStatusCodePassesThrough() {
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun inputText(text: String) {
+                throw io.grpc.Status.UNAVAILABLE
+                    .withDescription("connection dropped mid-action")
+                    .asRuntimeException()
+            }
+        }
+        val client = newClient(backend)
+
+        val thrown = kotlin.test.assertFailsWith<io.grpc.StatusRuntimeException> {
+            client.inputText(Text.newBuilder().setValue("hello").build())
+        }
+        assertEquals(io.grpc.Status.Code.UNAVAILABLE, thrown.status.code)
+    }
+
+    // The vendored iOS client throws failures that do not extend Exception;
+    // they must still map to a status error instead of killing the RPC as a
+    // channel-level Unknown the runner cannot classify.
+    @Test fun nonExceptionThrowableMapsToInternal() {
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun inputText(text: String) {
+                throw Throwable("only one gesture can be performed at a time")
+            }
+        }
+        val client = newClient(backend)
+
+        val thrown = kotlin.test.assertFailsWith<io.grpc.StatusRuntimeException> {
+            client.inputText(Text.newBuilder().setValue("hello").build())
+        }
+        assertEquals(io.grpc.Status.Code.INTERNAL, thrown.status.code)
+        assertTrue(thrown.status.description.orEmpty().contains("only one gesture"))
+    }
+
+    @Test fun reapOrphanIosRunnersKillsStrayXcodebuildAndRunnerApp() {
+        val commands = mutableListOf<List<String>>()
+        val reaped = reapOrphanIosRunners("UDID-1234") { command ->
+            commands.add(command)
+            0
+        }
+        assertTrue(reaped)
+        assertEquals(2, commands.size)
+        assertEquals("pkill", commands[0][0])
+        assertTrue(commands[0][2].contains("test-without-building"))
+        assertTrue(commands[0][2].contains("UDID-1234"))
+        assertEquals(listOf("xcrun", "simctl", "terminate", "UDID-1234", IOS_XCTEST_RUNNER_BUNDLE_ID), commands[1])
+    }
+
+    @Test fun reapOrphanIosRunnersReportsNothingFound() {
+        val reaped = reapOrphanIosRunners("UDID-1234") { 1 }
+        assertEquals(false, reaped)
+    }
+
+    @Test fun overlappedDoubleTapLandsTwoTaps() {
+        val invocations = java.util.concurrent.atomic.AtomicInteger(0)
+        overlappedDoubleTap { invocations.incrementAndGet() }
+        assertEquals(2, invocations.get())
+    }
+
+    @Test fun overlappedDoubleTapRetriesSequentiallyOnGestureCollision() {
+        val invocations = java.util.concurrent.atomic.AtomicInteger(0)
+        val inFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+        // Mimic the XCTest runner: a tap issued while another gesture is
+        // still executing fails instead of queuing.
+        val tapAction = {
+            if (!inFlight.compareAndSet(false, true)) {
+                throw IllegalStateException("only one gesture can be performed at a time")
+            }
+            invocations.incrementAndGet()
+            Thread.sleep(150)
+            inFlight.set(false)
+        }
+        overlappedDoubleTap(tapAction)
+        assertEquals(2, invocations.get())
+    }
+
+    @Test fun overlappedDoubleTapRetriesWhenFirstLegCollides() {
+        val landed = java.util.concurrent.atomic.AtomicInteger(0)
+        val failedFirst = java.util.concurrent.atomic.AtomicBoolean(false)
+        // The async first tap loses the race and collides; the second tap
+        // succeeds. The collision must be absorbed with a sequential retry,
+        // not propagated out of the join.
+        val tapAction = {
+            if (failedFirst.compareAndSet(false, true)) {
+                Thread.sleep(60)
+                throw IllegalStateException("only one gesture can be performed at a time")
+            }
+            landed.incrementAndGet()
+            Unit
+        }
+        overlappedDoubleTap(tapAction)
+        assertEquals(2, landed.get())
     }
 
     @Test fun doubleTapDefaultComposesTwoTaps() {

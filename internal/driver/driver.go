@@ -60,6 +60,16 @@ type ForegroundChecker interface {
 	ForegroundApp(ctx context.Context) (string, error)
 }
 
+// TextReplacer is the optional capability for drivers whose InputText already
+// replaces the field's content instead of appending to it. The runner must
+// skip its pre-erase for such drivers: the erase would be a redundant
+// round-trip on every InputText.
+type TextReplacer interface {
+	// ReplacesTextOnInput reports whether InputText replaces existing
+	// content, making the runner's pre-erase unnecessary.
+	ReplacesTextOnInput() bool
+}
+
 // FocusedWindowChecker is the optional capability for reporting which app owns
 // the focused (on-screen) window. The startup gate prefers it over
 // ForegroundChecker: the resumed-activity signal flips to a freshly launched

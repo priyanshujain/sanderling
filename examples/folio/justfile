@@ -123,7 +123,9 @@ ios:
 
 # Run 'sanderling test' against the folio app. Uses a connected device if one is
 # online; otherwise boots AVD=<name> when provided, or auto-boots a bootable AVD.
-test: _ensure-device
+# Depends on install so the run always fuzzes the current build, matching
+# test-ios which rebuilds and reinstalls the app first.
+test: install
     #!/usr/bin/env bash
     set -euo pipefail
     avd_flag=()
