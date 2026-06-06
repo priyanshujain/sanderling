@@ -108,6 +108,11 @@ func mapElement(element *rawElement) (treeNode, bool) {
 	}
 
 	value := stringValue(element.AXValue)
+	if value == unresolvedValueSentinel {
+		// Bridge state, not app content: surfacing it would show phantom
+		// field values in snapshots taken while the bridge catches up.
+		value = ""
+	}
 	label := stringValue(element.AXLabel)
 	editable := isEditable(element.Type)
 

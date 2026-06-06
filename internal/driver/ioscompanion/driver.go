@@ -594,6 +594,12 @@ func (d *Driver) WaitForIdle(ctx context.Context, _ time.Duration) error {
 		if err != nil {
 			return nil
 		}
+		// Unresolved bridge values mean the tree is mid-update; report the
+		// snapshot transitional so the streak resets instead of declaring a
+		// half-readable screen stable.
+		if hasUnresolvedValues(dump) {
+			return nil
+		}
 		mapped, err := MapHierarchy(dump, d.screenWidth, d.screenHeight)
 		if err != nil {
 			return nil
