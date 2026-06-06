@@ -35,7 +35,21 @@ class SidecarServer(
     }
 }
 
+// quietExpectedDriverNoise silences vendored loggers whose ERROR lines fire
+// on expected paths: CommandLineUtils logs every nonzero simctl exit even
+// when the caller absorbs it (terminating an app that is not running), and
+// XCTestDriverClient logs every non-2xx response including gesture
+// collisions the double-tap path retries. Real failures still reach the
+// runner as gRPC status errors, so nothing is lost from run output.
+private fun quietExpectedDriverNoise() {
+    org.apache.logging.log4j.core.config.Configurator.setLevel(
+        "util.CommandLineUtils", org.apache.logging.log4j.Level.OFF)
+    org.apache.logging.log4j.core.config.Configurator.setLevel(
+        "xcuitest.XCTestDriverClient", org.apache.logging.log4j.Level.OFF)
+}
+
 fun main(arguments: Array<String>) {
+    quietExpectedDriverNoise()
     val port = arguments.indexOf("--port").let { index ->
         if (index >= 0 && index + 1 < arguments.size) arguments[index + 1].toInt() else 0
     }
