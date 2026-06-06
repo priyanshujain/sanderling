@@ -600,6 +600,9 @@ export const __testing__ = {
   runtime,
   extractors,
   evaluateExtractors,
+  selectorFromString,
+  selectorFromObject,
+  xpathStringLiteral,
 };
 
 export {};
