@@ -64,7 +64,7 @@ func androidChecks() []doctorCheck {
 func iosChecks() []doctorCheck {
 	return []doctorCheck{
 		{Name: "xcrun on PATH (ios simulator)", Run: checkExecutableOnPath("xcrun")},
-		{Name: "simctl on PATH (ios simulator)", Run: checkExecutableOnPath("simctl")},
+		{Name: "simctl available (ios simulator)", Run: checkSimctl},
 	}
 }
 
@@ -107,6 +107,15 @@ func checkChromiumLaunch(ctx context.Context) error {
 	defer tabCancel()
 	if err := chromedp.Run(tabCtx, chromedp.Navigate("about:blank")); err != nil {
 		return fmt.Errorf("chromium launch: %w", err)
+	}
+	return nil
+}
+
+// checkSimctl exercises `xcrun simctl help`: simctl is an xcrun subcommand,
+// not a standalone binary, so a PATH lookup can never find it.
+func checkSimctl(ctx context.Context) error {
+	if err := exec.CommandContext(ctx, "xcrun", "simctl", "help").Run(); err != nil {
+		return fmt.Errorf("xcrun simctl help: %w", err)
 	}
 	return nil
 }
