@@ -4,16 +4,23 @@ title: Sanderling Manual
 
 # Sanderling Manual
 
-Autonomous property-based testing for mobile/web apps. Specs in TypeScript. Core in Go. Drives the app under test through UIAutomation/XCTest on Android/iOS and CDP on web.
+sanderling tests mobile and web apps by exploring them on its own and checking rules you write. You state properties that must always hold ("a new account starts at zero", "the app never throws"). sanderling drives the app for minutes or hours through thousands of taps, swipes, and inputs, and records every step where a property breaks. One TypeScript spec runs against Android, iOS, and web builds of the same app.
 
-Alpha: Scope of v0.1.0 is tracked in [issue #4](https://github.com/priyanshujain/sanderling/issues/4).
+Alpha: the scope of v0.1.0 is tracked in [issue #4](https://github.com/priyanshujain/sanderling/issues/4).
 
+## Manual
 
-- [Getting started](./manual/getting-started/)
-- [Writing specs](./manual/writing-specs/)
-- [Runs](./manual/runs/)
-- [Replay](./manual/replay/)
-- [CLI reference](./manual/cli/)
+- [Introduction](./manual/introduction/): what property-based testing is and how sanderling works.
+- [Getting started](./manual/getting-started/): install and run a first test against the example app.
+- [Writing specs](./manual/writing-specs/): build a real spec from scratch, one concept at a time.
+- [Spec language reference](./manual/spec-language/): every selector, operator, action, and sampler.
+- [Runs](./manual/runs/): what happens during a run and why runs are long.
+- [Replay](./manual/replay/): the trace browser.
+- [CLI reference](./manual/cli/): every command and flag.
+
+## Development
+
+- [Architecture](./development/architecture/) and [design principles](./development/design-principles/) for contributors.
 
 ---
 
