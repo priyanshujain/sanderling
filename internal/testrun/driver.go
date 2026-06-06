@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"syscall"
+	"time"
 
 	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/driver"
@@ -53,6 +55,13 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	sidecarCommand.Stdout = stdout
 	sidecarCommand.Stderr = stdout
 	sidecarCommand.Env = android.EnvWithAndroidPlatformTools(os.Environ())
+	// SIGTERM lets the sidecar's shutdown hook stop the iOS XCTest runner.
+	// SIGKILL skips the hook and orphans an xcodebuild session that later
+	// restarts its runner and hijacks the simulator mid-run.
+	sidecarCommand.Cancel = func() error {
+		return sidecarCommand.Process.Signal(syscall.SIGTERM)
+	}
+	sidecarCommand.WaitDelay = sidecarShutdownGrace
 	if err := sidecarCommand.Start(); err != nil {
 		return nil, nil, fmt.Errorf("spawn sidecar: %w", err)
 	}
@@ -60,7 +69,7 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 
 	driverClient, err := driverSidecar.Dial(fmt.Sprintf("127.0.0.1:%d", sidecarPort))
 	if err != nil {
-		_ = sidecarCommand.Process.Kill()
+		stopSidecar(sidecarCommand)
 		return nil, nil, fmt.Errorf("dial sidecar: %w", err)
 	}
 	driverClient.SetPlatform(options.Platform)
@@ -70,7 +79,7 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	healthCtx, healthCancel := context.WithTimeout(ctx, sidecarStartupTimeout)
 	if err := driverClient.WaitForHealth(healthCtx, 250e6); err != nil {
 		healthCancel()
-		_ = sidecarCommand.Process.Kill()
+		stopSidecar(sidecarCommand)
 		_ = driverClient.Close()
 		return nil, nil, fmt.Errorf("sidecar health check: %w", err)
 	}
@@ -79,11 +88,38 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 
 	cleanup := func() {
 		_ = driverClient.Close()
-		if sidecarCommand.Process != nil {
-			_ = sidecarCommand.Process.Kill()
-		}
+		stopSidecar(sidecarCommand)
 	}
 	return driverClient, cleanup, nil
+}
+
+// sidecarShutdownGrace bounds how long the sidecar gets to run its shutdown
+// hook (terminate the app, stop the XCTest runner) before being killed.
+const sidecarShutdownGrace = 15 * time.Second
+
+// stopSidecar terminates the sidecar gracefully so its shutdown hook can stop
+// the device-side runner processes, escalating to SIGKILL when it does not
+// exit within the grace window.
+func stopSidecar(sidecarCommand *exec.Cmd) {
+	if sidecarCommand.Process == nil {
+		return
+	}
+	if err := sidecarCommand.Process.Signal(syscall.SIGTERM); err != nil {
+		_ = sidecarCommand.Process.Kill()
+		_ = sidecarCommand.Wait()
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = sidecarCommand.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(sidecarShutdownGrace):
+		_ = sidecarCommand.Process.Kill()
+		<-done
+	}
 }
 
 func pickFreePort() (int, error) {
