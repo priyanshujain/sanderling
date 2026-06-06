@@ -4,7 +4,7 @@ import {
   statusFor,
   statusForStep,
 } from "../lib/property-status";
-import type { Step } from "../types";
+import { step } from "./fixtures";
 
 // Bug class: RunDetail and ViolationsPanel once carried two copies of this
 // status logic; if they drift, the same property shows a different verdict in
@@ -22,14 +22,12 @@ describe("statusFor", () => {
 
 describe("statusForStep", () => {
   it("matches statusFor for the same step and is pending for a null step", () => {
-    const step: Step = {
-      step: 0,
-      timestamp: "1970-01-01T00:00:00.000Z",
+    const s = step({
       violations: ["v"],
       residuals: { v: { op: "true" }, h: { op: "true" } },
-    };
-    expect(statusForStep("v", step)).toBe("violated");
-    expect(statusForStep("h", step)).toBe("holds");
+    });
+    expect(statusForStep("v", s)).toBe("violated");
+    expect(statusForStep("h", s)).toBe("holds");
     expect(statusForStep("v", null)).toBe("pending");
   });
 });

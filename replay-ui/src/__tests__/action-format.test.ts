@@ -5,17 +5,7 @@ import {
   parseSelector,
   tagFromSelector,
 } from "../lib/action-format";
-import type { StepSummary } from "../types";
-
-function summary(over: Partial<StepSummary>): StepSummary {
-  return {
-    index: 0,
-    timestamp: "1970-01-01T00:00:00.000Z",
-    has_violations: false,
-    has_exceptions: false,
-    ...over,
-  };
-}
+import { summary } from "./fixtures";
 
 // Bug class: selector parsing mislabels every action row — splitting on the
 // wrong colon, treating a value-with-colon as the kind, or dropping the prefix
