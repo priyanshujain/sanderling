@@ -308,15 +308,34 @@ func TestInputTextPasteFailsAfterAllAttempts(t *testing.T) {
 	field := fieldTarget{identifier: "F", centerX: 1, centerY: 2}
 	err := inputText(context.Background(), fake, "😀", field)
 	if err == nil {
-		t.Fatal("expected error after exhausting attempts")
+		t.Fatal("expected error after exhausting the verify budget")
 	}
 	// The chord is sent exactly once: with no dialog on screen, re-sending it
 	// on a slow render would paste the text twice.
 	if len(fake.hidStreams) != 1 {
 		t.Fatalf("expected exactly one paste chord, got %d", len(fake.hidStreams))
 	}
-	if fake.sleepCount != pasteAttempts {
-		t.Fatalf("expected %d settle sleeps, got %d", pasteAttempts, fake.sleepCount)
+	wantPolls := int(pasteVerifyTimeout / pastePoll)
+	if fake.sleepCount != wantPolls {
+		t.Fatalf("expected %d verify polls, got %d", wantPolls, fake.sleepCount)
+	}
+}
+
+func TestInputTextPasteLandsAfterBridgeBlackout(t *testing.T) {
+	// The field is absent (bridge blacked out by the dialog) for several
+	// polls, then the value lands. The loop must keep waiting through the
+	// blackout instead of failing.
+	blacked := `[{"type":"Application"}]`
+	landed := `[{"type":"TextField","AXUniqueId":"F","AXValue":"😀"}]`
+	dumps := [][]byte{[]byte(blacked), []byte(blacked), []byte(blacked), []byte(landed)}
+	fake := &fakeRunner{dumps: dumps}
+	field := fieldTarget{identifier: "F", centerX: 1, centerY: 2}
+	if err := inputText(context.Background(), fake, "😀", field); err != nil {
+		t.Fatalf("inputText: %v", err)
+	}
+	// One chord, no dialog seen, success once the value appears.
+	if len(fake.hidStreams) != 1 {
+		t.Fatalf("expected exactly one paste chord, got %d", len(fake.hidStreams))
 	}
 }
 
@@ -394,7 +413,7 @@ func TestWarmUpPasteNoDialog(t *testing.T) {
 	}
 }
 
-func TestUsesPasteboardThreshold(t *testing.T) {
+func TestUsesPasteboard(t *testing.T) {
 	cases := []struct {
 		text string
 		want bool
@@ -402,9 +421,9 @@ func TestUsesPasteboardThreshold(t *testing.T) {
 		{"", false},
 		{"a", false},
 		{"abc", false},
-		{"abcd", true},
+		{"a long but fully mappable ascii string", false},
 		{"-1", false},
-		{"%s%n", true},
+		{"%s%n", false},
 		{"😀", true},
 		{"Café", true},
 	}
