@@ -1384,6 +1384,81 @@ func TestIsTransientApplyError_Classification(t *testing.T) {
 	}
 }
 
+// TestIsWDADrop_Classification pins the fatal-vs-recoverable boundary: only
+// the sidecar's explicit reconnect-failure signal is a drop. A structured
+// UNAVAILABLE that happens to embed raw exception text (e.g. ConnectException
+// from the original failure) means the sidecar already recovered and the run
+// must continue.
+func TestIsWDADrop_Classification(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			"unavailable with embedded ConnectException is recovered",
+			status.Error(codes.Unavailable, "connection dropped mid-action; the action may have applied: java.net.ConnectException: Failed to connect to /127.0.0.1:22161"),
+			false,
+		},
+		{
+			"reconnect failure is a drop",
+			status.Error(codes.Internal, "java.lang.IllegalStateException: WDA reconnect failed: IOSDriverTimeoutException"),
+			true,
+		},
+		{"generic internal is not a drop", status.Error(codes.Internal, "boom"), false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := isWDADrop(testCase.err); got != testCase.want {
+				t.Errorf("got %v, want %v", got, testCase.want)
+			}
+			if testCase.want && isTransientApplyError(context.Background(), testCase.err) {
+				t.Error("a WDA drop must never also classify as transient")
+			}
+		})
+	}
+}
+
+// tapSelectorAlwaysUnavailable wraps a mock driver so every TapSelector call
+// fails with a transient Unavailable error, mimicking a device whose channel
+// never recovers between steps.
+type tapSelectorAlwaysUnavailable struct {
+	*mockdriver.Driver
+}
+
+func (d *tapSelectorAlwaysUnavailable) TapSelector(ctx context.Context, selector string) error {
+	return status.Error(codes.Unavailable, "connection dropped mid-action; the action may have applied")
+}
+
+// TestRunner_ConsecutiveTransientApplyFailuresAbort verifies the run fails
+// fast once transient apply errors form an unbroken streak instead of burning
+// the whole budget on a wedged device.
+func TestRunner_ConsecutiveTransientApplyFailuresAbort(t *testing.T) {
+	state := newHarness(t)
+	wrapped := &tapSelectorAlwaysUnavailable{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err == nil {
+		t.Fatal("Run must abort after consecutive transient apply failures")
+	}
+	if !strings.Contains(err.Error(), "consecutive transient failures") {
+		t.Errorf("expected consecutive-failure abort, got %v", err)
+	}
+	// The aborting step returns before it is recorded, so the summary holds
+	// the steps before the cap-hitting one.
+	if summary.Steps != maxConsecutiveApplyFailures-1 {
+		t.Errorf("run must stop at the failure cap, got %d recorded steps", summary.Steps)
+	}
+}
+
 // TestRunner_WaitActionSkipsIdle ensures the runner does not call WaitForIdle
 // after a Wait action - the action already provides settling time.
 func TestRunner_WaitActionSkipsIdle(t *testing.T) {

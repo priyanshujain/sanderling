@@ -81,6 +81,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
 	stepIndex := 0
+	consecutiveApplyFailures := 0
 	var lastAction *verifier.Action
 	var lastLogTime time.Time
 	for time.Now().Before(deadline) {
@@ -229,9 +230,13 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if nextErr == nil {
 			if err := applyAction(ctx, options.Driver, nextAction, tree, options.IdleTimeout); err != nil {
 				if isWDADrop(err) {
-					return summary, fmt.Errorf("step %d: iOS XCTest runner lost connection - known WDA startup flake, re-run the test: %w", stepIndex, err)
+					return summary, fmt.Errorf("step %d: the iOS XCTest runner could not be restarted - re-run the test: %w", stepIndex, err)
 				}
 				if isTransientApplyError(ctx, err) {
+					consecutiveApplyFailures++
+					if consecutiveApplyFailures >= maxConsecutiveApplyFailures {
+						return summary, fmt.Errorf("step %d apply: %d consecutive transient failures; the device is not recovering: %w", stepIndex, consecutiveApplyFailures, err)
+					}
 					logger.Warn("transient apply error; marking step transitional", "step", stepIndex, "err", err)
 					transitional = true
 					applySkipped = true
@@ -240,6 +245,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 					return summary, fmt.Errorf("step %d apply: %w", stepIndex, err)
 				}
 			} else {
+				consecutiveApplyFailures = 0
 				actionCopy := nextAction
 				lastAction = &actionCopy
 			}
@@ -912,10 +918,19 @@ func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessa
 	return encoded, firstErr
 }
 
+// maxConsecutiveApplyFailures bounds how many transient apply failures in a
+// row the run tolerates before aborting. One or two absorb a runner restart;
+// an unbroken streak means the device is wedged and the rest of the budget
+// would be spent doing nothing.
+const maxConsecutiveApplyFailures = 3
+
+// isWDADrop reports that the sidecar could not restart the iOS XCTest
+// runner: the channel is gone for good and the run must abort. Transient
+// drops are classified by the sidecar itself (it reconnects and surfaces
+// UNAVAILABLE), so matching on raw exception text like "ConnectException"
+// here would kill runs the sidecar already recovered.
 func isWDADrop(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "ConnectException") ||
-		(strings.Contains(msg, "code = Internal") && strings.Contains(msg, "SocketException"))
+	return strings.Contains(err.Error(), "WDA reconnect failed")
 }
 
 // isTransientApplyError reports whether an applyAction failure is a transient
