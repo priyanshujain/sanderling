@@ -46,27 +46,17 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 			return err
 		}
 	}
-	aliases := map[string]string{}
-	specAPIPath := resolveSpecAPIPath(options.Spec)
-	if specAPIPath != "" {
-		aliases["@sanderling/spec"] = specAPIPath
-		base := filepath.Dir(specAPIPath)
-		aliases["@sanderling/spec/defaults"] = filepath.Join(base, "defaults/index.ts")
-		aliases["@sanderling/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
+	prep, err := prepareBundleInputs(options)
+	if err != nil {
+		return err
 	}
-	seed := resolveSeed(options.Seed)
-	defines := map[string]string{
-		"SANDERLING_TEST_PHONE": os.Getenv("SANDERLING_TEST_PHONE"),
-		"SANDERLING_TEST_OTP":   os.Getenv("SANDERLING_TEST_OTP"),
-		"SANDERLING_SEED":       strconv.FormatInt(seed, 10),
-	}
-	gojaRuntimePath := resolveGojaRuntimePath(specAPIPath, options.Spec)
-	if gojaRuntimePath == "" {
-		return fmt.Errorf("goja-runtime.ts not found near %s; checkout pkg/spec or set @sanderling/spec alias", options.Spec)
-	}
+	aliases := prep.aliases
+	seed := prep.seed
+	defines := prep.defines
+	specAPIPath := prep.specAPIPath
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile:   options.Spec,
-		RuntimeFile: gojaRuntimePath,
+		RuntimeFile: prep.gojaRuntimePath,
 		Defines:     defines,
 		Aliases:     aliases,
 	})
@@ -169,6 +159,47 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "\nelapsed: %s\n", summary.EndTime.Sub(summary.StartTime).Round(time.Millisecond))
 	runner.RenderSummary(stdout, summary, options.Platform)
 	return nil
+}
+
+// bundleInputs holds the pre-driver assembly: alias map, seed, esbuild defines,
+// and the resolved spec-API/goja-runtime paths the bundler consumes.
+type bundleInputs struct {
+	aliases         map[string]string
+	seed            int64
+	defines         map[string]string
+	specAPIPath     string
+	gojaRuntimePath string
+}
+
+// prepareBundleInputs builds the alias map, defines, seed, and resolves the
+// goja runtime path. It is the pure (no driver/JVM) front half of Execute,
+// returning the documented error when the runtime entry cannot be located.
+func prepareBundleInputs(options Options) (bundleInputs, error) {
+	aliases := map[string]string{}
+	specAPIPath := resolveSpecAPIPath(options.Spec)
+	if specAPIPath != "" {
+		aliases["@sanderling/spec"] = specAPIPath
+		base := filepath.Dir(specAPIPath)
+		aliases["@sanderling/spec/defaults"] = filepath.Join(base, "defaults/index.ts")
+		aliases["@sanderling/spec/defaults/properties"] = filepath.Join(base, "defaults/properties.ts")
+	}
+	seed := resolveSeed(options.Seed)
+	defines := map[string]string{
+		"SANDERLING_TEST_PHONE": os.Getenv("SANDERLING_TEST_PHONE"),
+		"SANDERLING_TEST_OTP":   os.Getenv("SANDERLING_TEST_OTP"),
+		"SANDERLING_SEED":       strconv.FormatInt(seed, 10),
+	}
+	gojaRuntimePath := resolveGojaRuntimePath(specAPIPath, options.Spec)
+	if gojaRuntimePath == "" {
+		return bundleInputs{}, fmt.Errorf("goja-runtime.ts not found near %s; checkout pkg/spec or set @sanderling/spec alias", options.Spec)
+	}
+	return bundleInputs{
+		aliases:         aliases,
+		seed:            seed,
+		defines:         defines,
+		specAPIPath:     specAPIPath,
+		gojaRuntimePath: gojaRuntimePath,
+	}, nil
 }
 
 // resolveSeed returns the configured seed, or a time-derived one when unset.
