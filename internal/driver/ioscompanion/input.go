@@ -99,12 +99,28 @@ type fieldTarget struct {
 	centerY    float64
 }
 
-// inputText types text into the focused field. Mappable text goes through the
-// hardware keyboard in one HID stream; anything else falls back to the
-// pasteboard. The field target is only consulted on the pasteboard path.
+// pasteLengthThreshold is the rune count above which mappable text still goes
+// through the pasteboard. Typed keys render progressively on the simulator
+// (roughly 75ms per character), so a long typed string keeps the screen
+// churning well past the HID call and stretches the post-action settle; a
+// paste lands the whole value in one frame.
+const pasteLengthThreshold = 3
+
+// usesPasteboard reports whether text takes the pasteboard path: any
+// unmappable rune forces it, and longer mappable text uses it so the value
+// lands atomically.
+func usesPasteboard(text string) bool {
+	_, skipped := typeString(text)
+	return len(skipped) > 0 || len([]rune(text)) > pasteLengthThreshold
+}
+
+// inputText types text into the focused field. Short mappable text goes
+// through the hardware keyboard in one HID stream; everything else goes
+// through the pasteboard. The field target is only consulted on the
+// pasteboard path.
 func inputText(ctx context.Context, run runner, text string, field fieldTarget) error {
-	presses, skipped := typeString(text)
-	if len(skipped) == 0 {
+	if !usesPasteboard(text) {
+		presses, _ := typeString(text)
 		return run.sendHID(ctx, keyPressEvents(presses)...)
 	}
 	return pasteText(ctx, run, text, field)
@@ -120,6 +136,15 @@ func pasteText(ctx context.Context, run runner, text string, field fieldTarget) 
 	for attempt := 0; attempt < pasteAttempts; attempt++ {
 		if err := run.sendHID(ctx, pasteChordEvents()...); err != nil {
 			return fmt.Errorf("send paste chord: %w", err)
+		}
+		// A warm paste lands within a frame or two; check once before paying
+		// the settle sleep so the common case stays fast.
+		quick, err := run.describeAll(ctx)
+		if err != nil {
+			return fmt.Errorf("describe accessibility: %w", err)
+		}
+		if pasteLanded(quick, field.identifier, text) {
+			return nil
 		}
 		if err := run.sleep(ctx, pasteSettle); err != nil {
 			return err

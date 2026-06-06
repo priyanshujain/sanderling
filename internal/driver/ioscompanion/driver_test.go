@@ -217,9 +217,10 @@ func TestScreenshotRejectsNonPNG(t *testing.T) {
 func TestInputTextFastPathSkipsFieldResolution(t *testing.T) {
 	companion := &fakeCompanion{accessibilityJSON: "[]"}
 	d := newTestDriver(companion)
-	// "hello" is fully mappable, so the fast keyboard path runs and never reads
-	// the accessibility dump for a field target.
-	if err := d.InputText(context.Background(), "hello"); err != nil {
+	// "abc" is fully mappable and under the paste threshold, so the fast
+	// keyboard path runs and never reads the accessibility dump for a field
+	// target.
+	if err := d.InputText(context.Background(), "abc"); err != nil {
 		t.Fatalf("InputText: %v", err)
 	}
 	if indexOf(companion.calls, "hid") < 0 {
