@@ -186,9 +186,10 @@ private fun walkForStructuralHash(node: com.fasterxml.jackson.databind.JsonNode,
 
 // overlappedDoubleTap fires the second tap while the first is still in
 // flight, so the on-device gap stays tight on transports with high per-tap
-// latency. The overlap can collide with the first tap still executing ("only
-// one gesture can be performed at a time"); the second tap then waits the
-// first out and lands sequentially instead of failing the step.
+// latency. The overlap can collide with the other tap still executing ("only
+// one gesture can be performed at a time") on either leg; the colliding leg
+// then lands sequentially after the surviving one instead of failing the
+// step.
 internal fun overlappedDoubleTap(tapAction: () -> Unit) {
     val firstTap = java.util.concurrent.CompletableFuture.runAsync { tapAction() }
     Thread.sleep(40)
@@ -199,7 +200,11 @@ internal fun overlappedDoubleTap(tapAction: () -> Unit) {
         tapAction()
         return
     }
-    firstTap.join()
+    try {
+        firstTap.join()
+    } catch (_: Throwable) {
+        tapAction()
+    }
 }
 
 data class MetricsSample(

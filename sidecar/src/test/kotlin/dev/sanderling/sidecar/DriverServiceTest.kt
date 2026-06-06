@@ -201,6 +201,24 @@ class DriverServiceTest {
         assertEquals(2, invocations.get())
     }
 
+    @Test fun overlappedDoubleTapRetriesWhenFirstLegCollides() {
+        val landed = java.util.concurrent.atomic.AtomicInteger(0)
+        val failedFirst = java.util.concurrent.atomic.AtomicBoolean(false)
+        // The async first tap loses the race and collides; the second tap
+        // succeeds. The collision must be absorbed with a sequential retry,
+        // not propagated out of the join.
+        val tapAction = {
+            if (failedFirst.compareAndSet(false, true)) {
+                Thread.sleep(60)
+                throw IllegalStateException("only one gesture can be performed at a time")
+            }
+            landed.incrementAndGet()
+            Unit
+        }
+        overlappedDoubleTap(tapAction)
+        assertEquals(2, landed.get())
+    }
+
     @Test fun doubleTapDefaultComposesTwoTaps() {
         // Interface delegation would bind the default doubleTap to the
         // delegate, bypassing the tap override, so implement the interface
