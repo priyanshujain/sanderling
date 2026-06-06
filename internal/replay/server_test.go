@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -275,8 +274,8 @@ func TestAssets_FallbackToIndexHTML(t *testing.T) {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 	body := recorder.Body.String()
-	if !strings.Contains(body, "<div id=\"app\"></div>") && !strings.Contains(body, "<div id=\"root\"></div>") {
-		t.Errorf("expected SPA shell with #app or #root, got %q", body)
+	if !strings.Contains(body, "<div id=\"root\"></div>") {
+		t.Errorf("expected SPA shell with #root, got %q", body)
 	}
 }
 
@@ -312,12 +311,8 @@ func TestResolveRunsDirectory(t *testing.T) {
 	}
 }
 
-func TestDevProxy_ParsesTarget(t *testing.T) {
+func TestDevProxy_RejectsInvalidTarget(t *testing.T) {
 	if _, err := newDevProxy(":://bad-url"); err == nil {
 		t.Error("expected parse error for invalid URL")
-	}
-	parsed, err := url.Parse(DevTarget)
-	if err != nil || parsed.Host != "127.0.0.1:5173" {
-		t.Errorf("DevTarget parsed wrong: %v %q", err, parsed.Host)
 	}
 }
