@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"net"
 	"strings"
 	"testing"
 )
@@ -31,6 +32,25 @@ func TestParseReplayArgs_RejectsTooManyPositional(t *testing.T) {
 	_, err := parseReplayArgs([]string{"a", "b"}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "at most one") {
 		t.Fatalf("expected too-many-args error, got %v", err)
+	}
+}
+
+func TestBuildBrowseURL(t *testing.T) {
+	address := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8080}
+	cases := []struct {
+		name       string
+		deepLinkID string
+		want       string
+	}{
+		{"root", "", "http://127.0.0.1:8080/"},
+		{"deep link", "20240101-120000", "http://127.0.0.1:8080/runs/20240101-120000"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := buildBrowseURL(address, c.deepLinkID); got != c.want {
+				t.Errorf("buildBrowseURL(%q) = %q, want %q", c.deepLinkID, got, c.want)
+			}
+		})
 	}
 }
 
