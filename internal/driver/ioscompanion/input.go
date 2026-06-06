@@ -21,20 +21,22 @@ import (
 // as a parameter so the value stays configurable.
 const DefaultDoubleTapGapMilliseconds = 70
 
-// pasteAttempts bounds the paste-and-dismiss-dialog retry loop. Each attempt
-// resends the paste chord and checks for the permission dialog or a landed
-// value, so eight attempts comfortably covers the one-to-two dialogs iOS shows
-// per app session plus a couple of refocus retries.
-const pasteAttempts = 8
+// pasteVerifyTimeout bounds the whole paste-and-verify loop. Dismissing the
+// permission dialog blacks out the accessibility bridge for around 2.5s (the
+// dump collapses to the root element), and the pasted value only becomes
+// readable once it recovers, so the budget has to outlast that blackout.
+const pasteVerifyTimeout = 8 * time.Second
 
-// pasteSettle is how long to wait after a paste chord before reading the
-// hierarchy. The warm-paste measurement in the validated spike settled around
-// 124ms; this leaves margin for a cold paste while keeping the loop tight.
-const pasteSettle = 350 * time.Millisecond
+// pastePoll is the interval between describe-all reads while verifying a paste.
+const pastePoll = 250 * time.Millisecond
 
 // dialogSettle is the pause after tapping the dialog's allow button and after
-// refocusing the field, before the next paste attempt.
+// refocusing the field, before the paste chord is resent.
 const dialogSettle = 200 * time.Millisecond
+
+// pasteAttempts bounds the warm-up paste's dialog poll. Warm-up only needs to
+// surface and dismiss the permission dialog once.
+const pasteAttempts = 8
 
 // warmUpPrimer is the throwaway string pasted at session start so the
 // permission dialog fires and gets handled before any real input.
@@ -99,25 +101,19 @@ type fieldTarget struct {
 	centerY    float64
 }
 
-// pasteLengthThreshold is the rune count above which mappable text still goes
-// through the pasteboard. Typed keys render progressively on the simulator
-// (roughly 75ms per character), so a long typed string keeps the screen
-// churning well past the HID call and stretches the post-action settle; a
-// paste lands the whole value in one frame.
-const pasteLengthThreshold = 3
-
-// usesPasteboard reports whether text takes the pasteboard path: any
-// unmappable rune forces it, and longer mappable text uses it so the value
-// lands atomically.
+// usesPasteboard reports whether text takes the pasteboard path. Only
+// unmappable runes force it: on this OS generation every external pasteboard
+// write re-triggers the paste-permission dialog and dismissing it blacks out
+// the accessibility bridge for seconds, so the hardware keyboard stays the
+// default for everything it can express.
 func usesPasteboard(text string) bool {
 	_, skipped := typeString(text)
-	return len(skipped) > 0 || len([]rune(text)) > pasteLengthThreshold
+	return len(skipped) > 0
 }
 
-// inputText types text into the focused field. Short mappable text goes
-// through the hardware keyboard in one HID stream; everything else goes
-// through the pasteboard. The field target is only consulted on the
-// pasteboard path.
+// inputText types text into the focused field. Mappable text goes through the
+// hardware keyboard in one HID stream; anything else falls back to the
+// pasteboard. The field target is only consulted on the pasteboard path.
 func inputText(ctx context.Context, run runner, text string, field fieldTarget) error {
 	if !usesPasteboard(text) {
 		presses, _ := typeString(text)
@@ -140,7 +136,8 @@ func pasteText(ctx context.Context, run runner, text string, field fieldTarget) 
 		return fmt.Errorf("send paste chord: %w", err)
 	}
 	verifiable := field.identifier != ""
-	for attempt := 0; attempt < pasteAttempts; attempt++ {
+	maxPolls := int(pasteVerifyTimeout / pastePoll)
+	for poll := 0; poll < maxPolls; poll++ {
 		dump, err := run.describeAll(ctx)
 		if err != nil {
 			return fmt.Errorf("describe accessibility: %w", err)
@@ -149,6 +146,9 @@ func pasteText(ctx context.Context, run runner, text string, field fieldTarget) 
 			return nil
 		}
 		if button, found := findAllowPasteButton(dump); found {
+			// The dialog swallowed the paste; dismiss it, refocus, and resend
+			// the chord exactly once. Dismissing blacks out the bridge, so the
+			// landed value only appears on a later poll.
 			if err := run.sendHID(ctx, tapEvents(button.centerX, button.centerY)...); err != nil {
 				return fmt.Errorf("tap allow button: %w", err)
 			}
@@ -166,22 +166,28 @@ func pasteText(ctx context.Context, run runner, text string, field fieldTarget) 
 			}
 			continue
 		}
-		if !verifiable && attempt > 0 {
-			// No way to confirm landing; the chord went out and no dialog is
-			// blocking it. Give it one settle and move on.
-			return nil
+		if !verifiable {
+			// Without a field identifier the paste cannot be confirmed. The
+			// chord went out and no dialog is blocking it, so one settle is the
+			// best available behavior.
+			return run.sleep(ctx, pastePoll)
 		}
-		if err := run.sleep(ctx, pasteSettle); err != nil {
+		// Field not yet showing the text: either the bridge is still blacked
+		// out from the dialog or the paste has not rendered. Keep polling until
+		// the value lands or the budget runs out.
+		if err := run.sleep(ctx, pastePoll); err != nil {
 			return err
 		}
 	}
-	return fmt.Errorf("paste did not land after %d attempts", pasteAttempts)
+	return fmt.Errorf("paste did not land within %s", pasteVerifyTimeout)
 }
 
 // warmUpPaste pastes a throwaway primer once so the iOS pasteboard-permission
 // dialog fires and gets dismissed at a moment the driver chooses (session
-// start) rather than mid-run. It does not assert the paste landed: the goal is
-// only to clear the dialog. A best-effort allow-button tap handles the prompt.
+// start) rather than mid-run. It polls for the dialog (which appears around
+// half a second after the chord) and taps allow once. It does not assert the
+// paste landed: the goal is only to clear the dialog so real input never has
+// to.
 func warmUpPaste(ctx context.Context, run runner) error {
 	if err := run.setPasteboard(ctx, warmUpPrimer); err != nil {
 		return fmt.Errorf("set pasteboard: %w", err)
@@ -189,16 +195,19 @@ func warmUpPaste(ctx context.Context, run runner) error {
 	if err := run.sendHID(ctx, pasteChordEvents()...); err != nil {
 		return fmt.Errorf("send paste chord: %w", err)
 	}
-	if err := run.sleep(ctx, pasteSettle); err != nil {
-		return err
-	}
-	dump, err := run.describeAll(ctx)
-	if err != nil {
-		return fmt.Errorf("describe accessibility: %w", err)
-	}
-	if button, found := findAllowPasteButton(dump); found {
-		if err := run.sendHID(ctx, tapEvents(button.centerX, button.centerY)...); err != nil {
-			return fmt.Errorf("tap allow button: %w", err)
+	for poll := 0; poll < pasteAttempts; poll++ {
+		if err := run.sleep(ctx, pastePoll); err != nil {
+			return err
+		}
+		dump, err := run.describeAll(ctx)
+		if err != nil {
+			return fmt.Errorf("describe accessibility: %w", err)
+		}
+		if button, found := findAllowPasteButton(dump); found {
+			if err := run.sendHID(ctx, tapEvents(button.centerX, button.centerY)...); err != nil {
+				return fmt.Errorf("tap allow button: %w", err)
+			}
+			return nil
 		}
 	}
 	return nil
