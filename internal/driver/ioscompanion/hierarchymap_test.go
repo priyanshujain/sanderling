@@ -224,27 +224,6 @@ func TestRootIsFlatWithAllChildren(t *testing.T) {
 	}
 }
 
-func TestHasUnresolvedValues(t *testing.T) {
-	cases := []struct {
-		name string
-		dump string
-		want bool
-	}{
-		{name: "sentinel value", dump: `[{"type":"TextField","AXValue":"Invalid","frame":{"x":0,"y":0,"width":1,"height":1}}]`, want: true},
-		{name: "clean values", dump: `[{"type":"TextField","AXValue":"hello","frame":{"x":0,"y":0,"width":1,"height":1}}]`, want: false},
-		{name: "empty value", dump: `[{"type":"TextField","AXValue":"","frame":{"x":0,"y":0,"width":1,"height":1}}]`, want: false},
-		{name: "empty dump", dump: `[]`, want: false},
-		{name: "malformed dump", dump: `nope`, want: false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := hasUnresolvedValues([]byte(c.dump)); got != c.want {
-				t.Fatalf("got %v, want %v", got, c.want)
-			}
-		})
-	}
-}
-
 func TestMapHierarchySentinelValueMapsAsEmpty(t *testing.T) {
 	dump := `[{"type":"TextField","AXUniqueId":"F","AXLabel":"Email","AXValue":"Invalid","frame":{"x":0,"y":0,"width":10,"height":10},"enabled":true}]`
 	mapped, err := MapHierarchy([]byte(dump), 100, 100)

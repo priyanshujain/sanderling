@@ -14,25 +14,14 @@ type rawFrame struct {
 	Height float64 `json:"height"`
 }
 
+// emptyFieldValueSentinel is what the accessibility bridge reports as the
+// AXValue of an empty editable field. It is bridge state, not app content, so
+// it maps to an empty value rather than surfacing as literal field text.
+const emptyFieldValueSentinel = "Invalid"
+
 // rawElement is one entry in the flat describe-all dump returned by the
 // simulator companion. Only the fields the mapper consumes are declared;
 // unknown fields are ignored.
-// unresolvedValueSentinel is what the accessibility bridge reports for a value
-// it cannot resolve yet (typically during app cold start). It is bridge state,
-// not app content.
-const unresolvedValueSentinel = "Invalid"
-
-// hasUnresolvedValues reports whether any element in the flat dump still
-// carries the bridge's unresolved-value sentinel.
-func hasUnresolvedValues(dump []byte) bool {
-	for _, element := range decodeDump(dump) {
-		if stringValue(element.AXValue) == unresolvedValueSentinel {
-			return true
-		}
-	}
-	return false
-}
-
 type rawElement struct {
 	Frame      rawFrame `json:"frame"`
 	AXUniqueID *string  `json:"AXUniqueId"`
@@ -108,9 +97,9 @@ func mapElement(element *rawElement) (treeNode, bool) {
 	}
 
 	value := stringValue(element.AXValue)
-	if value == unresolvedValueSentinel {
-		// Bridge state, not app content: surfacing it would show phantom
-		// field values in snapshots taken while the bridge catches up.
+	if value == emptyFieldValueSentinel {
+		// An empty editable field reads as this sentinel through the bridge;
+		// it is not app content, so treat the field as empty.
 		value = ""
 	}
 	label := stringValue(element.AXLabel)
