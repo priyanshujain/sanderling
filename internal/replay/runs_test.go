@@ -198,6 +198,52 @@ func TestCacheOpen_ViolationWithoutWitnessStepKeepsDetectionStep(t *testing.T) {
 	}
 }
 
+func TestCacheOpen_ReusesUnchangedRunAndReparsesOnAppend(t *testing.T) {
+	root := t.TempDir()
+	startedAt := time.Now().UTC()
+	writeRun(t, root, "r1", trace.Meta{StartedAt: startedAt}, []trace.Step{
+		{Index: 1, Timestamp: startedAt},
+	})
+	cache := NewCache(root)
+
+	first, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	again, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open again: %v", err)
+	}
+	if first != again {
+		t.Fatal("unchanged run should be served from cache, got a re-parse")
+	}
+
+	tracePath := filepath.Join(root, "r1", "trace.jsonl")
+	file, err := os.OpenFile(tracePath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(file).Encode(trace.Step{Index: 2, Timestamp: startedAt.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	bumped := first.traceMtime.Add(time.Second)
+	if err := os.Chtimes(tracePath, bumped, bumped); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open after append: %v", err)
+	}
+	if updated == first {
+		t.Fatal("mtime bump should force a re-parse, got the stale cached run")
+	}
+	if len(updated.Steps) != 2 {
+		t.Errorf("re-parsed steps = %d, want 2", len(updated.Steps))
+	}
+}
+
 func TestDecodeStepSummary_ActionLabelPerKind(t *testing.T) {
 	cases := []struct {
 		line      string
