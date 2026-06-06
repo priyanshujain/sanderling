@@ -298,8 +298,6 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 		return fmt.Errorf("launch %s: %w", d.bundleID, err)
 	}
 
-	d.waitForAccessibilityReady(ctx)
-
 	if !d.pastePrimed {
 		if err := warmUpPaste(ctx, d.makeRunner()); err != nil {
 			fmt.Fprintf(d.output, "paste warm-up failed (continuing): %v\n", err)
@@ -307,28 +305,6 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 		d.pastePrimed = true
 	}
 	return nil
-}
-
-// accessibilityReadyTimeout bounds how long Launch waits for the freshly
-// started app's accessibility tree to stop reporting placeholder values.
-const accessibilityReadyTimeout = 10 * time.Second
-
-// waitForAccessibilityReady polls the accessibility dump until no element
-// value reads as the bridge's unresolved-value sentinel. During app cold start
-// the bridge reports "Invalid" for values it cannot resolve yet; a snapshot
-// taken in that window shows phantom field content. Launch owns this wait so
-// the first post-launch snapshot is trustworthy; the per-step settle cap is
-// too short to absorb a cold start.
-func (d *Driver) waitForAccessibilityReady(ctx context.Context) {
-	deadline := time.Now().Add(accessibilityReadyTimeout)
-	for time.Now().Before(deadline) && ctx.Err() == nil {
-		dump, err := d.describeAll(ctx)
-		if err == nil && !hasUnresolvedValues(dump) {
-			return
-		}
-		time.Sleep(StabilityPollInterval)
-	}
-	fmt.Fprintln(d.output, "accessibility tree still reports unresolved values after launch; first snapshot may be unreliable")
 }
 
 // clearAppState resets the app to a first-launch state. With an app path it
@@ -592,12 +568,6 @@ func (d *Driver) WaitForIdle(ctx context.Context, _ time.Duration) error {
 	PollUntilStable(ctx, clock, func() *hierarchy.Tree {
 		dump, err := d.describeAll(ctx)
 		if err != nil {
-			return nil
-		}
-		// Unresolved bridge values mean the tree is mid-update; report the
-		// snapshot transitional so the streak resets instead of declaring a
-		// half-readable screen stable.
-		if hasUnresolvedValues(dump) {
 			return nil
 		}
 		mapped, err := MapHierarchy(dump, d.screenWidth, d.screenHeight)
