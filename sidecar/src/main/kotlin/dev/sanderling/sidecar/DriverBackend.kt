@@ -690,10 +690,80 @@ internal fun reapOrphanIosRunners(udid: String, execute: (List<String>) -> Int):
     return killed
 }
 
+// WdaRecovery serializes XCTest runner recovery across concurrent RPCs. An
+// IOException on one call does not prove the runner is down (an overlapped
+// gesture can reset a single connection), and a full runner restart costs
+// around 50 seconds of downtime, so recovery probes channel liveness first
+// and only restarts a dead channel. The probe re-runs under the lock so
+// threads queued behind an in-flight restart do not restart again.
+internal class WdaRecovery(
+    private val isAlive: () -> Boolean,
+    private val restart: () -> Unit,
+    private val log: (String) -> Unit = ::println,
+) {
+    private val lock = java.util.concurrent.locks.ReentrantLock()
+
+    // run executes block, recovering the channel on IO failure. replay re-runs
+    // the block afterwards and is only safe for idempotent reads: an action
+    // can fail client-side after the device already applied it, so replaying
+    // types text or taps twice. Non-idempotent actions surface UNAVAILABLE,
+    // which the runner treats as transient.
+    fun <T> run(replay: Boolean, block: () -> T): T {
+        return try {
+            block()
+        } catch (e: Exception) {
+            if (!isIoFailure(e)) throw e
+            recover(e)
+            if (!replay) {
+                throw io.grpc.Status.UNAVAILABLE
+                    .withDescription("connection dropped mid-action; the action may have applied: ${e.message}")
+                    .withCause(e).asRuntimeException()
+            }
+            try {
+                block()
+            } catch (retryErr: Exception) {
+                if (!isIoFailure(retryErr)) throw retryErr
+                throw io.grpc.Status.UNAVAILABLE
+                    .withDescription("read retry failed after channel recovery: ${retryErr.message}")
+                    .withCause(retryErr).asRuntimeException()
+            }
+        }
+    }
+
+    private fun isIoFailure(e: Exception): Boolean =
+        generateSequence(e as Throwable) { it.cause }.any { it is java.io.IOException }
+
+    private fun recover(cause: Exception) {
+        lock.lock()
+        try {
+            if (isAlive()) {
+                log("channel alive after $cause; skipping runner restart")
+                return
+            }
+            log("channel dead after $cause; restarting the XCTest runner")
+            val startedAt = System.currentTimeMillis()
+            try {
+                restart()
+            } catch (restartErr: Exception) {
+                throw IllegalStateException("WDA reconnect failed: $restartErr", cause)
+            }
+            log("XCTest runner restarted in ${System.currentTimeMillis() - startedAt} ms")
+        } finally {
+            lock.unlock()
+        }
+    }
+}
+
 class IosDriverBackend(private val udid: String) : DriverBackend {
     private lateinit var driver: maestro.drivers.IOSDriver
     private lateinit var localDevice: ios.LocalIOSDevice
-    private val reconnectLock = java.util.concurrent.locks.ReentrantLock()
+    private lateinit var installer: xcuitest.installer.LocalXCTestInstaller
+    private val recovery by lazy {
+        WdaRecovery(
+            isAlive = { runCatching { installer.isChannelAlive() }.getOrElse { false } },
+            restart = { driver.open(); warmup() },
+        )
+    }
 
     init {
         val reaped = reapOrphanIosRunners(udid) { command ->
@@ -716,7 +786,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
             context = xcuitest.installer.Context.CLI,
             snapshotKeyHonorModalViews = null,
         )
-        val installer = xcuitest.installer.LocalXCTestInstaller(
+        installer = xcuitest.installer.LocalXCTestInstaller(
             deviceId = udid,
             host = "127.0.0.1",
             deviceType = util.IOSDeviceType.SIMULATOR,
@@ -763,36 +833,8 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
         warmupErr?.let { throw IllegalStateException("WDA warmup failed after 3 attempts: $it") }
     }
 
-    // withReconnect recovers from a dropped WDA connection. replay re-runs
-    // the block after reconnecting and is only safe for idempotent reads:
-    // an action call can fail client-side (e.g. a read timeout mid-typing)
-    // after the device already applied it, so replaying types text or taps
-    // twice. Non-idempotent actions reconnect for the next RPC's benefit but
-    // surface UNAVAILABLE, which the runner treats as transient.
-    private fun <T> withReconnect(replay: Boolean = true, block: () -> T): T {
-        return try {
-            block()
-        } catch (e: Exception) {
-            val isIoFailure = generateSequence(e as Throwable) { it.cause }
-                .any { it is java.io.IOException }
-            if (!isIoFailure) throw e
-            reconnectLock.lock()
-            try {
-                try { driver.open(); warmup() }
-                catch (reconnectErr: Exception) {
-                    throw IllegalStateException("WDA reconnect failed: $reconnectErr", e)
-                }
-            } finally {
-                reconnectLock.unlock()
-            }
-            if (!replay) {
-                throw io.grpc.Status.UNAVAILABLE
-                    .withDescription("WDA connection dropped mid-action; the action may have applied, reconnected: $e")
-                    .withCause(e).asRuntimeException()
-            }
-            block()
-        }
-    }
+    private fun <T> withReconnect(replay: Boolean = true, block: () -> T): T =
+        recovery.run(replay, block)
 
     override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) = withReconnect {
         runCatching { driver.stopApp(bundleId) }
