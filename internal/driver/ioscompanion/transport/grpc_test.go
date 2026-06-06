@@ -42,6 +42,31 @@ func TestProcessStateFromProto(t *testing.T) {
 	}
 }
 
+func TestScreenDescriptionFrom(t *testing.T) {
+	resp := &pb.TargetDescriptionResponse{
+		TargetDescription: &pb.TargetDescription{
+			ScreenDimensions: &pb.ScreenDimensions{
+				Width:        828,
+				Height:       1792,
+				Density:      2,
+				WidthPoints:  414,
+				HeightPoints: 896,
+			},
+		},
+	}
+	got := screenDescriptionFrom(resp)
+	want := ScreenDescription{WidthPoints: 414, HeightPoints: 896, Scale: 2}
+	if got != want {
+		t.Errorf("screenDescriptionFrom = %+v, want %+v", got, want)
+	}
+}
+
+func TestScreenDescriptionFromNilSafe(t *testing.T) {
+	if got := screenDescriptionFrom(&pb.TargetDescriptionResponse{}); got != (ScreenDescription{}) {
+		t.Errorf("screenDescriptionFrom(empty) = %+v, want zero", got)
+	}
+}
+
 func TestTarGzipDirectory(t *testing.T) {
 	root := t.TempDir()
 	bundle := filepath.Join(root, "Sample.app")

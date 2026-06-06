@@ -16,6 +16,10 @@ type Companion interface {
 	// raw flat-format JSON string the companion emits.
 	AccessibilityInfo(ctx context.Context) (string, error)
 
+	// Describe reports the target's screen dimensions in points, along with
+	// the pixel scale when the companion supplies one.
+	Describe(ctx context.Context) (ScreenDescription, error)
+
 	// SendHID opens the HID stream, sends every event in order, then closes.
 	SendHID(ctx context.Context, events ...HIDEvent) error
 
@@ -41,6 +45,16 @@ type Companion interface {
 
 	// Close releases the underlying connection.
 	Close() error
+}
+
+// ScreenDescription carries the target screen geometry. Width and Height are
+// in points (the coordinate space HID events and the accessibility frames use).
+// Scale is the pixel-per-point density, or 0 when the companion did not report
+// one.
+type ScreenDescription struct {
+	WidthPoints  int
+	HeightPoints int
+	Scale        float64
 }
 
 // ProcessState mirrors the companion's notion of whether an app is running.

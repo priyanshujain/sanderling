@@ -47,6 +47,26 @@ func (c *grpcCompanion) AccessibilityInfo(ctx context.Context) (string, error) {
 	return resp.GetJson(), nil
 }
 
+func (c *grpcCompanion) Describe(ctx context.Context) (ScreenDescription, error) {
+	resp, err := c.client.Describe(ctx, &pb.TargetDescriptionRequest{})
+	if err != nil {
+		return ScreenDescription{}, err
+	}
+	return screenDescriptionFrom(resp), nil
+}
+
+// screenDescriptionFrom extracts the point dimensions and scale from a describe
+// response. The generated getters are nil-safe, so a response missing the
+// nested messages yields a zero-valued ScreenDescription rather than panicking.
+func screenDescriptionFrom(resp *pb.TargetDescriptionResponse) ScreenDescription {
+	dimensions := resp.GetTargetDescription().GetScreenDimensions()
+	return ScreenDescription{
+		WidthPoints:  int(dimensions.GetWidthPoints()),
+		HeightPoints: int(dimensions.GetHeightPoints()),
+		Scale:        dimensions.GetDensity(),
+	}
+}
+
 func (c *grpcCompanion) SendHID(ctx context.Context, events ...HIDEvent) error {
 	stream, err := c.client.Hid(ctx)
 	if err != nil {
