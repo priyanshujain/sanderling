@@ -76,77 +76,66 @@ func TestParseAvailableDevices_DropsUnavailable(t *testing.T) {
 	}
 }
 
-func TestPickSimulator_ByName(t *testing.T) {
-	available := []simDevice{
-		{UDID: "aaa", Name: "iPad Pro", IsAvailable: true},
-		{UDID: "bbb", Name: "iPhone 15", IsAvailable: true},
+func TestPickSimulator(t *testing.T) {
+	cases := []struct {
+		name      string
+		query     string
+		available []simDevice
+		wantUDID  string // "" with wantErr means error expected
+		wantErr   bool
+	}{
+		{
+			name:      "by name",
+			query:     "iPhone 15",
+			available: []simDevice{{UDID: "aaa", Name: "iPad Pro", IsAvailable: true}, {UDID: "bbb", Name: "iPhone 15", IsAvailable: true}},
+			wantUDID:  "bbb",
+		},
+		{
+			name:      "by udid",
+			query:     "aaa",
+			available: []simDevice{{UDID: "aaa", Name: "iPad Pro", IsAvailable: true}, {UDID: "bbb", Name: "iPhone 14", IsAvailable: true}},
+			wantUDID:  "aaa",
+		},
+		{
+			name:      "unknown name errors",
+			query:     "Pixel 7",
+			available: []simDevice{{UDID: "aaa", Name: "iPad Pro", IsAvailable: true}},
+			wantErr:   true,
+		},
+		{
+			name:      "empty query prefers iPhone",
+			query:     "",
+			available: []simDevice{{UDID: "aaa", Name: "iPad mini", IsAvailable: true}, {UDID: "bbb", Name: "iPhone 16", IsAvailable: true}, {UDID: "ccc", Name: "Apple Watch", IsAvailable: true}},
+			wantUDID:  "bbb",
+		},
+		{
+			name:      "empty query falls back to first",
+			query:     "",
+			available: []simDevice{{UDID: "aaa", Name: "iPad Air", IsAvailable: true}, {UDID: "bbb", Name: "Apple TV", IsAvailable: true}},
+			wantUDID:  "aaa",
+		},
+		{
+			name:    "empty list errors",
+			query:   "",
+			wantErr: true,
+		},
 	}
-	got, err := pickSimulator("iPhone 15", available)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.UDID != "bbb" {
-		t.Errorf("got %q, want bbb", got.UDID)
-	}
-}
-
-func TestPickSimulator_ByUDID(t *testing.T) {
-	available := []simDevice{
-		{UDID: "aaa", Name: "iPad Pro", IsAvailable: true},
-		{UDID: "bbb", Name: "iPhone 14", IsAvailable: true},
-	}
-	got, err := pickSimulator("aaa", available)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Name != "iPad Pro" {
-		t.Errorf("got %q, want iPad Pro", got.Name)
-	}
-}
-
-func TestPickSimulator_UnknownName(t *testing.T) {
-	available := []simDevice{
-		{UDID: "aaa", Name: "iPad Pro", IsAvailable: true},
-	}
-	_, err := pickSimulator("Pixel 7", available)
-	if err == nil {
-		t.Fatal("expected error for unknown simulator name")
-	}
-}
-
-func TestPickSimulator_EmptyName_PrefersIPhone(t *testing.T) {
-	available := []simDevice{
-		{UDID: "aaa", Name: "iPad mini", IsAvailable: true},
-		{UDID: "bbb", Name: "iPhone 16", IsAvailable: true},
-		{UDID: "ccc", Name: "Apple Watch", IsAvailable: true},
-	}
-	got, err := pickSimulator("", available)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.UDID != "bbb" {
-		t.Errorf("got %q, want bbb (iPhone)", got.UDID)
-	}
-}
-
-func TestPickSimulator_EmptyName_FallsBackToFirst(t *testing.T) {
-	available := []simDevice{
-		{UDID: "aaa", Name: "iPad Air", IsAvailable: true},
-		{UDID: "bbb", Name: "Apple TV", IsAvailable: true},
-	}
-	got, err := pickSimulator("", available)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.UDID != "aaa" {
-		t.Errorf("got %q, want aaa (first available)", got.UDID)
-	}
-}
-
-func TestPickSimulator_EmptyList(t *testing.T) {
-	_, err := pickSimulator("", nil)
-	if err == nil {
-		t.Fatal("expected error for empty simulator list")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := pickSimulator(tc.query, tc.available)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for query %q", tc.query)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.UDID != tc.wantUDID {
+				t.Errorf("got %q, want %q", got.UDID, tc.wantUDID)
+			}
+		})
 	}
 }
 
