@@ -127,10 +127,30 @@ func TestDoctorChecksFor_All_IsUnion(t *testing.T) {
 	for _, c := range all {
 		names[c.Name]++
 	}
-	for _, name := range []string{"adb on PATH", "xcrun on PATH", "headless chromium can launch"} {
+	for _, name := range []string{"adb on PATH", "xcrun on PATH (ios simulator)", "headless chromium can launch"} {
 		if names[name] != 1 {
 			t.Errorf("expected %q in 'all' exactly once, got %d", name, names[name])
 		}
+	}
+}
+
+func TestDoctorChecksFor_iOSSimulator_OmitsJava(t *testing.T) {
+	for _, c := range doctorChecksFor("ios") {
+		if strings.Contains(c.Name, "java") || strings.Contains(c.Name, "sidecar") {
+			t.Errorf("ios simulator checks must omit %q; simulator runs need no JVM", c.Name)
+		}
+	}
+}
+
+func TestDoctorChecksFor_iOSDevice_IncludesJava(t *testing.T) {
+	found := false
+	for _, c := range doctorChecksFor("ios-device") {
+		if strings.Contains(c.Name, "java") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("ios-device checks must include java for the sidecar path")
 	}
 }
 
