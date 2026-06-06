@@ -4,19 +4,21 @@ title: Spec language reference
 
 # Spec language reference
 
+Lookup reference for everything importable from `@sanderling/spec`. For a guided walkthrough, read [writing specs](./writing-specs/) first.
+
 ## Module structure
 
-A spec is a TypeScript module evaluated by the Go runner each step. It must export `properties` and `actionsRoot` on `globalThis` (the bundler entry point does this automatically via the final two lines):
+A spec is a TypeScript module evaluated by the Go runner each step. It exports `properties` and `actionsRoot`, plus an optional `setup`:
 
 ```ts
 import { ... } from "@sanderling/spec";
 
 export const properties = { ... };
 export const actionsRoot = weighted(...);
-
-(globalThis as { actions?: unknown }).actions = actionsRoot;
-(globalThis as { properties?: unknown }).properties = properties;
+export const setup = login;   // optional
 ```
+
+`setup` is an `ActionGenerator` the runner consults before `actionsRoot` each step. While it returns actions, they run; when it returns an empty list, the runner falls through to `actionsRoot`. Use it for preconditions like login and onboarding. If the app later regresses across the precondition (a logout mid-run), `setup` re-engages on its own.
 
 ## State
 
@@ -71,9 +73,16 @@ Every key-value pair must match. Substring and boolean rules apply per attribute
 
 Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
 
-### Path queries
+### Path selectors
 
-Chains of string selectors separated by ` > ` scope each segment to the subtree of the previous match. Path queries are only supported on the tree root (`ax.find`, `ax.findAll`), not on element-scoped `.find`/`.findAll`.
+An array of object selectors matches a path: each segment is matched within the subtree of the previous match. Arrays work on the tree root and on element-scoped `.find`/`.findAll`.
+
+```ts
+s.ax.find([{ testTag: "LoginScreen" }, { testTag: "LoginEmail" }])
+s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }])
+```
+
+String selectors chain the same way with ` > `, but only on the tree root (`ax.find`, `ax.findAll`):
 
 ```ts
 s.ax.find("id:HomeScreen > descPrefix:account_card:")
@@ -144,11 +153,13 @@ KMP apps are tested identically to native apps. An Android KMP build uses the An
 
 ```ts
 const loggedIn = extract((s) => !!s.ax.find("id:home-tab-bar"));
+const route = extract("route", (s) => ...);   // named form
+
 loggedIn.current    // T - value from the current step
 loggedIn.previous   // T | undefined - value from the previous step, undefined on first step
 ```
 
-Extractors are evaluated before properties and action generators. Use `.previous` to detect transitions between steps.
+Extractors are evaluated before properties and action generators. Use `.previous` to detect transitions between steps. Named extractors appear by name in the replay UI and trace.
 
 ## LTL operators
 
@@ -174,8 +185,11 @@ Extractors are evaluated before properties and action generators. Use `.previous
 
 ```ts
 Tap({ on: element | string })
+DoubleTap({ on: element | string })
+LongPress({ on: element | string })
 InputText({ into: element | string, text: string })
 Swipe({ from: element | Point, to: element | Point, durationMillis?: number })
+Scroll({ direction: "up" | "down" | "left" | "right", in?: element | string })
 PressKey({ key: Key })
 Wait({ durationMillis: number })
 ```
@@ -189,6 +203,10 @@ On web, `"back"` maps to Backspace and `"home"` is not supported. All other keys
 | Generator | Behaviour |
 |---|---|
 | `taps` | Random tap on a clickable element |
+| `doubleTaps` | Random double tap on a clickable element |
+| `longPresses` | Random long press on a clickable element |
+| `typing` | Types a value from the edge-case corpus into a random editable field |
+| `scrolls` | Random scroll gesture |
 | `swipes` | Random swipe gesture |
 | `waitOnce` | Idles one step |
 | `pressKeys` | Presses a random supported key |
@@ -217,23 +235,47 @@ export const actionsRoot = weighted(
 );
 ```
 
-### `from(items)`
+### `whenRoute(routeExtractor, routes, body)`
 
-Returns a `Sampler<T>` that cycles through a fixed list. Use `.generate()` to pick an item.
+Builds a generator that runs `body` only when the extractor's current value is in `routes` (a string or array of strings). Returns an empty list otherwise.
+
+```ts
+const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
+  ...
+  return [Tap({ on: btn })];
+});
+```
+
+### Samplers
+
+Every sampler has `.generate()`. Draws are seeded by the run's PRNG, so a run replays identically from its seed.
+
+| Sampler | Produces |
+|---|---|
+| `from(items)` | An item from a fixed list |
+| `integers().between(min, max)` | An integer in the range |
+| `strings().length(min, max).alpha()` | A random string; `.alpha()` restricts to letters |
+| `emails().domain("example.com")` | A random email address |
+| `edgeCaseText()` | A value from the adversarial input corpus (empty and whitespace strings, emoji, numeric boundary values, very long strings, injection payloads) |
 
 ```ts
 const names = from(["Checking", "Savings", "Travel"]);
+const amounts = integers().between(1, 500);
 // inside an actions() callback:
 InputText({ into: nameField, text: names.generate() })
+InputText({ into: amountField, text: String(amounts.generate()) })
 ```
 
-## Default properties
+## Defaults
 
 ```ts
+import { defaultActions, doubleTaps } from "@sanderling/spec/defaults";
 import { noUncaughtExceptions, noLogcatErrors } from "@sanderling/spec/defaults/properties";
 ```
+
+`defaultActions` is a ready-made weighted tree of the built-in generators: taps and typing at weight 100, scrolls 50, swipes 25, double taps 10. Use it as a baseline pool or as one entry in your own tree.
 
 | Property | Fails when |
 |---|---|
 | `noUncaughtExceptions` | An uncaught exception or `Sanderling.reportError()` call is captured |
-| `noLogcatErrors` | Logcat emits any error-level (`E`) lines since the previous step |
+| `noLogcatErrors` | Logcat emits any error-level (`E`) lines since the previous step (Android only; holds elsewhere) |
