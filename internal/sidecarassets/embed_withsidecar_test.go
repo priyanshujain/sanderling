@@ -3,6 +3,7 @@
 package sidecarassets
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -54,21 +55,21 @@ func TestExtract_ReusesIdenticalFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalStat, err := os.Stat(path)
-	if err != nil {
+	sentinel := []byte("SENTINEL-do-not-rewrite")
+	if err := os.WriteFile(path, sentinel, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	originalModTime := originalStat.ModTime()
 
 	if _, err := Extract(directory); err != nil {
 		t.Fatal(err)
 	}
-	secondStat, err := os.Stat(path)
+
+	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !secondStat.ModTime().Equal(originalModTime) {
-		t.Errorf("second extract should not have rewritten the file")
+	if !bytes.Equal(after, sentinel) {
+		t.Errorf("second extract rewrote the existing JAR; reuse branch corrupted on-disk file")
 	}
 }
 
