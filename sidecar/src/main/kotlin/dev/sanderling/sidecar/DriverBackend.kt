@@ -281,7 +281,7 @@ private fun sampleCpuTwice(serial: String?, pid: Int): Double {
     return (deltaCpuNanos / 50_000_000.0) * 100.0
 }
 
-private fun parseCpuTicks(statLine: String): Long? {
+internal fun parseCpuTicks(statLine: String): Long? {
     val afterComm = statLine.substringAfterLast(')').trim()
     val fields = afterComm.split(Regex("\\s+"))
     if (fields.size < 13) return null
@@ -304,7 +304,7 @@ private fun sampleProcessMemory(serial: String?, pid: Int): Pair<Long, Long> {
     return Pair(rssKb * 1024L, vmSizeKb * 1024L)
 }
 
-private fun parseKb(line: String): Long? {
+internal fun parseKb(line: String): Long? {
     val parts = line.split(Regex("\\s+"))
     if (parts.size < 2) return null
     return parts[1].toLongOrNull()
@@ -638,7 +638,7 @@ private fun buildDadb(serial: String?): dadb.Dadb {
     }
 }
 
-private fun findBoundsBySelector(root: maestro.TreeNode, selector: String): IntArray? {
+internal fun findBoundsBySelector(root: maestro.TreeNode, selector: String): IntArray? {
     val colon = selector.indexOf(':')
     if (colon < 0) return null
     val kind = selector.substring(0, colon)
@@ -646,7 +646,7 @@ private fun findBoundsBySelector(root: maestro.TreeNode, selector: String): IntA
     return findBoundsInTree(root, kind, value)
 }
 
-private fun findBoundsInTree(node: maestro.TreeNode, kind: String, value: String): IntArray? {
+internal fun findBoundsInTree(node: maestro.TreeNode, kind: String, value: String): IntArray? {
     val attrs = node.attributes
     val matches = when (kind) {
         "id" -> attrs["resource-id"]?.let { it == value || it.endsWith(":id/$value") } == true
@@ -664,19 +664,19 @@ private fun findBoundsInTree(node: maestro.TreeNode, kind: String, value: String
     return null
 }
 
-private fun parseBounds(s: String): IntArray? {
+internal fun parseBounds(s: String): IntArray? {
     val pattern = Regex("^\\[(-?\\d+),(-?\\d+),(-?\\d+),(-?\\d+)\\]$")
     val m = pattern.matchEntire(s) ?: return null
     return IntArray(4) { m.groupValues[it + 1].toInt() }
 }
 
-private fun pngWidth(bytes: ByteArray): Int {
+internal fun pngWidth(bytes: ByteArray): Int {
     if (bytes.size < 24) return 0
     return (bytes[16].toInt() and 0xFF shl 24) or (bytes[17].toInt() and 0xFF shl 16) or
         (bytes[18].toInt() and 0xFF shl 8) or (bytes[19].toInt() and 0xFF)
 }
 
-private fun pngHeight(bytes: ByteArray): Int {
+internal fun pngHeight(bytes: ByteArray): Int {
     if (bytes.size < 24) return 0
     return (bytes[20].toInt() and 0xFF shl 24) or (bytes[21].toInt() and 0xFF shl 16) or
         (bytes[22].toInt() and 0xFF shl 8) or (bytes[23].toInt() and 0xFF)
