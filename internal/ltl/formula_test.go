@@ -248,13 +248,19 @@ func TestResidual_HoldsViolatedPending(t *testing.T) {
 		t.Errorf("violated residual = %v, want false", got)
 	}
 
-	pendingEval := NewEvaluator(Always(Next(Pure(true))))
+	// A genuinely multi-obligation residual: both Next inners survive to the
+	// next step folded under And, in registration order. A residual that
+	// dropped or transposed an obligation would change this exact AST.
+	predP := ThunkNamed("p", func() (bool, error) { return true, nil })
+	predQ := ThunkNamed("q", func() (bool, error) { return true, nil })
+	pendingEval := NewEvaluator(Always(And(Next(predP), Next(predQ))))
 	pendingEval.Observe()
 	body, err := json.Marshal(pendingEval.Residual())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), `"op":"and"`) && !strings.Contains(string(body), `"op":"true"`) {
-		t.Errorf("pending residual unexpected: %s", body)
+	want := `{"op":"and","left":{"op":"predicate","name":"p"},"right":{"op":"predicate","name":"q"}}`
+	if string(body) != want {
+		t.Errorf("pending residual:\n got: %s\nwant: %s", body, want)
 	}
 }
