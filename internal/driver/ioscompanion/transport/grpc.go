@@ -136,6 +136,10 @@ func (c *grpcCompanion) ListApps(ctx context.Context) ([]InstalledApp, error) {
 	return apps, nil
 }
 
+// installChunkBytes keeps each install payload frame comfortably under the
+// companion's 16MiB incoming-message cap.
+const installChunkBytes = 4 * 1024 * 1024
+
 func (c *grpcCompanion) Install(ctx context.Context, appPath string) error {
 	info, err := os.Stat(appPath)
 	if err != nil {
@@ -162,10 +166,14 @@ func (c *grpcCompanion) Install(ctx context.Context, appPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := stream.Send(&pb.InstallRequest{Value: &pb.InstallRequest_Payload{
-		Payload: &pb.Payload{Source: &pb.Payload_Data{Data: archive}},
-	}}); err != nil {
-		return err
+	// The companion caps incoming messages at 16MiB, so the archive streams in
+	// chunks; the companion concatenates consecutive data payloads.
+	for _, chunk := range payloadChunks(archive, installChunkBytes) {
+		if err := stream.Send(&pb.InstallRequest{Value: &pb.InstallRequest_Payload{
+			Payload: &pb.Payload{Source: &pb.Payload_Data{Data: chunk}},
+		}}); err != nil {
+			return err
+		}
 	}
 
 	if err := stream.CloseSend(); err != nil {
@@ -179,6 +187,16 @@ func (c *grpcCompanion) Install(ctx context.Context, appPath string) error {
 			return err
 		}
 	}
+}
+
+// payloadChunks splits data into consecutive slices of at most chunkBytes.
+func payloadChunks(data []byte, chunkBytes int) [][]byte {
+	var chunks [][]byte
+	for offset := 0; offset < len(data); offset += chunkBytes {
+		end := min(offset+chunkBytes, len(data))
+		chunks = append(chunks, data[offset:end])
+	}
+	return chunks
 }
 
 // tarGzipDirectory packs dir into a gzip-compressed tar archive. Entry paths are
