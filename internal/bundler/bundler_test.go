@@ -199,6 +199,29 @@ func TestBundle_RegistersWithoutSetupExport(t *testing.T) {
 	}
 }
 
+func TestBundle_RegistersPropertiesOnlySpec(t *testing.T) {
+	directory := t.TempDir()
+	runtimePath := filepath.Join(directory, "runtime.ts")
+	specPath := filepath.Join(directory, "spec.ts")
+	if err := os.WriteFile(runtimePath, []byte(`export {};`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(specPath, []byte(`export const properties = "PROPS_MARKER";`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Bundle(Options{EntryFile: specPath, RuntimeFile: runtimePath})
+	if err != nil {
+		t.Fatalf("properties-only spec should bundle: %v", err)
+	}
+	body := string(result.JavaScript)
+	if !strings.Contains(body, "PROPS_MARKER") {
+		t.Errorf("properties export not registered:\n%s", body)
+	}
+	if !strings.Contains(body, "globalThis.properties") {
+		t.Errorf("trailer should assign globalThis.properties:\n%s", body)
+	}
+}
+
 func TestBundle_ReportsSyntaxErrors(t *testing.T) {
 	entry := writeFixture(t, "broken.ts", `const x = ;`)
 	_, err := Bundle(Options{EntryFile: entry})
