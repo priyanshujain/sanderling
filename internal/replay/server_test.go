@@ -157,6 +157,47 @@ func TestHandleStep_ErrorCases(t *testing.T) {
 	}
 }
 
+func TestServer_CorruptRunDirReturns500WithError(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "bad-meta", "meta.json"), "{not json")
+	mustWriteFile(t, filepath.Join(root, "bad-trace", "meta.json"), `{"started_at":"2026-04-17T18:00:00Z"}`)
+	mustWriteFile(t, filepath.Join(root, "bad-trace", "trace.jsonl"), "{not json\n")
+
+	server, err := NewServer(ServerOptions{RunsDirectory: root, AssetsFS: testAssetsFS})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []string{
+		"/api/runs/bad-meta",
+		"/api/runs/bad-trace",
+		"/api/runs/bad-trace/steps/1",
+	}
+	for _, path := range cases {
+		t.Run(path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			server.Handler().ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500, body=%s", recorder.Code, recorder.Body.String())
+			}
+			if strings.TrimSpace(recorder.Body.String()) == "" {
+				t.Error("expected a non-empty error body")
+			}
+		})
+	}
+}
+
+func mustWriteFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestScreenshot_ServesWhitelistedPNG(t *testing.T) {
 	server, _ := newFixtureServer(t)
 	recorder := httptest.NewRecorder()
