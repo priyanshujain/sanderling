@@ -677,12 +677,33 @@ private fun pngHeight(bytes: ByteArray): Int {
         (bytes[22].toInt() and 0xFF shl 8) or (bytes[23].toInt() and 0xFF)
 }
 
+internal const val IOS_XCTEST_RUNNER_BUNDLE_ID = "dev.mobile.maestro-driver-iosUITests.xctrunner"
+
+// reapOrphanIosRunners kills XCTest runner sessions left over from a prior
+// run. A sidecar that died without its shutdown hook leaves its xcodebuild
+// session alive; xcodebuild later restarts its dead runner, which terminates
+// the active run's session and steals the simulator's gesture daemon. Returns
+// true when an orphaned xcodebuild session was found and killed.
+internal fun reapOrphanIosRunners(udid: String, execute: (List<String>) -> Int): Boolean {
+    val killed = execute(listOf("pkill", "-f", "xcodebuild.*test-without-building.*$udid")) == 0
+    execute(listOf("xcrun", "simctl", "terminate", udid, IOS_XCTEST_RUNNER_BUNDLE_ID))
+    return killed
+}
+
 class IosDriverBackend(private val udid: String) : DriverBackend {
     private lateinit var driver: maestro.drivers.IOSDriver
     private lateinit var localDevice: ios.LocalIOSDevice
     private val reconnectLock = java.util.concurrent.locks.ReentrantLock()
 
     init {
+        val reaped = reapOrphanIosRunners(udid) { command ->
+            runCatching { ProcessBuilder(command).start().waitFor() }.getOrDefault(1)
+        }
+        if (reaped) {
+            println("terminated orphaned XCTest runner session for $udid")
+            // Give the killed session a beat to tear down before installing ours.
+            Thread.sleep(1000)
+        }
         val wdaPort = maestro.utils.SocketUtils.nextFreePort(22000, 23000)
         val tempFileHandler = maestro.utils.TempFileHandler()
         val simctlDevice = device.SimctlIOSDevice(

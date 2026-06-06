@@ -159,6 +159,25 @@ class DriverServiceTest {
         assertTrue(thrown.status.description.orEmpty().contains("only one gesture"))
     }
 
+    @Test fun reapOrphanIosRunnersKillsStrayXcodebuildAndRunnerApp() {
+        val commands = mutableListOf<List<String>>()
+        val reaped = reapOrphanIosRunners("UDID-1234") { command ->
+            commands.add(command)
+            0
+        }
+        assertTrue(reaped)
+        assertEquals(2, commands.size)
+        assertEquals("pkill", commands[0][0])
+        assertTrue(commands[0][2].contains("test-without-building"))
+        assertTrue(commands[0][2].contains("UDID-1234"))
+        assertEquals(listOf("xcrun", "simctl", "terminate", "UDID-1234", IOS_XCTEST_RUNNER_BUNDLE_ID), commands[1])
+    }
+
+    @Test fun reapOrphanIosRunnersReportsNothingFound() {
+        val reaped = reapOrphanIosRunners("UDID-1234") { 1 }
+        assertEquals(false, reaped)
+    }
+
     @Test fun overlappedDoubleTapLandsTwoTaps() {
         val invocations = java.util.concurrent.atomic.AtomicInteger(0)
         overlappedDoubleTap { invocations.incrementAndGet() }
