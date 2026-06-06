@@ -31,6 +31,11 @@ interface DriverBackend {
     // serialized pair from the same on-device frame. Backends may override
     // to fuse the two reads more tightly when their native API allows.
     fun snapshot(): SnapshotSample = SnapshotSample(hierarchy(), screenshot())
+
+    // close releases device-side resources on shutdown. The iOS backend must
+    // stop its XCTest runner here: an orphaned runner session auto-restarts
+    // later and hijacks the simulator's gesture daemon mid-run.
+    fun close() {}
 }
 
 data class SnapshotSample(
@@ -613,6 +618,11 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
 
     override fun metrics(bundleId: String) = readProcMetrics(serial, bundleId)
+
+    override fun close() {
+        runCatching { driver.close() }
+        runCatching { dadb.close() }
+    }
 }
 
 private fun buildDadb(serial: String?): dadb.Dadb {
@@ -832,6 +842,13 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
 
     override fun metrics(bundleId: String) = MetricsSample(0.0, 0L, 0L)
+
+    // close stops the XCTest runner session (kills the xcodebuild process and
+    // uninstalls the runner app). Skipping this leaves an orphaned session
+    // that xcodebuild later restarts, killing the next run's session.
+    override fun close() {
+        runCatching { driver.close() }
+    }
 }
 
 private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? {

@@ -186,6 +186,15 @@ class DriverService(
         }
     }
 
+    // shutdown runs on the JVM shutdown path (SIGTERM from the runner). It
+    // terminates the app under test so the simulator is not left showing a
+    // stale session, then closes the backend so the iOS XCTest runner process
+    // dies with us instead of being orphaned.
+    fun shutdown() {
+        runCatching { launchedBundleId.getAndSet(null)?.let { backend.terminate(it) } }
+        runCatching { backend.close() }
+    }
+
     private inline fun <T> runRpc(observer: StreamObserver<T>, block: () -> T) {
         try {
             observer.onNext(block())

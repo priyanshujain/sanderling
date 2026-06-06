@@ -30,6 +30,7 @@ class SidecarServer(
 
     fun stop() {
         grpcServer?.shutdown()
+        service.shutdown()
         shutdownLatch.countDown()
     }
 }
