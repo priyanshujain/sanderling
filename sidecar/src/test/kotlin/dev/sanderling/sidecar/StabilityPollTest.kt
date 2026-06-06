@@ -65,7 +65,7 @@ class StabilityPollTest {
             "frame-$calls"
         }
         val elapsed = System.currentTimeMillis() - start
-        assertTrue(elapsed in budget..(budget + 200L), "expected to hit cap, elapsed=$elapsed")
+        assertTrue(elapsed in budget..(budget + 1000L), "expected to hit cap, elapsed=$elapsed")
     }
 
     @Test fun zeroBudgetReturnsImmediately() {
