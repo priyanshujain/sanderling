@@ -146,6 +146,49 @@ func TestViolationLatchIsMonotonic(t *testing.T) {
 	}
 }
 
+// TestFinalize_KleeneConnectives locks the soundness guarantee in finalize's
+// doc comment: an indefinite (pending) operand must never let a connective
+// manufacture a definite verdict. Bug class: a pending side collapsing to
+// holds/violated at run end, making sanderling lie about pass/fail.
+func TestFinalize_KleeneConnectives(t *testing.T) {
+	pure := func(v bool) Formula { return PureFormula{Value: v} }
+	pendingThunk := ThunkFormula{Name: "t", Func: func() (bool, error) { return true, nil }}
+	eventuallyViolated := EventuallyFormula{Inner: PureFormula{Value: false}}
+	nextPending := NextFormula{Inner: PureFormula{Value: true}}
+	alwaysHolds := AlwaysFormula{Inner: PureFormula{Value: true}}
+
+	cases := []struct {
+		name    string
+		formula Formula
+		want    residualStatus
+	}{
+		{"and-pending-violated", AndFormula{Left: pendingThunk, Right: eventuallyViolated}, statusViolated},
+		{"and-violated-pending", AndFormula{Left: nextPending, Right: eventuallyViolated}, statusViolated},
+		{"and-pending-holds", AndFormula{Left: pendingThunk, Right: alwaysHolds}, statusPending},
+		{"and-holds-holds", AndFormula{Left: pure(true), Right: alwaysHolds}, statusHolds},
+
+		{"or-pending-violated", OrFormula{Left: pendingThunk, Right: eventuallyViolated}, statusPending},
+		{"or-pending-holds", OrFormula{Left: pendingThunk, Right: alwaysHolds}, statusHolds},
+		{"or-violated-violated", OrFormula{Left: pure(false), Right: eventuallyViolated}, statusViolated},
+
+		{"not-pending", NotFormula{Inner: pendingThunk}, statusPending},
+		{"not-violated", NotFormula{Inner: eventuallyViolated}, statusHolds},
+		{"not-holds", NotFormula{Inner: alwaysHolds}, statusViolated},
+
+		{"implies-pending-violated", ImpliesFormula{Antecedent: pendingThunk, Consequent: eventuallyViolated}, statusPending},
+		{"implies-holds-violated", ImpliesFormula{Antecedent: alwaysHolds, Consequent: eventuallyViolated}, statusViolated},
+		{"implies-violated-pending", ImpliesFormula{Antecedent: eventuallyViolated, Consequent: nextPending}, statusHolds},
+
+		{"now-violated", NowFormula{Inner: eventuallyViolated}, statusViolated},
+		{"now-pending", NowFormula{Inner: nextPending}, statusPending},
+	}
+	for _, tc := range cases {
+		if got := finalize(tc.formula); got != tc.want {
+			t.Errorf("%s: finalize = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestCollapse_IdenticalObligationsMerge(t *testing.T) {
 	merged := collapse([]obligation{
 		{formula: Next(Pure(true)), origin: 1},
