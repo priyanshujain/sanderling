@@ -5,9 +5,51 @@ package chrome
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 )
+
+// TestActionMethods_HonorCallerCancellation confirms the DeviceDriver action
+// methods route through runCtx so a cancelled caller context aborts the CDP
+// round-trip instead of blocking on d.tabCtx. Without this a hung browser would
+// ignore step deadlines and Ctrl-C.
+func TestActionMethods_HonorCallerCancellation(t *testing.T) {
+	d := New()
+	defer d.Terminate(context.Background())
+	launchCtx, launchCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer launchCancel()
+	if err := d.Launch(launchCtx, "data:text/html,<body><button id=go>go</button></body>", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	actions := map[string]func() error{
+		"Tap":         func() error { return d.Tap(cancelled, 1, 1) },
+		"Swipe":       func() error { return d.Swipe(cancelled, 1, 1, 2, 2, 50*time.Millisecond) },
+		"LongPress":   func() error { return d.LongPress(cancelled, 1, 1) },
+		"PressKey":    func() error { return d.PressKey(cancelled, "enter") },
+		"InputText":   func() error { return d.InputText(cancelled, "x") },
+		"EraseText":   func() error { return d.EraseText(cancelled, 1) },
+		"TapSelector": func() error { return d.TapSelector(cancelled, "#go") },
+	}
+	for name, action := range actions {
+		t.Run(name, func(t *testing.T) {
+			done := make(chan error, 1)
+			go func() { done <- action() }()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("want context.Canceled, got %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("action ignored cancelled caller ctx and blocked")
+			}
+		})
+	}
+}
 
 // TestHierarchy_EditableFlag confirms the injected hierarchy script marks text
 // inputs, textareas, and contenteditable elements editable while leaving
