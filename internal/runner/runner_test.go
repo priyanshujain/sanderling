@@ -160,6 +160,35 @@ func TestRunner_MaxStepsStopsAfterExactlyNSteps(t *testing.T) {
 	}
 }
 
+// TestRenderSummary_SurfacesUnsupportedVerbs exercises the real path that takes
+// verbs the picker requested but the platform cannot dispatch and puts them in
+// front of the operator. TestRunner_HappyPath only ever asserts the field stays
+// empty (every builtin is supported, so its non-empty arm can never fire), so
+// without this the "unsupported on %s: ..." branch could be deleted and every
+// unsupported-verb regression would pass silently.
+func TestRenderSummary_SurfacesUnsupportedVerbs(t *testing.T) {
+	summary := Summary{Steps: 3, UnsupportedVerbs: []string{"longPresses", "scrolls"}}
+
+	var out bytes.Buffer
+	RenderSummary(&out, summary, "ios")
+
+	if !strings.Contains(out.String(), "unsupported on ios: longPresses, scrolls") {
+		t.Errorf("expected unsupported verbs line for ios, got:\n%s", out.String())
+	}
+}
+
+// TestRenderSummary_OmitsUnsupportedLineWhenNone guards the inverse: a clean run
+// must not print a stray "unsupported on" line, so a future refactor cannot
+// start emitting an empty list and alarm the operator on every run.
+func TestRenderSummary_OmitsUnsupportedLineWhenNone(t *testing.T) {
+	var out bytes.Buffer
+	RenderSummary(&out, Summary{Steps: 2}, "android")
+
+	if strings.Contains(out.String(), "unsupported on") {
+		t.Errorf("did not expect an unsupported-verbs line, got:\n%s", out.String())
+	}
+}
+
 func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 
