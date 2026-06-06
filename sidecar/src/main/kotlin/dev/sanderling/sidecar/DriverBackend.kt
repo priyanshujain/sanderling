@@ -179,6 +179,24 @@ private fun walkForStructuralHash(node: com.fasterxml.jackson.databind.JsonNode,
     out.append(')')
 }
 
+// overlappedDoubleTap fires the second tap while the first is still in
+// flight, so the on-device gap stays tight on transports with high per-tap
+// latency. The overlap can collide with the first tap still executing ("only
+// one gesture can be performed at a time"); the second tap then waits the
+// first out and lands sequentially instead of failing the step.
+internal fun overlappedDoubleTap(tapAction: () -> Unit) {
+    val firstTap = java.util.concurrent.CompletableFuture.runAsync { tapAction() }
+    Thread.sleep(40)
+    try {
+        tapAction()
+    } catch (_: Throwable) {
+        runCatching { firstTap.join() }
+        tapAction()
+        return
+    }
+    firstTap.join()
+}
+
 data class MetricsSample(
     val cpuPercent: Double,
     val heapBytes: Long,
@@ -760,12 +778,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
     // turnaround instead of a full transport round trip. Sequential requests
     // leave a gap wide enough for the app to navigate between the taps.
     override fun doubleTap(x: Int, y: Int): Unit = withReconnect(replay = false) {
-        val point = maestro.Point(x, y)
-        val firstTap = java.util.concurrent.CompletableFuture.runAsync { driver.tap(point) }
-        Thread.sleep(40)
-        driver.tap(point)
-        firstTap.join()
-        Unit
+        overlappedDoubleTap { driver.tap(maestro.Point(x, y)) }
     }
 
     override fun longPress(x: Int, y: Int) = withReconnect(replay = false) { driver.longPress(maestro.Point(x, y)) }

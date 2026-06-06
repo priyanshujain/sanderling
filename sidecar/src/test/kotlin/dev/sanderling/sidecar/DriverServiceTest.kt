@@ -102,6 +102,47 @@ class DriverServiceTest {
         assertEquals(io.grpc.Status.Code.UNAVAILABLE, thrown.status.code)
     }
 
+    // The vendored iOS client throws failures that do not extend Exception;
+    // they must still map to a status error instead of killing the RPC as a
+    // channel-level Unknown the runner cannot classify.
+    @Test fun nonExceptionThrowableMapsToInternal() {
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun inputText(text: String) {
+                throw Throwable("only one gesture can be performed at a time")
+            }
+        }
+        val client = newClient(backend)
+
+        val thrown = kotlin.test.assertFailsWith<io.grpc.StatusRuntimeException> {
+            client.inputText(Text.newBuilder().setValue("hello").build())
+        }
+        assertEquals(io.grpc.Status.Code.INTERNAL, thrown.status.code)
+        assertTrue(thrown.status.description.orEmpty().contains("only one gesture"))
+    }
+
+    @Test fun overlappedDoubleTapLandsTwoTaps() {
+        val invocations = java.util.concurrent.atomic.AtomicInteger(0)
+        overlappedDoubleTap { invocations.incrementAndGet() }
+        assertEquals(2, invocations.get())
+    }
+
+    @Test fun overlappedDoubleTapRetriesSequentiallyOnGestureCollision() {
+        val invocations = java.util.concurrent.atomic.AtomicInteger(0)
+        val inFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+        // Mimic the XCTest runner: a tap issued while another gesture is
+        // still executing fails instead of queuing.
+        val tapAction = {
+            if (!inFlight.compareAndSet(false, true)) {
+                throw IllegalStateException("only one gesture can be performed at a time")
+            }
+            invocations.incrementAndGet()
+            Thread.sleep(150)
+            inFlight.set(false)
+        }
+        overlappedDoubleTap(tapAction)
+        assertEquals(2, invocations.get())
+    }
+
     @Test fun doubleTapDefaultComposesTwoTaps() {
         // Interface delegation would bind the default doubleTap to the
         // delegate, bypassing the tap override, so implement the interface
