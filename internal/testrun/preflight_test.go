@@ -49,7 +49,7 @@ func TestPreflight_AndroidNeedsAdbAndJava(t *testing.T) {
 	}
 }
 
-func TestPreflight_iOSNeedsXcrunAndJava(t *testing.T) {
+func TestPreflight_iOSNeedsXcrun(t *testing.T) {
 	check := func(name string) error {
 		if name == "xcrun" {
 			return errors.New("xcrun not found")
@@ -65,11 +65,38 @@ func TestPreflight_iOSNeedsXcrunAndJava(t *testing.T) {
 	}
 }
 
+func TestPreflight_iOSDoesNotRequireJava(t *testing.T) {
+	checked := []string{}
+	check := func(name string) error {
+		checked = append(checked, name)
+		if name == "java" {
+			return errors.New("java not found")
+		}
+		return nil
+	}
+	if err := runPreflight(context.Background(), "ios", check); err != nil {
+		t.Fatalf("ios preflight should pass without java, got %v", err)
+	}
+	for _, name := range checked {
+		if name == "java" {
+			t.Errorf("ios preflight must not check java; simulator runs need no JVM")
+		}
+	}
+}
+
 func TestPreflight_AllOK(t *testing.T) {
 	check := func(name string) error { return nil }
 	for _, platform := range []string{"web", "android", "ios"} {
 		if err := runPreflight(context.Background(), platform, check); err != nil {
 			t.Errorf("%s: unexpected error %v", platform, err)
+		}
+	}
+}
+
+func TestPreflightDevice_NonIosIsNoop(t *testing.T) {
+	for _, platform := range []string{"web", "android"} {
+		if err := preflightDevice(platform); err != nil {
+			t.Errorf("%s: preflightDevice should be a no-op, got %v", platform, err)
 		}
 	}
 }
