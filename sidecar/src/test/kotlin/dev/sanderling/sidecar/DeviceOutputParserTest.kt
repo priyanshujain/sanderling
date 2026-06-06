@@ -3,8 +3,37 @@ package dev.sanderling.sidecar
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DeviceOutputParserTest {
+
+    // Logcat's threadtime format carries no year; the parser infers the current
+    // one. A line missing a field (or in another format) must be skipped, not
+    // misparsed into a bogus entry.
+    @Test fun parseLogcatExtractsLevelTagMessageAndInfersYear() {
+        val output = """
+            06-06 12:34:56.789  1000  1000 E AndroidRuntime: FATAL EXCEPTION: main
+            not a logcat line at all
+            06-06 12:34:57.000  1000  1000 I ActivityManager: Start proc
+        """.trimIndent()
+
+        val lines = StubDriverBackend.parseLogcatOutput(output)
+        assertEquals(2, lines.size)
+        assertEquals("E", lines[0].level)
+        assertEquals("AndroidRuntime", lines[0].tag)
+        assertEquals("FATAL EXCEPTION: main", lines[0].message)
+
+        val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = lines[0].unixMillis }
+        assertEquals(year, cal.get(java.util.Calendar.YEAR))
+        assertEquals(56, cal.get(java.util.Calendar.SECOND))
+        assertEquals(789, cal.get(java.util.Calendar.MILLISECOND))
+    }
+
+    @Test fun parseLogcatEmptyOutputYieldsNoLines() {
+        assertTrue(StubDriverBackend.parseLogcatOutput("").isEmpty())
+        assertTrue(StubDriverBackend.parseLogcatOutput("   \n  ").isEmpty())
+    }
 
     // /proc/pid/stat: the comm field is parenthesized and may itself contain
     // spaces and a ')'. Splitting before substringAfterLast(')') would shift
