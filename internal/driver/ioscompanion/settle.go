@@ -13,17 +13,20 @@ import (
 )
 
 // StabilityPollInterval is how long the loop waits between hierarchy probes.
-// It is set wide enough that the companion's hierarchy endpoint is not
-// hammered: tighter intervals back the companion's stream up under load.
-const StabilityPollInterval = 250 * time.Millisecond
+// The companion answers describe-all in tens of milliseconds, so a tight
+// interval samples transitions promptly without backing the stream up.
+const StabilityPollInterval = 150 * time.Millisecond
 
 // MinStableStreak is how long the tree must stay structurally identical (and
 // non-transitional) before the poll declares settle. Actions whose effect is
 // async (a tap that fires a write which later pops the back stack) leave the
 // UI momentarily stable before the navigation transition fires; requiring an
-// uninterrupted streak of this length means any churn that starts during the
-// window resets the clock instead of being missed.
-const MinStableStreak = 750 * time.Millisecond
+// uninterrupted streak means churn that starts during the window resets the
+// clock instead of being missed. The streak is shorter than the JVM sidecar's
+// (which polls a slower, flakier adb hierarchy): the companion's describe is
+// fast and deterministic, and cross-fade transitions are caught separately by
+// the route-screen transitional check rather than by streak length.
+const MinStableStreak = 450 * time.Millisecond
 
 // StabilityPollCap bounds total time spent polling so a UI that never settles
 // does not block the runner indefinitely.
