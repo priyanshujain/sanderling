@@ -22,7 +22,7 @@ DOCS_TEMPLATE := docs/_template/page.html
 REPLAY_DIST := internal/replay/dist
 WEB_DIST := replay-ui/dist
 
-.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-kotlin test-spec-api web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry
+.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-kotlin test-spec-api web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -69,10 +69,13 @@ $(SIDECAR_EMBED): $(SIDECAR_JAR)
 	mkdir -p $(dir $@)
 	cp $< $@
 
-test: test-go test-spec-api web-typecheck
+test: test-go test-spec-api web-typecheck web-test
 
 test-go:
 	$(GO) test $(GO_PACKAGES)
+
+web-test:
+	cd replay-ui && bun install --frozen-lockfile && bun test
 
 # Drives small web fixtures and the chrome driver through real headless Chrome.
 # Kept out of `test` because it needs a Chrome binary on PATH.
