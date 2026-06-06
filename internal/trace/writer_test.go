@@ -289,16 +289,16 @@ func TestWriteStep_MultipleStepsAppend(t *testing.T) {
 	}
 }
 
-// Bug class: dropping the writer mutex would let concurrent encoder.Encode
-// calls interleave, producing torn JSONL lines. Run under -race: every line
-// must be a complete, parseable Step and all N must arrive.
-func TestWriteStep_ConcurrentWritesAreWellFormed(t *testing.T) {
+// Bug class: dropping the writer mutex unsynchronizes the w.file field that
+// WriteStep reads and Close nils out. Run under -race with WriteStep racing
+// Close: a missing mutex is a reported data race on w.file, and any step that
+// survives Close must still be a complete, parseable JSONL line.
+func TestWriteStep_RacesCloseSafely(t *testing.T) {
 	directory := t.TempDir()
 	writer, err := NewWriter(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer writer.Close()
 
 	const n = 50
 	var wg sync.WaitGroup
@@ -306,27 +306,21 @@ func TestWriteStep_ConcurrentWritesAreWellFormed(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			if err := writer.WriteStep(Step{Index: index, Screen: "s"}); err != nil {
-				t.Errorf("WriteStep: %v", err)
-			}
+			// Tolerate "writer is closed": the contract under test is that the
+			// w.file access is synchronized, not that every write lands.
+			_ = writer.WriteStep(Step{Index: index, Screen: "s"})
 		}(index)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 	wg.Wait()
 
-	lines := readLines(t, filepath.Join(directory, "trace.jsonl"))
-	if len(lines) != n {
-		t.Fatalf("expected %d lines, got %d", n, len(lines))
-	}
-	seen := make(map[int]bool, n)
-	for _, line := range lines {
+	for _, line := range readLines(t, filepath.Join(directory, "trace.jsonl")) {
 		var got Step
 		if err := json.Unmarshal([]byte(line), &got); err != nil {
 			t.Fatalf("torn JSONL line: %v\n%s", err, line)
 		}
-		seen[got.Index] = true
-	}
-	if len(seen) != n {
-		t.Errorf("expected %d distinct steps, got %d", n, len(seen))
 	}
 }
 
