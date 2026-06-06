@@ -1321,8 +1321,8 @@ func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
 	if len(summary.Violations) != 0 {
 		t.Errorf("transient apply error must not surface as a violation, got %v", summary.Violations)
 	}
-	if !strings.Contains(logBuf.String(), "transient apply error") {
-		t.Errorf("expected transient-apply WARN log, got %q", logBuf.String())
+	if !strings.Contains(logBuf.String(), "apply error; marking step transitional") {
+		t.Errorf("expected apply-error WARN log, got %q", logBuf.String())
 	}
 
 	type traceLine struct {
@@ -1353,34 +1353,44 @@ func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
 	}
 }
 
-// TestIsTransientApplyError_Classification covers the helper's matching rules
-// directly so future code changes don't quietly drop a transient case.
-func TestIsTransientApplyError_Classification(t *testing.T) {
-	cleanCtx := context.Background()
-	cancelledCtx, cancel := context.WithCancel(context.Background())
-	cancel()
+// internalApplyErrorFailFirst wraps a mock driver so the first InputText call
+// fails with the bare Internal error the iOS runner's input handler emits
+// when it chokes (HTTP 500 with an empty body), then recovers.
+type internalApplyErrorFailFirst struct {
+	*mockdriver.Driver
+	calls int
+}
 
-	cases := []struct {
-		name string
-		ctx  context.Context
-		err  error
-		want bool
-	}{
-		{"nil error", cleanCtx, nil, false},
-		{"deadline exceeded", cleanCtx, status.Error(codes.DeadlineExceeded, "boom"), true},
-		{"unavailable", cleanCtx, status.Error(codes.Unavailable, "boom"), true},
-		{"internal wrapping deadline", cleanCtx, status.Error(codes.Internal, "io.grpc.StatusRuntimeException: DEADLINE_EXCEEDED: ..."), true},
-		{"internal wrapping unavailable", cleanCtx, status.Error(codes.Internal, "io.grpc.StatusRuntimeException: UNAVAILABLE: ..."), true},
-		{"internal generic", cleanCtx, status.Error(codes.Internal, "boom"), false},
-		{"raw context deadline", cleanCtx, context.DeadlineExceeded, true},
-		{"run context cancelled overrides", cancelledCtx, status.Error(codes.DeadlineExceeded, "boom"), false},
+func (d *internalApplyErrorFailFirst) TapSelector(ctx context.Context, selector string) error {
+	d.calls++
+	if d.calls == 1 {
+		return status.Error(codes.Internal, "UnknownFailure(errorResponse=Request for inputText failed, code: 500, body: )")
 	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			if got := isTransientApplyError(testCase.ctx, testCase.err); got != testCase.want {
-				t.Errorf("got %v, want %v", got, testCase.want)
-			}
-		})
+	return d.Driver.TapSelector(ctx, selector)
+}
+
+// TestRunner_InternalApplyErrorMarksTransitional pins the policy that a
+// one-off device-side failure (e.g. the iOS input handler's bare 500) is
+// absorbed as a transitional step instead of killing the run. Persistent
+// failure is covered by the consecutive-failure cap.
+func TestRunner_InternalApplyErrorMarksTransitional(t *testing.T) {
+	state := newHarness(t)
+	wrapped := &internalApplyErrorFailFirst{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    300 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run must not return on a one-off internal apply error, got %v", err)
+	}
+	if summary.Steps < 2 {
+		t.Fatalf("need at least 2 steps to prove the loop continued, got %d", summary.Steps)
 	}
 }
 
@@ -1411,9 +1421,6 @@ func TestIsWDADrop_Classification(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			if got := isWDADrop(testCase.err); got != testCase.want {
 				t.Errorf("got %v, want %v", got, testCase.want)
-			}
-			if testCase.want && isTransientApplyError(context.Background(), testCase.err) {
-				t.Error("a WDA drop must never also classify as transient")
 			}
 		})
 	}
@@ -1449,7 +1456,7 @@ func TestRunner_ConsecutiveTransientApplyFailuresAbort(t *testing.T) {
 	if err == nil {
 		t.Fatal("Run must abort after consecutive transient apply failures")
 	}
-	if !strings.Contains(err.Error(), "consecutive transient failures") {
+	if !strings.Contains(err.Error(), "consecutive failures") {
 		t.Errorf("expected consecutive-failure abort, got %v", err)
 	}
 	// The aborting step returns before it is recorded, so the summary holds

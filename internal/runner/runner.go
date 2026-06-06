@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -232,18 +230,23 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				if isWDADrop(err) {
 					return summary, fmt.Errorf("step %d: the iOS XCTest runner could not be restarted - re-run the test: %w", stepIndex, err)
 				}
-				if isTransientApplyError(ctx, err) {
-					consecutiveApplyFailures++
-					if consecutiveApplyFailures >= maxConsecutiveApplyFailures {
-						return summary, fmt.Errorf("step %d apply: %d consecutive transient failures; the device is not recovering: %w", stepIndex, consecutiveApplyFailures, err)
-					}
-					logger.Warn("transient apply error; marking step transitional", "step", stepIndex, "err", err)
-					transitional = true
-					applySkipped = true
-					lastAction = nil
-				} else {
+				if ctx.Err() != nil {
 					return summary, fmt.Errorf("step %d apply: %w", stepIndex, err)
 				}
+				// Every apply error is a device-side condition (a dropped
+				// gesture, a typing request the runner's input handler choked
+				// on, an RPC deadline). None of them individually justify
+				// killing a fuzz run; what does is an unbroken streak, which
+				// means the device is wedged. The step is marked transitional
+				// so the verifier never sees a state the action did not reach.
+				consecutiveApplyFailures++
+				if consecutiveApplyFailures >= maxConsecutiveApplyFailures {
+					return summary, fmt.Errorf("step %d apply: %d consecutive failures; the device is not recovering: %w", stepIndex, consecutiveApplyFailures, err)
+				}
+				logger.Warn("apply error; marking step transitional", "step", stepIndex, "err", err)
+				transitional = true
+				applySkipped = true
+				lastAction = nil
 			} else {
 				consecutiveApplyFailures = 0
 				actionCopy := nextAction
@@ -933,28 +936,3 @@ func isWDADrop(err error) bool {
 	return strings.Contains(err.Error(), "WDA reconnect failed")
 }
 
-// isTransientApplyError reports whether an applyAction failure is a transient
-// device-side hang (sidecar RPC deadline, momentary unavailability) rather than
-// a fatal condition. Such steps are recorded as transitional and the loop
-// continues. The run context being cancelled is never transient: it means the
-// caller wants to stop.
-func isTransientApplyError(runCtx context.Context, err error) bool {
-	if err == nil || runCtx.Err() != nil {
-		return false
-	}
-	if s, ok := status.FromError(err); ok {
-		switch s.Code() {
-		case codes.DeadlineExceeded, codes.Unavailable:
-			return true
-		case codes.Internal:
-			message := s.Message()
-			if strings.Contains(message, "DEADLINE_EXCEEDED") || strings.Contains(message, "UNAVAILABLE") {
-				return true
-			}
-		}
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	return false
-}
