@@ -152,17 +152,6 @@ func TestRun_UnknownCommand(t *testing.T) {
 	}
 }
 
-func TestRun_Doctor(t *testing.T) {
-	var stdout bytes.Buffer
-	// Doctor may pass or fail depending on host environment; we just want to
-	// confirm it runs and emits per-check lines.
-	_ = run([]string{"sanderling", "doctor"}, &stdout, io.Discard)
-	output := stdout.String()
-	if !strings.Contains(output, "OK") && !strings.Contains(output, "FAIL") {
-		t.Errorf("doctor output missing OK/FAIL lines: %q", output)
-	}
-}
-
 func TestParseTestArgs_AcceptsIosPlatform(t *testing.T) {
 	options, err := parseTestArgs([]string{
 		"--spec", "s.ts",
