@@ -120,3 +120,39 @@ func tarEntryNames(t *testing.T, archive []byte) map[string]bool {
 	}
 	return names
 }
+
+func TestPayloadChunks(t *testing.T) {
+	cases := []struct {
+		name       string
+		dataLength int
+		chunkBytes int
+		wantSizes  []int
+	}{
+		{name: "empty", dataLength: 0, chunkBytes: 4, wantSizes: nil},
+		{name: "under one chunk", dataLength: 3, chunkBytes: 4, wantSizes: []int{3}},
+		{name: "exact multiple", dataLength: 8, chunkBytes: 4, wantSizes: []int{4, 4}},
+		{name: "remainder", dataLength: 10, chunkBytes: 4, wantSizes: []int{4, 4, 2}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			data := make([]byte, c.dataLength)
+			for i := range data {
+				data[i] = byte(i)
+			}
+			chunks := payloadChunks(data, c.chunkBytes)
+			if len(chunks) != len(c.wantSizes) {
+				t.Fatalf("got %d chunks, want %d", len(chunks), len(c.wantSizes))
+			}
+			var rejoined []byte
+			for i, chunk := range chunks {
+				if len(chunk) != c.wantSizes[i] {
+					t.Fatalf("chunk %d size %d, want %d", i, len(chunk), c.wantSizes[i])
+				}
+				rejoined = append(rejoined, chunk...)
+			}
+			if !bytes.Equal(rejoined, data) {
+				t.Fatal("rejoined chunks differ from input")
+			}
+		})
+	}
+}
