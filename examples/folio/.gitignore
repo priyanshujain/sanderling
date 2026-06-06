@@ -8,5 +8,6 @@ app/iosApp/iosApp.xcodeproj/**
 .DS_Store
 sanderling/node_modules/
 sanderling/runs/
+sanderling/gates/
 .playwright-mcp/
 web-*.png

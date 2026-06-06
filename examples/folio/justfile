@@ -7,6 +7,7 @@ duration   := env_var_or_default("DURATION", "1m")
 seed       := env_var_or_default("SEED", "0")
 output     := env_var_or_default("OUTPUT", justfile_directory() / "sanderling" / "runs")
 ios_device := env_var_or_default("IOS_DEVICE", "iPhone 17 Pro")
+ios_app    := justfile_directory() / "app" / "iosApp" / "build" / "Build" / "Products" / "Debug-iphonesimulator" / "iosApp.app"
 
 default:
     @just --list
@@ -118,7 +119,7 @@ ios:
       -destination 'platform=iOS Simulator,name={{ios_device}}' \
       -derivedDataPath app/iosApp/build \
       build | tail -5
-    xcrun simctl install booted app/iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app
+    xcrun simctl install booted "{{ios_app}}"
     xcrun simctl launch booted app.folio
 
 # Run 'sanderling test' against the folio app. Uses a connected device if one is
@@ -167,7 +168,15 @@ test-ios:
       --platform ios \
       --spec "{{justfile_directory()}}/sanderling/spec.ts" \
       --bundle-id app.folio \
+      --ios-app-path "{{ios_app}}" \
       "${ios_device_flag[@]}" \
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"
+
+# BACKEND=simulator (default) or BACKEND=device; honors RUNS/DURATION/SEED and
+# the IOS_DEVICE/--ios-device convention. `just gates --self-test` runs the
+# offline analyzer tests without a device.
+# Run the iOS conformance gate: five serial 3-minute runs scored against G1..G5.
+gates *args:
+    "{{justfile_directory()}}/gates.sh" {{args}}
