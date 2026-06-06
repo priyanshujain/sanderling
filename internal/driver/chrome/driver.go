@@ -293,7 +293,9 @@ var keyMap = map[string]string{
 	"right":  kb.ArrowRight,
 }
 
-func (d *Driver) Hierarchy(_ context.Context) (string, error) {
+func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	script := `
 (function() {
   const route = window.location.hash.replace(/^#/, '').split('?')[0] || '/';
@@ -339,7 +341,7 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
 })()`
 
 	var result any
-	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &result)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &result)); err != nil {
 		return "", fmt.Errorf("hierarchy: %w", err)
 	}
 	bytes, err := json.Marshal(result)
@@ -349,9 +351,11 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
 	return string(bytes), nil
 }
 
-func (d *Driver) Screenshot(_ context.Context) (driver.Image, error) {
+func (d *Driver) Screenshot(ctx context.Context) (driver.Image, error) {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	var buf []byte
-	if err := chromedp.Run(d.tabCtx, chromedp.CaptureScreenshot(&buf)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.CaptureScreenshot(&buf)); err != nil {
 		return driver.Image{}, fmt.Errorf("screenshot: %w", err)
 	}
 	w, h := pngDimensions(buf)
@@ -390,8 +394,10 @@ func (d *Driver) RecentLogs(_ context.Context, since time.Time, minLevel string)
 	return result, nil
 }
 
-func (d *Driver) WaitForIdle(_ context.Context, _ time.Duration) error {
-	return chromedp.Run(d.tabCtx, chromedp.WaitReady("body", chromedp.ByQuery))
+func (d *Driver) WaitForIdle(ctx context.Context, _ time.Duration) error {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	return chromedp.Run(runCtx, chromedp.WaitReady("body", chromedp.ByQuery))
 }
 
 func (d *Driver) Health(_ context.Context) (driver.Health, error) {
@@ -403,14 +409,16 @@ func (d *Driver) Health(_ context.Context) (driver.Health, error) {
 	}
 }
 
-func (d *Driver) Metrics(_ context.Context, _ string) (driver.Metrics, error) {
+func (d *Driver) Metrics(ctx context.Context, _ string) (driver.Metrics, error) {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	var result map[string]any
 	script := `
 (function() {
   const mem = performance.memory || {};
   return {heap: mem.usedJSHeapSize || 0, totalMem: mem.totalJSHeapSize || 0};
 })()`
-	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &result)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &result)); err != nil {
 		return driver.Metrics{}, nil
 	}
 	heap, _ := result["heap"].(float64)
