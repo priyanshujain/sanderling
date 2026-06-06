@@ -5,6 +5,7 @@ import dev.sanderling.driver.v1.Duration
 import dev.sanderling.driver.v1.Empty
 import dev.sanderling.driver.v1.EraseTextRequest
 import dev.sanderling.driver.v1.LaunchRequest
+import dev.sanderling.driver.v1.MetricsRequest
 import dev.sanderling.driver.v1.Point
 import dev.sanderling.driver.v1.PressKeyRequest
 import dev.sanderling.driver.v1.RecentLogsRequest
@@ -336,6 +337,40 @@ class DriverServiceTest {
         assertEquals(1, response.entriesCount)
         assertEquals("AndroidRuntime", response.getEntries(0).tag)
         assertEquals("boom", response.getEntries(0).message)
+    }
+
+    // With no explicit bundle in the request, metrics must sample the app the
+    // service launched; otherwise CPU/memory are read from the wrong process.
+    @Test fun metricsFallsBackToLaunchedBundleWhenRequestOmitsIt() {
+        var sampled: String? = null
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun metrics(bundleId: String): MetricsSample {
+                sampled = bundleId
+                return MetricsSample(0.0, 0L, 0L)
+            }
+        }
+        val client = newClient(backend)
+
+        client.launch(LaunchRequest.newBuilder().setBundleId("com.launched").build())
+        client.metrics(MetricsRequest.getDefaultInstance())
+
+        assertEquals("com.launched", sampled)
+    }
+
+    @Test fun metricsRequestBundleOverridesLaunchedBundle() {
+        var sampled: String? = null
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun metrics(bundleId: String): MetricsSample {
+                sampled = bundleId
+                return MetricsSample(0.0, 0L, 0L)
+            }
+        }
+        val client = newClient(backend)
+
+        client.launch(LaunchRequest.newBuilder().setBundleId("com.launched").build())
+        client.metrics(MetricsRequest.newBuilder().setBundleId("com.other").build())
+
+        assertEquals("com.other", sampled)
     }
 
     @Test fun healthReportsPlatformAndVersion() {
