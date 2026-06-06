@@ -210,6 +210,66 @@ func TestWriteStep_AppendsOneJsonLine(t *testing.T) {
 	}
 }
 
+// Bug class: a property that first violates at step 0 carries Witness.Step==0,
+// which omitempty drops from JSON. Decode must still yield Step 0 (the true
+// origin) rather than confusing it with a later step. Also pins that the
+// Witnesses/ExtractorChanges/Metrics/Exceptions sidecars survive the round-trip
+// rather than silently vanishing on decode.
+func TestWriteStep_DiagnosticsRoundTrip(t *testing.T) {
+	directory := t.TempDir()
+	writer, _ := NewWriter(directory)
+	defer writer.Close()
+
+	step := Step{
+		Index: 4,
+		Witnesses: map[string]Witness{
+			"balanceNonNegative": {
+				Reason:  "balance went negative",
+				IsError: true,
+				Step:    0,
+				Extractors: map[string]json.RawMessage{
+					"balance": json.RawMessage(`-5`),
+				},
+			},
+		},
+		ExtractorChanges: map[string]ExtractorChange{
+			"balance": {Prev: json.RawMessage(`10`), Curr: json.RawMessage(`-5`)},
+		},
+		Metrics:    &Metrics{CPUPercent: 12.5, HeapBytes: 4096},
+		Exceptions: []Exception{{Class: "NullPointerException", Message: "boom"}},
+	}
+	if err := writer.WriteStep(step); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(directory, "trace.jsonl"))
+	if strings.Contains(string(body), `"step":0`) {
+		t.Errorf("Witness.Step==0 should be omitted from JSON, got: %s", body)
+	}
+	var got Step
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("bad jsonl: %v\n%s", err, body)
+	}
+	w, ok := got.Witnesses["balanceNonNegative"]
+	if !ok {
+		t.Fatal("step-0 witness vanished on decode")
+	}
+	if w.Step != 0 || w.Reason != "balance went negative" || !w.IsError {
+		t.Errorf("witness round-trip wrong: %+v", w)
+	}
+	if string(w.Extractors["balance"]) != `-5` {
+		t.Errorf("witness extractors lost: %s", w.Extractors["balance"])
+	}
+	if c := got.ExtractorChanges["balance"]; string(c.Prev) != `10` || string(c.Curr) != `-5` {
+		t.Errorf("extractor change round-trip wrong: %+v", c)
+	}
+	if got.Metrics == nil || got.Metrics.CPUPercent != 12.5 || got.Metrics.HeapBytes != 4096 {
+		t.Errorf("metrics round-trip wrong: %+v", got.Metrics)
+	}
+	if len(got.Exceptions) != 1 || got.Exceptions[0].Class != "NullPointerException" {
+		t.Errorf("exceptions round-trip wrong: %+v", got.Exceptions)
+	}
+}
+
 func TestWriteStep_MultipleStepsAppend(t *testing.T) {
 	directory := t.TempDir()
 	writer, err := NewWriter(directory)
