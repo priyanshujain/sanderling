@@ -107,6 +107,59 @@ func TestResolveSpecAPIPath_FindsUpwardSibling(t *testing.T) {
 	}
 }
 
+func TestResolveRuntimeSibling(t *testing.T) {
+	const filename = "goja-runtime.ts"
+
+	siblingRoot := t.TempDir()
+	siblingAPI := filepath.Join(siblingRoot, "pkg", "spec", "src", "index.ts")
+	if err := os.MkdirAll(filepath.Dir(siblingAPI), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	siblingFile := filepath.Join(filepath.Dir(siblingAPI), filename)
+	if err := os.WriteFile(siblingFile, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	nmRoot := t.TempDir()
+	nmFile := filepath.Join(nmRoot, "node_modules", "@sanderling", "spec", "src", filename)
+	if err := os.MkdirAll(filepath.Dir(nmFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nmFile, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nmSpec := filepath.Join(nmRoot, "examples", "deep", "spec.ts")
+	if err := os.MkdirAll(filepath.Dir(nmSpec), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nmSpec, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	missingSpec := filepath.Join(t.TempDir(), "spec.ts")
+	if err := os.WriteFile(missingSpec, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name        string
+		specAPIPath string
+		userSpec    string
+		want        string
+	}{
+		{"sibling next to spec-API wins", siblingAPI, missingSpec, siblingFile},
+		{"node_modules fallback upward", "", nmSpec, nmFile},
+		{"neither reachable returns empty", "", missingSpec, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveRuntimeSibling(tt.specAPIPath, tt.userSpec, filename); got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveSpecAPIPath_ReturnsEmptyWhenMissing(t *testing.T) {
 	root := t.TempDir()
 	specPath := filepath.Join(root, "spec.ts")
