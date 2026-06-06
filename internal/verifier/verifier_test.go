@@ -339,8 +339,11 @@ func TestNextAction_WeightedSelectsByWeight(t *testing.T) {
 			awayCount++
 		}
 	}
-	if awayCount <= homeCount {
-		t.Errorf("expected away-skewed distribution, got home=%d away=%d", homeCount, awayCount)
+	// Weights are 99:1, so away must dominate by a wide margin. Requiring a 5x
+	// skew (rather than a bare >) keeps the assertion robust to harmless picker
+	// reshuffles while still failing if the weight is ignored or inverted.
+	if awayCount <= 5*homeCount {
+		t.Errorf("expected away to outweigh home by >5x (weights 99:1), got home=%d away=%d", homeCount, awayCount)
 	}
 }
 
