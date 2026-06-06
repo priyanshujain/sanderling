@@ -69,18 +69,7 @@ func bootedSimulator(ctx context.Context) (*simDevice, error) {
 	if err != nil {
 		return nil, err
 	}
-	var list simctlDeviceList
-	if err := json.Unmarshal(out, &list); err != nil {
-		return nil, err
-	}
-	for _, devices := range list.Devices {
-		for _, d := range devices {
-			if d.State == "Booted" {
-				return &d, nil
-			}
-		}
-	}
-	return nil, nil
+	return parseBootedDevice(out)
 }
 
 func availableSimulators(ctx context.Context) ([]simDevice, error) {
@@ -88,6 +77,25 @@ func availableSimulators(ctx context.Context) ([]simDevice, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseAvailableDevices(out)
+}
+
+func parseBootedDevice(out []byte) (*simDevice, error) {
+	var list simctlDeviceList
+	if err := json.Unmarshal(out, &list); err != nil {
+		return nil, err
+	}
+	for _, devices := range list.Devices {
+		for i := range devices {
+			if devices[i].State == "Booted" {
+				return &devices[i], nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func parseAvailableDevices(out []byte) ([]simDevice, error) {
 	var list simctlDeviceList
 	if err := json.Unmarshal(out, &list); err != nil {
 		return nil, err
