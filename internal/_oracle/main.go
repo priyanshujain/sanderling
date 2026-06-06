@@ -26,10 +26,10 @@ type seed struct {
 }
 
 type caseEntry struct {
-	Seed    seed                `json:"seed"`
-	Uint64  []string            `json:"uint64"`
-	Float64 []float64           `json:"float64"`
-	IntN    map[string][]int    `json:"intN"`
+	Seed    seed             `json:"seed"`
+	Uint64  []string         `json:"uint64"`
+	Float64 []float64        `json:"float64"`
+	IntN    map[string][]int `json:"intN"`
 }
 
 const drawCount = 40

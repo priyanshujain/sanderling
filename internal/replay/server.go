@@ -284,4 +284,3 @@ func ResolveRunsDirectory(argument string) (string, string, error) {
 	}
 	return argument, "", nil
 }
-

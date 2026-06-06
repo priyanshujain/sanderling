@@ -67,9 +67,9 @@ type violationAttribution struct {
 
 func decodeStepSummary(line []byte) (StepSummary, []violationAttribution, error) {
 	var partial struct {
-		Index     int       `json:"step"`
-		Timestamp time.Time `json:"timestamp"`
-		Screen    string    `json:"screen,omitempty"`
+		Index      int       `json:"step"`
+		Timestamp  time.Time `json:"timestamp"`
+		Screen     string    `json:"screen,omitempty"`
 		NextAction *struct {
 			Kind           string `json:"kind"`
 			X              int    `json:"x,omitempty"`

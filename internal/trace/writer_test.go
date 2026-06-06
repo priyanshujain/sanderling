@@ -22,13 +22,13 @@ func TestWriteMeta_RoundTrip(t *testing.T) {
 	defer writer.Close()
 
 	meta := Meta{
-		Seed:         42,
-		SpecPath:     "spec.ts",
-		BundleSHA256: "deadbeef",
-		Platform:     "android",
-		BundleID:     "in.okcredit.merchant",
-		StartedAt:    time.Date(2026, 4, 17, 22, 30, 0, 0, time.UTC),
-		SanderlingVersion:  "0.0.1",
+		Seed:              42,
+		SpecPath:          "spec.ts",
+		BundleSHA256:      "deadbeef",
+		Platform:          "android",
+		BundleID:          "in.okcredit.merchant",
+		StartedAt:         time.Date(2026, 4, 17, 22, 30, 0, 0, time.UTC),
+		SanderlingVersion: "0.0.1",
 	}
 	if err := writer.WriteMeta(meta); err != nil {
 		t.Fatal(err)
@@ -57,12 +57,12 @@ func TestWriteMeta_EndedAtRoundTrip(t *testing.T) {
 
 	endedAt := time.Date(2026, 4, 17, 22, 31, 0, 0, time.UTC)
 	meta := Meta{
-		Seed:        7,
-		SpecPath:    "spec.ts",
-		Platform:    "android",
-		BundleID:    "in.test",
-		StartedAt:   time.Date(2026, 4, 17, 22, 30, 0, 0, time.UTC),
-		EndedAt:     &endedAt,
+		Seed:              7,
+		SpecPath:          "spec.ts",
+		Platform:          "android",
+		BundleID:          "in.test",
+		StartedAt:         time.Date(2026, 4, 17, 22, 30, 0, 0, time.UTC),
+		EndedAt:           &endedAt,
 		SanderlingVersion: "0.0.1",
 	}
 	if err := writer.WriteMeta(meta); err != nil {
