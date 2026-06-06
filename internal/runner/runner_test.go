@@ -552,6 +552,48 @@ func TestTraceActionFor_StaleCoordinatesDoNotOverrideTreeCenter(t *testing.T) {
 	}
 }
 
+// TestTraceActionFor_RecordsKindSpecificFields locks each action kind's trace
+// encoding. PressKey must carry its Key and Wait its DurationMillis; if either
+// branch of traceActionFor drops the field (or a field rename desyncs from the
+// trace.Action struct) the replay UI silently renders a key-less PressKey or a
+// zero-duration Wait. Swipe's endpoint encoding is covered separately via
+// applyAction (TestApplyAction_ScrollWithPrecomputedEndpointsSwipes).
+func TestTraceActionFor_RecordsKindSpecificFields(t *testing.T) {
+	cases := []struct {
+		name   string
+		action verifier.Action
+		check  func(*testing.T, *trace.Action)
+	}{
+		{
+			"PressKey records key",
+			verifier.Action{Kind: verifier.ActionKindPressKey, Key: "back"},
+			func(t *testing.T, a *trace.Action) {
+				if a.Key != "back" {
+					t.Errorf("Key = %q, want %q", a.Key, "back")
+				}
+			},
+		},
+		{
+			"Wait records duration",
+			verifier.Action{Kind: verifier.ActionKindWait, DurationMillis: 250},
+			func(t *testing.T, a *trace.Action) {
+				if a.DurationMillis != 250 {
+					t.Errorf("DurationMillis = %d, want 250", a.DurationMillis)
+				}
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			traceAction := traceActionFor(testCase.action, nil)
+			if traceAction.Kind != string(testCase.action.Kind) {
+				t.Errorf("Kind = %q, want %q", traceAction.Kind, testCase.action.Kind)
+			}
+			testCase.check(t, traceAction)
+		})
+	}
+}
+
 func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 	state := newHarness(t)
 	state.mock.Failures[mockdriver.ActionWaitForIdle] = errors.New("sidecar lost gRPC stream")
