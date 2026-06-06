@@ -36,7 +36,7 @@ By default the installed app stays in place between runs, so whatever the previo
 
 sanderling does not restart the app every few steps. Restarting throws away two things.
 
-**Exploration history.** Action selection favors states the run has not seen. A restart resets that history and the explorer re-treads the same early screens.
+**Accumulated data.** Accounts created, items added, caches warmed, settings changed. Interesting bugs live in apps with history, and a restart wipes it.
 
 **Deep app states.** Many bugs live in states that take many actions to reach: nested settings, a loaded cart, the screen after the third transaction. A 50-step path to "cart with 3 items" never happens if every run starts cold.
 

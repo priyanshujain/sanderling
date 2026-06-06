@@ -317,7 +317,7 @@ Weights declare testing intent:
 - `doubleTaps` gets explicit weight because rapid double submission is a failure mode these forms must survive. This is the line that flushes out the double-submit bug.
 - `defaultActions` keeps a quarter of the budget on random exploration, so the explorer still wanders everywhere and types edge-case values into every field. Without it, the spec only tests the flows you thought of, which defeats the point.
 
-A generator that returns an empty list drops out of the sampling for that step, so weights only ever distribute across what is currently possible.
+When a sampled generator returns an empty list, the runner re-draws, up to 16 times per step. So weights state preference, and the step still lands on a generator that currently has something to offer.
 
 ## The finished spec
 
