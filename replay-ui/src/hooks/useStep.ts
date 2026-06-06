@@ -32,7 +32,7 @@ export function useStep(maxIndex: number | undefined): UseStepResult {
   return { runId, stepIndex: clamped, goTo };
 }
 
-function clampIndex(index: number, maxIndex: number | undefined): number {
+export function clampIndex(index: number, maxIndex: number | undefined): number {
   if (index < 1) {
     return 1;
   }
