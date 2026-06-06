@@ -1,6 +1,6 @@
 import type { Run, RunSummary, Step } from "./types";
 
-async function getJson<T>(path: string): Promise<T> {
+export async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
     throw new Error(`request failed: ${response.status} ${response.statusText} (${path})`);
