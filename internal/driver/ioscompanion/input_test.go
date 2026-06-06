@@ -384,3 +384,22 @@ func TestUsesPasteboardThreshold(t *testing.T) {
 		}
 	}
 }
+
+func TestPasteLandedMaskedSecureField(t *testing.T) {
+	cases := []struct {
+		name string
+		dump string
+		want bool
+	}{
+		{name: "all bullets counts as landed", dump: `[{"type":"TextField","AXUniqueId":"PW","AXValue":"•••••"}]`, want: true},
+		{name: "empty secure field not landed", dump: `[{"type":"TextField","AXUniqueId":"PW","AXValue":""}]`, want: false},
+		{name: "mixed bullets and text not masked", dump: `[{"type":"TextField","AXUniqueId":"PW","AXValue":"••a"}]`, want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := pasteLanded([]byte(c.dump), "PW", "secret9"); got != c.want {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}

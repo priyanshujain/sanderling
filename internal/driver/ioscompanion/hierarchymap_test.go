@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -241,5 +242,19 @@ func TestHasUnresolvedValues(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestMapHierarchySentinelValueMapsAsEmpty(t *testing.T) {
+	dump := `[{"type":"TextField","AXUniqueId":"F","AXLabel":"Email","AXValue":"Invalid","frame":{"x":0,"y":0,"width":10,"height":10},"enabled":true}]`
+	mapped, err := MapHierarchy([]byte(dump), 100, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(mapped), "Invalid") {
+		t.Fatalf("sentinel leaked into mapped tree: %s", mapped)
+	}
+	if !strings.Contains(string(mapped), "hintText") {
+		t.Fatalf("empty editable field should map label to hintText: %s", mapped)
 	}
 }
