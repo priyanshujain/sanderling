@@ -126,29 +126,21 @@ func inputText(ctx context.Context, run runner, text string, field fieldTarget) 
 	return pasteText(ctx, run, text, field)
 }
 
-// pasteText copies the full text to the pasteboard, sends the paste chord, and
-// loops past the permission dialog until the field reflects the text or the
-// attempts are exhausted.
+// pasteText copies the full text to the pasteboard, sends the paste chord
+// once, and polls until the field reflects the text. The chord is re-sent ONLY
+// after dismissing a permission dialog (the dialog swallowed that paste);
+// re-sending it on a slow render would paste the text twice. When the field
+// cannot be verified (no identifier resolved), one chord plus a settle is the
+// best available behavior.
 func pasteText(ctx context.Context, run runner, text string, field fieldTarget) error {
 	if err := run.setPasteboard(ctx, text); err != nil {
 		return fmt.Errorf("set pasteboard: %w", err)
 	}
+	if err := run.sendHID(ctx, pasteChordEvents()...); err != nil {
+		return fmt.Errorf("send paste chord: %w", err)
+	}
+	verifiable := field.identifier != ""
 	for attempt := 0; attempt < pasteAttempts; attempt++ {
-		if err := run.sendHID(ctx, pasteChordEvents()...); err != nil {
-			return fmt.Errorf("send paste chord: %w", err)
-		}
-		// A warm paste lands within a frame or two; check once before paying
-		// the settle sleep so the common case stays fast.
-		quick, err := run.describeAll(ctx)
-		if err != nil {
-			return fmt.Errorf("describe accessibility: %w", err)
-		}
-		if pasteLanded(quick, field.identifier, text) {
-			return nil
-		}
-		if err := run.sleep(ctx, pasteSettle); err != nil {
-			return err
-		}
 		dump, err := run.describeAll(ctx)
 		if err != nil {
 			return fmt.Errorf("describe accessibility: %w", err)
@@ -156,23 +148,30 @@ func pasteText(ctx context.Context, run runner, text string, field fieldTarget) 
 		if pasteLanded(dump, field.identifier, text) {
 			return nil
 		}
-		button, found := findAllowPasteButton(dump)
-		if !found {
+		if button, found := findAllowPasteButton(dump); found {
+			if err := run.sendHID(ctx, tapEvents(button.centerX, button.centerY)...); err != nil {
+				return fmt.Errorf("tap allow button: %w", err)
+			}
 			if err := run.sleep(ctx, dialogSettle); err != nil {
 				return err
 			}
+			if err := run.sendHID(ctx, tapEvents(field.centerX, field.centerY)...); err != nil {
+				return fmt.Errorf("refocus field: %w", err)
+			}
+			if err := run.sleep(ctx, dialogSettle); err != nil {
+				return err
+			}
+			if err := run.sendHID(ctx, pasteChordEvents()...); err != nil {
+				return fmt.Errorf("send paste chord: %w", err)
+			}
 			continue
 		}
-		if err := run.sendHID(ctx, tapEvents(button.centerX, button.centerY)...); err != nil {
-			return fmt.Errorf("tap allow button: %w", err)
+		if !verifiable && attempt > 0 {
+			// No way to confirm landing; the chord went out and no dialog is
+			// blocking it. Give it one settle and move on.
+			return nil
 		}
-		if err := run.sleep(ctx, dialogSettle); err != nil {
-			return err
-		}
-		if err := run.sendHID(ctx, tapEvents(field.centerX, field.centerY)...); err != nil {
-			return fmt.Errorf("refocus field: %w", err)
-		}
-		if err := run.sleep(ctx, dialogSettle); err != nil {
+		if err := run.sleep(ctx, pasteSettle); err != nil {
 			return err
 		}
 	}
@@ -205,13 +204,27 @@ func warmUpPaste(ctx context.Context, run runner) error {
 	return nil
 }
 
-// eraseText deletes characterCount characters from the focused field by sending
-// that many backspaces in one HID stream.
+// eraseBackspaceThreshold is the largest erase still sent as individual
+// backspaces. Backspaces render progressively on the simulator (tens of
+// milliseconds per character), so clearing a long field key-by-key leaves the
+// screen churning long after the HID call returns and races whatever input
+// follows. Above the threshold the field is cleared atomically instead.
+const eraseBackspaceThreshold = 3
+
+// eraseText deletes characterCount characters from the focused field. Small
+// counts go as backspaces in one HID stream; larger counts clear the whole
+// field via select-all plus one backspace. The runner asks for the field's
+// full length when it pre-erases (replace semantics), so treating a large
+// count as clear-the-field matches its intent while landing in one frame.
 func eraseText(ctx context.Context, run runner, characterCount int) error {
 	if characterCount <= 0 {
 		return nil
 	}
-	return run.sendHID(ctx, keyPressEvents(backspaces(characterCount))...)
+	if characterCount <= eraseBackspaceThreshold {
+		return run.sendHID(ctx, keyPressEvents(backspaces(characterCount))...)
+	}
+	events := append(selectAllChordEvents(), keyPressEvents(backspaces(1))...)
+	return run.sendHID(ctx, events...)
 }
 
 // keyPressEvents flattens key presses into a HID event stream. A shifted press
@@ -238,6 +251,17 @@ func pasteChordEvents() []transport.HIDEvent {
 		transport.KeyDown(LeftGUI),
 		transport.KeyDown(VKey),
 		transport.KeyUp(VKey),
+		transport.KeyUp(LeftGUI),
+	}
+}
+
+// selectAllChordEvents is the command+A chord selecting the focused field's
+// whole content.
+func selectAllChordEvents() []transport.HIDEvent {
+	return []transport.HIDEvent{
+		transport.KeyDown(LeftGUI),
+		transport.KeyDown(usageA),
+		transport.KeyUp(usageA),
 		transport.KeyUp(LeftGUI),
 	}
 }
