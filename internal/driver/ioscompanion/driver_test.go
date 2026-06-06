@@ -7,6 +7,8 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"net"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -403,4 +405,54 @@ func indexOf(slice []string, value string) int {
 		}
 	}
 	return -1
+}
+
+// TestNewChildOutlivesStartup proves the companion child is spawned under the
+// driver-lifetime context, not the startup-scoped one: a startup context that
+// is canceled when New returns would SIGTERM the child mid-run.
+func TestNewChildOutlivesStartup(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			connection, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			_ = connection.Close()
+		}
+	}()
+
+	var spawnContext context.Context
+	options := Options{
+		UniqueDeviceIdentifier: "FAKE-UDID",
+		pickAddress:            func() (string, error) { return listener.Addr().String(), nil },
+		spawnChild: func(ctx context.Context, _ string) (*exec.Cmd, error) {
+			spawnContext = ctx
+			return &exec.Cmd{}, nil
+		},
+		dialCompanion: func(string) (transport.Companion, error) {
+			return &fakeCompanion{accessibilityJSON: "[]"}, nil
+		},
+	}
+
+	d, err := New(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-spawnContext.Done():
+		t.Fatal("spawn context canceled after New returned; child would receive SIGTERM mid-run")
+	default:
+	}
+
+	d.Close()
+	select {
+	case <-spawnContext.Done():
+	default:
+		t.Fatal("spawn context still alive after Close; child lifetime leaks")
+	}
 }
