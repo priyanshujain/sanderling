@@ -101,6 +101,13 @@ type Driver struct {
 	spawnChild func(ctx context.Context, address string) (*exec.Cmd, error)
 	dial       func(address string) (transport.Companion, error)
 	child      *exec.Cmd
+
+	// processContext owns the companion child's lifetime: it is derived from
+	// New's context (so a canceled run still reaps the child) and canceled by
+	// Close. Spawning under a startup-scoped context would SIGTERM the child
+	// the moment startup finishes.
+	processContext context.Context
+	processCancel  context.CancelFunc
 }
 
 // New extracts the embedded companion, spawns it against the configured
@@ -146,6 +153,7 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 	driverInstance.address = address
 	driverInstance.restart = driverInstance.respawnAndRedial
 	driverInstance.resetContainer = driverInstance.resetDataContainer
+	driverInstance.processContext, driverInstance.processCancel = context.WithCancel(ctx)
 
 	if err := driverInstance.bringUp(ctx); err != nil {
 		return nil, err
@@ -167,7 +175,7 @@ func (d *Driver) bringUp(ctx context.Context) error {
 	startupCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
 
-	child, err := d.spawnChild(startupCtx, d.address)
+	child, err := d.spawnChild(d.processContext, d.address)
 	if err != nil {
 		return fmt.Errorf("spawn companion: %w", err)
 	}
@@ -629,6 +637,9 @@ func (d *Driver) Close() {
 		d.companion = nil
 	}
 	d.stopChild()
+	if d.processCancel != nil {
+		d.processCancel()
+	}
 }
 
 // stopChild terminates the companion child gracefully (SIGTERM, grace window,
