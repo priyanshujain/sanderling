@@ -285,9 +285,9 @@ func TestInputTextPasteLandsImmediately(t *testing.T) {
 func TestInputTextPasteDismissesDialogThenLands(t *testing.T) {
 	dialog := string(loadDialogDump(t))
 	landed := `[{"type":"TextField","AXUniqueId":"TxnNoteField","AXValue":"Café ☕ 😀"}]`
-	// Quick post-chord check and post-sleep check both see the dialog, the
-	// retried chord's quick check sees the landed value.
-	fake := &fakeRunner{dumps: [][]byte{[]byte(dialog), []byte(dialog), []byte(landed)}}
+	// First check sees the dialog (which swallowed the initial chord); the
+	// check after the retried chord sees the landed value.
+	fake := &fakeRunner{dumps: [][]byte{[]byte(dialog), []byte(landed)}}
 	field := fieldTarget{identifier: "TxnNoteField", centerX: 195, centerY: 222}
 	if err := inputText(context.Background(), fake, "Café ☕ 😀", field); err != nil {
 		t.Fatalf("inputText: %v", err)
@@ -310,9 +310,39 @@ func TestInputTextPasteFailsAfterAllAttempts(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error after exhausting attempts")
 	}
-	if len(fake.hidStreams) != pasteAttempts {
-		t.Fatalf("expected %d paste chords, got %d", pasteAttempts, len(fake.hidStreams))
+	// The chord is sent exactly once: with no dialog on screen, re-sending it
+	// on a slow render would paste the text twice.
+	if len(fake.hidStreams) != 1 {
+		t.Fatalf("expected exactly one paste chord, got %d", len(fake.hidStreams))
 	}
+	if fake.sleepCount != pasteAttempts {
+		t.Fatalf("expected %d settle sleeps, got %d", pasteAttempts, fake.sleepCount)
+	}
+}
+
+func TestInputTextPasteUnverifiableFieldSingleChord(t *testing.T) {
+	// No field identifier resolved: one chord, no dialog, success after the
+	// settle without endless retries.
+	noField := `[{"type":"StaticText","AXLabel":"whatever"}]`
+	fake := &fakeRunner{dumps: [][]byte{[]byte(noField)}}
+	if err := inputText(context.Background(), fake, "😀", fieldTarget{}); err != nil {
+		t.Fatalf("inputText: %v", err)
+	}
+	if len(fake.hidStreams) != 1 {
+		t.Fatalf("expected exactly one paste chord, got %d", len(fake.hidStreams))
+	}
+}
+
+func TestEraseTextLargeCountClearsAtomically(t *testing.T) {
+	fake := &fakeRunner{}
+	if err := eraseText(context.Background(), fake, 40); err != nil {
+		t.Fatalf("eraseText: %v", err)
+	}
+	if len(fake.hidStreams) != 1 {
+		t.Fatalf("expected one stream, got %d", len(fake.hidStreams))
+	}
+	want := append(selectAllChordEvents(), keyPressEvents(backspaces(1))...)
+	eventsEqual(t, fake.hidStreams[0], want)
 }
 
 func TestEraseTextSendsBackspaces(t *testing.T) {
