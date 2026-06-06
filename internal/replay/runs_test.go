@@ -244,6 +244,33 @@ func TestCacheOpen_ReusesUnchangedRunAndReparsesOnAppend(t *testing.T) {
 	}
 }
 
+func TestCacheOpen_ViolationFallsBackToDetectionStepWhenAttributedMissing(t *testing.T) {
+	// The witness attributes the violation to step 99, which never appears in
+	// the trace. The marker must fall back to the detection step (2) so the
+	// violation still renders somewhere instead of vanishing.
+	root := t.TempDir()
+	startedAt := time.Now().UTC()
+	steps := []trace.Step{
+		{Index: 1, Timestamp: startedAt},
+		{
+			Index:      2,
+			Timestamp:  startedAt.Add(time.Second),
+			Violations: []string{"prop1"},
+			Witnesses:  map[string]trace.Witness{"prop1": {Reason: "predicate false", Step: 99}},
+		},
+	}
+	writeRun(t, root, "r1", trace.Meta{StartedAt: startedAt, EndedAt: timePointer(startedAt.Add(2 * time.Second))}, steps)
+
+	cache := NewCache(root)
+	run, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !run.Steps[1].HasViolations {
+		t.Error("step 2 (detection step) should keep the marker when the attributed step is absent")
+	}
+}
+
 func TestDecodeStepSummary_ActionLabelPerKind(t *testing.T) {
 	cases := []struct {
 		line      string
