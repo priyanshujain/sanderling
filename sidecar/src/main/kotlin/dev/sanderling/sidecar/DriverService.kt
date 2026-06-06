@@ -195,7 +195,11 @@ class DriverService(
             // a dropped-mid-action connection) keeps it, so the runner can
             // tell transient failures from fatal ones.
             observer.onError(cause)
-        } catch (cause: Exception) {
+        } catch (cause: Throwable) {
+            // Throwable, not Exception: the vendored iOS client throws
+            // failures that do not extend Exception, and an uncaught one
+            // kills the RPC as a channel-level Unknown instead of a status
+            // the runner can classify.
             observer.onError(io.grpc.Status.INTERNAL.withDescription(cause.toString())
                 .withCause(cause).asRuntimeException())
         }
