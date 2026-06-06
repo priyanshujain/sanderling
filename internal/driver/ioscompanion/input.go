@@ -350,7 +350,9 @@ func buttonCenter(element rawElement) (allowPasteButton, bool) {
 
 // pasteLanded reports whether the field identified by fieldIdentifier now shows
 // expectedText in its AXValue. The paste appends at the cursor, so a substring
-// match (rather than equality) is used: the field may already hold text.
+// match (rather than equality) is used: the field may already hold text. A
+// secure field masks its value as bullets, making content verification
+// impossible; a non-empty all-bullet value counts as landed.
 func pasteLanded(dump []byte, fieldIdentifier, expectedText string) bool {
 	if fieldIdentifier == "" || expectedText == "" {
 		return false
@@ -359,9 +361,27 @@ func pasteLanded(dump []byte, fieldIdentifier, expectedText string) bool {
 		if stringValue(element.AXUniqueID) != fieldIdentifier {
 			continue
 		}
-		return strings.Contains(stringValue(element.AXValue), expectedText)
+		value := stringValue(element.AXValue)
+		if strings.Contains(value, expectedText) {
+			return true
+		}
+		return isMaskedValue(value)
 	}
 	return false
+}
+
+// isMaskedValue reports whether value is a secure field's masked content:
+// non-empty and made up entirely of bullet characters.
+func isMaskedValue(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r != '•' {
+			return false
+		}
+	}
+	return true
 }
 
 // decodeDump parses a flat describe-all dump into elements, reusing the same
