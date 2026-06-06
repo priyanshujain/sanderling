@@ -46,6 +46,7 @@ type fakeServer struct {
 	metrics        *driverpb.MetricsResponse
 
 	healthError error
+	tapError    error
 }
 
 func (s *fakeServer) Health(_ context.Context, _ *driverpb.Empty) (*driverpb.HealthStatus, error) {
@@ -80,6 +81,9 @@ func (s *fakeServer) Terminate(_ context.Context, _ *driverpb.Empty) (*driverpb.
 func (s *fakeServer) Tap(_ context.Context, point *driverpb.Point) (*driverpb.Empty, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	if s.tapError != nil {
+		return nil, s.tapError
+	}
 	s.taps = append(s.taps, point.GetX(), point.GetY())
 	return &driverpb.Empty{}, nil
 }
@@ -378,6 +382,27 @@ func TestClient_WaitForIdleForwardsMillis(t *testing.T) {
 	}
 	if len(state.fake.idleMillis) != 1 || state.fake.idleMillis[0] != 250 {
 		t.Errorf("idleMillis wrong: %v", state.fake.idleMillis)
+	}
+}
+
+// TestClient_RPCErrorSurfaces is the representative check that a gRPC error
+// status from the sidecar propagates out of an action RPC instead of being
+// swallowed into a nil error. Per-method coverage of the sidecar-side status
+// mapping lives in the sidecar server tests.
+func TestClient_RPCErrorSurfaces(t *testing.T) {
+	state := newHarness(t)
+	state.fake.mutex.Lock()
+	state.fake.tapError = status.Error(codes.Internal, "device offline")
+	state.fake.mutex.Unlock()
+	client, _ := Dial(state.address)
+	defer client.Close()
+
+	err := client.Tap(context.Background(), 1, 2)
+	if err == nil {
+		t.Fatal("expected Tap to surface the gRPC error, got nil")
+	}
+	if status.Code(err) != codes.Internal {
+		t.Errorf("expected INTERNAL code, got %v", status.Code(err))
 	}
 }
 
