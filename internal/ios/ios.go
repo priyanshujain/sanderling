@@ -22,8 +22,17 @@ type simctlDeviceList struct {
 	Devices map[string][]simDevice `json:"devices"`
 }
 
+// Command-runner seams: overridable in tests so EnsureSimulator can be driven
+// with canned device lists without invoking xcrun.
+var (
+	listBooted    = bootedSimulator
+	listAvailable = availableSimulators
+	boot          = bootSimulator
+	waitForBoot   = waitForSimulatorBoot
+)
+
 func EnsureSimulator(ctx context.Context, deviceName string, stdout io.Writer) error {
-	booted, err := bootedSimulator(ctx)
+	booted, err := listBooted(ctx)
 	if err != nil {
 		return fmt.Errorf("list booted simulators: %w", err)
 	}
@@ -32,7 +41,7 @@ func EnsureSimulator(ctx context.Context, deviceName string, stdout io.Writer) e
 		return nil
 	}
 
-	available, err := availableSimulators(ctx)
+	available, err := listAvailable(ctx)
 	if err != nil {
 		return fmt.Errorf("list available simulators: %w", err)
 	}
@@ -43,11 +52,11 @@ func EnsureSimulator(ctx context.Context, deviceName string, stdout io.Writer) e
 	}
 
 	fmt.Fprintf(stdout, "booting simulator %q (%s)...\n", target.Name, target.UDID)
-	if err := bootSimulator(ctx, target.UDID); err != nil {
+	if err := boot(ctx, target.UDID); err != nil {
 		return fmt.Errorf("boot simulator %q: %w", target.UDID, err)
 	}
 
-	if err := waitForSimulatorBoot(ctx, target.UDID, 60*time.Second); err != nil {
+	if err := waitForBoot(ctx, target.UDID, 60*time.Second); err != nil {
 		return fmt.Errorf("wait for simulator boot: %w", err)
 	}
 
