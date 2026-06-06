@@ -8,6 +8,8 @@ BUF := buf
 GO_PACKAGES := ./...
 SIDECAR_JAR := sidecar/build/libs/sidecar-all.jar
 SIDECAR_EMBED := internal/sidecarassets/assets/sidecar-all.jar
+COMPANION_EMBED := internal/driver/ioscompanion/companionassets/assets/companion-1.1.8.tar.gz
+COMPANION_PREPARE := internal/driver/ioscompanion/companionassets/prepare.sh
 SIDECAR_SRC := $(shell find sidecar/src -type f \( -name '*.kt' -o -name '*.kts' \) 2>/dev/null) build.gradle.kts settings.gradle.kts
 SANDERLING_BIN := bin/sanderling
 
@@ -37,14 +39,14 @@ sidecar: $(SIDECAR_JAR)
 
 sanderling: $(SANDERLING_BIN)
 
-$(SANDERLING_BIN): $(SIDECAR_EMBED) web-build
+$(SANDERLING_BIN): $(SIDECAR_EMBED) $(COMPANION_EMBED) web-build
 	mkdir -p bin
-	$(GO) build -tags withsidecar -o $(SANDERLING_BIN) ./cmd/sanderling
+	$(GO) build -tags "withsidecar withcompanion" -o $(SANDERLING_BIN) ./cmd/sanderling
 
 # Installs `sanderling` into $GOBIN (or $GOPATH/bin) so it's directly on PATH for
 # anyone with a standard Go toolchain setup.
-install: $(SIDECAR_EMBED) web-build
-	$(GO) install -tags withsidecar ./cmd/sanderling
+install: $(SIDECAR_EMBED) $(COMPANION_EMBED) web-build
+	$(GO) install -tags "withsidecar withcompanion" ./cmd/sanderling
 	@dest="$$($(GO) env GOBIN)"; [ -n "$$dest" ] || dest="$$($(GO) env GOPATH)/bin"; echo "installed sanderling to $$dest"
 
 web-build:
@@ -68,6 +70,9 @@ $(SIDECAR_JAR): $(SIDECAR_SRC)
 $(SIDECAR_EMBED): $(SIDECAR_JAR)
 	mkdir -p $(dir $@)
 	cp $< $@
+
+$(COMPANION_EMBED): $(COMPANION_PREPARE)
+	$(COMPANION_PREPARE)
 
 test: test-go test-spec-api web-typecheck web-test
 
