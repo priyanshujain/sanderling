@@ -285,7 +285,9 @@ func TestInputTextPasteLandsImmediately(t *testing.T) {
 func TestInputTextPasteDismissesDialogThenLands(t *testing.T) {
 	dialog := string(loadDialogDump(t))
 	landed := `[{"type":"TextField","AXUniqueId":"TxnNoteField","AXValue":"Café ☕ 😀"}]`
-	fake := &fakeRunner{dumps: [][]byte{[]byte(dialog), []byte(landed)}}
+	// Quick post-chord check and post-sleep check both see the dialog, the
+	// retried chord's quick check sees the landed value.
+	fake := &fakeRunner{dumps: [][]byte{[]byte(dialog), []byte(dialog), []byte(landed)}}
 	field := fieldTarget{identifier: "TxnNoteField", centerX: 195, centerY: 222}
 	if err := inputText(context.Background(), fake, "Café ☕ 😀", field); err != nil {
 		t.Fatalf("inputText: %v", err)
@@ -359,5 +361,26 @@ func TestWarmUpPasteNoDialog(t *testing.T) {
 	}
 	if len(fake.hidStreams) != 1 {
 		t.Fatalf("expected only the paste chord, got %d streams", len(fake.hidStreams))
+	}
+}
+
+func TestUsesPasteboardThreshold(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"", false},
+		{"a", false},
+		{"abc", false},
+		{"abcd", true},
+		{"-1", false},
+		{"%s%n", true},
+		{"😀", true},
+		{"Café", true},
+	}
+	for _, c := range cases {
+		if got := usesPasteboard(c.text); got != c.want {
+			t.Errorf("usesPasteboard(%q) = %v, want %v", c.text, got, c.want)
+		}
 	}
 }
