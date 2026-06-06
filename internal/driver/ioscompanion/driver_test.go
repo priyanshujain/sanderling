@@ -108,6 +108,7 @@ func newTestDriver(companion transport.Companion) *Driver {
 		screenHeight:             844,
 	}
 	d.resetContainer = func(context.Context) error { return nil }
+	d.reinstallApp = func(context.Context) error { return nil }
 	return d
 }
 
@@ -140,14 +141,16 @@ func TestLaunchClearStateReinstallsWithAppPath(t *testing.T) {
 	companion := &fakeCompanion{accessibilityJSON: "[]"}
 	d := newTestDriver(companion)
 	d.appPath = "/tmp/Sample.app"
+	reinstalls := 0
+	d.reinstallApp = func(context.Context) error { reinstalls++; return nil }
 	if err := d.Launch(context.Background(), "", true, nil); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
-	if indexOf(companion.calls, "uninstall") < 0 || indexOf(companion.calls, "install") < 0 {
-		t.Fatalf("clear-state with app path must uninstall then install; got %v", companion.calls)
+	if reinstalls != 1 {
+		t.Fatalf("clear-state with app path must reinstall exactly once; got %d", reinstalls)
 	}
-	if indexOf(companion.calls, "uninstall") > indexOf(companion.calls, "install") {
-		t.Fatalf("uninstall must precede install; got %v", companion.calls)
+	if indexOf(companion.calls, "launch") < indexOf(companion.calls, "terminate") {
+		t.Fatalf("launch must still follow terminate; got %v", companion.calls)
 	}
 }
 

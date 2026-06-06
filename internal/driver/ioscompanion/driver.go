@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -95,6 +96,10 @@ type Driver struct {
 	// A seam so tests skip the xcrun shell-out.
 	resetContainer func(ctx context.Context) error
 
+	// reinstallApp uninstalls and reinstalls the app bundle for clear-state.
+	// A seam so tests skip the simctl shell-outs.
+	reinstallApp func(ctx context.Context) error
+
 	// idleClock drives WaitForIdle's settle poll. A seam so tests substitute a
 	// fake clock and avoid the real settle cap.
 	idleClock  Clock
@@ -153,6 +158,7 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 	driverInstance.address = address
 	driverInstance.restart = driverInstance.respawnAndRedial
 	driverInstance.resetContainer = driverInstance.resetDataContainer
+	driverInstance.reinstallApp = driverInstance.simctlReinstall
 	driverInstance.processContext, driverInstance.processCancel = context.WithCancel(ctx)
 
 	if err := driverInstance.bringUp(ctx); err != nil {
@@ -306,8 +312,7 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 // container and warns once that a full reinstall needs the app path.
 func (d *Driver) clearAppState(ctx context.Context) error {
 	if d.appPath != "" {
-		_ = d.withRecovery(ctx, func() error { return d.companion.Uninstall(ctx, d.bundleID) })
-		if err := d.withRecovery(ctx, func() error { return d.companion.Install(ctx, d.appPath) }); err != nil {
+		if err := d.reinstallApp(ctx); err != nil {
 			return fmt.Errorf("reinstall %s: %w", d.appPath, err)
 		}
 		return nil
@@ -317,6 +322,18 @@ func (d *Driver) clearAppState(ctx context.Context) error {
 		d.clearStateWarned = true
 	}
 	return d.resetContainer(ctx)
+}
+
+// simctlReinstall uninstalls and reinstalls the app bundle via simctl. App
+// lifecycle stays with simctl: the companion's install RPC misreads current
+// simulator targets' architectures and rejects valid bundles.
+func (d *Driver) simctlReinstall(ctx context.Context) error {
+	_ = exec.CommandContext(ctx, "xcrun", "simctl", "uninstall", d.udid, d.bundleID).Run()
+	output, err := exec.CommandContext(ctx, "xcrun", "simctl", "install", d.udid, d.appPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("simctl install: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 // resetDataContainer deletes the contents of the app's data container so the
@@ -698,6 +715,14 @@ func (d *Driver) realSpawnChild(ctx context.Context, address string) (*exec.Cmd,
 	command := exec.CommandContext(ctx, binaryPath, "--udid", d.udid, "--grpc-port", port)
 	command.Stdout = d.output
 	command.Stderr = d.output
+	// The companion echoes its whole environment into the run log at startup,
+	// so it gets a minimal one: secrets in the parent environment must never
+	// reach run artifacts.
+	command.Env = []string{
+		"HOME=" + os.Getenv("HOME"),
+		"PATH=/usr/bin:/bin",
+		"TMPDIR=" + os.TempDir(),
+	}
 	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
 	command.WaitDelay = shutdownGrace
 	if err := command.Start(); err != nil {
