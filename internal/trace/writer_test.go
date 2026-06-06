@@ -330,6 +330,12 @@ func TestWriteStep_ConcurrentWritesAreWellFormed(t *testing.T) {
 	}
 }
 
+// Grep contract (intentional substring assertion, not a JSON round-trip):
+// operators and CI scripts locate failing steps by grepping raw trace.jsonl for
+// `"violations":["<prop>"]` without a JSON parser. Bug class: a serialization
+// change (whitespace from indenting, renamed/reordered field, pointer slice)
+// that keeps the Step parseable but breaks that exact on-disk byte shape would
+// silently blind every grep-based tool.
 func TestWriteStep_ViolationsAreGreppable(t *testing.T) {
 	directory := t.TempDir()
 	writer, _ := NewWriter(directory)
