@@ -183,3 +183,51 @@ test("an uncaught cross-extractor read aborts evaluateExtractors", () => {
     /inside another extractor is not allowed/,
   );
 });
+
+// sanitize runs over every extractor's return value before it leaves the
+// runtime. A user extractor that returns a page object reachable from
+// document/window can be self-referential, carry functions, or nest deeply;
+// without cycle, function, and depth guards extraction overflows the stack or
+// emits non-serializable values. These exercise sanitize via the real path.
+function sanitizeViaExtract(value: unknown): unknown {
+  __testing__.extractors.length = 0;
+  __testing__.runtime.extract(() => value);
+  let out: Record<number, unknown> = {};
+  withState(() => {
+    out = __testing__.evaluateExtractors();
+  });
+  return out[0];
+}
+
+test("sanitize breaks a self-referential cycle instead of overflowing", () => {
+  const cyclic: Record<string, unknown> = { name: "root" };
+  cyclic.self = cyclic;
+  const result = sanitizeViaExtract(cyclic) as Record<string, unknown>;
+  assert.equal(result.name, "root");
+  assert.equal(result.self, null);
+});
+
+test("sanitize drops function-valued properties", () => {
+  const result = sanitizeViaExtract({ keep: 1, fn: () => 7 }) as Record<string, unknown>;
+  assert.deepEqual(result, { keep: 1 });
+});
+
+test("sanitize drops a top-level function to undefined", () => {
+  assert.equal(sanitizeViaExtract(() => 7), undefined);
+});
+
+test("sanitize bounds recursion past its depth limit", () => {
+  let deep: Record<string, unknown> = { leaf: true };
+  for (let i = 0; i < 40; i++) deep = { next: deep };
+  // Walk to the depth cap; beyond it sanitize must yield null, not recurse on.
+  let node: unknown = sanitizeViaExtract(deep);
+  for (let i = 0; i < 32 && node && typeof node === "object"; i++) {
+    node = (node as Record<string, unknown>).next;
+  }
+  assert.equal(node, null);
+});
+
+test("sanitize preserves arrays and nested plain values", () => {
+  const result = sanitizeViaExtract({ items: [1, "two", { ok: true }] });
+  assert.deepEqual(result, { items: [1, "two", { ok: true }] });
+});
