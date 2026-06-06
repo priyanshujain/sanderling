@@ -9,6 +9,17 @@ import (
 	"github.com/priyanshujain/sanderling/internal/bundler"
 )
 
+func bundleSpec(specSrc, entryFile string) (bundler.Result, error) {
+	return bundler.Bundle(bundler.Options{
+		EntryFile: entryFile,
+		Aliases: map[string]string{
+			"@sanderling/spec":                     filepath.Join(specSrc, "index.ts"),
+			"@sanderling/spec/defaults":            filepath.Join(specSrc, "defaults/index.ts"),
+			"@sanderling/spec/defaults/properties": filepath.Join(specSrc, "defaults/properties.ts"),
+		},
+	})
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: bundle-check <spec.ts>")
@@ -26,16 +37,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "getwd: %v\n", err)
 		os.Exit(1)
 	}
-	specApiPath := filepath.Join(repoRoot, "pkg/spec-api/src/index.ts")
-	defaultPropertiesPath := filepath.Join(repoRoot, "pkg/spec-api/src/defaults/properties.ts")
 
-	result, err := bundler.Bundle(bundler.Options{
-		EntryFile: entryFile,
-		Aliases: map[string]string{
-			"@sanderling/spec":                    specApiPath,
-			"@sanderling/spec/defaults/properties": defaultPropertiesPath,
-		},
-	})
+	result, err := bundleSpec(filepath.Join(repoRoot, "pkg/spec/src"), entryFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bundle: %v\n", err)
 		os.Exit(1)

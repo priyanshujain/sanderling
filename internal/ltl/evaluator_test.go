@@ -104,6 +104,48 @@ func TestDescribe(t *testing.T) {
 	}
 }
 
+// TestEventuallyWithinSteps_NextInnerHitsBoundFirstStep pins the boundary: a
+// 1-step Eventually whose inner is a Next defers the inner to step 2, but the
+// window closes at step 1, so the obligation is unmet and violates. Bug class:
+// off-by-one at the step bound treating the deferred inner as still in-window.
+func TestEventuallyWithinSteps_NextInnerHitsBoundFirstStep(t *testing.T) {
+	evaluator := NewEvaluator(EventuallyWithinSteps(Next(ThunkNamed("p", func() (bool, error) { return true, nil })), 1))
+	if got := evaluator.ObserveAt(time.Unix(0, 0)); got != VerdictViolated {
+		t.Errorf("EventuallyWithinSteps(Next(p), 1) step 1: got %v, want violated", got)
+	}
+}
+
+// TestOr_ViolatedDisjunctDoesNotViolateWhileOtherPending guards the Or-reduce
+// path where one disjunct fails (Pure(false)) while the other is still pending
+// (Next(p)). The disjunction must stay pending on the failing step, never
+// violate. Bug class: Or-reduction dropping the still-pending branch and
+// latching violated on a single failed disjunct.
+func TestOr_ViolatedDisjunctDoesNotViolateWhileOtherPending(t *testing.T) {
+	evaluator := NewEvaluator(Always(Or(Pure(false), Next(ThunkNamed("p", func() (bool, error) { return true, nil })))))
+	if got := evaluator.ObserveAt(time.Unix(0, 0)); got != VerdictPending {
+		t.Errorf("step 1: got %v, want pending (Pure(false) disjunct must not violate)", got)
+	}
+	if got := evaluator.ObserveAt(time.Unix(1, 0)); got != VerdictPending {
+		t.Errorf("step 2: got %v, want pending", got)
+	}
+}
+
+// TestNot_OverPendingStaysPendingThenResolves pins Not over a pending inner: it
+// must carry a Not-wrapped residual rather than collapse to a definite verdict
+// at the step the inner is still deferred. Bug class: negation of a pending
+// verdict resolving early to holds/violated.
+func TestNot_OverPendingStaysPendingThenResolves(t *testing.T) {
+	// Next(p) is deferred at step 1, so Not(Next(p)) is pending, not definite.
+	// At step 2 the inner Next holds, so Not violates.
+	evaluator := NewEvaluator(Always(Not(Next(ThunkNamed("p", func() (bool, error) { return true, nil })))))
+	if got := evaluator.ObserveAt(time.Unix(0, 0)); got != VerdictPending {
+		t.Errorf("step 1: got %v, want pending", got)
+	}
+	if got := evaluator.ObserveAt(time.Unix(1, 0)); got != VerdictViolated {
+		t.Errorf("step 2: got %v, want violated (Not over a held inner)", got)
+	}
+}
+
 func TestObserve_PanicsOnUnknownFormulaType(t *testing.T) {
 	type unsupportedFormula struct{ Formula }
 	defer func() {

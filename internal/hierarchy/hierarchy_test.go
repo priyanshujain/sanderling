@@ -940,3 +940,69 @@ func TestIOSFlatStructuralChildStillPreferred(t *testing.T) {
 		t.Fatalf("expected the structural child SubmitLabel, got id=%q", node.ResourceID)
 	}
 }
+
+// Bug class: malformed device output must surface as an error, not a nil tree
+// the callers dereference. A blank string is the only documented benign input.
+func TestParseInvalidJSON(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"truncated object", `{"attributes":`, true},
+		{"trailing garbage", `{"attributes":{}} oops`, true},
+		{"not an object", `[1,2,3]`, true},
+		{"bare garbage", `not json at all`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Parse(%q) err = %v, wantErr %v", tc.input, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// Bug class: a node carrying a bounds value the device emitted in an
+// unrecognized shape must degrade to a zero rectangle without losing the rest
+// of the element. parseBounds' error is intentionally swallowed in
+// elementFromNode, so a regression that aborts the whole parse, or that
+// corrupts neighboring fields, would be caught here.
+func TestParseMalformedBoundsKeepsElementIntact(t *testing.T) {
+	cases := []string{
+		"[1,2,3]",   // too few coordinates
+		"garbage",   // not a bounds string at all
+		"[a,b,c,d]", // non-numeric
+		"",          // empty
+	}
+	for _, b := range cases {
+		t.Run(b, func(t *testing.T) {
+			input := `{"attributes":{"resource-id":"app:id/x","text":"keep","bounds":"` + b + `"},"children":[]}`
+			tree, err := Parse(input)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			el := tree.Find("id:x")
+			if el == nil {
+				t.Fatal("element dropped when bounds was malformed")
+			}
+			if el.Text != "keep" {
+				t.Errorf("neighboring field corrupted: text=%q", el.Text)
+			}
+			if el.Bounds != (Bounds{}) {
+				t.Errorf("malformed bounds must yield zero rectangle, got %+v", el.Bounds)
+			}
+		})
+	}
+}
+
+// Bug class: parseBounds must reject inputs that are neither [L,T,R,B] nor
+// [x1,y1][x2,y2] rather than returning a partially-filled rectangle.
+func TestParseBoundsRejectsBadInput(t *testing.T) {
+	for _, in := range []string{"[1,2,3]", "[1,2,3,4,5]", "1,2,3,4", "[]", "garbage"} {
+		if _, err := parseBounds(in); err == nil {
+			t.Errorf("parseBounds(%q) = nil error, want error", in)
+		}
+	}
+}

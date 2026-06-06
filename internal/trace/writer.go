@@ -158,6 +158,9 @@ func (w *Writer) WriteStep(step Step) error {
 	return w.encoder.Encode(step)
 }
 
+// WriteScreenshot is lock-free: each call writes a distinct, uniquely-named
+// file via os.WriteFile and touches no field of Writer, so concurrent calls
+// never contend.
 func (w *Writer) WriteScreenshot(stepIndex int, png []byte) error {
 	return w.writePNG(fmt.Sprintf("step-%05d.png", stepIndex), png)
 }

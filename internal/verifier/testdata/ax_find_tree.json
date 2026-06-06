@@ -1,0 +1,15 @@
+{
+  "attributes": {"resource-id": "com.example:id/root", "bounds": "[0,0,1080,2340]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "com.example:id/header", "bounds": "[0,0,1080,200]"},
+      "children": []
+    },
+    {
+      "attributes": {"resource-id": "com.example:id/select_language", "text": "Select language", "bounds": "[40,400,1040,520]"},
+      "clickable": true,
+      "enabled": true,
+      "children": []
+    }
+  ]
+}

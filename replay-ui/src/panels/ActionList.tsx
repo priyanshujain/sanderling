@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { KeyboardEvent } from "react";
 import type { Step, StepSummary } from "../types";
+import { formatActionRow, formatElapsed } from "../lib/action-format";
 import "./ActionList.css";
 
 export interface ActionListProps {
@@ -9,95 +10,6 @@ export interface ActionListProps {
   onSelect: (index: number) => void;
   runStartMillis?: number;
   selectedStep?: Step;
-}
-
-interface FormattedRow {
-  verb: string;
-  target: string;
-  targetIsTag: boolean;
-}
-
-const SELECTOR_PREFIXES = [
-  "id",
-  "text",
-  "textPrefix",
-  "desc",
-  "descPrefix",
-  "class",
-  "classPrefix",
-  "package",
-];
-
-function parseSelector(selector: string): { kind: string; value: string } | null {
-  const colonIndex = selector.indexOf(":");
-  if (colonIndex <= 0) {
-    return null;
-  }
-  const kind = selector.slice(0, colonIndex);
-  const value = selector.slice(colonIndex + 1);
-  if (!SELECTOR_PREFIXES.includes(kind)) {
-    return null;
-  }
-  return { kind, value };
-}
-
-function tagFromSelector(selector: string): string {
-  const parsed = parseSelector(selector);
-  if (!parsed) {
-    return selector;
-  }
-  if (parsed.kind.endsWith("Prefix")) {
-    return `${parsed.value}...`;
-  }
-  return parsed.value;
-}
-
-export function formatActionRow(step: StepSummary): FormattedRow {
-  const kind = step.action_kind;
-  const label = step.action_label ?? "";
-
-  if (!kind) {
-    if (step.screen) {
-      return { verb: "Observe", target: `@ ${step.screen}`, targetIsTag: false };
-    }
-    return { verb: "Observe", target: "", targetIsTag: false };
-  }
-
-  switch (kind) {
-    case "Tap": {
-      if (!label) {
-        return { verb: "Click", target: "", targetIsTag: false };
-      }
-      if (label.startsWith("(") && label.endsWith(")")) {
-        return { verb: "Click", target: label, targetIsTag: false };
-      }
-      if (parseSelector(label)) {
-        return { verb: "Click", target: tagFromSelector(label), targetIsTag: true };
-      }
-      return { verb: "Click", target: label, targetIsTag: false };
-    }
-    case "InputText":
-      return { verb: "Type", target: label, targetIsTag: false };
-    case "Swipe":
-      return { verb: "Swipe", target: label, targetIsTag: true };
-    case "PressKey":
-      return { verb: "Press", target: label, targetIsTag: true };
-    case "Wait":
-      return { verb: "Wait", target: label, targetIsTag: true };
-    default:
-      return { verb: kind, target: label, targetIsTag: false };
-  }
-}
-
-export function formatElapsed(millis: number): string {
-  const safe = Math.max(0, Math.floor(millis));
-  const totalSeconds = Math.floor(safe / 1000);
-  const mm = Math.floor(totalSeconds / 60);
-  const ss = totalSeconds % 60;
-  const ms = safe % 1000;
-  const pad2 = (n: number) => String(n).padStart(2, "0");
-  const pad3 = (n: number) => String(n).padStart(3, "0");
-  return `${pad2(mm)}:${pad2(ss)}.${pad3(ms)}`;
 }
 
 function renderTarget(target: string, isTag: boolean) {

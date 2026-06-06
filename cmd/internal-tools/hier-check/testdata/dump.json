@@ -1,0 +1,17 @@
+{
+  "attributes": {"class": "android.widget.LinearLayout", "package": "app", "bounds": "[0,0,1080,2340]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "app:id/title", "text": "Hello", "bounds": "[10,20,200,60]"},
+      "children": []
+    },
+    {
+      "attributes": {"resource-id": "app:id/row", "text": "Alice", "content-desc": "row", "bounds": "[0,100,1080,200]"},
+      "children": []
+    },
+    {
+      "attributes": {"resource-id": "app:id/row", "text": "Bob", "content-desc": "row", "bounds": "[0,200,1080,300]"},
+      "children": []
+    }
+  ]
+}

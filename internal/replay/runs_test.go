@@ -198,6 +198,79 @@ func TestCacheOpen_ViolationWithoutWitnessStepKeepsDetectionStep(t *testing.T) {
 	}
 }
 
+func TestCacheOpen_ReusesUnchangedRunAndReparsesOnAppend(t *testing.T) {
+	root := t.TempDir()
+	startedAt := time.Now().UTC()
+	writeRun(t, root, "r1", trace.Meta{StartedAt: startedAt}, []trace.Step{
+		{Index: 1, Timestamp: startedAt},
+	})
+	cache := NewCache(root)
+
+	first, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	again, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open again: %v", err)
+	}
+	if first != again {
+		t.Fatal("unchanged run should be served from cache, got a re-parse")
+	}
+
+	tracePath := filepath.Join(root, "r1", "trace.jsonl")
+	file, err := os.OpenFile(tracePath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(file).Encode(trace.Step{Index: 2, Timestamp: startedAt.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	bumped := first.traceMtime.Add(time.Second)
+	if err := os.Chtimes(tracePath, bumped, bumped); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open after append: %v", err)
+	}
+	if updated == first {
+		t.Fatal("mtime bump should force a re-parse, got the stale cached run")
+	}
+	if len(updated.Steps) != 2 {
+		t.Errorf("re-parsed steps = %d, want 2", len(updated.Steps))
+	}
+}
+
+func TestCacheOpen_ViolationFallsBackToDetectionStepWhenAttributedMissing(t *testing.T) {
+	// The witness attributes the violation to step 99, which never appears in
+	// the trace. The marker must fall back to the detection step (2) so the
+	// violation still renders somewhere instead of vanishing.
+	root := t.TempDir()
+	startedAt := time.Now().UTC()
+	steps := []trace.Step{
+		{Index: 1, Timestamp: startedAt},
+		{
+			Index:      2,
+			Timestamp:  startedAt.Add(time.Second),
+			Violations: []string{"prop1"},
+			Witnesses:  map[string]trace.Witness{"prop1": {Reason: "predicate false", Step: 99}},
+		},
+	}
+	writeRun(t, root, "r1", trace.Meta{StartedAt: startedAt, EndedAt: timePointer(startedAt.Add(2 * time.Second))}, steps)
+
+	cache := NewCache(root)
+	run, err := cache.Open("r1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !run.Steps[1].HasViolations {
+		t.Error("step 2 (detection step) should keep the marker when the attributed step is absent")
+	}
+}
+
 func TestDecodeStepSummary_ActionLabelPerKind(t *testing.T) {
 	cases := []struct {
 		line      string

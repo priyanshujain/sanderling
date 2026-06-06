@@ -160,6 +160,35 @@ func TestRunner_MaxStepsStopsAfterExactlyNSteps(t *testing.T) {
 	}
 }
 
+// TestRenderSummary_SurfacesUnsupportedVerbs exercises the real path that takes
+// verbs the picker requested but the platform cannot dispatch and puts them in
+// front of the operator. TestRunner_HappyPath only ever asserts the field stays
+// empty (every builtin is supported, so its non-empty arm can never fire), so
+// without this the "unsupported on %s: ..." branch could be deleted and every
+// unsupported-verb regression would pass silently.
+func TestRenderSummary_SurfacesUnsupportedVerbs(t *testing.T) {
+	summary := Summary{Steps: 3, UnsupportedVerbs: []string{"longPresses", "scrolls"}}
+
+	var out bytes.Buffer
+	RenderSummary(&out, summary, "ios")
+
+	if !strings.Contains(out.String(), "unsupported on ios: longPresses, scrolls") {
+		t.Errorf("expected unsupported verbs line for ios, got:\n%s", out.String())
+	}
+}
+
+// TestRenderSummary_OmitsUnsupportedLineWhenNone guards the inverse: a clean run
+// must not print a stray "unsupported on" line, so a future refactor cannot
+// start emitting an empty list and alarm the operator on every run.
+func TestRenderSummary_OmitsUnsupportedLineWhenNone(t *testing.T) {
+	var out bytes.Buffer
+	RenderSummary(&out, Summary{Steps: 2}, "android")
+
+	if strings.Contains(out.String(), "unsupported on") {
+		t.Errorf("did not expect an unsupported-verbs line, got:\n%s", out.String())
+	}
+}
+
 func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 
@@ -549,6 +578,48 @@ func TestTraceActionFor_StaleCoordinatesDoNotOverrideTreeCenter(t *testing.T) {
 	if traceAction.ResolvedBounds.X != 100 || traceAction.ResolvedBounds.Y != 200 {
 		t.Errorf("resolved bounds origin = (%d,%d), want (100,200)",
 			traceAction.ResolvedBounds.X, traceAction.ResolvedBounds.Y)
+	}
+}
+
+// TestTraceActionFor_RecordsKindSpecificFields locks each action kind's trace
+// encoding. PressKey must carry its Key and Wait its DurationMillis; if either
+// branch of traceActionFor drops the field (or a field rename desyncs from the
+// trace.Action struct) the replay UI silently renders a key-less PressKey or a
+// zero-duration Wait. Swipe's endpoint encoding is covered separately via
+// applyAction (TestApplyAction_ScrollWithPrecomputedEndpointsSwipes).
+func TestTraceActionFor_RecordsKindSpecificFields(t *testing.T) {
+	cases := []struct {
+		name   string
+		action verifier.Action
+		check  func(*testing.T, *trace.Action)
+	}{
+		{
+			"PressKey records key",
+			verifier.Action{Kind: verifier.ActionKindPressKey, Key: "back"},
+			func(t *testing.T, a *trace.Action) {
+				if a.Key != "back" {
+					t.Errorf("Key = %q, want %q", a.Key, "back")
+				}
+			},
+		},
+		{
+			"Wait records duration",
+			verifier.Action{Kind: verifier.ActionKindWait, DurationMillis: 250},
+			func(t *testing.T, a *trace.Action) {
+				if a.DurationMillis != 250 {
+					t.Errorf("DurationMillis = %d, want 250", a.DurationMillis)
+				}
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			traceAction := traceActionFor(testCase.action, nil)
+			if traceAction.Kind != string(testCase.action.Kind) {
+				t.Errorf("Kind = %q, want %q", traceAction.Kind, testCase.action.Kind)
+			}
+			testCase.check(t, traceAction)
+		})
 	}
 }
 
@@ -1399,7 +1470,18 @@ func TestRunner_InternalApplyErrorMarksTransitional(t *testing.T) {
 // UNAVAILABLE that happens to embed raw exception text (e.g. ConnectException
 // from the original failure) means the sidecar already recovered and the run
 // must continue.
+// TestIsWDADrop_Classification pins isWDADrop to the exact phrase the sidecar
+// throws at its reconnect site (sidecar DriverBackend.kt):
+//
+//	throw IllegalStateException("WDA reconnect failed: $restartErr", cause)
+//
+// If that message is reworded on the Kotlin side without updating the Go
+// matcher, a fatal, unrecoverable WDA drop is misclassified as transient and
+// the run burns its budget retrying a dead channel instead of aborting.
 func TestIsWDADrop_Classification(t *testing.T) {
+	// sidecarReconnectFailedMessage mirrors the literal the sidecar emits; the
+	// matcher's contract is keyed on this exact prefix.
+	const sidecarReconnectFailedMessage = "WDA reconnect failed"
 	cases := []struct {
 		name string
 		err  error
@@ -1411,8 +1493,8 @@ func TestIsWDADrop_Classification(t *testing.T) {
 			false,
 		},
 		{
-			"reconnect failure is a drop",
-			status.Error(codes.Internal, "java.lang.IllegalStateException: WDA reconnect failed: IOSDriverTimeoutException"),
+			"sidecar reconnect-failed message is a drop",
+			status.Error(codes.Internal, "java.lang.IllegalStateException: "+sidecarReconnectFailedMessage+": IOSDriverTimeoutException"),
 			true,
 		},
 		{"generic internal is not a drop", status.Error(codes.Internal, "boom"), false},

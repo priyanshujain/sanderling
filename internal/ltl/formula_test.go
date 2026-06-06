@@ -220,6 +220,30 @@ func TestMarshalJSON_EventuallyMillisecondsAndDeadline(t *testing.T) {
 	}
 }
 
+// TestMarshalJSON_AlwaysStepsMillisecondsDeadline mirrors the Eventually
+// marshal test for bounded Always: the within node must carry the right unit
+// and amount for each bound flavor. Bug class: a bounded Always serializing the
+// wrong bound (unit/amount) into the trace AST the replay UI consumes.
+func TestMarshalJSON_AlwaysStepsMillisecondsDeadline(t *testing.T) {
+	steps := AlwaysFormula{Inner: Pure(true), StepBound: 4, HasStepBound: true}
+	body, _ := json.Marshal(steps)
+	if !strings.Contains(string(body), `"unit":"steps"`) || !strings.Contains(string(body), `"amount":4`) {
+		t.Errorf("always steps within wrong: %s", body)
+	}
+
+	duration := AlwaysFormula{Inner: Pure(true), Duration: 250 * time.Millisecond}
+	body, _ = json.Marshal(duration)
+	if !strings.Contains(string(body), `"unit":"milliseconds"`) || !strings.Contains(string(body), `"amount":250`) {
+		t.Errorf("always milliseconds within wrong: %s", body)
+	}
+
+	deadline := AlwaysFormula{Inner: Pure(true), Deadline: time.UnixMilli(1700000000000), HasDeadline: true}
+	body, _ = json.Marshal(deadline)
+	if !strings.Contains(string(body), `"unit":"deadline"`) || !strings.Contains(string(body), `"amount":1700000000000`) {
+		t.Errorf("always deadline within wrong: %s", body)
+	}
+}
+
 func TestMarshalJSON_NextAndThunkAndError(t *testing.T) {
 	body, _ := json.Marshal(Next(Pure(true)))
 	if string(body) != `{"op":"next","arg":{"op":"true"}}` {
@@ -248,13 +272,19 @@ func TestResidual_HoldsViolatedPending(t *testing.T) {
 		t.Errorf("violated residual = %v, want false", got)
 	}
 
-	pendingEval := NewEvaluator(Always(Next(Pure(true))))
+	// A genuinely multi-obligation residual: both Next inners survive to the
+	// next step folded under And, in registration order. A residual that
+	// dropped or transposed an obligation would change this exact AST.
+	predP := ThunkNamed("p", func() (bool, error) { return true, nil })
+	predQ := ThunkNamed("q", func() (bool, error) { return true, nil })
+	pendingEval := NewEvaluator(Always(And(Next(predP), Next(predQ))))
 	pendingEval.Observe()
 	body, err := json.Marshal(pendingEval.Residual())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), `"op":"and"`) && !strings.Contains(string(body), `"op":"true"`) {
-		t.Errorf("pending residual unexpected: %s", body)
+	want := `{"op":"and","left":{"op":"predicate","name":"p"},"right":{"op":"predicate","name":"q"}}`
+	if string(body) != want {
+		t.Errorf("pending residual:\n got: %s\nwant: %s", body, want)
 	}
 }

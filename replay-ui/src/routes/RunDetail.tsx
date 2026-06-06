@@ -1,36 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getRun, getStep, screenshotUrl } from "../api";
-import type { Run, Step } from "../types";
+import type { Run } from "../types";
 import ActionList from "../panels/ActionList";
 import HierarchyPanel from "../panels/HierarchyPanel";
 import Screenshot from "../panels/Screenshot";
 import SnapshotTable from "../panels/SnapshotTable";
 import ViolationsPanel from "../panels/ViolationsPanel";
 import ExceptionsPanel from "../panels/ExceptionsPanel";
-import type { LaneStatus, PropertyLane } from "../panels/Timeline";
-import MetricsChart, { type MetricsSample } from "../panels/MetricsChart";
+import MetricsChart from "../panels/MetricsChart";
 import Tabs, { type TabDefinition } from "../components/Tabs";
 import { useStep } from "../hooks/useStep";
 import { useKeyboardNav } from "../hooks/useKeyboardNav";
 import { useTheme } from "../hooks/useTheme";
 import { deviceSpaceOf } from "../lib/device-space";
+import { buildRunHistory, type RunHistory } from "../lib/run-history";
 
 function basename(specPath: string): string {
   const index = specPath.lastIndexOf("/");
   return index >= 0 ? specPath.slice(index + 1) : specPath;
 }
 
-interface RunHistory {
-  names: string[];
-  lanes: PropertyLane[];
-  firstViolationStep?: number;
-  firstExceptionStep?: number;
-  exceptionStepIndices: number[];
-  violationStepIndices: number[];
-  metricsSamples: MetricsSample[];
-  steps: (Step | null)[];
-}
 
 export default function RunDetail() {
   const [run, setRun] = useState<Run | null>(null);
@@ -371,65 +361,5 @@ async function loadHistory(run: Run): Promise<RunHistory> {
   const responses = await Promise.all(
     run.steps.map((entry) => getStep(run.id, entry.index).catch(() => null)),
   );
-  const propertyNames = collectPropertyNames(responses);
-  const lanes: PropertyLane[] = propertyNames.map((name) => ({
-    name,
-    statuses: responses.map((step) => statusForProperty(name, step)),
-  }));
-  const firstViolationStep = run.steps.find((entry) => entry.has_violations)?.index;
-  const firstExceptionStep = run.steps.find((entry) => entry.has_exceptions)?.index;
-  const exceptionStepIndices = run.steps
-    .filter((entry) => entry.has_exceptions)
-    .map((entry) => entry.index);
-  const violationStepIndices = run.steps
-    .filter((entry) => entry.has_violations)
-    .map((entry) => entry.index);
-  const metricsSamples: MetricsSample[] = run.steps.map((entry, position) => ({
-    stepIndex: entry.index,
-    timestamp: entry.timestamp,
-    metrics: responses[position]?.metrics,
-  }));
-  return {
-    names: propertyNames,
-    lanes: sortLanes(lanes),
-    firstViolationStep,
-    firstExceptionStep,
-    exceptionStepIndices,
-    violationStepIndices,
-    metricsSamples,
-    steps: responses,
-  };
-}
-
-function collectPropertyNames(steps: (Step | null)[]): string[] {
-  const names = new Set<string>();
-  for (const step of steps) {
-    if (!step?.residuals) continue;
-    for (const name of Object.keys(step.residuals)) {
-      names.add(name);
-    }
-  }
-  return [...names].sort();
-}
-
-function statusForProperty(name: string, step: Step | null): LaneStatus {
-  if (!step) return "pending";
-  if (step.violations?.includes(name)) return "violated";
-  const residual = step.residuals?.[name];
-  if (residual && residual.op === "true") return "holds";
-  return "pending";
-}
-
-function sortLanes(lanes: PropertyLane[]): PropertyLane[] {
-  const rank = (lane: PropertyLane): number => {
-    const last = lane.statuses[lane.statuses.length - 1];
-    if (lane.statuses.includes("violated")) return 0;
-    if (last === "pending") return 1;
-    return 2;
-  };
-  return [...lanes].sort((a, b) => {
-    const delta = rank(a) - rank(b);
-    if (delta !== 0) return delta;
-    return a.name.localeCompare(b.name);
-  });
+  return buildRunHistory(run, responses);
 }

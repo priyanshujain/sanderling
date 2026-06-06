@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,6 +157,47 @@ func TestHandleStep_ErrorCases(t *testing.T) {
 	}
 }
 
+func TestServer_CorruptRunDirReturns500WithError(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "bad-meta", "meta.json"), "{not json")
+	mustWriteFile(t, filepath.Join(root, "bad-trace", "meta.json"), `{"started_at":"2026-04-17T18:00:00Z"}`)
+	mustWriteFile(t, filepath.Join(root, "bad-trace", "trace.jsonl"), "{not json\n")
+
+	server, err := NewServer(ServerOptions{RunsDirectory: root, AssetsFS: testAssetsFS})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []string{
+		"/api/runs/bad-meta",
+		"/api/runs/bad-trace",
+		"/api/runs/bad-trace/steps/1",
+	}
+	for _, path := range cases {
+		t.Run(path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			server.Handler().ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500, body=%s", recorder.Code, recorder.Body.String())
+			}
+			if strings.TrimSpace(recorder.Body.String()) == "" {
+				t.Error("expected a non-empty error body")
+			}
+		})
+	}
+}
+
+func mustWriteFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestScreenshot_ServesWhitelistedPNG(t *testing.T) {
 	server, _ := newFixtureServer(t)
 	recorder := httptest.NewRecorder()
@@ -223,6 +263,57 @@ func TestSSE_ReturnsWhenContextCanceled(t *testing.T) {
 	}
 }
 
+func TestSSE_DeliversRunsChangedAfterBroadcast(t *testing.T) {
+	server, _ := newFixtureServer(t)
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, httpServer.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+
+	events := make(chan string, 1)
+	go func() {
+		buffer := make([]byte, 256)
+		for {
+			n, err := response.Body.Read(buffer)
+			if n > 0 {
+				events <- string(buffer[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		server.Watcher().broadcast()
+		select {
+		case got := <-events:
+			if strings.Contains(got, ": ping") {
+				continue
+			}
+			if !strings.Contains(got, "event: runs.changed") {
+				t.Fatalf("event = %q, want runs.changed", got)
+			}
+			return
+		case <-time.After(50 * time.Millisecond):
+			if time.Now().After(deadline) {
+				t.Fatal("client never received runs.changed after broadcast")
+			}
+		}
+	}
+}
+
 func TestDevProxy_ForwardsRequestBodyUnchanged(t *testing.T) {
 	received := make(chan string, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
@@ -275,8 +366,8 @@ func TestAssets_FallbackToIndexHTML(t *testing.T) {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 	body := recorder.Body.String()
-	if !strings.Contains(body, "<div id=\"app\"></div>") && !strings.Contains(body, "<div id=\"root\"></div>") {
-		t.Errorf("expected SPA shell with #app or #root, got %q", body)
+	if !strings.Contains(body, "<div id=\"root\"></div>") {
+		t.Errorf("expected SPA shell with #root, got %q", body)
 	}
 }
 
@@ -312,12 +403,8 @@ func TestResolveRunsDirectory(t *testing.T) {
 	}
 }
 
-func TestDevProxy_ParsesTarget(t *testing.T) {
+func TestDevProxy_RejectsInvalidTarget(t *testing.T) {
 	if _, err := newDevProxy(":://bad-url"); err == nil {
 		t.Error("expected parse error for invalid URL")
-	}
-	parsed, err := url.Parse(DevTarget)
-	if err != nil || parsed.Host != "127.0.0.1:5173" {
-		t.Errorf("DevTarget parsed wrong: %v %q", err, parsed.Host)
 	}
 }

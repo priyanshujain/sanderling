@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
 func TestWriteMeta_RoundTrip(t *testing.T) {
@@ -99,6 +102,12 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 	writer, _ := NewWriter(directory)
 	defer writer.Close()
 
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root"},"children":[
+		{"attributes":{"resource-id":"child","text":"hi"},"children":[]}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	step := Step{
 		Index:     1,
 		Timestamp: time.Now().UTC(),
@@ -108,6 +117,7 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 			ResolvedBounds: &BoundsRecord{X: 10, Y: 20, Width: 100, Height: 50},
 			TapPoint:       &PointRecord{X: 60, Y: 45},
 		},
+		Hierarchy: tree,
 		Residuals: map[string]json.RawMessage{
 			"prop1": json.RawMessage(`{"op":"true"}`),
 		},
@@ -131,6 +141,24 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 	}
 	if string(got.Residuals["prop1"]) != `{"op":"true"}` {
 		t.Errorf("residuals round-trip wrong: %s", got.Residuals["prop1"])
+	}
+
+	// Intentionally-lossy contract: Tree marshals only Elements (Root and
+	// Node.Children are json:"-"). The flat element list survives; tree
+	// structure does not. Lock both halves so a regression that drops the
+	// element list, or one that silently starts persisting structure the
+	// replay UI would then depend on, is caught.
+	if got.Hierarchy == nil {
+		t.Fatal("hierarchy dropped from trace")
+	}
+	if len(got.Hierarchy.Elements) != 2 {
+		t.Fatalf("hierarchy elements not preserved: got %d", len(got.Hierarchy.Elements))
+	}
+	if got.Hierarchy.Elements[1].Text != "hi" {
+		t.Errorf("element field lost: %+v", got.Hierarchy.Elements[1])
+	}
+	if got.Hierarchy.Root != nil {
+		t.Errorf("Root is json:\"-\" and must decode nil, got %+v", got.Hierarchy.Root)
 	}
 }
 
@@ -182,6 +210,66 @@ func TestWriteStep_AppendsOneJsonLine(t *testing.T) {
 	}
 }
 
+// Bug class: a property that first violates at step 0 carries Witness.Step==0,
+// which omitempty drops from JSON. Decode must still yield Step 0 (the true
+// origin) rather than confusing it with a later step. Also pins that the
+// Witnesses/ExtractorChanges/Metrics/Exceptions sidecars survive the round-trip
+// rather than silently vanishing on decode.
+func TestWriteStep_DiagnosticsRoundTrip(t *testing.T) {
+	directory := t.TempDir()
+	writer, _ := NewWriter(directory)
+	defer writer.Close()
+
+	step := Step{
+		Index: 4,
+		Witnesses: map[string]Witness{
+			"balanceNonNegative": {
+				Reason:  "balance went negative",
+				IsError: true,
+				Step:    0,
+				Extractors: map[string]json.RawMessage{
+					"balance": json.RawMessage(`-5`),
+				},
+			},
+		},
+		ExtractorChanges: map[string]ExtractorChange{
+			"balance": {Prev: json.RawMessage(`10`), Curr: json.RawMessage(`-5`)},
+		},
+		Metrics:    &Metrics{CPUPercent: 12.5, HeapBytes: 4096},
+		Exceptions: []Exception{{Class: "NullPointerException", Message: "boom"}},
+	}
+	if err := writer.WriteStep(step); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(directory, "trace.jsonl"))
+	if strings.Contains(string(body), `"step":0`) {
+		t.Errorf("Witness.Step==0 should be omitted from JSON, got: %s", body)
+	}
+	var got Step
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("bad jsonl: %v\n%s", err, body)
+	}
+	w, ok := got.Witnesses["balanceNonNegative"]
+	if !ok {
+		t.Fatal("step-0 witness vanished on decode")
+	}
+	if w.Step != 0 || w.Reason != "balance went negative" || !w.IsError {
+		t.Errorf("witness round-trip wrong: %+v", w)
+	}
+	if string(w.Extractors["balance"]) != `-5` {
+		t.Errorf("witness extractors lost: %s", w.Extractors["balance"])
+	}
+	if c := got.ExtractorChanges["balance"]; string(c.Prev) != `10` || string(c.Curr) != `-5` {
+		t.Errorf("extractor change round-trip wrong: %+v", c)
+	}
+	if got.Metrics == nil || got.Metrics.CPUPercent != 12.5 || got.Metrics.HeapBytes != 4096 {
+		t.Errorf("metrics round-trip wrong: %+v", got.Metrics)
+	}
+	if len(got.Exceptions) != 1 || got.Exceptions[0].Class != "NullPointerException" {
+		t.Errorf("exceptions round-trip wrong: %+v", got.Exceptions)
+	}
+}
+
 func TestWriteStep_MultipleStepsAppend(t *testing.T) {
 	directory := t.TempDir()
 	writer, err := NewWriter(directory)
@@ -201,6 +289,47 @@ func TestWriteStep_MultipleStepsAppend(t *testing.T) {
 	}
 }
 
+// Bug class: dropping the writer mutex unsynchronizes the w.file field that
+// WriteStep reads and Close nils out. Run under -race with WriteStep racing
+// Close: a missing mutex is a reported data race on w.file, and any step that
+// survives Close must still be a complete, parseable JSONL line.
+func TestWriteStep_RacesCloseSafely(t *testing.T) {
+	directory := t.TempDir()
+	writer, err := NewWriter(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 50
+	var wg sync.WaitGroup
+	for index := 0; index < n; index++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			// Tolerate "writer is closed": the contract under test is that the
+			// w.file access is synchronized, not that every write lands.
+			_ = writer.WriteStep(Step{Index: index, Screen: "s"})
+		}(index)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	wg.Wait()
+
+	for _, line := range readLines(t, filepath.Join(directory, "trace.jsonl")) {
+		var got Step
+		if err := json.Unmarshal([]byte(line), &got); err != nil {
+			t.Fatalf("torn JSONL line: %v\n%s", err, line)
+		}
+	}
+}
+
+// Grep contract (intentional substring assertion, not a JSON round-trip):
+// operators and CI scripts locate failing steps by grepping raw trace.jsonl for
+// `"violations":["<prop>"]` without a JSON parser. Bug class: a serialization
+// change (whitespace from indenting, renamed/reordered field, pointer slice)
+// that keeps the Step parseable but breaks that exact on-disk byte shape would
+// silently blind every grep-based tool.
 func TestWriteStep_ViolationsAreGreppable(t *testing.T) {
 	directory := t.TempDir()
 	writer, _ := NewWriter(directory)

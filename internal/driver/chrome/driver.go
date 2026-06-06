@@ -131,13 +131,17 @@ func (d *Driver) Terminate(_ context.Context) error {
 	return nil
 }
 
-func (d *Driver) Tap(_ context.Context, x, y int) error {
-	return chromedp.Run(d.tabCtx,
+func (d *Driver) Tap(ctx context.Context, x, y int) error {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	return chromedp.Run(runCtx,
 		chromedp.MouseClickXY(float64(x), float64(y)),
 	)
 }
 
-func (d *Driver) TapSelector(_ context.Context, selector string) error {
+func (d *Driver) TapSelector(ctx context.Context, selector string) error {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	target, isXPath, err := TranslateStringSelector(selector)
 	if err != nil {
 		// Fall back to passing the string straight through; chromedp will
@@ -145,9 +149,9 @@ func (d *Driver) TapSelector(_ context.Context, selector string) error {
 		target = selector
 	}
 	if isXPath {
-		return chromedp.Run(d.tabCtx, chromedp.Click(target, chromedp.NodeVisible, chromedp.BySearch))
+		return chromedp.Run(runCtx, chromedp.Click(target, chromedp.NodeVisible, chromedp.BySearch))
 	}
-	return chromedp.Run(d.tabCtx, chromedp.Click(target, chromedp.NodeVisible))
+	return chromedp.Run(runCtx, chromedp.Click(target, chromedp.NodeVisible))
 }
 
 // doubleTapGap is the inter-tap delay for DoubleTap: short enough to land both
@@ -177,8 +181,10 @@ func webDoubleTap(ctx context.Context, tap func() error) error {
 	return tap()
 }
 
-func (d *Driver) InputText(_ context.Context, text string) error {
-	return chromedp.Run(d.tabCtx,
+func (d *Driver) InputText(callerCtx context.Context, text string) error {
+	runCtx, cancel := d.runCtx(callerCtx)
+	defer cancel()
+	return chromedp.Run(runCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			// Select any existing content so InsertText replaces rather than appends.
 			if err := chromedp.Evaluate(`
@@ -201,8 +207,10 @@ func (d *Driver) ReplacesTextOnInput() bool {
 
 // EraseText clears the focused field. InputText above already replaces via
 // select-all, so the character count is not needed to bound the deletion.
-func (d *Driver) EraseText(_ context.Context, _ int) error {
-	return chromedp.Run(d.tabCtx,
+func (d *Driver) EraseText(callerCtx context.Context, _ int) error {
+	runCtx, cancel := d.runCtx(callerCtx)
+	defer cancel()
+	return chromedp.Run(runCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			if err := chromedp.Evaluate(`
 				(function() {
@@ -216,7 +224,9 @@ func (d *Driver) EraseText(_ context.Context, _ int) error {
 	)
 }
 
-func (d *Driver) Swipe(_ context.Context, fromX, fromY, toX, toY int, duration time.Duration) error {
+func (d *Driver) Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	millis := max(duration.Milliseconds(), 50)
 	script := fmt.Sprintf(`
 (function() {
@@ -238,18 +248,22 @@ func (d *Driver) Swipe(_ context.Context, fromX, fromY, toX, toY int, duration t
 		fromX, fromY,
 		toX, toY,
 	)
-	return chromedp.Run(d.tabCtx, chromedp.Evaluate(script, nil))
+	return chromedp.Run(runCtx, chromedp.Evaluate(script, nil))
 }
 
-func (d *Driver) PressKey(_ context.Context, key string) error {
+func (d *Driver) PressKey(ctx context.Context, key string) error {
 	k, ok := keyMap[key]
 	if !ok {
 		return fmt.Errorf("unsupported key: %q", key)
 	}
-	return chromedp.Run(d.tabCtx, chromedp.KeyEvent(k))
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	return chromedp.Run(runCtx, chromedp.KeyEvent(k))
 }
 
-func (d *Driver) LongPress(_ context.Context, x, y int) error {
+func (d *Driver) LongPress(ctx context.Context, x, y int) error {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	script := fmt.Sprintf(`
 (function() {
   const el = document.elementFromPoint(%d, %d);
@@ -263,7 +277,7 @@ func (d *Driver) LongPress(_ context.Context, x, y int) error {
 		x, y,
 		x, y,
 	)
-	return chromedp.Run(d.tabCtx, chromedp.Evaluate(script, nil))
+	return chromedp.Run(runCtx, chromedp.Evaluate(script, nil))
 }
 
 // keyMap covers the keys web specs may emit (enter/tab/escape/arrows).
@@ -279,7 +293,9 @@ var keyMap = map[string]string{
 	"right":  kb.ArrowRight,
 }
 
-func (d *Driver) Hierarchy(_ context.Context) (string, error) {
+func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	script := `
 (function() {
   const route = window.location.hash.replace(/^#/, '').split('?')[0] || '/';
@@ -325,7 +341,7 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
 })()`
 
 	var result any
-	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &result)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &result)); err != nil {
 		return "", fmt.Errorf("hierarchy: %w", err)
 	}
 	bytes, err := json.Marshal(result)
@@ -335,9 +351,11 @@ func (d *Driver) Hierarchy(_ context.Context) (string, error) {
 	return string(bytes), nil
 }
 
-func (d *Driver) Screenshot(_ context.Context) (driver.Image, error) {
+func (d *Driver) Screenshot(ctx context.Context) (driver.Image, error) {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	var buf []byte
-	if err := chromedp.Run(d.tabCtx, chromedp.CaptureScreenshot(&buf)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.CaptureScreenshot(&buf)); err != nil {
 		return driver.Image{}, fmt.Errorf("screenshot: %w", err)
 	}
 	w, h := pngDimensions(buf)
@@ -376,8 +394,10 @@ func (d *Driver) RecentLogs(_ context.Context, since time.Time, minLevel string)
 	return result, nil
 }
 
-func (d *Driver) WaitForIdle(_ context.Context, _ time.Duration) error {
-	return chromedp.Run(d.tabCtx, chromedp.WaitReady("body", chromedp.ByQuery))
+func (d *Driver) WaitForIdle(ctx context.Context, _ time.Duration) error {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	return chromedp.Run(runCtx, chromedp.WaitReady("body", chromedp.ByQuery))
 }
 
 func (d *Driver) Health(_ context.Context) (driver.Health, error) {
@@ -389,14 +409,16 @@ func (d *Driver) Health(_ context.Context) (driver.Health, error) {
 	}
 }
 
-func (d *Driver) Metrics(_ context.Context, _ string) (driver.Metrics, error) {
+func (d *Driver) Metrics(ctx context.Context, _ string) (driver.Metrics, error) {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	var result map[string]any
 	script := `
 (function() {
   const mem = performance.memory || {};
   return {heap: mem.usedJSHeapSize || 0, totalMem: mem.totalJSHeapSize || 0};
 })()`
-	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &result)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &result)); err != nil {
 		return driver.Metrics{}, nil
 	}
 	heap, _ := result["heap"].(float64)
