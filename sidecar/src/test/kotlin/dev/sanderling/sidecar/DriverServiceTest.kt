@@ -54,6 +54,45 @@ class DriverServiceTest {
         assertEquals(null, backend.lastBundleId)
     }
 
+    @Test fun shutdownTerminatesLaunchedAppAndClosesBackend() {
+        var terminated: String? = null
+        var closed = false
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun terminate(bundleId: String) { terminated = bundleId }
+            override fun close() { closed = true }
+        }
+        val serverName = InProcessServerBuilder.generateName()
+        val service = DriverService(platform = "android", backend = backend)
+        grpcCleanup.register(
+            InProcessServerBuilder.forName(serverName).directExecutor().addService(service).build().start()
+        )
+        val channel: ManagedChannel = grpcCleanup.register(
+            InProcessChannelBuilder.forName(serverName).directExecutor().build()
+        )
+        val client = DriverGrpc.newBlockingStub(channel)
+
+        client.launch(LaunchRequest.newBuilder().setBundleId("com.example").build())
+        service.shutdown()
+
+        assertEquals("com.example", terminated)
+        assertTrue(closed)
+    }
+
+    @Test fun shutdownWithoutLaunchedAppStillClosesBackend() {
+        var terminated: String? = null
+        var closed = false
+        val backend = object : DriverBackend by StubDriverBackend("android") {
+            override fun terminate(bundleId: String) { terminated = bundleId }
+            override fun close() { closed = true }
+        }
+        val service = DriverService(platform = "android", backend = backend)
+
+        service.shutdown()
+
+        assertEquals(null, terminated)
+        assertTrue(closed)
+    }
+
     @Test fun tapForwardsCoordinates() {
         val backend = StubDriverBackend("android")
         val client = newClient(backend)
