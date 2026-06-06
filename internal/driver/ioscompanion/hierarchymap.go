@@ -17,6 +17,22 @@ type rawFrame struct {
 // rawElement is one entry in the flat describe-all dump returned by the
 // simulator companion. Only the fields the mapper consumes are declared;
 // unknown fields are ignored.
+// unresolvedValueSentinel is what the accessibility bridge reports for a value
+// it cannot resolve yet (typically during app cold start). It is bridge state,
+// not app content.
+const unresolvedValueSentinel = "Invalid"
+
+// hasUnresolvedValues reports whether any element in the flat dump still
+// carries the bridge's unresolved-value sentinel.
+func hasUnresolvedValues(dump []byte) bool {
+	for _, element := range decodeDump(dump) {
+		if stringValue(element.AXValue) == unresolvedValueSentinel {
+			return true
+		}
+	}
+	return false
+}
+
 type rawElement struct {
 	Frame      rawFrame `json:"frame"`
 	AXUniqueID *string  `json:"AXUniqueId"`
