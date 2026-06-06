@@ -16,15 +16,16 @@ import (
 var Version = "dev"
 
 type testOptions struct {
-	spec      string
-	bundleID  string
-	platform  string
-	avd       string
-	iosDevice string
-	duration  time.Duration
-	seed      int64
-	output    string
-	clearData bool
+	spec       string
+	bundleID   string
+	platform   string
+	avd        string
+	iosDevice  string
+	iosAppPath string
+	duration   time.Duration
+	seed       int64
+	output     string
+	clearData  bool
 }
 
 const topUsage = `sanderling is a property-based UI fuzzer for mobile apps.
@@ -50,6 +51,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.StringVar(&options.platform, "platform", "android", "target platform: android, ios, web")
 	flagSet.StringVar(&options.avd, "avd", "", "Android AVD name to boot if no device is connected")
 	flagSet.StringVar(&options.iosDevice, "ios-device", "", "iOS simulator name or UDID to boot if none is running")
+	flagSet.StringVar(&options.iosAppPath, "ios-app-path", "", "path to the .app bundle for iOS simulator clear-state reinstall")
 	flagSet.DurationVar(&options.duration, "duration", 5*time.Minute, "total test duration")
 	flagSet.Int64Var(&options.seed, "seed", 0, "RNG seed (0 = random)")
 	flagSet.StringVar(&options.output, "output", "./runs", "output directory for traces")
