@@ -182,24 +182,20 @@ func TestParseTestArgs_IosDeviceFlag(t *testing.T) {
 }
 
 func TestRun_TestSubcommand_PipelineErrors(t *testing.T) {
-	// Without a real spec, a real device, or a bootable AVD the pipeline
-	// must surface a specific error rather than panicking — proves the flag
-	// wiring reaches the runner.
+	// Web skips host-dependent device boot and bundles first, so a missing spec
+	// deterministically surfaces a bundle-resolution error. This proves the
+	// flag wiring reaches the bundler rather than panicking on the way.
 	err := run([]string{
 		"sanderling", "test",
 		"--spec", "definitely-missing-spec.ts",
-		"--bundle-id", "com.example",
-		"--avd", "definitely-missing-avd",
+		"--bundle-id", "http://localhost:3000",
+		"--platform", "web",
 	}, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	message := err.Error()
-	ok := strings.Contains(message, "bundle") ||
-		strings.Contains(message, "device") ||
-		strings.Contains(message, "AVD") ||
-		strings.Contains(message, "emulator")
-	if !ok {
-		t.Errorf("expected pipeline error (bundle/device/AVD/emulator), got %v", err)
+	if !strings.HasPrefix(message, "bundle spec:") || !strings.Contains(message, "definitely-missing-spec.ts") {
+		t.Errorf("expected bundle-resolution error for the missing spec, got %v", err)
 	}
 }
