@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
 func TestWriteMeta_RoundTrip(t *testing.T) {
@@ -99,6 +102,12 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 	writer, _ := NewWriter(directory)
 	defer writer.Close()
 
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root"},"children":[
+		{"attributes":{"resource-id":"child","text":"hi"},"children":[]}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	step := Step{
 		Index:     1,
 		Timestamp: time.Now().UTC(),
@@ -108,6 +117,7 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 			ResolvedBounds: &BoundsRecord{X: 10, Y: 20, Width: 100, Height: 50},
 			TapPoint:       &PointRecord{X: 60, Y: 45},
 		},
+		Hierarchy: tree,
 		Residuals: map[string]json.RawMessage{
 			"prop1": json.RawMessage(`{"op":"true"}`),
 		},
@@ -131,6 +141,24 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 	}
 	if string(got.Residuals["prop1"]) != `{"op":"true"}` {
 		t.Errorf("residuals round-trip wrong: %s", got.Residuals["prop1"])
+	}
+
+	// Intentionally-lossy contract: Tree marshals only Elements (Root and
+	// Node.Children are json:"-"). The flat element list survives; tree
+	// structure does not. Lock both halves so a regression that drops the
+	// element list, or one that silently starts persisting structure the
+	// replay UI would then depend on, is caught.
+	if got.Hierarchy == nil {
+		t.Fatal("hierarchy dropped from trace")
+	}
+	if len(got.Hierarchy.Elements) != 2 {
+		t.Fatalf("hierarchy elements not preserved: got %d", len(got.Hierarchy.Elements))
+	}
+	if got.Hierarchy.Elements[1].Text != "hi" {
+		t.Errorf("element field lost: %+v", got.Hierarchy.Elements[1])
+	}
+	if got.Hierarchy.Root != nil {
+		t.Errorf("Root is json:\"-\" and must decode nil, got %+v", got.Hierarchy.Root)
 	}
 }
 
@@ -198,6 +226,47 @@ func TestWriteStep_MultipleStepsAppend(t *testing.T) {
 	lines := readLines(t, filepath.Join(directory, "trace.jsonl"))
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines, got %d", len(lines))
+	}
+}
+
+// Bug class: dropping the writer mutex would let concurrent encoder.Encode
+// calls interleave, producing torn JSONL lines. Run under -race: every line
+// must be a complete, parseable Step and all N must arrive.
+func TestWriteStep_ConcurrentWritesAreWellFormed(t *testing.T) {
+	directory := t.TempDir()
+	writer, err := NewWriter(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	const n = 50
+	var wg sync.WaitGroup
+	for index := 0; index < n; index++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			if err := writer.WriteStep(Step{Index: index, Screen: "s"}); err != nil {
+				t.Errorf("WriteStep: %v", err)
+			}
+		}(index)
+	}
+	wg.Wait()
+
+	lines := readLines(t, filepath.Join(directory, "trace.jsonl"))
+	if len(lines) != n {
+		t.Fatalf("expected %d lines, got %d", n, len(lines))
+	}
+	seen := make(map[int]bool, n)
+	for _, line := range lines {
+		var got Step
+		if err := json.Unmarshal([]byte(line), &got); err != nil {
+			t.Fatalf("torn JSONL line: %v\n%s", err, line)
+		}
+		seen[got.Index] = true
+	}
+	if len(seen) != n {
+		t.Errorf("expected %d distinct steps, got %d", n, len(seen))
 	}
 }
 
