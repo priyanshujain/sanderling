@@ -786,7 +786,7 @@ class IosDriverBackend(private val udid: String) : DriverBackend {
             tempFileHandler = tempFileHandler,
         )
         val driverConfig = xcuitest.installer.LocalXCTestInstaller.IOSDriverConfig(
-            prebuiltRunner = false,
+            prebuiltRunner = true,
             sourceDirectory = "driver-iPhoneSimulator",
             context = xcuitest.installer.Context.CLI,
             snapshotKeyHonorModalViews = null,
