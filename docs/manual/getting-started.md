@@ -4,55 +4,77 @@ title: Getting started
 
 # Getting started
 
-Install the CLI, run a spec.
+This page installs sanderling and runs a first test against folio, the example app that ships with the repo. By the end you will have a trace of a real run open in your browser.
 
-## Prerequisites
-
-**Android / iOS:**
-
-- An Android emulator with API level 30 or newer (or a connected device).
-- `adb` on your PATH.
-
-**Web:**
-
-- Chrome installed. sanderling drives it via CDP; no other setup required.
-
-Run `sanderling doctor` to check the host environment.
+If you have not read the [introduction](./introduction/), start there. It explains what sanderling does and how it works.
 
 ## Install
 
-### CLI
+Install the CLI:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/priyanshujain/sanderling/master/install.sh | bash
 ```
 
-### Spec package ([npm](https://www.npmjs.com/package/@sanderling/spec))
+Specs import from the `@sanderling/spec` package on [npm](https://www.npmjs.com/package/@sanderling/spec). Install it in the project where your spec lives:
 
 ```sh
 npm install --save-dev @sanderling/spec
 ```
 
+The example apps already depend on it, so for this page the CLI is enough.
+
+## Check your environment
+
+```sh
+sanderling doctor
+```
+
+`doctor` checks each platform and tells you what is missing. What each platform needs:
+
+- **Web**: Chrome. Nothing else.
+- **Android**: `adb` on your PATH, and an emulator (API level 30 or newer) or a connected device.
+- **iOS**: Xcode 16 or newer, with a simulator.
+
+Web is the easiest place to start. If you have Chrome, you can run a test right now.
+
 ## Your first run
 
-The repo ships two sample apps. `examples/folio` is a Kotlin Multiplatform personal-ledger app that covers Android, iOS, and web (wasmJs) from one shared codebase. `examples/folio-web` is a smaller React + Vite app that covers only the web path. Both carry a TypeScript spec under `sanderling/spec.ts`. Install `just`, then pick a target below.
+Clone the repo and pick an example app. Both are small personal-ledger apps: log in, create accounts, add transactions.
+
+- `examples/folio` is a Kotlin Multiplatform app. One codebase builds for Android, iOS, and web.
+- `examples/folio-web` is a React + Vite app. Web only.
+
+Both carry a spec at `sanderling/spec.ts`. The examples use [`just`](https://github.com/casey/just) as a command runner, so install it first.
+
+### Web
+
+The quickest path. From `examples/folio-web`:
+
+```sh
+just test
+```
+
+This starts the Vite dev server, then runs `sanderling test`. sanderling launches Chrome and starts exploring: logging in, creating accounts, adding transactions, and tapping things at random. Let it run, or stop it early with Ctrl+C.
+
+For the Kotlin Multiplatform web build instead, run `just web` from `examples/folio`.
 
 ### Android
 
-From `examples/folio`:
+From `examples/folio`, with an emulator booted or a device connected:
 
 ```sh
-just install   # build and install the folio APK on a booted emulator or device
+just install   # build and install the folio APK
 just test      # run the spec
 ```
 
-With no device connected and multiple AVDs, pick one:
+If no device is connected and you have several AVDs, pick one:
 
 ```sh
 AVD=Pixel_7 just test
 ```
 
-Persistent settings can live in a `.env` alongside the justfile (`AVD=Pixel_7`, `DURATION=5m`, and so on).
+Settings you use every time can live in a `.env` file next to the justfile (`AVD=Pixel_7`, `DURATION=5m`, and so on).
 
 ### iOS
 
@@ -65,33 +87,31 @@ IOS_DEVICE="iPhone 15" just test-ios   # pick a different simulator
 
 `just test-ios` boots the simulator if needed, builds and installs the app, then runs `sanderling test --platform ios`.
 
-### Web
-
-From either example. For the KMP wasmJs build, use `examples/folio`:
-
-```sh
-just web       # serve the wasmJs app on a webpack dev server
-```
-
-For the React + Vite build, use `examples/folio-web`:
-
-```sh
-just test      # starts the Vite dev server, then sanderling drives Chrome via CDP
-```
-
-No emulator or SDK setup needed for either web path.
-
-### Trace output
+## What you get
 
 When the run ends, the trace lands in `sanderling/runs/<timestamp>/`:
 
 ```
 runs/2026-04-18T12-34-56/
-├── trace.jsonl
-├── screenshots/
-└── meta.json
+├── trace.jsonl       one JSON line per step
+├── screenshots/      one screenshot per step
+└── meta.json         seed, duration, run metadata
 ```
 
-Browse it with `sanderling replay` (see [replay](./replay/)), or read `trace.jsonl` step by step.
+The trace is written as the run goes, so a run you interrupt is still complete up to the point you stopped it.
 
-Next: [writing specs](./writing-specs/).
+## Look at the run
+
+```sh
+sanderling replay
+```
+
+This opens a web UI for the trace. Step through the run with `j` and `k`. Each step shows the screenshot, the action taken, the state of every property, and the full UI hierarchy. If a property broke, press `.` to jump to the violation and see exactly what the screen showed when it happened.
+
+The folio spec gives extra weight to rapid double taps, because a form that submits twice on a double tap is a classic bug. folio's transaction form has exactly that flaw. When the explorer hits it, the balance moves by twice the typed amount, the `submitMovesBalanceByTypedAmount` property fires, and the timeline shows the violation.
+
+See [replay](./replay/) for the full panel and shortcut reference.
+
+## Next
+
+You have run sanderling against an app with a finished spec. The next page builds that spec from scratch, one concept at a time: [writing specs](./writing-specs/).
