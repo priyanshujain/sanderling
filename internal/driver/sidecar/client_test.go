@@ -381,6 +381,56 @@ func TestClient_WaitForIdleForwardsMillis(t *testing.T) {
 	}
 }
 
+// TestClient_DoubleTapSelectorFiresTwice confirms the selector fallback
+// composes exactly two taps; a broken composition would single-tap and the
+// double-tap gesture would silently degrade.
+func TestClient_DoubleTapSelectorFiresTwice(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+
+	if err := client.DoubleTapSelector(context.Background(), "id:home"); err != nil {
+		t.Fatal(err)
+	}
+	state.fake.mutex.Lock()
+	defer state.fake.mutex.Unlock()
+	if len(state.fake.tapSelectors) != 2 || state.fake.tapSelectors[0] != "id:home" || state.fake.tapSelectors[1] != "id:home" {
+		t.Errorf("expected two taps on id:home, got %v", state.fake.tapSelectors)
+	}
+}
+
+// TestClient_DoubleTapSelectorCancelBetweenTaps confirms a context cancelled
+// during the inter-tap gap fires exactly one tap and returns ctx.Err() - it
+// must neither double-fire nor swallow the cancellation.
+func TestClient_DoubleTapSelectorCancelBetweenTaps(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			state.fake.mutex.Lock()
+			n := len(state.fake.tapSelectors)
+			state.fake.mutex.Unlock()
+			if n >= 1 {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	err := client.DoubleTapSelector(ctx, "id:home")
+	if err == nil || !strings.Contains(err.Error(), "context") {
+		t.Fatalf("expected context error, got %v", err)
+	}
+	state.fake.mutex.Lock()
+	defer state.fake.mutex.Unlock()
+	if len(state.fake.tapSelectors) != 1 {
+		t.Errorf("expected exactly one tap before cancellation, got %d", len(state.fake.tapSelectors))
+	}
+}
+
 // TestClient_SwipeForwardsEndpointsInOrder pins down that From keeps the start
 // point and To the end point. A from/to transposition would send the swipe in
 // the reverse direction on-device while every other assertion still passed.
