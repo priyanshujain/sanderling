@@ -1399,7 +1399,18 @@ func TestRunner_InternalApplyErrorMarksTransitional(t *testing.T) {
 // UNAVAILABLE that happens to embed raw exception text (e.g. ConnectException
 // from the original failure) means the sidecar already recovered and the run
 // must continue.
+// TestIsWDADrop_Classification pins isWDADrop to the exact phrase the sidecar
+// throws at its reconnect site (sidecar DriverBackend.kt):
+//
+//	throw IllegalStateException("WDA reconnect failed: $restartErr", cause)
+//
+// If that message is reworded on the Kotlin side without updating the Go
+// matcher, a fatal, unrecoverable WDA drop is misclassified as transient and
+// the run burns its budget retrying a dead channel instead of aborting.
 func TestIsWDADrop_Classification(t *testing.T) {
+	// sidecarReconnectFailedMessage mirrors the literal the sidecar emits; the
+	// matcher's contract is keyed on this exact prefix.
+	const sidecarReconnectFailedMessage = "WDA reconnect failed"
 	cases := []struct {
 		name string
 		err  error
@@ -1411,8 +1422,8 @@ func TestIsWDADrop_Classification(t *testing.T) {
 			false,
 		},
 		{
-			"reconnect failure is a drop",
-			status.Error(codes.Internal, "java.lang.IllegalStateException: WDA reconnect failed: IOSDriverTimeoutException"),
+			"sidecar reconnect-failed message is a drop",
+			status.Error(codes.Internal, "java.lang.IllegalStateException: "+sidecarReconnectFailedMessage+": IOSDriverTimeoutException"),
 			true,
 		},
 		{"generic internal is not a drop", status.Error(codes.Internal, "boom"), false},
