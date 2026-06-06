@@ -220,6 +220,30 @@ func TestMarshalJSON_EventuallyMillisecondsAndDeadline(t *testing.T) {
 	}
 }
 
+// TestMarshalJSON_AlwaysStepsMillisecondsDeadline mirrors the Eventually
+// marshal test for bounded Always: the within node must carry the right unit
+// and amount for each bound flavor. Bug class: a bounded Always serializing the
+// wrong bound (unit/amount) into the trace AST the replay UI consumes.
+func TestMarshalJSON_AlwaysStepsMillisecondsDeadline(t *testing.T) {
+	steps := AlwaysFormula{Inner: Pure(true), StepBound: 4, HasStepBound: true}
+	body, _ := json.Marshal(steps)
+	if !strings.Contains(string(body), `"unit":"steps"`) || !strings.Contains(string(body), `"amount":4`) {
+		t.Errorf("always steps within wrong: %s", body)
+	}
+
+	duration := AlwaysFormula{Inner: Pure(true), Duration: 250 * time.Millisecond}
+	body, _ = json.Marshal(duration)
+	if !strings.Contains(string(body), `"unit":"milliseconds"`) || !strings.Contains(string(body), `"amount":250`) {
+		t.Errorf("always milliseconds within wrong: %s", body)
+	}
+
+	deadline := AlwaysFormula{Inner: Pure(true), Deadline: time.UnixMilli(1700000000000), HasDeadline: true}
+	body, _ = json.Marshal(deadline)
+	if !strings.Contains(string(body), `"unit":"deadline"`) || !strings.Contains(string(body), `"amount":1700000000000`) {
+		t.Errorf("always deadline within wrong: %s", body)
+	}
+}
+
 func TestMarshalJSON_NextAndThunkAndError(t *testing.T) {
 	body, _ := json.Marshal(Next(Pure(true)))
 	if string(body) != `{"op":"next","arg":{"op":"true"}}` {
