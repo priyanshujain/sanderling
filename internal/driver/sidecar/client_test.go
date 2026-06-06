@@ -320,16 +320,47 @@ func TestClient_TapAndTapSelector(t *testing.T) {
 	}
 }
 
-func TestClient_InputText(t *testing.T) {
-	state := newHarness(t)
-	client, _ := Dial(state.address)
-	defer client.Close()
-
-	if err := client.InputText(context.Background(), "hello world"); err != nil {
-		t.Fatal(err)
+// TestClient_ScalarForwardingRPCs pins that each single-payload RPC forwards
+// its argument unchanged to the captured request: a dropped/mistyped text,
+// idle duration, erase count, or logical key would change device behavior with
+// no other field to disambiguate it.
+func TestClient_ScalarForwardingRPCs(t *testing.T) {
+	tests := []struct {
+		name  string
+		call  func(c *Client) error
+		check func(t *testing.T, s *fakeServer)
+	}{
+		{"InputText", func(c *Client) error { return c.InputText(context.Background(), "hello world") }, func(t *testing.T, s *fakeServer) {
+			if len(s.inputs) != 1 || s.inputs[0] != "hello world" {
+				t.Errorf("inputs wrong: %v", s.inputs)
+			}
+		}},
+		{"WaitForIdle", func(c *Client) error { return c.WaitForIdle(context.Background(), 250*time.Millisecond) }, func(t *testing.T, s *fakeServer) {
+			if len(s.idleMillis) != 1 || s.idleMillis[0] != 250 {
+				t.Errorf("idleMillis wrong: %v", s.idleMillis)
+			}
+		}},
+		{"EraseText", func(c *Client) error { return c.EraseText(context.Background(), 7) }, func(t *testing.T, s *fakeServer) {
+			if len(s.erases) != 1 || s.erases[0] != 7 {
+				t.Errorf("erase count wrong: %v", s.erases)
+			}
+		}},
+		{"PressKey", func(c *Client) error { return c.PressKey(context.Background(), "back") }, func(t *testing.T, s *fakeServer) {
+			if len(s.pressedKeys) != 1 || s.pressedKeys[0] != "back" {
+				t.Errorf("pressed key wrong: %v", s.pressedKeys)
+			}
+		}},
 	}
-	if len(state.fake.inputs) != 1 || state.fake.inputs[0] != "hello world" {
-		t.Errorf("inputs wrong: %v", state.fake.inputs)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newHarness(t)
+			client, _ := Dial(state.address)
+			defer client.Close()
+			if err := tt.call(client); err != nil {
+				t.Fatal(err)
+			}
+			tt.check(t, state.fake)
+		})
 	}
 }
 
@@ -369,19 +400,6 @@ func TestClient_SnapshotPairsHierarchyAndScreenshot(t *testing.T) {
 	}
 	if image.Width != 1080 || image.Height != 2340 || len(image.PNG) != 1 {
 		t.Errorf("image wrong: %+v", image)
-	}
-}
-
-func TestClient_WaitForIdleForwardsMillis(t *testing.T) {
-	state := newHarness(t)
-	client, _ := Dial(state.address)
-	defer client.Close()
-
-	if err := client.WaitForIdle(context.Background(), 250*time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	if len(state.fake.idleMillis) != 1 || state.fake.idleMillis[0] != 250 {
-		t.Errorf("idleMillis wrong: %v", state.fake.idleMillis)
 	}
 }
 
@@ -506,36 +524,6 @@ func TestClient_PointRPCsForwardCoordinates(t *testing.T) {
 				t.Errorf("coordinates wrong: %v", got)
 			}
 		})
-	}
-}
-
-// TestClient_EraseTextForwardsCount catches a count dropped or mistyped on the
-// way to EraseTextRequest.
-func TestClient_EraseTextForwardsCount(t *testing.T) {
-	state := newHarness(t)
-	client, _ := Dial(state.address)
-	defer client.Close()
-
-	if err := client.EraseText(context.Background(), 7); err != nil {
-		t.Fatal(err)
-	}
-	if len(state.fake.erases) != 1 || state.fake.erases[0] != 7 {
-		t.Errorf("erase count wrong: %v", state.fake.erases)
-	}
-}
-
-// TestClient_PressKeyForwardsKey catches the logical key name being dropped or
-// rewritten before it reaches the sidecar.
-func TestClient_PressKeyForwardsKey(t *testing.T) {
-	state := newHarness(t)
-	client, _ := Dial(state.address)
-	defer client.Close()
-
-	if err := client.PressKey(context.Background(), "back"); err != nil {
-		t.Fatal(err)
-	}
-	if len(state.fake.pressedKeys) != 1 || state.fake.pressedKeys[0] != "back" {
-		t.Errorf("pressed key wrong: %v", state.fake.pressedKeys)
 	}
 }
 
