@@ -1296,3 +1296,46 @@ func TestUnsupportedVerbs_CollectedDedupedInOrder(t *testing.T) {
 		t.Errorf("UnsupportedVerbs = %v, want %v", got, want)
 	}
 }
+
+// TestWithPlatform_IOSReachesPicker asserts WithPlatform("ios") is plumbed all
+// the way to the host binding the shared picker reads (host.platform()), and
+// that a platform-gated builtin (pressKeys) still resolves on iOS, drawing from
+// the native key pool. Bug class: the platform option is dropped before the
+// picker, so iOS silently runs the android (default) verb matrix / key pool.
+func TestWithPlatform_IOSReachesPicker(t *testing.T) {
+	verifier := newVerifier(t, WithPlatform("ios"))
+
+	platform, ok := goja.AssertFunction(
+		verifier.runtime.GlobalObject().Get("__sanderlingHost__").
+			ToObject(verifier.runtime).Get("platform"),
+	)
+	if !ok {
+		t.Fatal("platform host binding missing")
+	}
+	value, err := platform(goja.Undefined())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.String() != "ios" {
+		t.Errorf("host.platform() = %q, want ios", value.String())
+	}
+
+	loadActionSpec(t, verifier, `
+		import { pressKeys } from "@sanderling/spec";
+		globalThis.actions = pressKeys;
+	`)
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}}); err != nil {
+		t.Fatal(err)
+	}
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.Kind != ActionKindPressKey {
+		t.Fatalf("kind = %v, want PressKey", action.Kind)
+	}
+	// iOS draws from NATIVE_PRESS_KEYS (corpus.ts), which contains only "back".
+	if action.Key != "back" {
+		t.Errorf("key = %q, want back (native press-key pool)", action.Key)
+	}
+}
