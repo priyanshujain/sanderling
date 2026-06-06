@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	driverpb "github.com/priyanshujain/sanderling/proto/driverpb"
 )
@@ -180,7 +182,9 @@ func TestClient_WaitForHealth_PollsUntilReady(t *testing.T) {
 
 func TestClient_WaitForHealth_HonorsContext(t *testing.T) {
 	state := newHarness(t)
+	state.fake.mutex.Lock()
 	state.fake.healthReady = false
+	state.fake.mutex.Unlock()
 	client, err := Dial(state.address)
 	if err != nil {
 		t.Fatal(err)
@@ -192,6 +196,22 @@ func TestClient_WaitForHealth_HonorsContext(t *testing.T) {
 	err = client.WaitForHealth(ctx, 25*time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "context") {
 		t.Fatalf("expected context error, got %v", err)
+	}
+}
+
+func TestClient_Health_SurfacesRPCError(t *testing.T) {
+	state := newHarness(t)
+	state.fake.mutex.Lock()
+	state.fake.healthError = status.Error(codes.Unavailable, "boom")
+	state.fake.mutex.Unlock()
+	client, err := Dial(state.address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	if _, err := client.Health(context.Background()); err == nil {
+		t.Fatal("expected Health to surface the RPC error, got nil")
 	}
 }
 
