@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { ResidualNode, Witness } from "../types";
+import { STATUS_ORDER, statusFor } from "../lib/property-status";
 import ResidualNodeView from "../components/ResidualNode";
 import "./ViolationsPanel.css";
 
@@ -13,29 +14,6 @@ export interface ViolationsPanelProps {
   onJumpToStep?: (step: number) => void;
   /** When true, only render violated rows and hide the header button row. */
   violationsOnly?: boolean;
-}
-
-type Status = "violated" | "pending" | "holds";
-
-const STATUS_ORDER: Record<Status, number> = {
-  violated: 0,
-  pending: 1,
-  holds: 2,
-};
-
-function statusFor(
-  name: string,
-  violations: Set<string>,
-  residuals?: Record<string, ResidualNode>,
-): Status {
-  if (violations.has(name)) {
-    return "violated";
-  }
-  const residual = residuals?.[name];
-  if (residual && residual.op === "true") {
-    return "holds";
-  }
-  return "pending";
 }
 
 function formatValue(value: unknown): string {
