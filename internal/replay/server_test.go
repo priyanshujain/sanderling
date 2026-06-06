@@ -263,6 +263,57 @@ func TestSSE_ReturnsWhenContextCanceled(t *testing.T) {
 	}
 }
 
+func TestSSE_DeliversRunsChangedAfterBroadcast(t *testing.T) {
+	server, _ := newFixtureServer(t)
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, httpServer.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+
+	events := make(chan string, 1)
+	go func() {
+		buffer := make([]byte, 256)
+		for {
+			n, err := response.Body.Read(buffer)
+			if n > 0 {
+				events <- string(buffer[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		server.Watcher().broadcast()
+		select {
+		case got := <-events:
+			if strings.Contains(got, ": ping") {
+				continue
+			}
+			if !strings.Contains(got, "event: runs.changed") {
+				t.Fatalf("event = %q, want runs.changed", got)
+			}
+			return
+		case <-time.After(50 * time.Millisecond):
+			if time.Now().After(deadline) {
+				t.Fatal("client never received runs.changed after broadcast")
+			}
+		}
+	}
+}
+
 func TestDevProxy_ForwardsRequestBodyUnchanged(t *testing.T) {
 	received := make(chan string, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
