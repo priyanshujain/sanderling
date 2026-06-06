@@ -6,7 +6,7 @@ title: Getting started
 
 This page installs sanderling and runs a first test against folio, the example app that ships with the repo. By the end you will have a trace of a real run open in your browser.
 
-If you have not read the [introduction](./introduction/), start there. It explains what sanderling does and how it works.
+If you have not read the [introduction](../introduction/), start there. It explains what sanderling does and how it works.
 
 ## Install
 
@@ -110,8 +110,8 @@ This opens a web UI for the trace. Step through the run with `j` and `k`. Each s
 
 The folio spec gives extra weight to rapid double taps, because a form that submits twice on a double tap is a classic bug. folio's transaction form has exactly that flaw. When the explorer hits it, the balance moves by twice the typed amount, the `submitMovesBalanceByTypedAmount` property fires, and the timeline shows the violation.
 
-See [replay](./replay/) for the full panel and shortcut reference.
+See [replay](../replay/) for the full panel and shortcut reference.
 
 ## Next
 
-You have run sanderling against an app with a finished spec. The next page builds that spec from scratch, one concept at a time: [writing specs](./writing-specs/).
+You have run sanderling against an app with a finished spec. The next page builds that spec from scratch, one concept at a time: [writing specs](../writing-specs/).

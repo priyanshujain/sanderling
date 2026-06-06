@@ -4,7 +4,7 @@ title: Writing specs
 
 # Writing specs
 
-This page teaches spec writing by building one. The subject is folio, the example app from [getting started](./getting-started/). We start from an empty file and end at the finished spec that ships in the repo at `examples/folio/sanderling/spec.ts`. Each section adds one concept.
+This page teaches spec writing by building one. The subject is folio, the example app from [getting started](../getting-started/). We start from an empty file and end at the finished spec that ships in the repo at `examples/folio/sanderling/spec.ts`. Each section adds one concept.
 
 ## The app
 

@@ -30,7 +30,7 @@ The trace is written incrementally. An interrupted run is complete up to the ste
 
 ## App state across runs
 
-By default the installed app stays in place between runs, so whatever the previous run left behind (an account, cached responses, completed onboarding) carries over. Pass `--clear-data` to wipe app data before launch and start cold every time. See the [CLI reference](./cli/#sanderling-test).
+By default the installed app stays in place between runs, so whatever the previous run left behind (an account, cached responses, completed onboarding) carries over. Pass `--clear-data` to wipe app data before launch and start cold every time. See the [CLI reference](../cli/#sanderling-test).
 
 ## Why runs are long
 
@@ -44,7 +44,7 @@ Long runs reach states that restart-per-test approaches structurally cannot.
 
 ## Setup cost is paid once
 
-Preconditions like login run through the spec's `setup` export (see [writing specs](./writing-specs/#getting-past-login)). They fire when their condition is unmet and go quiet after, so login costs a few seconds once per run, not once per test case.
+Preconditions like login run through the spec's `setup` export (see [writing specs](../writing-specs/#getting-past-login)). They fire when their condition is unmet and go quiet after, so login costs a few seconds once per run, not once per test case.
 
 | Run length | Login cost | Share of run |
 |---|---|---|

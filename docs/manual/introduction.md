@@ -82,9 +82,9 @@ Kotlin Multiplatform apps need nothing special: the Android build is tested thro
 
 ## Reading this manual
 
-- [Getting started](./getting-started/) installs the CLI and runs a first test against folio, the example app.
-- [Writing specs](./writing-specs/) builds the folio spec from scratch and teaches every concept along the way.
-- [Spec language reference](./spec-language/) lists every selector, operator, and action.
-- [Runs](./runs/) explains what happens during a run and why runs are long.
-- [Replay](./replay/) covers the trace browser.
-- [CLI reference](./cli/) lists every command and flag.
+- [Getting started](../getting-started/) installs the CLI and runs a first test against folio, the example app.
+- [Writing specs](../writing-specs/) builds the folio spec from scratch and teaches every concept along the way.
+- [Spec language reference](../spec-language/) lists every selector, operator, and action.
+- [Runs](../runs/) explains what happens during a run and why runs are long.
+- [Replay](../replay/) covers the trace browser.
+- [CLI reference](../cli/) lists every command and flag.
