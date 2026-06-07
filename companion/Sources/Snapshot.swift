@@ -31,7 +31,7 @@ enum Snapshot {
 
     private static func serialize(_ node: XCUIElementSnapshot) -> [String: Any] {
         let frame = node.frame
-        var element: [String: Any] = [
+        return [
             "type": elementTypeName(node.elementType),
             "frame": [
                 "x": Double(frame.origin.x),
@@ -44,9 +44,6 @@ enum Snapshot {
             "AXValue": nullableString(stringifyValue(node.value)),
             "AXUniqueId": nullableString(node.identifier),
         ]
-        // Keep the dictionary keys deterministic for readers; values stay as set.
-        _ = element
-        return element
     }
 
     private static func nullableString(_ value: String?) -> Any {

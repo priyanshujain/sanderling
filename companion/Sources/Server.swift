@@ -10,6 +10,9 @@ final class Server {
     private let port: NWEndpoint.Port
     private let listener: NWListener
     private let queue = DispatchQueue(label: "dev.sanderling.companion.server")
+    // Requests are handled off the network queue so blocking automation work
+    // (snapshot, gesture synthesis) never stalls accept and receive.
+    private let work = DispatchQueue(label: "dev.sanderling.companion.work")
 
     // The bundle identifier of the most recently snapshotted app, used as the
     // default target for typeText when no explicit bundleId is supplied.
@@ -58,13 +61,16 @@ final class Server {
 
     private func handleLine(_ lineData: Data, on connection: NWConnection) {
         guard !lineData.isEmpty else { return }
-        let requestId = (try? JSONSerialization.jsonObject(with: lineData))
-            .flatMap { ($0 as? [String: Any])?["id"] as? Int } ?? 0
-        do {
-            let response = try dispatch(lineData)
-            send(response, on: connection)
-        } catch {
-            send(["id": requestId, "error": "\(error)"], on: connection)
+        work.async { [weak self] in
+            guard let self = self else { return }
+            let requestId = (try? JSONSerialization.jsonObject(with: lineData))
+                .flatMap { ($0 as? [String: Any])?["id"] as? Int } ?? 0
+            do {
+                let response = try self.dispatch(lineData)
+                self.send(response, on: connection)
+            } catch {
+                self.send(["id": requestId, "error": "\(error)"], on: connection)
+            }
         }
     }
 
