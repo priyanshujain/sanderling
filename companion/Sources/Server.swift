@@ -103,6 +103,15 @@ final class Server {
             return ["ok": true]
         case "gestureProbe":
             return Gesture.probe()
+        case "launch":
+            let bundleIdentifier = params["bundleId"] as? String ?? currentBundleIdentifier
+            let foregroundIfRunning = params["foregroundIfRunning"] as? Bool ?? false
+            try AppLifecycle.launch(bundleIdentifier: bundleIdentifier, foregroundIfRunning: foregroundIfRunning)
+            return ["ok": true]
+        case "terminate":
+            let bundleIdentifier = params["bundleId"] as? String ?? currentBundleIdentifier
+            try AppLifecycle.terminate(bundleIdentifier: bundleIdentifier)
+            return ["ok": true]
         case "typeText":
             let text = params["text"] as? String ?? ""
             let replace = params["replace"] as? Bool ?? false
