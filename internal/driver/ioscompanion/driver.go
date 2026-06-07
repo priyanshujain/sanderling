@@ -34,6 +34,10 @@ import (
 // a connection and answer a health probe.
 const startupTimeout = 30 * time.Second
 
+// runnerStartupTimeout bounds the in-simulator runner's startup. The runner is
+// hosted by a test session whose cold start is far slower than the companion's.
+const runnerStartupTimeout = 120 * time.Second
+
 // shutdownGrace bounds how long the companion child gets to exit after SIGTERM
 // before it is killed.
 const shutdownGrace = 15 * time.Second
@@ -110,6 +114,17 @@ type Driver struct {
 	dial       func(address string) (transport.Companion, error)
 	child      *exec.Cmd
 
+	// The hybrid simulator companion pairs the legacy child (HID gestures,
+	// lifecycle, screenshot) with an in-simulator runner that serves
+	// collapse-free accessibility snapshots and native unicode typing.
+	// runnerClient is nil on the legacy-only path.
+	runnerClient  transport.Companion
+	runnerChild   *exec.Cmd
+	runnerAddress string
+	spawnRunner   func(ctx context.Context, address string) (*exec.Cmd, error)
+	dialRunner    func(address string) (transport.Companion, error)
+	hybrid        bool
+
 	// processContext owns the companion child's lifetime: it is derived from
 	// New's context (so a canceled run still reaps the child) and canceled by
 	// Close. Spawning under a startup-scoped context would SIGTERM the child
@@ -142,12 +157,21 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 		doubleTapGapMilliseconds: gap,
 		spawnChild:               options.spawnChild,
 		dial:                     options.dialCompanion,
+		hybrid:                   hybridCompanionEnabled(),
 	}
 	if driverInstance.spawnChild == nil {
 		driverInstance.spawnChild = driverInstance.realSpawnChild
 	}
 	if driverInstance.dial == nil {
 		driverInstance.dial = transport.Dial
+	}
+	if driverInstance.spawnRunner == nil {
+		driverInstance.spawnRunner = driverInstance.realSpawnRunner
+	}
+	if driverInstance.dialRunner == nil {
+		driverInstance.dialRunner = func(address string) (transport.Companion, error) {
+			return transport.DialRunner(address, driverInstance.udid, driverInstance.bundleID)
+		}
 	}
 	pickAddress := options.pickAddress
 	if pickAddress == nil {
@@ -167,6 +191,12 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 
 	if err := driverInstance.bringUp(ctx); err != nil {
 		return nil, err
+	}
+	if driverInstance.hybrid {
+		if err := driverInstance.bringUpRunner(ctx); err != nil {
+			driverInstance.Close()
+			return nil, fmt.Errorf("simulator runner: %w (set SANDERLING_SIMULATOR_COMPANION=legacy to bypass)", err)
+		}
 	}
 
 	description, err := driverInstance.companion.Describe(ctx)
@@ -229,15 +259,84 @@ func (d *Driver) waitForHealth(ctx context.Context) error {
 	}
 }
 
-// respawnAndRedial tears down the current transport and child, then brings a
-// fresh pair up at the same address. Used as the supervision restart.
+// respawnAndRedial tears down the current transports and children, then brings
+// fresh ones up at the same addresses. Used as the supervision restart. On the
+// hybrid path both halves restart together: their failure modes overlap (a
+// rebooted simulator drops both) and one orchestration keeps recovery simple.
 func (d *Driver) respawnAndRedial(ctx context.Context) error {
 	if d.companion != nil {
 		_ = d.companion.Close()
 		d.companion = nil
 	}
 	d.stopChild()
-	return d.bringUp(ctx)
+	if d.runnerClient != nil {
+		_ = d.runnerClient.Close()
+		d.runnerClient = nil
+	}
+	d.stopRunnerChild()
+	if err := d.bringUp(ctx); err != nil {
+		return err
+	}
+	if d.hybrid {
+		return d.bringUpRunner(ctx)
+	}
+	return nil
+}
+
+// hybridCompanionEnabled reports whether the simulator driver should pair the
+// legacy companion with the in-simulator runner. The hybrid is opt-in while it
+// is proven out; SANDERLING_SIMULATOR_COMPANION=hybrid enables it.
+func hybridCompanionEnabled() bool {
+	return os.Getenv("SANDERLING_SIMULATOR_COMPANION") == "hybrid"
+}
+
+// bringUpRunner spawns the in-simulator runner, waits for its listener, dials,
+// and confirms it serves snapshots. Used by New and the in-place restart.
+func (d *Driver) bringUpRunner(ctx context.Context) error {
+	startupCtx, cancel := context.WithTimeout(ctx, runnerStartupTimeout)
+	defer cancel()
+
+	if d.runnerAddress == "" {
+		address, err := pickLoopbackAddress()
+		if err != nil {
+			return err
+		}
+		d.runnerAddress = address
+	}
+
+	child, err := d.spawnRunner(d.processContext, d.runnerAddress)
+	if err != nil {
+		return fmt.Errorf("spawn runner: %w", err)
+	}
+	d.runnerChild = child
+
+	if err := waitForListener(startupCtx, d.runnerAddress); err != nil {
+		d.stopRunnerChild()
+		return fmt.Errorf("runner listener: %w", err)
+	}
+
+	client, err := d.dialRunner(d.runnerAddress)
+	if err != nil {
+		d.stopRunnerChild()
+		return fmt.Errorf("dial runner: %w", err)
+	}
+
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, healthErr := client.AccessibilityInfo(startupCtx); healthErr == nil {
+			break
+		}
+		select {
+		case <-startupCtx.Done():
+			_ = client.Close()
+			d.stopRunnerChild()
+			return fmt.Errorf("runner health: %w", startupCtx.Err())
+		case <-ticker.C:
+		}
+	}
+	d.runnerClient = client
+	return nil
 }
 
 // withRecovery runs call, and on a connection-level failure performs one
@@ -301,8 +400,9 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 	// must go through the pasteboard, since HID cannot express it) never trips
 	// the iOS paste-permission prompt. clearState reinstall resets the grant,
 	// so it is reapplied on every launch. Best effort: if it fails, the paste
-	// path still handles the prompt, just slower.
-	if d.bundleID != "" {
+	// path still handles the prompt, just slower. The hybrid path types
+	// natively and never touches the pasteboard, so it skips the grant.
+	if d.bundleID != "" && d.runnerTyper() == nil {
 		if err := d.grantPaste(ctx); err != nil {
 			fmt.Fprintf(d.output, "grant pasteboard access failed (continuing): %v\n", err)
 		}
@@ -458,6 +558,16 @@ func (d *Driver) textEditor() transport.TextEditor {
 	return nil
 }
 
+// runnerTyper returns the in-simulator runner's native typing capability, or
+// nil outside the hybrid path. Resolved per call because a restart replaces
+// d.runnerClient.
+func (d *Driver) runnerTyper() transport.TextTyper {
+	if typer, ok := d.runnerClient.(transport.TextTyper); ok {
+		return typer
+	}
+	return nil
+}
+
 // pressKeyUsage maps the logical key names mobile runs emit to a HID usage.
 // Only Return/Enter has a hardware-keyboard equivalent on the simulator; other
 // names (notably "back" and "home") have no HID key and report unsupported.
@@ -506,6 +616,18 @@ func (d *Driver) resolveSelectorCenter(ctx context.Context, selector string) (in
 }
 
 func (d *Driver) InputText(ctx context.Context, text string) error {
+	// Hybrid path: clear the focused field atomically with the legacy HID
+	// select-all chord, then let the runner type the text natively. Typing
+	// covers unicode without the pasteboard and its permission dialog; the
+	// chord clears regardless of where a tap left the cursor.
+	if d.runnerTyper() != nil {
+		return d.withRecovery(ctx, func() error {
+			if err := d.companion.SendHID(ctx, clearFieldEvents()...); err != nil {
+				return fmt.Errorf("clear field: %w", err)
+			}
+			return d.runnerTyper().TypeText(ctx, text, false)
+		})
+	}
 	// A text-editing companion replaces the field's content natively, which
 	// covers unicode without the pasteboard and its permission dialog.
 	if d.textEditor() != nil {
@@ -699,13 +821,23 @@ func (d *Driver) ForegroundApp(ctx context.Context) (string, error) {
 const collapsedDumpRetries = 6
 const collapsedDumpDelay = 150 * time.Millisecond
 
+// snapshotCompanion is the transport that serves accessibility dumps: the
+// in-simulator runner when the hybrid is active (its snapshots never collapse),
+// otherwise the legacy companion.
+func (d *Driver) snapshotCompanion() transport.Companion {
+	if d.runnerClient != nil {
+		return d.runnerClient
+	}
+	return d.companion
+}
+
 // describeAllRaw fetches the flat accessibility dump with one-restart recovery
 // and no collapse handling. The settle loop uses it: it treats a collapsed dump
 // as transitional itself, so an inner retry here would double the wait.
 func (d *Driver) describeAllRaw(ctx context.Context) ([]byte, error) {
 	var dump []byte
 	err := d.withRecovery(ctx, func() error {
-		info, infoErr := d.companion.AccessibilityInfo(ctx)
+		info, infoErr := d.snapshotCompanion().AccessibilityInfo(ctx)
 		if infoErr != nil {
 			return infoErr
 		}
@@ -745,13 +877,18 @@ func (d *Driver) makeRunner() runner {
 	return simctlRunner{companion: d.companion, udid: d.udid}
 }
 
-// Close stops the companion child and releases the transport.
+// Close stops the companion and runner children and releases the transports.
 func (d *Driver) Close() {
 	if d.companion != nil {
 		_ = d.companion.Close()
 		d.companion = nil
 	}
 	d.stopChild()
+	if d.runnerClient != nil {
+		_ = d.runnerClient.Close()
+		d.runnerClient = nil
+	}
+	d.stopRunnerChild()
 	if d.processCancel != nil {
 		d.processCancel()
 	}
@@ -762,6 +899,19 @@ func (d *Driver) Close() {
 func (d *Driver) stopChild() {
 	child := d.child
 	d.child = nil
+	stopProcess(child)
+}
+
+// stopRunnerChild terminates the runner's hosting session the same way. The
+// session tears down its in-simulator children on SIGTERM; killing it outright
+// would orphan them.
+func (d *Driver) stopRunnerChild() {
+	child := d.runnerChild
+	d.runnerChild = nil
+	stopProcess(child)
+}
+
+func stopProcess(child *exec.Cmd) {
 	if child == nil || child.Process == nil {
 		return
 	}
