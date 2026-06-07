@@ -35,4 +35,20 @@ NS_ASSUME_NONNULL_BEGIN
              completion:(void (^)(NSError *_Nullable error))completion;
 @end
 
+// Runs the block and converts any raised NSException into an NSError so a
+// testing-framework assertion does not terminate the runner process.
+NS_INLINE BOOL CompanionRunCatching(void (^block)(void), NSError *_Nullable *_Nullable error) {
+    @try {
+        block();
+        return YES;
+    } @catch (NSException *exception) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"dev.sanderling.companion"
+                                         code:1
+                                     userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: exception.name}];
+        }
+        return NO;
+    }
+}
+
 NS_ASSUME_NONNULL_END

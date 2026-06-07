@@ -5,39 +5,60 @@ import XCTest
 // length is consumed first by prepending that many delete keys so the whole
 // replacement happens in one typeText call.
 enum TextInput {
+    enum TextInputError: Error {
+        case typingFailed(String)
+    }
+
     static func type(text: String, replace: Bool, bundleIdentifier: String) throws {
         let application = XCUIApplication(bundleIdentifier: bundleIdentifier)
-        let focused = focusedElement(in: application)
 
         var payload = text
         if replace {
-            let currentLength = currentValueLength(of: focused)
+            let currentLength = focusedValueLength(bundleIdentifier: bundleIdentifier)
             if currentLength > 0 {
                 let deletes = String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentLength)
                 payload = deletes + text
             }
         }
 
-        if let focused = focused {
-            focused.typeText(payload)
+        // Type at the application level so it lands in whatever holds keyboard
+        // focus, without resolving a specific element. Compose Multiplatform
+        // text fields do not reliably expose hasKeyboardFocus to the query layer.
+        // typeText must run on the main thread.
+        var caughtError: NSError?
+        var completed = false
+        runOnMain {
+            completed = CompanionRunCatching({
+                application.typeText(payload)
+            }, &caughtError)
+        }
+        if !completed {
+            throw TextInputError.typingFailed(caughtError?.localizedDescription ?? "unknown")
+        }
+    }
+
+    private static func runOnMain(_ work: () -> Void) {
+        if Thread.isMainThread {
+            work()
         } else {
-            application.typeText(payload)
+            DispatchQueue.main.sync(execute: work)
         }
     }
 
-    private static func focusedElement(in application: XCUIApplication) -> XCUIElement? {
-        let predicate = NSPredicate(format: "hasKeyboardFocus == true")
-        let matches = application.descendants(matching: .any).matching(predicate)
-        if matches.count > 0 {
-            return matches.element(boundBy: 0)
+    // Reads the current value length of the focused editable field from a flat
+    // snapshot. Used to size the delete prefix for replace.
+    private static func focusedValueLength(bundleIdentifier: String) -> Int {
+        let elements = Snapshot.elements(bundleIdentifier: bundleIdentifier)
+        for element in elements {
+            guard let type = element["type"] as? String,
+                  type == "TextArea" || type == "TextField",
+                  let value = element["AXValue"] as? String else {
+                continue
+            }
+            if !value.isEmpty {
+                return value.count
+            }
         }
-        return nil
-    }
-
-    private static func currentValueLength(of element: XCUIElement?) -> Int {
-        guard let element = element, let value = element.value as? String else {
-            return 0
-        }
-        return value.count
+        return 0
     }
 }
