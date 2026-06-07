@@ -237,3 +237,24 @@ func TestMapHierarchySentinelValueMapsAsEmpty(t *testing.T) {
 		t.Fatalf("empty editable field should map label to hintText: %s", mapped)
 	}
 }
+
+func TestDumpIsCollapsed(t *testing.T) {
+	cases := []struct {
+		name string
+		dump string
+		want bool
+	}{
+		{name: "empty array", dump: `[]`, want: true},
+		{name: "application only", dump: `[{"type":"Application","frame":{"x":0,"y":0,"width":390,"height":844}}]`, want: true},
+		{name: "malformed", dump: `nope`, want: true},
+		{name: "real screen", dump: `[{"type":"Application"},{"type":"TextArea","AXUniqueId":"LoginEmail","frame":{"x":0,"y":0,"width":1,"height":1}}]`, want: false},
+		{name: "single button", dump: `[{"type":"Button","frame":{"x":0,"y":0,"width":1,"height":1}}]`, want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := dumpIsCollapsed([]byte(c.dump)); got != c.want {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
