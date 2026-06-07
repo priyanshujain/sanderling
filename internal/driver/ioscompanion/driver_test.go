@@ -467,6 +467,9 @@ func indexOf(slice []string, value string) int {
 // driver-lifetime context, not the startup-scoped one: a startup context that
 // is canceled when New returns would SIGTERM the child mid-run.
 func TestNewChildOutlivesStartup(t *testing.T) {
+	// The legacy-only path keeps this test focused on the companion child;
+	// the hybrid default would also demand runner assets.
+	t.Setenv("SANDERLING_SIMULATOR_COMPANION", "legacy")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
