@@ -182,12 +182,19 @@ print(samples[rank - 1])
 '
 }
 
-# G5 orphan check: report any lingering companion (and, on the device backend,
-# the XCTest runner java sidecar) processes. Empty output means clean.
+# G5 orphan check: report any lingering companion, runner session (the hybrid
+# simulator driver hosts an in-simulator runner), and, on the device backend,
+# the XCTest runner java sidecar. Empty output means clean.
 orphan_processes() {
   local found=""
   if pgrep -f "$companion_process_name" >/dev/null 2>&1; then
     found+="companion "
+  fi
+  if pgrep -f "sanderling-runner.*xctestrun" >/dev/null 2>&1; then
+    found+="runner-session "
+  fi
+  if pgrep -f "CompanionRunnerUITests-Runner" >/dev/null 2>&1; then
+    found+="runner-app "
   fi
   if [[ "$BACKEND" == "device" ]]; then
     # The native sidecar that drives the XCTest runner for physical devices.
