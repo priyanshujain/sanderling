@@ -38,6 +38,12 @@ enum Snapshot {
     }
 
     private static func walk(_ node: XCUIElementSnapshot, into result: inout [[String: Any]]) {
+        // The keyboard subtree is pruned: the legacy accessibility bridge
+        // never exposed it, its key frames are unreliable as tap targets, and
+        // its shift-state churn destabilizes settle hashing.
+        if node.elementType == .keyboard {
+            return
+        }
         result.append(serialize(node))
         for child in node.children {
             walk(child, into: &result)
