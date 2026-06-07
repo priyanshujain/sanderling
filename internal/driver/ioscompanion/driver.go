@@ -286,10 +286,10 @@ func (d *Driver) respawnAndRedial(ctx context.Context) error {
 }
 
 // hybridCompanionEnabled reports whether the simulator driver should pair the
-// legacy companion with the in-simulator runner. The hybrid is opt-in while it
-// is proven out; SANDERLING_SIMULATOR_COMPANION=hybrid enables it.
+// legacy companion with the in-simulator runner. The hybrid is the default;
+// SANDERLING_SIMULATOR_COMPANION=legacy forces the legacy companion alone.
 func hybridCompanionEnabled() bool {
-	return os.Getenv("SANDERLING_SIMULATOR_COMPANION") == "hybrid"
+	return os.Getenv("SANDERLING_SIMULATOR_COMPANION") != "legacy"
 }
 
 // bringUpRunner spawns the in-simulator runner, waits for its listener, dials,
