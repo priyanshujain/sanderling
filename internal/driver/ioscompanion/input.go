@@ -34,14 +34,6 @@ const pastePoll = 250 * time.Millisecond
 // refocusing the field, before the paste chord is resent.
 const dialogSettle = 200 * time.Millisecond
 
-// pasteAttempts bounds the warm-up paste's dialog poll. Warm-up only needs to
-// surface and dismiss the permission dialog once.
-const pasteAttempts = 8
-
-// warmUpPrimer is the throwaway string pasted at session start so the
-// permission dialog fires and gets handled before any real input.
-const warmUpPrimer = "sanderling"
-
 // runner abstracts the simulator-companion side effects InputText needs so the
 // decision logic stays testable without a live device. The driver supplies a
 // real implementation; tests supply a fake.
@@ -180,37 +172,6 @@ func pasteText(ctx context.Context, run runner, text string, field fieldTarget) 
 		}
 	}
 	return fmt.Errorf("paste did not land within %s", pasteVerifyTimeout)
-}
-
-// warmUpPaste pastes a throwaway primer once so the iOS pasteboard-permission
-// dialog fires and gets dismissed at a moment the driver chooses (session
-// start) rather than mid-run. It polls for the dialog (which appears around
-// half a second after the chord) and taps allow once. It does not assert the
-// paste landed: the goal is only to clear the dialog so real input never has
-// to.
-func warmUpPaste(ctx context.Context, run runner) error {
-	if err := run.setPasteboard(ctx, warmUpPrimer); err != nil {
-		return fmt.Errorf("set pasteboard: %w", err)
-	}
-	if err := run.sendHID(ctx, pasteChordEvents()...); err != nil {
-		return fmt.Errorf("send paste chord: %w", err)
-	}
-	for poll := 0; poll < pasteAttempts; poll++ {
-		if err := run.sleep(ctx, pastePoll); err != nil {
-			return err
-		}
-		dump, err := run.describeAll(ctx)
-		if err != nil {
-			return fmt.Errorf("describe accessibility: %w", err)
-		}
-		if button, found := findAllowPasteButton(dump); found {
-			if err := run.sendHID(ctx, tapEvents(button.centerX, button.centerY)...); err != nil {
-				return fmt.Errorf("tap allow button: %w", err)
-			}
-			return nil
-		}
-	}
-	return nil
 }
 
 // eraseBackspaceThreshold is the largest erase still sent as individual
