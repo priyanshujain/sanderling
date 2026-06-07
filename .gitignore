@@ -36,6 +36,10 @@ internal/sidecarassets/assets/sidecar-all.jar
 # `go build -tags withcompanion`. Never commit: it's ~16 MB.
 internal/driver/ioscompanion/companionassets/assets/companion-*.tar.gz
 
+# In-simulator runner bundle. Build artifact produced by companion/prepare.sh
+# before `go build -tags withcompanion`. Never commit: it's ~5 MB.
+internal/driver/ioscompanion/runnerassets/assets/runner-*.tar.gz
+
 # spec-api compiled output
 pkg/spec/dist/
 
