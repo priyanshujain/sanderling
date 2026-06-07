@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -132,12 +133,17 @@ func (c *runnerCompanion) call(ctx context.Context, method string, params map[st
 // wrapTransport classifies a read/write failure. A caller-imposed cancel or
 // deadline is the caller's slowness budget, not a connection loss, so it does
 // not carry the unavailable sentinel: a child restart would not make the call
-// faster. Either way the connection is desynced and reconnects on the next
-// call.
+// faster. The connection's own deadline is only ever set from the caller's
+// context, so a deadline-exceeded network error is the same budget expiry
+// even when it beats the context's done flag by a hair. Either way the
+// connection is desynced and reconnects on the next call.
 func (c *runnerCompanion) wrapTransport(ctx context.Context, stage, method string, err error) error {
 	c.dirty = true
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("runner %s interrupted (%s): %w", method, stage, ctxErr)
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return fmt.Errorf("runner %s interrupted (%s): %w", method, stage, err)
 	}
 	return fmt.Errorf("runner transport: %w: %s %s: %v", ErrCompanionUnavailable, stage, method, err)
 }
