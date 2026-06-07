@@ -101,6 +101,22 @@ func TestPreflightDevice_NonIosIsNoop(t *testing.T) {
 	}
 }
 
+func TestPreflightDevice_JavaFailurePointsAtIosDeviceDoctor(t *testing.T) {
+	check := func(name string) error {
+		if name == "java" {
+			return errors.New("java not found")
+		}
+		return nil
+	}
+	err := runPreflightDevice("ios", check)
+	if err == nil || !strings.Contains(err.Error(), "java") {
+		t.Fatalf("expected java error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "sanderling doctor --platform=ios-device") {
+		t.Errorf("hint must name the ios-device doctor platform: %v", err)
+	}
+}
+
 func TestPreflight_UnknownPlatform(t *testing.T) {
 	check := func(string) error { return nil }
 	if err := runPreflight(context.Background(), "fuchsia", check); err == nil {

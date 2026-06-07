@@ -56,11 +56,17 @@ func runPreflight(ctx context.Context, platform string, check preflightFunc) err
 // know a run targets a physical iOS device. Android already requires java in
 // the top-level Preflight, so this only matters for ios.
 func preflightDevice(platform string) error {
+	return runPreflightDevice(platform, preflightCheck)
+}
+
+func runPreflightDevice(platform string, check preflightFunc) error {
 	if platform != "ios" {
 		return nil
 	}
-	if err := preflightCheck("java"); err != nil {
-		return preflightFailure("ios", err)
+	if err := check("java"); err != nil {
+		// The doctor splits simulator and device checks: java lives under the
+		// ios-device platform, so the hint must point there.
+		return preflightFailure("ios-device", err)
 	}
 	return nil
 }
