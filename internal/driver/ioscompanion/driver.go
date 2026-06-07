@@ -264,14 +264,16 @@ func (d *Driver) waitForHealth(ctx context.Context) error {
 // hybrid path both halves restart together: their failure modes overlap (a
 // rebooted simulator drops both) and one orchestration keeps recovery simple.
 func (d *Driver) respawnAndRedial(ctx context.Context) error {
+	// The dead transports are closed but kept in place until their fresh
+	// replacements land: if the restart fails, later calls error gracefully on
+	// the closed transport instead of dereferencing nil, and a later incident
+	// earns another restart attempt.
 	if d.companion != nil {
 		_ = d.companion.Close()
-		d.companion = nil
 	}
 	d.stopChild()
 	if d.runnerClient != nil {
 		_ = d.runnerClient.Close()
-		d.runnerClient = nil
 	}
 	d.stopRunnerChild()
 	if err := d.bringUp(ctx); err != nil {
@@ -296,13 +298,14 @@ func (d *Driver) bringUpRunner(ctx context.Context) error {
 	startupCtx, cancel := context.WithTimeout(ctx, runnerStartupTimeout)
 	defer cancel()
 
-	if d.runnerAddress == "" {
-		address, err := pickLoopbackAddress()
-		if err != nil {
-			return err
-		}
-		d.runnerAddress = address
+	// A fresh port every bring-up: after a restart the dying session's
+	// listener may still answer on the old port and would satisfy the wait
+	// below with a dead server.
+	address, err := pickLoopbackAddress()
+	if err != nil {
+		return err
 	}
+	d.runnerAddress = address
 
 	child, err := d.spawnRunner(d.processContext, d.runnerAddress)
 	if err != nil {
@@ -352,7 +355,14 @@ func (d *Driver) withRecovery(ctx context.Context, call func() error) error {
 	d.restarting = true
 	defer func() { d.restarting = false }()
 	fmt.Fprintf(d.output, "companion connection lost (%v); restarting once\n", err)
-	if restartErr := d.restart(ctx); restartErr != nil {
+	// The restart runs under the driver's own lifetime context, not the
+	// failed call's: an action whose deadline already expired must not doom
+	// the recovery that later actions depend on.
+	restartCtx := d.processContext
+	if restartCtx == nil {
+		restartCtx = ctx
+	}
+	if restartErr := d.restart(restartCtx); restartErr != nil {
 		return fmt.Errorf("companion restart failed: %w (original: %v)", restartErr, err)
 	}
 	return call()
@@ -388,7 +398,7 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 
 	// Terminate first so the launch is a clean cold start regardless of the
 	// app's prior state. A not-running app is not an error here.
-	_ = d.withRecovery(ctx, func() error { return d.companion.Terminate(ctx, d.bundleID) })
+	_ = d.withRecovery(ctx, func() error { return d.lifecycleCompanion().Terminate(ctx, d.bundleID) })
 
 	if clearState {
 		if err := d.clearAppState(ctx); err != nil {
@@ -409,11 +419,23 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 	}
 
 	if err := d.withRecovery(ctx, func() error {
-		return d.companion.Launch(ctx, d.bundleID, true)
+		return d.lifecycleCompanion().Launch(ctx, d.bundleID, true)
 	}); err != nil {
 		return fmt.Errorf("launch %s: %w", d.bundleID, err)
 	}
 	return nil
+}
+
+// lifecycleCompanion is the transport that owns app launch and terminate: the
+// in-simulator runner when the hybrid is active, otherwise the legacy
+// companion. Lifecycle performed outside the runner's automation session
+// leaves the session's app proxies bound to dead processes, after which
+// snapshots hang and typing asserts.
+func (d *Driver) lifecycleCompanion() transport.Companion {
+	if d.runnerClient != nil {
+		return d.runnerClient
+	}
+	return d.companion
 }
 
 // clearAppState resets the app to a first-launch state. With an app path it
@@ -496,7 +518,7 @@ func (d *Driver) resetDataContainer(ctx context.Context) error {
 }
 
 func (d *Driver) Terminate(ctx context.Context) error {
-	return d.withRecovery(ctx, func() error { return d.companion.Terminate(ctx, d.bundleID) })
+	return d.withRecovery(ctx, func() error { return d.lifecycleCompanion().Terminate(ctx, d.bundleID) })
 }
 
 func (d *Driver) Tap(ctx context.Context, x, y int) error {
