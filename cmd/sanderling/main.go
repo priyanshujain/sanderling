@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -74,7 +76,11 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 }
 
 func runTest(options testOptions, stdout io.Writer) error {
-	ctx, cancel := context.WithCancel(context.Background())
+	// A signal-aware root context: on Ctrl-C the cancellation propagates into
+	// the drivers' process contexts, so spawned children (the iOS companion,
+	// the xcodebuild runner session) get their SIGTERM instead of outliving
+	// the run as orphans.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	return runTestPipeline(ctx, options, stdout)
 }
