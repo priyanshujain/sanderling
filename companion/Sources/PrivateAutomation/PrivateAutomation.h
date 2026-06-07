@@ -18,10 +18,13 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 // A complete synthesized event composed of one or more pointer paths.
+// synthesizeWithError: delivers the event synchronously and returns whether it
+// succeeded, which avoids the asynchronous completion-block path.
 @interface XCSynthesizedEventRecord : NSObject
 - (instancetype)initWithName:(NSString *)name
          interfaceOrientation:(NSInteger)interfaceOrientation;
 - (void)addPointerEventPath:(XCPointerEventPath *)pointerEventPath;
+- (BOOL)synthesizeWithError:(NSError *_Nullable *_Nullable)error;
 @end
 
 // The runner-side session that delivers synthesized events to the system under

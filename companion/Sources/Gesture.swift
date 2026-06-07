@@ -73,17 +73,9 @@ enum Gesture {
         let record = XCSynthesizedEventRecord(name: "companion", interfaceOrientation: 0)
         record.add(path)
 
-        let semaphore = DispatchSemaphore(value: 0)
-        var synthesisError: Error?
-        XCTRunnerDaemonSession.shared().synthesize(event: record) { error in
-            synthesisError = error
-            semaphore.signal()
-        }
-        if semaphore.wait(timeout: .now() + 30) == .timedOut {
-            throw GestureError.synthesisTimeout
-        }
-        if let synthesisError = synthesisError {
-            throw GestureError.synthesisFailed("\(synthesisError)")
-        }
+        // Synchronous delivery: returns whether the event was synthesized and
+        // populates the error out-pointer on failure. This avoids the async
+        // completion-block path.
+        try record.synthesize()
     }
 }
