@@ -47,8 +47,9 @@ companion_process_name="idb_companion"
 # only lines that are provably harmless and emitted on every healthy run.
 benign_stderr_substrings=(
   # The dynamic linker reports the same Objective-C class registered by two
-  # loaded images. The companion runs fine; this is cosmetic.
-  "objc[*]: Class"
+  # loaded images. The companion runs fine; this is cosmetic. The real line
+  # reads "objc[<pid>]: Class ...", so the fixed substring is "]: Class".
+  "]: Class"
   "is implemented in both"
   "One of the two will be used. Which one is undefined."
   # gRPC and absl emit informational banner lines on startup.
@@ -59,8 +60,9 @@ benign_stderr_substrings=(
 
 # G2 helper: strip benign companion noise, then report sanderling ERROR lines.
 # sanderling's progress logger renders error-level records as lines beginning
-# "error:" (see internal/testrun/progress.go). We also catch upper-case ERROR
-# for safety against future handlers.
+# "error:" (see internal/testrun/progress.go). We also catch the upper-case
+# ERROR token (word-bounded, so ERRORS/ERRORLESS and path fragments do not
+# trip the gate) for safety against future handlers.
 error_lines_in() {
   local output_file="$1"
   local filtered
@@ -69,7 +71,7 @@ error_lines_in() {
   for pattern in "${benign_stderr_substrings[@]}"; do
     filtered="$(printf '%s\n' "$filtered" | grep -vF "$pattern" || true)"
   done
-  printf '%s\n' "$filtered" | grep -E '(^error:|ERROR|level=ERROR)' || true
+  printf '%s\n' "$filtered" | grep -E '(^error:|\bERROR\b)' || true
 }
 
 # G1: process exit status recorded by the runner loop.

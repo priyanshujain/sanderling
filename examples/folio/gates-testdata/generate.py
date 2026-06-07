@@ -77,6 +77,9 @@ BENIGN_NOISE = [
     "objc[4242]: Class FBSDKError is implemented in both /a (0x1) and /b (0x2). "
     "One of the two will be used. Which one is undefined.\n",
     "WARNING: All log messages before absl::InitializeLog() is called are written to STDERR\n",
+    # An incidental ERROR substring inside a longer word: the G2 scan is
+    # word-bounded, so this must not trip the gate.
+    "archived previous runs under runs/ERRORS_archive\n",
 ]
 
 write_run("pass", healthy_steps())
