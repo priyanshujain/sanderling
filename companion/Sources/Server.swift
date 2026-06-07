@@ -20,7 +20,7 @@ final class Server {
             .flatMap { UInt16($0) } ?? 27753
         self.port = NWEndpoint.Port(rawValue: resolvedPort)!
         let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: self.port)
+        parameters.allowLocalEndpointReuse = true
         self.listener = try NWListener(using: parameters, on: self.port)
     }
 
@@ -109,21 +109,26 @@ final class Server {
     }
 
     private func describeScreen() -> [String: Any] {
-        var bounds = CGRect.zero
+        // The runner process has no foreground scene, so UIScreen.main.bounds
+        // returns a fallback size. The springboard application snapshot frame is
+        // the device size in points; the screen scale comes from UIScreen.
         var scale: CGFloat = 1
-        let collect = {
-            let screen = UIScreen.main
-            bounds = screen.bounds
-            scale = screen.scale
-        }
+        let collect = { scale = UIScreen.main.scale }
         if Thread.isMainThread {
             collect()
         } else {
             DispatchQueue.main.sync(execute: collect)
         }
+        var width = 0
+        var height = 0
+        if let root = Snapshot.elements(bundleIdentifier: "com.apple.springboard").first,
+           let frame = root["frame"] as? [String: Any] {
+            width = Int(frame["width"] as? Double ?? 0)
+            height = Int(frame["height"] as? Double ?? 0)
+        }
         return [
-            "widthPoints": Int(bounds.size.width),
-            "heightPoints": Int(bounds.size.height),
+            "widthPoints": width,
+            "heightPoints": height,
             "scale": Double(scale),
         ]
     }
