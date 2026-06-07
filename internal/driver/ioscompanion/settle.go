@@ -15,7 +15,7 @@ import (
 // StabilityPollInterval is how long the loop waits between hierarchy probes.
 // The companion answers describe-all in tens of milliseconds, so a tight
 // interval samples transitions promptly without backing the stream up.
-const StabilityPollInterval = 150 * time.Millisecond
+const StabilityPollInterval = 100 * time.Millisecond
 
 // MinStableStreak is how long the tree must stay structurally identical (and
 // non-transitional) before the poll declares settle. Actions whose effect is
@@ -24,13 +24,16 @@ const StabilityPollInterval = 150 * time.Millisecond
 // uninterrupted streak means churn that starts during the window resets the
 // clock instead of being missed. The streak is shorter than the JVM sidecar's
 // (which polls a slower, flakier adb hierarchy): the companion's describe is
-// fast and deterministic, and cross-fade transitions are caught separately by
-// the route-screen transitional check rather than by streak length.
-const MinStableStreak = 450 * time.Millisecond
+// fast and deterministic, so three consecutive identical samples are a solid
+// stability signal, and cross-fade transitions are caught separately by the
+// route-screen transitional check rather than by streak length.
+const MinStableStreak = 300 * time.Millisecond
 
 // StabilityPollCap bounds total time spent polling so a UI that never settles
-// does not block the runner indefinitely.
-const StabilityPollCap = 2000 * time.Millisecond
+// does not block the runner indefinitely. A genuinely still-churning screen
+// hands a transitional snapshot to the next step, which settles it, so the cap
+// trades a slightly stale read for bounded latency rather than dropping work.
+const StabilityPollCap = 1500 * time.Millisecond
 
 // Clock abstracts time so the poll loop can be driven by a fake in tests
 // without sleeping for real.
