@@ -82,7 +82,6 @@ type Driver struct {
 		set  bool
 	}
 
-	pastePrimed      bool
 	clearStateWarned bool
 
 	// restart rebuilds the transport in place after a connection-level failure.
@@ -99,6 +98,10 @@ type Driver struct {
 	// reinstallApp uninstalls and reinstalls the app bundle for clear-state.
 	// A seam so tests skip the simctl shell-outs.
 	reinstallApp func(ctx context.Context) error
+
+	// grantPaste pre-authorizes the app's pasteboard access. A seam so tests
+	// skip the sqlite shell-out.
+	grantPaste func(ctx context.Context) error
 
 	// idleClock drives WaitForIdle's settle poll. A seam so tests substitute a
 	// fake clock and avoid the real settle cap.
@@ -159,6 +162,7 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 	driverInstance.restart = driverInstance.respawnAndRedial
 	driverInstance.resetContainer = driverInstance.resetDataContainer
 	driverInstance.reinstallApp = driverInstance.simctlReinstall
+	driverInstance.grantPaste = driverInstance.grantPasteboardAccess
 	driverInstance.processContext, driverInstance.processCancel = context.WithCancel(ctx)
 
 	if err := driverInstance.bringUp(ctx); err != nil {
@@ -292,17 +296,21 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 		}
 	}
 
+	// Grant the app pasteboard access before it runs so unicode input (which
+	// must go through the pasteboard, since HID cannot express it) never trips
+	// the iOS paste-permission prompt. clearState reinstall resets the grant,
+	// so it is reapplied on every launch. Best effort: if it fails, the paste
+	// path still handles the prompt, just slower.
+	if d.bundleID != "" {
+		if err := d.grantPaste(ctx); err != nil {
+			fmt.Fprintf(d.output, "grant pasteboard access failed (continuing): %v\n", err)
+		}
+	}
+
 	if err := d.withRecovery(ctx, func() error {
 		return d.companion.Launch(ctx, d.bundleID, true)
 	}); err != nil {
 		return fmt.Errorf("launch %s: %w", d.bundleID, err)
-	}
-
-	if !d.pastePrimed {
-		if err := warmUpPaste(ctx, d.makeRunner()); err != nil {
-			fmt.Fprintf(d.output, "paste warm-up failed (continuing): %v\n", err)
-		}
-		d.pastePrimed = true
 	}
 	return nil
 }
@@ -332,6 +340,33 @@ func (d *Driver) simctlReinstall(ctx context.Context) error {
 	output, err := exec.CommandContext(ctx, "xcrun", "simctl", "install", d.udid, d.appPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("simctl install: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// grantPasteboardAccess authorizes the app to read the pasteboard without the
+// iOS permission prompt, by writing an allow row into the simulator's privacy
+// (TCC) database. This is the simulator counterpart to `simctl privacy grant`,
+// which does not expose the pasteboard service. Without it, every unicode input
+// (which must paste, since HID cannot express unicode) blocks on a modal that
+// costs seconds; with it the paste lands in one frame.
+func (d *Driver) grantPasteboardAccess(ctx context.Context) error {
+	databasePath := filepath.Join(
+		os.Getenv("HOME"), "Library", "Developer", "CoreSimulator", "Devices",
+		d.udid, "data", "Library", "TCC", "TCC.db",
+	)
+	if _, err := os.Stat(databasePath); err != nil {
+		return fmt.Errorf("locate privacy database: %w", err)
+	}
+	statement := fmt.Sprintf(
+		"INSERT OR REPLACE INTO access "+
+			"(service,client,client_type,auth_value,auth_reason,auth_version,indirect_object_identifier) "+
+			"VALUES ('kTCCServicePasteboard','%s',0,2,4,1,'UNUSED');",
+		d.bundleID,
+	)
+	output, err := exec.CommandContext(ctx, "sqlite3", databasePath, statement).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("write privacy grant: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
