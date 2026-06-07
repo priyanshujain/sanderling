@@ -14,9 +14,9 @@ enum TextInput {
 
         var payload = text
         if replace {
-            let currentLength = focusedValueLength(bundleIdentifier: bundleIdentifier)
-            if currentLength > 0 {
-                let deletes = String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentLength)
+            let deleteCount = deletePrefixLength(bundleIdentifier: bundleIdentifier)
+            if deleteCount > 0 {
+                let deletes = String(repeating: XCUIKeyboardKey.delete.rawValue, count: deleteCount)
                 payload = deletes + text
             }
         }
@@ -45,20 +45,23 @@ enum TextInput {
         }
     }
 
-    // Reads the current value length of the focused editable field from a flat
-    // snapshot. Used to size the delete prefix for replace.
-    private static func focusedValueLength(bundleIdentifier: String) -> Int {
+    // Sizes the delete prefix for replace. The snapshot does not say which
+    // editable field holds keyboard focus (Compose fields never expose
+    // hasKeyboardFocus), so the prefix covers the longest editable value on
+    // screen: deletes beyond the focused field's content are no-ops at the
+    // start of the field, while undersizing would leave residue and silently
+    // turn replace into append.
+    private static func deletePrefixLength(bundleIdentifier: String) -> Int {
         let elements = Snapshot.elements(bundleIdentifier: bundleIdentifier)
+        var longest = 0
         for element in elements {
             guard let type = element["type"] as? String,
                   type == "TextArea" || type == "TextField",
                   let value = element["AXValue"] as? String else {
                 continue
             }
-            if !value.isEmpty {
-                return value.count
-            }
+            longest = max(longest, value.count)
         }
-        return 0
+        return longest
     }
 }
