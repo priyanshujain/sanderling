@@ -5,6 +5,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 
 	pb "github.com/priyanshujain/sanderling/internal/driver/ioscompanion/companionpb"
 )
@@ -46,6 +47,24 @@ type Companion interface {
 	// Close releases the underlying connection.
 	Close() error
 }
+
+// TextEditor is an optional companion capability: the transport edits text
+// natively on the device instead of the driver composing keyboard HID streams.
+// The driver routes text input through it when the companion implements it.
+type TextEditor interface {
+	// InputText replaces the focused field's content with text.
+	InputText(ctx context.Context, text string) error
+
+	// EraseText deletes characterCount characters from the focused field.
+	EraseText(ctx context.Context, characterCount int) error
+
+	// PressKey presses the named logical key (currently only return/enter).
+	PressKey(ctx context.Context, key string) error
+}
+
+// ErrCompanionUnavailable marks a connection-level failure that a companion
+// restart can recover from. Transports wrap dropped-connection errors with it.
+var ErrCompanionUnavailable = errors.New("companion connection unavailable")
 
 // ScreenDescription carries the target screen geometry. Width and Height are
 // in points (the coordinate space HID events and the accessibility frames use).
