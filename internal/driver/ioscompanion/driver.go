@@ -39,8 +39,8 @@ const startupTimeout = 30 * time.Second
 const runnerStartupTimeout = 120 * time.Second
 
 // shutdownGrace bounds how long the companion child gets to exit after SIGTERM
-// before it is killed.
-const shutdownGrace = 15 * time.Second
+// before it is killed. A variable so the kill-escalation test can shrink it.
+var shutdownGrace = 15 * time.Second
 
 // longPressHoldMilliseconds is how long LongPress holds the finger down.
 const longPressHoldMilliseconds = 600
