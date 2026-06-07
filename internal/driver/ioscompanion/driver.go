@@ -741,17 +741,27 @@ func (d *Driver) Screenshot(ctx context.Context) (driver.Image, error) {
 func (d *Driver) Snapshot(ctx context.Context) (string, driver.Image, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	// The hierarchy and the screenshot ride different transports on the
+	// hybrid path, so they are captured concurrently. Only the hierarchy leg
+	// runs under withRecovery: two concurrent recoveries would race the
+	// restart bookkeeping, and a screenshot connection failure surfaces as a
+	// plain error that the next serialized call recovers from.
+	var data []byte
+	screenshotDone := make(chan error, 1)
+	go func() {
+		imageData, _, callErr := d.companion.Screenshot(ctx)
+		data = imageData
+		screenshotDone <- callErr
+	}()
+
 	dump, err := d.describeAll(ctx)
+	screenshotErr := <-screenshotDone
 	if err != nil {
 		return "", driver.Image{}, err
 	}
-	var data []byte
-	if err := d.withRecovery(ctx, func() error {
-		var screenshotErr error
-		data, _, screenshotErr = d.companion.Screenshot(ctx)
-		return screenshotErr
-	}); err != nil {
-		return "", driver.Image{}, fmt.Errorf("screenshot: %w", err)
+	if screenshotErr != nil {
+		return "", driver.Image{}, fmt.Errorf("screenshot: %w", screenshotErr)
 	}
 	mapped, err := MapHierarchy(dump, d.screenWidth, d.screenHeight)
 	if err != nil {

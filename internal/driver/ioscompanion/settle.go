@@ -56,33 +56,30 @@ func SystemClock() Clock { return systemClock{} }
 // capped at StabilityPollCap. fetch returns the current hierarchy tree (nil on
 // fetch failure, treated like a transitional snapshot so the streak resets).
 //
-// The loop mirrors the companion's JVM implementation: it samples a prior
-// snapshot, then on each tick sleeps the poll interval, fetches a fresh
-// snapshot, and grows the streak only while consecutive snapshots are both
-// non-transitional and structurally identical. A transitional snapshot, a
-// changed snapshot, or a fetch failure resets the streak. The function returns
-// when the streak reaches MinStableStreak or the cap elapses, and respects
-// context cancellation.
+// The stable stretch is measured from the start of the earliest read in the
+// current run of identical snapshots: a fetch is not instantaneous (a runner
+// snapshot takes a fair fraction of the streak itself), and the UI changing
+// mid-read would change the snapshot, so the read's own duration is evidence
+// of stability. A transitional snapshot, a changed snapshot, or a fetch
+// failure resets the run. The function returns when the stretch reaches
+// MinStableStreak or the cap elapses, and respects context cancellation.
 func PollUntilStable(ctx context.Context, clock Clock, fetch func() *hierarchy.Tree) {
 	deadline := clock.Now().Add(StabilityPollCap)
+	runStart := clock.Now()
 	prior := snapshot(fetch)
-	var streakStart time.Time
 	for clock.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return
 		}
 		clock.Sleep(StabilityPollInterval)
+		currentStart := clock.Now()
 		current := snapshot(fetch)
-		now := clock.Now()
 		if prior.valid && current.valid && prior.hash == current.hash {
-			if streakStart.IsZero() {
-				streakStart = now
-			}
-			if now.Sub(streakStart) >= MinStableStreak {
+			if clock.Now().Sub(runStart) >= MinStableStreak {
 				return
 			}
 		} else {
-			streakStart = time.Time{}
+			runStart = currentStart
 		}
 		prior = current
 	}

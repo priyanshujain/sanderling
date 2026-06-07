@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +28,10 @@ import (
 // the order of calls and returns scripted results, so the driver's decision
 // logic is testable without a live simulator.
 type fakeCompanion struct {
-	calls []string
+	// callsMutex guards calls: Snapshot captures the hierarchy and the
+	// screenshot concurrently.
+	callsMutex sync.Mutex
+	calls      []string
 
 	accessibilityJSON string
 	accessibilityErr  error
@@ -40,7 +44,19 @@ type fakeCompanion struct {
 	hidErr error
 }
 
-func (f *fakeCompanion) record(name string) { f.calls = append(f.calls, name) }
+func (f *fakeCompanion) record(name string) {
+	f.callsMutex.Lock()
+	defer f.callsMutex.Unlock()
+	f.calls = append(f.calls, name)
+}
+
+func (f *fakeCompanion) recorded() []string {
+	f.callsMutex.Lock()
+	defer f.callsMutex.Unlock()
+	out := make([]string, len(f.calls))
+	copy(out, f.calls)
+	return out
+}
 
 func (f *fakeCompanion) AccessibilityInfo(context.Context) (string, error) {
 	f.record("accessibility")
@@ -218,7 +234,7 @@ func TestLaunchRejectsEnvironment(t *testing.T) {
 	}
 }
 
-func TestSnapshotPairsHierarchyThenScreenshot(t *testing.T) {
+func TestSnapshotPairsHierarchyAndScreenshot(t *testing.T) {
 	companion := &fakeCompanion{
 		accessibilityJSON: "[]",
 		screenshotData:    samplePNG(t, 390, 844),
@@ -231,8 +247,11 @@ func TestSnapshotPairsHierarchyThenScreenshot(t *testing.T) {
 	if image.Width != 390 || image.Height != 844 {
 		t.Fatalf("image dims = %dx%d, want 390x844", image.Width, image.Height)
 	}
-	if indexOf(companion.calls, "accessibility") > indexOf(companion.calls, "screenshot") {
-		t.Fatalf("accessibility must precede screenshot; got %v", companion.calls)
+	// The two captures run concurrently (they ride different transports on
+	// the hybrid path), so both must happen but in no particular order.
+	calls := companion.recorded()
+	if indexOf(calls, "accessibility") < 0 || indexOf(calls, "screenshot") < 0 {
+		t.Fatalf("snapshot must capture hierarchy and screenshot; got %v", calls)
 	}
 }
 
