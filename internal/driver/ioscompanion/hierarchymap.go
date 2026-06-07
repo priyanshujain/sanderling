@@ -19,6 +19,20 @@ type rawFrame struct {
 // it maps to an empty value rather than surfacing as literal field text.
 const emptyFieldValueSentinel = "Invalid"
 
+// dumpIsCollapsed reports whether a flat describe-all dump carries no real UI
+// content: it is empty or holds only the application shell. The accessibility
+// bridge briefly returns this state during cold start and screen transitions
+// before the real tree reappears.
+func dumpIsCollapsed(dump []byte) bool {
+	elements := decodeDump(dump)
+	for _, element := range elements {
+		if element.Type != "" && element.Type != "Application" {
+			return false
+		}
+	}
+	return true
+}
+
 // rawElement is one entry in the flat describe-all dump returned by the
 // simulator companion. Only the fields the mapper consumes are declared;
 // unknown fields are ignored.

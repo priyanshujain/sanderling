@@ -660,18 +660,47 @@ func (d *Driver) ForegroundApp(ctx context.Context) (string, error) {
 	return other, nil
 }
 
-// describeAll fetches the flat accessibility dump with one-restart recovery.
+// collapsedDumpRetries and collapsedDumpDelay bound how long describeAll waits
+// out a collapsed accessibility dump. The bridge briefly reports only the app
+// shell (no UI content) during cold start and screen transitions; it recovers
+// within a few hundred milliseconds. Re-fetching past the collapse keeps the
+// runner from acting on, and snapshotting, an empty tree.
+const collapsedDumpRetries = 6
+const collapsedDumpDelay = 150 * time.Millisecond
+
+// describeAll fetches the flat accessibility dump with one-restart recovery,
+// retrying past a transient collapsed dump so callers see real UI content.
 func (d *Driver) describeAll(ctx context.Context) ([]byte, error) {
-	var dump []byte
-	err := d.withRecovery(ctx, func() error {
-		info, infoErr := d.companion.AccessibilityInfo(ctx)
-		if infoErr != nil {
-			return infoErr
+	fetch := func() ([]byte, error) {
+		var dump []byte
+		err := d.withRecovery(ctx, func() error {
+			info, infoErr := d.companion.AccessibilityInfo(ctx)
+			if infoErr != nil {
+				return infoErr
+			}
+			dump = []byte(info)
+			return nil
+		})
+		return dump, err
+	}
+
+	dump, err := fetch()
+	if err != nil {
+		return dump, err
+	}
+	for attempt := 0; attempt < collapsedDumpRetries && dumpIsCollapsed(dump); attempt++ {
+		select {
+		case <-ctx.Done():
+			return dump, nil
+		case <-time.After(collapsedDumpDelay):
 		}
-		dump = []byte(info)
-		return nil
-	})
-	return dump, err
+		next, nextErr := fetch()
+		if nextErr != nil {
+			return dump, nil
+		}
+		dump = next
+	}
+	return dump, nil
 }
 
 // makeRunner builds the input runner backed by the current transport. The text
