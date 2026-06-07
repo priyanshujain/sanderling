@@ -24,7 +24,11 @@ final class Server {
         self.port = NWEndpoint.Port(rawValue: resolvedPort)!
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
-        self.listener = try NWListener(using: parameters, on: self.port)
+        // The simulator shares the host network stack, so an unbound listener
+        // would be reachable from the host's LAN interfaces. Pin it to
+        // loopback so only local processes can drive the automation surface.
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: self.port)
+        self.listener = try NWListener(using: parameters)
     }
 
     func start() {
