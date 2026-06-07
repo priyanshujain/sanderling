@@ -101,6 +101,8 @@ final class Server {
             let events = params["events"] as? [[String: Any]] ?? []
             try Gesture.perform(events: events)
             return ["ok": true]
+        case "gestureProbe":
+            return Gesture.probe()
         case "typeText":
             let text = params["text"] as? String ?? ""
             let replace = params["replace"] as? Bool ?? false

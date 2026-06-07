@@ -8,6 +8,23 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// One raw pointer event inside a path: type, screen coordinate, and offset in
+// seconds. Constructed directly so a single path can carry several
+// press-and-lift pairs at exact offsets; the press-and-lift helper methods on
+// the path silently drop a second press after a lift.
+@interface XCPointerEvent : NSObject
++ (instancetype)eventWithType:(NSInteger)eventType
+                   buttonType:(NSInteger)buttonType
+                   coordinate:(CGPoint)coordinate
+                       offset:(double)offset
+                   clickCount:(NSUInteger)clickCount;
+@property (nonatomic, readonly) NSInteger eventType;
+@property (nonatomic, readonly) NSInteger buttonType;
+@property (nonatomic, readonly) NSUInteger clickCount;
+@property (nonatomic, readonly) CGPoint coordinate;
+@property (nonatomic, readonly) double offset;
+@end
+
 // One pointer's path through a synthesized event. Offsets are seconds from the
 // start of the event record.
 @interface XCPointerEventPath : NSObject
@@ -15,6 +32,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)moveToPoint:(CGPoint)point atOffset:(double)offset;
 - (void)pressDownAtOffset:(double)offset;
 - (void)liftUpAtOffset:(double)offset;
+- (void)_addPointerEvent:(XCPointerEvent *)pointerEvent;
+@property (nonatomic, readonly) NSArray<XCPointerEvent *> *pointerEvents;
+@property (nonatomic) unsigned long long index;
 @end
 
 // A complete synthesized event composed of one or more pointer paths.
