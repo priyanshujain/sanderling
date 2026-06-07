@@ -23,11 +23,17 @@ var deadlineImmediate = time.Unix(1, 0)
 type runnerCompanion struct {
 	uniqueDeviceIdentifier string
 	bundleID               string
+	address                string
 
 	mutex  sync.Mutex
 	conn   net.Conn
 	reader *bufio.Reader
 	nextID int
+
+	// dirty marks the connection desynced: a call was interrupted before its
+	// response was read, so the next call reconnects to the still-running
+	// server instead of misreading the stale response.
+	dirty bool
 }
 
 // DialRunner opens one persistent TCP connection to the simulator runner at
@@ -42,6 +48,7 @@ func DialRunner(address, uniqueDeviceIdentifier, bundleID string) (Companion, er
 	return &runnerCompanion{
 		uniqueDeviceIdentifier: uniqueDeviceIdentifier,
 		bundleID:               bundleID,
+		address:                address,
 		conn:                   conn,
 		reader:                 bufio.NewReader(conn),
 	}, nil
@@ -69,6 +76,12 @@ func (c *runnerCompanion) call(ctx context.Context, method string, params map[st
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
+	if c.dirty {
+		if err := c.reconnect(); err != nil {
+			return nil, fmt.Errorf("runner transport: %w: reconnect: %v", ErrCompanionUnavailable, err)
+		}
+	}
+
 	if params == nil {
 		params = map[string]any{}
 	}
@@ -95,12 +108,12 @@ func (c *runnerCompanion) call(ctx context.Context, method string, params map[st
 	}
 	payload = append(payload, '\n')
 	if _, err := c.conn.Write(payload); err != nil {
-		return nil, wrapTransport(ctx, "write", method, err)
+		return nil, c.wrapTransport(ctx, "write", method, err)
 	}
 
 	line, err := c.reader.ReadBytes('\n')
 	if err != nil {
-		return nil, wrapTransport(ctx, "read", method, err)
+		return nil, c.wrapTransport(ctx, "read", method, err)
 	}
 
 	var response runnerResponse
@@ -116,14 +129,31 @@ func (c *runnerCompanion) call(ctx context.Context, method string, params map[st
 	return response.Result, nil
 }
 
-// wrapTransport classifies a read/write failure. A cancelled or expired context
-// is reported as such so callers see why the call was interrupted; either way
-// the error wraps ErrCompanionUnavailable.
-func wrapTransport(ctx context.Context, stage, method string, err error) error {
+// wrapTransport classifies a read/write failure. A caller-imposed cancel or
+// deadline is the caller's slowness budget, not a connection loss, so it does
+// not carry the unavailable sentinel: a child restart would not make the call
+// faster. Either way the connection is desynced and reconnects on the next
+// call.
+func (c *runnerCompanion) wrapTransport(ctx context.Context, stage, method string, err error) error {
+	c.dirty = true
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return fmt.Errorf("runner transport: %w: %s %s interrupted: %v", ErrCompanionUnavailable, stage, method, ctxErr)
+		return fmt.Errorf("runner %s interrupted (%s): %w", method, stage, ctxErr)
 	}
 	return fmt.Errorf("runner transport: %w: %s %s: %v", ErrCompanionUnavailable, stage, method, err)
+}
+
+// reconnect replaces the desynced connection with a fresh one to the same
+// still-running server.
+func (c *runnerCompanion) reconnect() error {
+	_ = c.conn.Close()
+	conn, err := net.Dial("tcp", c.address)
+	if err != nil {
+		return err
+	}
+	c.conn = conn
+	c.reader = bufio.NewReader(conn)
+	c.dirty = false
+	return nil
 }
 
 func (c *runnerCompanion) AccessibilityInfo(ctx context.Context) (string, error) {

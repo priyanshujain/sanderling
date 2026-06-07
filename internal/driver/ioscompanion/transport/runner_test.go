@@ -428,11 +428,79 @@ func TestContextCancellationUnblocksCall(t *testing.T) {
 		if callErr == nil {
 			t.Fatal("expected cancellation error")
 		}
-		if !errors.Is(callErr, ErrCompanionUnavailable) {
-			t.Fatalf("cancellation error must wrap the sentinel: %v", callErr)
+		// A caller-imposed cancel is the caller's budget, not a connection
+		// loss: it must NOT wrap the sentinel, or a slow call would trigger a
+		// pointless child restart.
+		if !errors.Is(callErr, context.Canceled) {
+			t.Fatalf("cancellation error must carry the context error: %v", callErr)
+		}
+		if errors.Is(callErr, ErrCompanionUnavailable) {
+			t.Fatalf("cancellation error must not wrap the sentinel: %v", callErr)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancelled call did not return within 2s")
+	}
+}
+
+func TestInterruptedCallReconnectsOnNextCall(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+
+	// The server holds "describe" hostage and answers everything else, on
+	// every connection it accepts. A late reply to the interrupted request
+	// must never be misread by the following call.
+	accepted := make(chan net.Conn, 4)
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			accepted <- conn
+			go func(c net.Conn) {
+				reader := bufio.NewReader(c)
+				for {
+					line, readErr := reader.ReadBytes('\n')
+					if readErr != nil {
+						return
+					}
+					var request runnerRequest
+					if json.Unmarshal(line, &request) != nil {
+						return
+					}
+					if request.Method == "describe" {
+						continue
+					}
+					response := `{"id":` + strconv.Itoa(request.ID) + `,"result":{"ok":true}}` + "\n"
+					if _, writeErr := c.Write([]byte(response)); writeErr != nil {
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	companion, err := DialRunner(listener.Addr().String(), "UDID", "com.example.app")
+	if err != nil {
+		t.Fatalf("DialRunner: %v", err)
+	}
+	t.Cleanup(func() { companion.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := companion.Describe(ctx); err == nil {
+		t.Fatal("expected the held call to time out")
+	}
+
+	// The next call must transparently reconnect and succeed.
+	if err := companion.Terminate(context.Background(), "com.example.app"); err != nil {
+		t.Fatalf("call after interrupt: %v", err)
+	}
+	if len(accepted) != 2 {
+		t.Fatalf("accepted %d connections, want 2 (reconnect)", len(accepted))
 	}
 }
 
