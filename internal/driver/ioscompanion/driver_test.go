@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -571,5 +574,156 @@ func TestIsConnectionErrorRecognizesUnavailableSentinel(t *testing.T) {
 	}
 	if isConnectionError(errors.New("ordinary failure")) {
 		t.Fatal("ordinary errors must not count as connection errors")
+	}
+}
+
+// fakeRunnerCompanion stands in for the in-simulator runner half of the hybrid:
+// it serves snapshots and native typing.
+type fakeRunnerCompanion struct {
+	fakeCompanion
+
+	typed []struct {
+		text    string
+		replace bool
+	}
+}
+
+func (f *fakeRunnerCompanion) TypeText(_ context.Context, text string, replace bool) error {
+	f.record("typetext")
+	f.typed = append(f.typed, struct {
+		text    string
+		replace bool
+	}{text, replace})
+	return nil
+}
+
+var _ transport.TextTyper = (*fakeRunnerCompanion)(nil)
+
+func newHybridTestDriver(legacy *fakeCompanion, runner *fakeRunnerCompanion) *Driver {
+	d := newTestDriver(legacy)
+	d.hybrid = true
+	d.runnerClient = runner
+	return d
+}
+
+func TestHybridInputTextClearsViaHIDThenTypes(t *testing.T) {
+	legacy := &fakeCompanion{accessibilityJSON: "[]"}
+	runner := &fakeRunnerCompanion{}
+	d := newHybridTestDriver(legacy, runner)
+
+	if err := d.InputText(context.Background(), "héllo 🌟"); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.calls) != 1 || legacy.calls[0] != "hid" {
+		t.Fatalf("legacy calls = %v, want exactly the clear chord", legacy.calls)
+	}
+	if len(runner.typed) != 1 || runner.typed[0].text != "héllo 🌟" || runner.typed[0].replace {
+		t.Fatalf("typed = %+v, want the text appended without replace", runner.typed)
+	}
+}
+
+func TestHybridSnapshotsComeFromRunner(t *testing.T) {
+	legacy := &fakeCompanion{accessibilityJSON: `[{"type":"Application","frame":{"x":0,"y":0,"width":1,"height":1},"enabled":true}]`}
+	runner := &fakeRunnerCompanion{}
+	runner.accessibilityJSON = `[{"type":"Button","AXUniqueId":"FromRunner","frame":{"x":0,"y":0,"width":10,"height":10},"enabled":true}]`
+	d := newHybridTestDriver(legacy, runner)
+
+	hierarchy, err := d.Hierarchy(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(hierarchy, "FromRunner") {
+		t.Fatalf("hierarchy = %s, want runner content", hierarchy)
+	}
+	for _, call := range legacy.calls {
+		if call == "accessibility" {
+			t.Fatal("hybrid must not read snapshots from the legacy companion")
+		}
+	}
+}
+
+func TestHybridLaunchSkipsPasteGrant(t *testing.T) {
+	legacy := &fakeCompanion{accessibilityJSON: "[]"}
+	runner := &fakeRunnerCompanion{}
+	d := newHybridTestDriver(legacy, runner)
+	granted := 0
+	d.grantPaste = func(context.Context) error { granted++; return nil }
+
+	if err := d.Launch(context.Background(), "", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if granted != 0 {
+		t.Fatalf("grantPaste called %d times, want 0 on the hybrid path", granted)
+	}
+}
+
+func TestHybridGesturesStayOnLegacyHID(t *testing.T) {
+	legacy := &fakeCompanion{accessibilityJSON: "[]"}
+	runner := &fakeRunnerCompanion{}
+	d := newHybridTestDriver(legacy, runner)
+
+	if err := d.DoubleTap(context.Background(), 10, 20); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.calls) != 1 || legacy.calls[0] != "hid" {
+		t.Fatalf("legacy calls = %v, want the double-tap HID stream", legacy.calls)
+	}
+	for _, call := range runner.calls {
+		if call == "hid" {
+			t.Fatal("runner must not receive gesture streams")
+		}
+	}
+}
+
+func TestHybridRunnerErrorTriggersRestart(t *testing.T) {
+	legacy := &fakeCompanion{accessibilityJSON: "[]"}
+	runner := &fakeRunnerCompanion{}
+	runner.accessibilityErr = fmt.Errorf("read snapshot: %w", transport.ErrCompanionUnavailable)
+	d := newHybridTestDriver(legacy, runner)
+	restarts := 0
+	d.restart = func(context.Context) error {
+		restarts++
+		runner.accessibilityErr = nil
+		return nil
+	}
+
+	if _, err := d.Hierarchy(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if restarts != 1 {
+		t.Fatalf("restarts = %d, want 1", restarts)
+	}
+}
+
+func TestBindTestRunPortSubstitutesPlaceholder(t *testing.T) {
+	directory := t.TempDir()
+	source := filepath.Join(directory, "runner.xctestrun")
+	if err := os.WriteFile(source, []byte("<string>__COMPANION_PORT__</string>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := bindTestRunPort(source, "27999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(bound) != directory {
+		t.Fatalf("bound copy %s must sit next to the original", bound)
+	}
+	content, err := os.ReadFile(bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "<string>27999</string>" {
+		t.Fatalf("bound content = %s", content)
+	}
+}
+
+func TestBindTestRunPortRejectsMissingPlaceholder(t *testing.T) {
+	directory := t.TempDir()
+	source := filepath.Join(directory, "runner.xctestrun")
+	if err := os.WriteFile(source, []byte("<string>fixed</string>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bindTestRunPort(source, "27999"); err == nil {
+		t.Fatal("expected an error for a configuration without the placeholder")
 	}
 }
