@@ -52,6 +52,10 @@ replay-ui/node_modules/
 replay-ui/dist/
 replay-ui/.vite/
 
+# Simulator runner generated project and build output (xcodegen artifacts)
+companion/CompanionRunner.xcodeproj/
+companion/build/
+
 # folio-web frontend
 examples/folio-web/node_modules/
 examples/folio-web/dist/
