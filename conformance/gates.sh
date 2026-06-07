@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Scripted conformance gate for the iOS simulator driver. Runs five serial,
-# non-overlapping 3-minute fuzz runs against the folio app and scores five
-# gates (G1..G5) over the captured traces and output. Exits non-zero if any
-# gate fails.
+# non-overlapping 3-minute fuzz runs against the folio example app
+# (examples/folio) and scores five gates (G1..G5) over the captured traces and
+# output. Exits non-zero if any gate fails.
 #
 # Backends:
 #   BACKEND=simulator (default)  drive the booted iOS simulator
@@ -25,6 +25,7 @@
 set -euo pipefail
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+folio_directory="$(cd "${script_directory}/../examples/folio" && pwd)"
 
 BACKEND="${BACKEND:-simulator}"
 RUNS="${RUNS:-5}"
@@ -35,8 +36,8 @@ SANDERLING="${SANDERLING:-sanderling}"
 IOS_DEVICE="${IOS_DEVICE:-iPhone 17 Pro}"
 
 bundle_id="app.folio"
-spec_path="${script_directory}/sanderling/spec.ts"
-ios_app="${script_directory}/app/iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app"
+spec_path="${folio_directory}/sanderling/spec.ts"
+ios_app="${folio_directory}/app/iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app"
 
 # The companion binary, embedded for simulator runs. Referenced by file name
 # only for the orphan-process check; prose elsewhere says "the companion".
@@ -252,12 +253,12 @@ collect_run_artifacts() {
 run_gates() {
   if [[ "$BACKEND" == "simulator" ]]; then
     echo "preparing folio build for the simulator backend"
-    ( cd "$script_directory" && just ios >/dev/null )
+    ( cd "$folio_directory" && just ios >/dev/null )
   fi
 
   local timestamp
   timestamp="$(date +%Y%m%d-%H%M%S)"
-  local gate_root="${script_directory}/sanderling/gates/${timestamp}"
+  local gate_root="${script_directory}/runs/${timestamp}"
   mkdir -p "$gate_root"
   echo "gate root: ${gate_root}"
   echo "backend=${BACKEND} runs=${RUNS} duration=${DURATION} seed=${SEED} p95_limit_ms=${P95_LIMIT_MS}"
@@ -338,10 +339,10 @@ run_gates() {
 
 # ---- offline self-test -----------------------------------------------------
 # Exercises every analyzer against canned passing/failing run directories under
-# gates-testdata/ so the parsing logic can be checked without a device.
+# testdata/ so the parsing logic can be checked without a device.
 
 self_test() {
-  local testdata="${script_directory}/gates-testdata"
+  local testdata="${script_directory}/testdata"
   local failures=0
 
   assert() {
