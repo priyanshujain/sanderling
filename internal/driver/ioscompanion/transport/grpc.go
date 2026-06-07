@@ -73,12 +73,60 @@ func (c *grpcCompanion) SendHID(ctx context.Context, events ...HIDEvent) error {
 		return err
 	}
 	for _, e := range events {
-		if err := stream.Send(e.event); err != nil {
+		message, err := hidEventToProto(e)
+		if err != nil {
+			return err
+		}
+		if err := stream.Send(message); err != nil {
 			return err
 		}
 	}
 	_, err = stream.CloseAndRecv()
 	return err
+}
+
+// hidEventToProto encodes a neutral HID event as this companion's wire event.
+// The companion measures delays and swipe durations in seconds.
+func hidEventToProto(e HIDEvent) (*pb.HIDEvent, error) {
+	switch e.Kind {
+	case HIDKindTouchDown:
+		return touchProto(e.X, e.Y, pb.HIDEvent_DOWN), nil
+	case HIDKindTouchUp:
+		return touchProto(e.X, e.Y, pb.HIDEvent_UP), nil
+	case HIDKindKeyDown:
+		return keyProto(e.Usage, pb.HIDEvent_DOWN), nil
+	case HIDKindKeyUp:
+		return keyProto(e.Usage, pb.HIDEvent_UP), nil
+	case HIDKindDelay:
+		return &pb.HIDEvent{Event: &pb.HIDEvent_Delay{
+			Delay: &pb.HIDEvent_HIDDelay{Duration: e.Milliseconds / 1000.0},
+		}}, nil
+	case HIDKindSwipe:
+		return &pb.HIDEvent{Event: &pb.HIDEvent_Swipe{Swipe: &pb.HIDEvent_HIDSwipe{
+			Start:    &pb.Point{X: e.FromX, Y: e.FromY},
+			End:      &pb.Point{X: e.ToX, Y: e.ToY},
+			Duration: e.Seconds,
+		}}}, nil
+	}
+	return nil, fmt.Errorf("unknown HID event kind %d", e.Kind)
+}
+
+func touchProto(x, y float64, direction pb.HIDEvent_HIDDirection) *pb.HIDEvent {
+	return &pb.HIDEvent{Event: &pb.HIDEvent_Press{Press: &pb.HIDEvent_HIDPress{
+		Direction: direction,
+		Action: &pb.HIDEvent_HIDPressAction{Action: &pb.HIDEvent_HIDPressAction_Touch{
+			Touch: &pb.HIDEvent_HIDTouch{Point: &pb.Point{X: x, Y: y}},
+		}},
+	}}}
+}
+
+func keyProto(usage uint32, direction pb.HIDEvent_HIDDirection) *pb.HIDEvent {
+	return &pb.HIDEvent{Event: &pb.HIDEvent_Press{Press: &pb.HIDEvent_HIDPress{
+		Direction: direction,
+		Action: &pb.HIDEvent_HIDPressAction{Action: &pb.HIDEvent_HIDPressAction_Key{
+			Key: &pb.HIDEvent_HIDKey{Keycode: uint64(usage)},
+		}},
+	}}}
 }
 
 func (c *grpcCompanion) Screenshot(ctx context.Context) ([]byte, string, error) {

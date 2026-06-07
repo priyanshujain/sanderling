@@ -1,59 +1,63 @@
 package transport
 
-import (
-	pb "github.com/priyanshujain/sanderling/internal/driver/ioscompanion/companionpb"
+// HIDEventKind discriminates the neutral HID event variants.
+type HIDEventKind int
+
+const (
+	HIDKindTouchDown HIDEventKind = iota
+	HIDKindTouchUp
+	HIDKindKeyDown
+	HIDKindKeyUp
+	HIDKindDelay
+	HIDKindSwipe
 )
 
-// HIDEvent is one input event in a HID stream. It wraps the generated event so
-// callers never import the companionpb package. Build one with a builder below.
+// HIDEvent is one input event in a HID stream, expressed in transport-neutral
+// terms so each companion transport encodes it for its own wire format. Build
+// one with a builder below; only the fields for the event's kind are set.
 type HIDEvent struct {
-	event *pb.HIDEvent
-}
+	Kind HIDEventKind
 
-func touchPress(x, y float64, direction pb.HIDEvent_HIDDirection) HIDEvent {
-	return HIDEvent{event: &pb.HIDEvent{Event: &pb.HIDEvent_Press{Press: &pb.HIDEvent_HIDPress{
-		Direction: direction,
-		Action: &pb.HIDEvent_HIDPressAction{Action: &pb.HIDEvent_HIDPressAction_Touch{
-			Touch: &pb.HIDEvent_HIDTouch{Point: &pb.Point{X: x, Y: y}},
-		}},
-	}}}}
-}
+	// X, Y is the touch point for TouchDown and TouchUp.
+	X, Y float64
 
-func keyPress(usage uint32, direction pb.HIDEvent_HIDDirection) HIDEvent {
-	return HIDEvent{event: &pb.HIDEvent{Event: &pb.HIDEvent_Press{Press: &pb.HIDEvent_HIDPress{
-		Direction: direction,
-		Action: &pb.HIDEvent_HIDPressAction{Action: &pb.HIDEvent_HIDPressAction_Key{
-			Key: &pb.HIDEvent_HIDKey{Keycode: uint64(usage)},
-		}},
-	}}}}
+	// Usage is the USB HID usage identifier for KeyDown and KeyUp.
+	Usage uint32
+
+	// Milliseconds is the pause length for Delay.
+	Milliseconds float64
+
+	// FromX through Seconds describe a Swipe.
+	FromX, FromY float64
+	ToX, ToY     float64
+	Seconds      float64
 }
 
 // TouchDown presses a finger down at screen point (x, y).
-func TouchDown(x, y float64) HIDEvent { return touchPress(x, y, pb.HIDEvent_DOWN) }
+func TouchDown(x, y float64) HIDEvent { return HIDEvent{Kind: HIDKindTouchDown, X: x, Y: y} }
 
 // TouchUp lifts the finger at screen point (x, y).
-func TouchUp(x, y float64) HIDEvent { return touchPress(x, y, pb.HIDEvent_UP) }
+func TouchUp(x, y float64) HIDEvent { return HIDEvent{Kind: HIDKindTouchUp, X: x, Y: y} }
 
 // KeyDown presses the key with the given USB HID usage identifier.
-func KeyDown(usage uint32) HIDEvent { return keyPress(usage, pb.HIDEvent_DOWN) }
+func KeyDown(usage uint32) HIDEvent { return HIDEvent{Kind: HIDKindKeyDown, Usage: usage} }
 
 // KeyUp releases the key with the given USB HID usage identifier.
-func KeyUp(usage uint32) HIDEvent { return keyPress(usage, pb.HIDEvent_UP) }
+func KeyUp(usage uint32) HIDEvent { return HIDEvent{Kind: HIDKindKeyUp, Usage: usage} }
 
-// Delay pauses the HID stream. The companion measures delays in seconds, so the
-// caller's milliseconds are converted here.
+// Delay pauses the HID stream for the given duration.
 func Delay(milliseconds float64) HIDEvent {
-	return HIDEvent{event: &pb.HIDEvent{Event: &pb.HIDEvent_Delay{
-		Delay: &pb.HIDEvent_HIDDelay{Duration: milliseconds / 1000.0},
-	}}}
+	return HIDEvent{Kind: HIDKindDelay, Milliseconds: milliseconds}
 }
 
-// SwipeEvent drags from (fromX, fromY) to (toX, toY) over durationSeconds. The
-// swipe message carries start, end, and a duration in seconds.
+// SwipeEvent drags from (fromX, fromY) to (toX, toY) over durationSeconds.
 func SwipeEvent(fromX, fromY, toX, toY float64, durationSeconds float64) HIDEvent {
-	return HIDEvent{event: &pb.HIDEvent{Event: &pb.HIDEvent_Swipe{Swipe: &pb.HIDEvent_HIDSwipe{
-		Start:    &pb.Point{X: fromX, Y: fromY},
-		End:      &pb.Point{X: toX, Y: toY},
-		Duration: durationSeconds,
-	}}}}
+	return HIDEvent{
+		Kind:    HIDKindSwipe,
+		FromX:   fromX,
+		FromY:   fromY,
+		ToX:     toX,
+		ToY:     toY,
+		Seconds: durationSeconds,
+	}
 }
