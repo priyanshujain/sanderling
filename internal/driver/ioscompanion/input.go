@@ -103,15 +103,37 @@ func usesPasteboard(text string) bool {
 	return len(skipped) > 0
 }
 
-// inputText types text into the focused field. Mappable text goes through the
-// hardware keyboard in one HID stream; anything else falls back to the
-// pasteboard. The field target is only consulted on the pasteboard path.
+// inputText replaces the focused field's content with text. It selects any
+// existing content and deletes it first, so the result is the typed text alone
+// regardless of what the field held. Replacing (rather than relying on the
+// runner's pre-erase) keeps input correct even when the accessibility bridge is
+// momentarily collapsed and the runner cannot read the field's length. Mappable
+// text goes through the hardware keyboard in one HID stream; anything else falls
+// back to the pasteboard. The field target is only consulted on the pasteboard
+// path.
 func inputText(ctx context.Context, run runner, text string, field fieldTarget) error {
 	if !usesPasteboard(text) {
-		presses, _ := typeString(text)
-		return run.sendHID(ctx, keyPressEvents(presses)...)
+		events := append(clearFieldEvents(), keyPressEvents(typeStringPresses(text))...)
+		return run.sendHID(ctx, events...)
+	}
+	if err := run.sendHID(ctx, clearFieldEvents()...); err != nil {
+		return fmt.Errorf("clear field: %w", err)
 	}
 	return pasteText(ctx, run, text, field)
+}
+
+// typeStringPresses is typeString's presses, dropping the skipped runes (the
+// caller already decided this text is fully mappable).
+func typeStringPresses(text string) []KeyPress {
+	presses, _ := typeString(text)
+	return presses
+}
+
+// clearFieldEvents selects the whole field (command+A) and deletes it, so a
+// following type or paste lands in an empty field. On an already-empty field
+// the select selects nothing and the delete is a no-op.
+func clearFieldEvents() []transport.HIDEvent {
+	return append(selectAllChordEvents(), keyPressEvents(backspaces(1))...)
 }
 
 // pasteText copies the full text to the pasteboard, sends the paste chord

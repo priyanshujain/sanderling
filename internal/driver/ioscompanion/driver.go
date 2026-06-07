@@ -831,7 +831,14 @@ func waitForListener(ctx context.Context, address string) error {
 	}
 }
 
+// ReplacesTextOnInput reports that InputText replaces the field's content, so
+// the runner skips its pre-erase. The driver clears the field inside InputText,
+// which is robust even when a collapsed accessibility bridge would make the
+// runner read the field length as zero and wrongly skip erasing.
+func (d *Driver) ReplacesTextOnInput() bool { return true }
+
 var (
 	_ driver.DeviceDriver      = (*Driver)(nil)
 	_ driver.ForegroundChecker = (*Driver)(nil)
+	_ driver.TextReplacer      = (*Driver)(nil)
 )
