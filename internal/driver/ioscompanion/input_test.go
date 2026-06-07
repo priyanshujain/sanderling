@@ -367,8 +367,7 @@ func TestEraseTextLargeCountClearsAtomically(t *testing.T) {
 	if len(fake.hidStreams) != 1 {
 		t.Fatalf("expected one stream, got %d", len(fake.hidStreams))
 	}
-	want := append(selectAllChordEvents(), keyPressEvents(backspaces(1))...)
-	eventsEqual(t, fake.hidStreams[0], want)
+	eventsEqual(t, fake.hidStreams[0], clearFieldEvents())
 }
 
 func TestEraseTextSendsBackspaces(t *testing.T) {

@@ -129,11 +129,26 @@ func typeStringPresses(text string) []KeyPress {
 	return presses
 }
 
-// clearFieldEvents selects the whole field (command+A) and deletes it, so a
+// selectionApplyDelayMilliseconds is the in-stream pause between the
+// select-all chord and the deleting backspace. The chord's selection applies
+// asynchronously in the app; a backspace fired in the same instant deletes
+// one character at the cursor instead of the selection, which on a full field
+// silently turns replace into append. Long content needs the most time, and
+// this pause covers it with margin.
+const selectionApplyDelayMilliseconds = 150
+
+// deleteApplyDelayMilliseconds is the in-stream pause after the deleting
+// backspace, so following keystrokes land in the emptied field.
+const deleteApplyDelayMilliseconds = 40
+
+// clearFieldEvents selects the whole field (command+A), waits for the
+// selection to apply, deletes it, and waits for the delete to apply, so a
 // following type or paste lands in an empty field. On an already-empty field
 // the select selects nothing and the delete is a no-op.
 func clearFieldEvents() []transport.HIDEvent {
-	return append(selectAllChordEvents(), keyPressEvents(backspaces(1))...)
+	events := append(selectAllChordEvents(), transport.Delay(selectionApplyDelayMilliseconds))
+	events = append(events, keyPressEvents(backspaces(1))...)
+	return append(events, transport.Delay(deleteApplyDelayMilliseconds))
 }
 
 // pasteText copies the full text to the pasteboard, sends the paste chord
@@ -215,8 +230,7 @@ func eraseText(ctx context.Context, run runner, characterCount int) error {
 	if characterCount <= eraseBackspaceThreshold {
 		return run.sendHID(ctx, keyPressEvents(backspaces(characterCount))...)
 	}
-	events := append(selectAllChordEvents(), keyPressEvents(backspaces(1))...)
-	return run.sendHID(ctx, events...)
+	return run.sendHID(ctx, clearFieldEvents()...)
 }
 
 // keyPressEvents flattens key presses into a HID event stream. A shifted press
