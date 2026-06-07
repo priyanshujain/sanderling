@@ -806,11 +806,15 @@ func (d *Driver) Snapshot(ctx context.Context) (string, driver.Image, error) {
 	// hybrid path, so they are captured concurrently. Only the hierarchy leg
 	// runs under withRecovery: two concurrent recoveries would race the
 	// restart bookkeeping, and a screenshot connection failure surfaces as a
-	// plain error that the next serialized call recovers from.
+	// plain error that the next serialized call recovers from. The goroutine
+	// works through a captured local because a hierarchy-leg recovery
+	// reassigns d.companion mid-flight; a screenshot against the torn-down
+	// transport then fails as a plain error rather than racing the field.
 	var data []byte
 	screenshotDone := make(chan error, 1)
+	companion := d.companion
 	go func() {
-		imageData, _, callErr := d.companion.Screenshot(ctx)
+		imageData, _, callErr := companion.Screenshot(ctx)
 		data = imageData
 		screenshotDone <- callErr
 	}()

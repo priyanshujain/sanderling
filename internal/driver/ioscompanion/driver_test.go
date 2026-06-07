@@ -255,6 +255,49 @@ func TestSnapshotPairsHierarchyAndScreenshot(t *testing.T) {
 	}
 }
 
+// blockingScreenshotCompanion holds its Screenshot until proceed closes, so a
+// test can keep the screenshot leg in flight while the hierarchy leg recovers.
+type blockingScreenshotCompanion struct {
+	fakeCompanion
+	proceed chan struct{}
+}
+
+func (b *blockingScreenshotCompanion) Screenshot(ctx context.Context) ([]byte, string, error) {
+	<-b.proceed
+	return b.fakeCompanion.Screenshot(ctx)
+}
+
+func TestSnapshotRestartDuringScreenshotDoesNotRace(t *testing.T) {
+	// The hierarchy leg drops its connection, forcing withRecovery to restart
+	// while the screenshot goroutine is still in flight. The restart reassigns
+	// d.companion the way respawnAndRedial does; the goroutine must keep
+	// working through the transport it captured rather than racing the field.
+	first := &blockingScreenshotCompanion{
+		fakeCompanion: fakeCompanion{
+			accessibilityErr: status.Error(codes.Unavailable, "companion gone"),
+			screenshotData:   samplePNG(t, 390, 844),
+		},
+		proceed: make(chan struct{}),
+	}
+	replacement := &fakeCompanion{
+		accessibilityJSON: "[]",
+		screenshotData:    samplePNG(t, 390, 844),
+	}
+	d := newTestDriver(first)
+	d.restart = func(context.Context) error {
+		d.companion = replacement
+		close(first.proceed)
+		return nil
+	}
+	_, image, err := d.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot should recover: %v", err)
+	}
+	if image.Width != 390 || image.Height != 844 {
+		t.Fatalf("image dims = %dx%d, want 390x844", image.Width, image.Height)
+	}
+}
+
 func TestScreenshotRejectsNonPNG(t *testing.T) {
 	d := newTestDriver(&fakeCompanion{screenshotData: []byte("not a png")})
 	if _, err := d.Screenshot(context.Background()); err == nil {
