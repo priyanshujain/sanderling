@@ -386,33 +386,6 @@ func TestEraseTextZeroIsNoOp(t *testing.T) {
 	}
 }
 
-func TestWarmUpPasteHandlesDialog(t *testing.T) {
-	dialog := string(loadDialogDump(t))
-	fake := &fakeRunner{dumps: [][]byte{[]byte(dialog)}}
-	if err := warmUpPaste(context.Background(), fake); err != nil {
-		t.Fatalf("warmUpPaste: %v", err)
-	}
-	if fake.pasteboard != warmUpPrimer {
-		t.Fatalf("pasteboard: got %q, want %q", fake.pasteboard, warmUpPrimer)
-	}
-	// Streams: paste chord, tap allow.
-	if len(fake.hidStreams) != 2 {
-		t.Fatalf("expected 2 HID streams, got %d", len(fake.hidStreams))
-	}
-	eventsEqual(t, fake.hidStreams[0], pasteChordEvents())
-	eventsEqual(t, fake.hidStreams[1], tapEvents(280, 465))
-}
-
-func TestWarmUpPasteNoDialog(t *testing.T) {
-	fake := &fakeRunner{dumps: [][]byte{[]byte(`[]`)}}
-	if err := warmUpPaste(context.Background(), fake); err != nil {
-		t.Fatalf("warmUpPaste: %v", err)
-	}
-	if len(fake.hidStreams) != 1 {
-		t.Fatalf("expected only the paste chord, got %d streams", len(fake.hidStreams))
-	}
-}
-
 func TestUsesPasteboard(t *testing.T) {
 	cases := []struct {
 		text string

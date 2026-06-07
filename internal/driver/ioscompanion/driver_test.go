@@ -109,6 +109,7 @@ func newTestDriver(companion transport.Companion) *Driver {
 	}
 	d.resetContainer = func(context.Context) error { return nil }
 	d.reinstallApp = func(context.Context) error { return nil }
+	d.grantPaste = func(context.Context) error { return nil }
 	return d
 }
 
@@ -134,6 +135,31 @@ func TestLaunchTerminatesFirstThenLaunches(t *testing.T) {
 	}
 	if indexOf(companion.calls, "launch") < indexOf(companion.calls, "terminate") {
 		t.Fatalf("launch must follow terminate; got %v", companion.calls)
+	}
+}
+
+func TestLaunchGrantsPasteboardBeforeLaunch(t *testing.T) {
+	companion := &fakeCompanion{accessibilityJSON: "[]"}
+	d := newTestDriver(companion)
+	granted := false
+	d.grantPaste = func(context.Context) error { granted = true; return nil }
+	if err := d.Launch(context.Background(), "", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if !granted {
+		t.Fatal("Launch must grant pasteboard access so unicode input skips the permission prompt")
+	}
+}
+
+func TestLaunchContinuesWhenGrantFails(t *testing.T) {
+	companion := &fakeCompanion{accessibilityJSON: "[]"}
+	d := newTestDriver(companion)
+	d.grantPaste = func(context.Context) error { return errors.New("no privacy db") }
+	if err := d.Launch(context.Background(), "", false, nil); err != nil {
+		t.Fatalf("Launch must continue when the grant fails: %v", err)
+	}
+	if indexOf(companion.calls, "launch") < 0 {
+		t.Fatalf("app must still launch; got %v", companion.calls)
 	}
 }
 
