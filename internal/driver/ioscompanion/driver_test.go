@@ -409,9 +409,9 @@ func TestHealthReportsIOS(t *testing.T) {
 	}
 }
 
-// The driver must satisfy DeviceDriver and ForegroundChecker, but must NOT
-// satisfy TextReplacer: its InputText appends, so the runner's pre-erase must
-// stay in place.
+// The driver must satisfy DeviceDriver, ForegroundChecker, and TextReplacer
+// (its InputText clears the field then types, so the runner skips its
+// blackout-fragile pre-erase), but must NOT satisfy FocusedWindowChecker.
 func TestCapabilityAssertions(t *testing.T) {
 	var instance any = newTestDriver(&fakeCompanion{})
 	if _, ok := instance.(driver.DeviceDriver); !ok {
@@ -420,8 +420,12 @@ func TestCapabilityAssertions(t *testing.T) {
 	if _, ok := instance.(driver.ForegroundChecker); !ok {
 		t.Fatal("Driver must implement ForegroundChecker")
 	}
-	if _, ok := instance.(driver.TextReplacer); ok {
-		t.Fatal("Driver must NOT implement TextReplacer")
+	replacer, ok := instance.(driver.TextReplacer)
+	if !ok {
+		t.Fatal("Driver must implement TextReplacer")
+	}
+	if !replacer.ReplacesTextOnInput() {
+		t.Fatal("ReplacesTextOnInput must report true")
 	}
 	if _, ok := instance.(driver.FocusedWindowChecker); ok {
 		t.Fatal("Driver must NOT implement FocusedWindowChecker")

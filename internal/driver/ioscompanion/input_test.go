@@ -262,7 +262,9 @@ func TestInputTextFastPathUsesHardwareKeyboard(t *testing.T) {
 	if len(fake.hidStreams) != 1 {
 		t.Fatalf("fast path must send one HID stream, got %d", len(fake.hidStreams))
 	}
-	want := keyPressEvents([]KeyPress{{Usage: usageA + ('h' - 'a')}, {Usage: usageA + ('i' - 'a')}})
+	// One stream: clear the field, then type the runes.
+	want := append(clearFieldEvents(),
+		keyPressEvents([]KeyPress{{Usage: usageA + ('h' - 'a')}, {Usage: usageA + ('i' - 'a')}})...)
 	eventsEqual(t, fake.hidStreams[0], want)
 }
 
@@ -276,10 +278,12 @@ func TestInputTextPasteLandsImmediately(t *testing.T) {
 	if fake.pasteboard != "Café" {
 		t.Fatalf("pasteboard: got %q", fake.pasteboard)
 	}
-	if len(fake.hidStreams) != 1 {
-		t.Fatalf("expected one paste chord, got %d streams", len(fake.hidStreams))
+	// Streams: clear field, then paste chord.
+	if len(fake.hidStreams) != 2 {
+		t.Fatalf("expected clear then paste chord, got %d streams", len(fake.hidStreams))
 	}
-	eventsEqual(t, fake.hidStreams[0], pasteChordEvents())
+	eventsEqual(t, fake.hidStreams[0], clearFieldEvents())
+	eventsEqual(t, fake.hidStreams[1], pasteChordEvents())
 }
 
 func TestInputTextPasteDismissesDialogThenLands(t *testing.T) {
@@ -292,14 +296,15 @@ func TestInputTextPasteDismissesDialogThenLands(t *testing.T) {
 	if err := inputText(context.Background(), fake, "Café ☕ 😀", field); err != nil {
 		t.Fatalf("inputText: %v", err)
 	}
-	// Streams: paste chord, tap allow, refocus field, paste chord again.
-	if len(fake.hidStreams) != 4 {
-		t.Fatalf("expected 4 HID streams, got %d", len(fake.hidStreams))
+	// Streams: clear field, paste chord, tap allow, refocus field, paste chord again.
+	if len(fake.hidStreams) != 5 {
+		t.Fatalf("expected 5 HID streams, got %d", len(fake.hidStreams))
 	}
-	eventsEqual(t, fake.hidStreams[0], pasteChordEvents())
-	eventsEqual(t, fake.hidStreams[1], tapEvents(280, 465))
-	eventsEqual(t, fake.hidStreams[2], tapEvents(195, 222))
-	eventsEqual(t, fake.hidStreams[3], pasteChordEvents())
+	eventsEqual(t, fake.hidStreams[0], clearFieldEvents())
+	eventsEqual(t, fake.hidStreams[1], pasteChordEvents())
+	eventsEqual(t, fake.hidStreams[2], tapEvents(280, 465))
+	eventsEqual(t, fake.hidStreams[3], tapEvents(195, 222))
+	eventsEqual(t, fake.hidStreams[4], pasteChordEvents())
 }
 
 func TestInputTextPasteFailsAfterAllAttempts(t *testing.T) {
@@ -310,11 +315,12 @@ func TestInputTextPasteFailsAfterAllAttempts(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error after exhausting the verify budget")
 	}
-	// The chord is sent exactly once: with no dialog on screen, re-sending it
-	// on a slow render would paste the text twice.
-	if len(fake.hidStreams) != 1 {
-		t.Fatalf("expected exactly one paste chord, got %d", len(fake.hidStreams))
+	// Streams: clear field, then exactly one paste chord (no dialog, so it is
+	// not re-sent: re-sending on a slow render would paste twice).
+	if len(fake.hidStreams) != 2 {
+		t.Fatalf("expected clear then one paste chord, got %d streams", len(fake.hidStreams))
 	}
+	eventsEqual(t, fake.hidStreams[0], clearFieldEvents())
 	wantPolls := int(pasteVerifyTimeout / pastePoll)
 	if fake.sleepCount != wantPolls {
 		t.Fatalf("expected %d verify polls, got %d", wantPolls, fake.sleepCount)
@@ -333,9 +339,9 @@ func TestInputTextPasteLandsAfterBridgeBlackout(t *testing.T) {
 	if err := inputText(context.Background(), fake, "😀", field); err != nil {
 		t.Fatalf("inputText: %v", err)
 	}
-	// One chord, no dialog seen, success once the value appears.
-	if len(fake.hidStreams) != 1 {
-		t.Fatalf("expected exactly one paste chord, got %d", len(fake.hidStreams))
+	// Clear field, one chord, no dialog seen, success once the value appears.
+	if len(fake.hidStreams) != 2 {
+		t.Fatalf("expected clear then one paste chord, got %d streams", len(fake.hidStreams))
 	}
 }
 
@@ -347,8 +353,9 @@ func TestInputTextPasteUnverifiableFieldSingleChord(t *testing.T) {
 	if err := inputText(context.Background(), fake, "😀", fieldTarget{}); err != nil {
 		t.Fatalf("inputText: %v", err)
 	}
-	if len(fake.hidStreams) != 1 {
-		t.Fatalf("expected exactly one paste chord, got %d", len(fake.hidStreams))
+	// Clear field, then one paste chord.
+	if len(fake.hidStreams) != 2 {
+		t.Fatalf("expected clear then one paste chord, got %d streams", len(fake.hidStreams))
 	}
 }
 
