@@ -638,15 +638,24 @@ func (d *Driver) resolveSelectorCenter(ctx context.Context, selector string) (in
 }
 
 func (d *Driver) InputText(ctx context.Context, text string) error {
-	// Hybrid path: clear the focused field atomically with the legacy HID
-	// select-all chord, then let the runner type the text natively. Typing
-	// covers unicode without the pasteboard and its permission dialog; the
-	// chord clears regardless of where a tap left the cursor.
-	if d.runnerTyper() != nil {
+	// Hybrid path. Mappable text rides one HID stream: select-all chord plus
+	// keystrokes, atomic and strictly ordered on a single channel. Unicode
+	// (which HID cannot express) is typed natively by the runner after the
+	// chord; chord and typing ride different channels with no ordering
+	// guarantee between them, so the clear is verified through a snapshot
+	// before the first keystroke goes out.
+	if typer := d.runnerTyper(); typer != nil {
+		if !usesPasteboard(text) {
+			events := append(clearFieldEvents(), keyPressEvents(typeStringPresses(text))...)
+			return d.withRecovery(ctx, func() error {
+				return d.companion.SendHID(ctx, events...)
+			})
+		}
 		return d.withRecovery(ctx, func() error {
 			if err := d.companion.SendHID(ctx, clearFieldEvents()...); err != nil {
 				return fmt.Errorf("clear field: %w", err)
 			}
+			d.waitFieldCleared(ctx)
 			return d.runnerTyper().TypeText(ctx, text, false)
 		})
 	}
@@ -665,6 +674,57 @@ func (d *Driver) InputText(ctx context.Context, text string) error {
 		field = d.resolveInputField(ctx)
 	}
 	return inputText(ctx, d.makeRunner(), text, field)
+}
+
+// fieldClearedWaitCap and fieldClearedPoll bound the verify-cleared loop
+// between the HID clear chord and the runner's native typing.
+const fieldClearedWaitCap = 1200 * time.Millisecond
+const fieldClearedPoll = 150 * time.Millisecond
+
+// waitFieldCleared polls the focused field (the editable element under the
+// last tap) until its value reads empty, so the clear chord has demonstrably
+// landed before typing starts on the other channel. Best effort: when the
+// field cannot be resolved or the cap elapses, typing proceeds anyway.
+func (d *Driver) waitFieldCleared(ctx context.Context) {
+	d.mu.Lock()
+	tap := d.lastTap
+	d.mu.Unlock()
+	if !tap.set {
+		return
+	}
+	deadline := time.Now().Add(fieldClearedWaitCap)
+	for time.Now().Before(deadline) {
+		dump, err := d.describeAllRaw(ctx)
+		if err != nil {
+			return
+		}
+		cleared := true
+		for _, element := range decodeDump(dump) {
+			if !isEditable(element.Type) {
+				continue
+			}
+			frame := element.Frame
+			if !finite(frame.X) || !finite(frame.Y) || !finite(frame.Width) || !finite(frame.Height) {
+				continue
+			}
+			if tap.x < frame.X || tap.x > frame.X+frame.Width ||
+				tap.y < frame.Y || tap.y > frame.Y+frame.Height {
+				continue
+			}
+			if value := stringValue(element.AXValue); value != "" && value != emptyFieldValueSentinel {
+				cleared = false
+			}
+			break
+		}
+		if cleared {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(fieldClearedPoll):
+		}
+	}
 }
 
 // resolveInputField finds the editable element under the last tap so the

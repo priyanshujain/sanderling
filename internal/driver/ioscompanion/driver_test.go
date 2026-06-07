@@ -749,3 +749,62 @@ func TestBindTestRunPortRejectsMissingPlaceholder(t *testing.T) {
 		t.Fatal("expected an error for a configuration without the placeholder")
 	}
 }
+
+func TestHybridMappableTextRidesOneHIDStream(t *testing.T) {
+	legacy := &fakeCompanion{accessibilityJSON: "[]"}
+	runner := &fakeRunnerCompanion{}
+	d := newHybridTestDriver(legacy, runner)
+
+	if err := d.InputText(context.Background(), "Travel 42"); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.recorded()) != 1 || legacy.recorded()[0] != "hid" {
+		t.Fatalf("legacy calls = %v, want one combined chord-and-keystrokes stream", legacy.recorded())
+	}
+	if len(runner.typed) != 0 {
+		t.Fatalf("typed = %+v, want no native typing for mappable text", runner.typed)
+	}
+}
+
+func TestHybridUnicodeWaitsForClearedFieldBeforeTyping(t *testing.T) {
+	legacy := &fakeCompanion{accessibilityJSON: "[]"}
+	runner := &fakeRunnerCompanion{}
+	// The focused field still shows old content on the first read and is
+	// empty on the second; typing must come after the cleared read.
+	first := `[{"type":"TextField","AXUniqueId":"F","AXValue":"old","frame":{"x":0,"y":0,"width":100,"height":40},"enabled":true}]`
+	second := `[{"type":"TextField","AXUniqueId":"F","AXValue":"","frame":{"x":0,"y":0,"width":100,"height":40},"enabled":true}]`
+	reads := 0
+	d := newHybridTestDriver(legacy, runner)
+	d.mu.Lock()
+	d.lastTap.x, d.lastTap.y, d.lastTap.set = 50, 20, true
+	d.mu.Unlock()
+	// Swap the dump after the first read through a wrapper companion.
+	wrapped := &sequencedDumpCompanion{fakeRunnerCompanion: runner, dumps: []string{first, second}, reads: &reads}
+	d.runnerClient = wrapped
+
+	if err := d.InputText(context.Background(), "héllo 🌟"); err != nil {
+		t.Fatal(err)
+	}
+	if reads < 2 {
+		t.Fatalf("reads = %d, want at least 2 (poll until cleared)", reads)
+	}
+	if len(wrapped.typed) != 1 || wrapped.typed[0].text != "héllo 🌟" || wrapped.typed[0].replace {
+		t.Fatalf("typed = %+v", wrapped.typed)
+	}
+}
+
+// sequencedDumpCompanion serves scripted dumps in order, repeating the last.
+type sequencedDumpCompanion struct {
+	*fakeRunnerCompanion
+	dumps []string
+	reads *int
+}
+
+func (s *sequencedDumpCompanion) AccessibilityInfo(context.Context) (string, error) {
+	index := *s.reads
+	if index >= len(s.dumps) {
+		index = len(s.dumps) - 1
+	}
+	*s.reads++
+	return s.dumps[index], nil
+}
