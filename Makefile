@@ -24,7 +24,7 @@ DOCS_TEMPLATE := docs/_template/page.html
 REPLAY_DIST := internal/replay/dist
 WEB_DIST := replay-ui/dist
 
-.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-kotlin test-spec-api web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry
+.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-companion test-kotlin test-spec-api web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -86,6 +86,12 @@ web-test:
 # Kept out of `test` because it needs a Chrome binary on PATH.
 test-browser:
 	$(GO) test -tags browser ./test/browser/... ./internal/driver/chrome/...
+
+# Runs the withcompanion-tagged tests (asset embedding, extraction, checksum
+# reuse) against the real companion and runner bundles. Kept out of `test`
+# because preparing the companion bundle needs the darwin toolchain.
+test-companion: $(COMPANION_EMBED)
+	$(GO) test -tags withcompanion ./internal/driver/ioscompanion/...
 
 test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test
