@@ -4,14 +4,29 @@ import XCTest
 enum Snapshot {
     // Produces the flat element array for the given bundle identifier. Falls back
     // to springboard if the requested app is not running or its snapshot throws.
+    // Snapshot resolution can demand the test's execution context, which lives
+    // on the main thread, and a framework assertion raises an exception that
+    // would kill the server; so the capture runs on main inside the catch
+    // bridge, and an assertion yields an empty dump, which upstream treats as
+    // collapsed and retries.
     static func elements(bundleIdentifier: String) -> [[String: Any]] {
-        if let captured = try? capture(bundleIdentifier: bundleIdentifier) {
-            return captured
+        var result: [[String: Any]] = []
+        var caughtError: NSError?
+        let work = {
+            _ = CompanionRunCatching({
+                if let captured = try? capture(bundleIdentifier: bundleIdentifier) {
+                    result = captured
+                } else if let fallback = try? capture(bundleIdentifier: "com.apple.springboard") {
+                    result = fallback
+                }
+            }, &caughtError)
         }
-        if let fallback = try? capture(bundleIdentifier: "com.apple.springboard") {
-            return fallback
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.sync(execute: work)
         }
-        return []
+        return result
     }
 
     private static func capture(bundleIdentifier: String) throws -> [[String: Any]] {
