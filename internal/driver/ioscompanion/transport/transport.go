@@ -62,6 +62,14 @@ type TextEditor interface {
 	PressKey(ctx context.Context, key string) error
 }
 
+// TextTyper is an optional companion capability: the transport types text
+// natively into whatever holds keyboard focus. Unlike TextEditor it exposes
+// the replace flag, so a caller can clear the field through another channel
+// and append with replace false.
+type TextTyper interface {
+	TypeText(ctx context.Context, text string, replace bool) error
+}
+
 // ErrCompanionUnavailable marks a connection-level failure that a companion
 // restart can recover from. Transports wrap dropped-connection errors with it.
 var ErrCompanionUnavailable = errors.New("companion connection unavailable")

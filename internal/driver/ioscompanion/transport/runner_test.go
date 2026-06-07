@@ -467,3 +467,22 @@ func TestResponseIDMismatchIsSentinel(t *testing.T) {
 		t.Fatalf("id mismatch must wrap the sentinel: %v", err)
 	}
 }
+
+func TestTypeTextAppendsWithoutReplace(t *testing.T) {
+	server := startFakeServer(t, nil)
+	companion := dialFake(t, server, "com.example.app")
+	typer := companion.(TextTyper)
+
+	if err := typer.TypeText(context.Background(), "héllo 🌟", false); err != nil {
+		t.Fatalf("TypeText: %v", err)
+	}
+
+	requests := server.recorded()
+	if len(requests) != 1 {
+		t.Fatalf("recorded %d requests, want 1", len(requests))
+	}
+	request := requests[0]
+	if request.Method != "typeText" || request.Params["text"] != "héllo 🌟" || request.Params["replace"] != false {
+		t.Fatalf("typeText request = %+v", request)
+	}
+}

@@ -282,7 +282,11 @@ func (c *runnerCompanion) Uninstall(ctx context.Context, bundleID string) error 
 }
 
 func (c *runnerCompanion) InputText(ctx context.Context, text string) error {
-	_, err := c.call(ctx, "typeText", map[string]any{"text": text, "replace": true})
+	return c.TypeText(ctx, text, true)
+}
+
+func (c *runnerCompanion) TypeText(ctx context.Context, text string, replace bool) error {
+	_, err := c.call(ctx, "typeText", map[string]any{"text": text, "replace": replace})
 	return err
 }
 
