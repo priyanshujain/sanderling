@@ -601,8 +601,11 @@ func (d *Driver) WaitForIdle(ctx context.Context, _ time.Duration) error {
 		clock = SystemClock()
 	}
 	PollUntilStable(ctx, clock, func() *hierarchy.Tree {
-		dump, err := d.describeAll(ctx)
-		if err != nil {
+		dump, err := d.describeAllRaw(ctx)
+		if err != nil || dumpIsCollapsed(dump) {
+			// A collapsed dump is the bridge mid-transition; report it
+			// transitional so the streak resets and the poll waits for the
+			// real tree rather than settling on the empty shell.
 			return nil
 		}
 		mapped, err := MapHierarchy(dump, d.screenWidth, d.screenHeight)
@@ -668,23 +671,26 @@ func (d *Driver) ForegroundApp(ctx context.Context) (string, error) {
 const collapsedDumpRetries = 6
 const collapsedDumpDelay = 150 * time.Millisecond
 
-// describeAll fetches the flat accessibility dump with one-restart recovery,
-// retrying past a transient collapsed dump so callers see real UI content.
-func (d *Driver) describeAll(ctx context.Context) ([]byte, error) {
-	fetch := func() ([]byte, error) {
-		var dump []byte
-		err := d.withRecovery(ctx, func() error {
-			info, infoErr := d.companion.AccessibilityInfo(ctx)
-			if infoErr != nil {
-				return infoErr
-			}
-			dump = []byte(info)
-			return nil
-		})
-		return dump, err
-	}
+// describeAllRaw fetches the flat accessibility dump with one-restart recovery
+// and no collapse handling. The settle loop uses it: it treats a collapsed dump
+// as transitional itself, so an inner retry here would double the wait.
+func (d *Driver) describeAllRaw(ctx context.Context) ([]byte, error) {
+	var dump []byte
+	err := d.withRecovery(ctx, func() error {
+		info, infoErr := d.companion.AccessibilityInfo(ctx)
+		if infoErr != nil {
+			return infoErr
+		}
+		dump = []byte(info)
+		return nil
+	})
+	return dump, err
+}
 
-	dump, err := fetch()
+// describeAll fetches the flat accessibility dump, retrying past a transient
+// collapsed dump so one-shot reads (Snapshot, Hierarchy) see real UI content.
+func (d *Driver) describeAll(ctx context.Context) ([]byte, error) {
+	dump, err := d.describeAllRaw(ctx)
 	if err != nil {
 		return dump, err
 	}
@@ -694,7 +700,7 @@ func (d *Driver) describeAll(ctx context.Context) ([]byte, error) {
 			return dump, nil
 		case <-time.After(collapsedDumpDelay):
 		}
-		next, nextErr := fetch()
+		next, nextErr := d.describeAllRaw(ctx)
 		if nextErr != nil {
 			return dump, nil
 		}
