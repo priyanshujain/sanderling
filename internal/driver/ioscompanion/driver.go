@@ -260,12 +260,13 @@ func (d *Driver) withRecovery(ctx context.Context, call func() error) error {
 }
 
 // isConnectionError reports whether err is a dropped-connection signal that a
-// restart can recover from: a gRPC Unavailable status or an EOF.
+// restart can recover from: the transport's unavailable sentinel, a gRPC
+// Unavailable status, or an EOF.
 func isConnectionError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) || errors.Is(err, transport.ErrCompanionUnavailable) {
 		return true
 	}
 	if statusValue, ok := status.FromError(err); ok {
@@ -433,6 +434,11 @@ func (d *Driver) Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration
 }
 
 func (d *Driver) PressKey(ctx context.Context, key string) error {
+	if d.textEditor() != nil {
+		return d.withRecovery(ctx, func() error {
+			return d.textEditor().PressKey(ctx, key)
+		})
+	}
 	usage, ok := pressKeyUsage(key)
 	if !ok {
 		return fmt.Errorf("ios companion: unsupported key %q", key)
@@ -440,6 +446,16 @@ func (d *Driver) PressKey(ctx context.Context, key string) error {
 	return d.withRecovery(ctx, func() error {
 		return d.companion.SendHID(ctx, transport.KeyDown(usage), transport.KeyUp(usage))
 	})
+}
+
+// textEditor returns the companion's native text-editing capability, or nil
+// when the transport does not implement it. Resolved per call because a
+// restart replaces d.companion.
+func (d *Driver) textEditor() transport.TextEditor {
+	if editor, ok := d.companion.(transport.TextEditor); ok {
+		return editor
+	}
+	return nil
 }
 
 // pressKeyUsage maps the logical key names mobile runs emit to a HID usage.
@@ -490,6 +506,13 @@ func (d *Driver) resolveSelectorCenter(ctx context.Context, selector string) (in
 }
 
 func (d *Driver) InputText(ctx context.Context, text string) error {
+	// A text-editing companion replaces the field's content natively, which
+	// covers unicode without the pasteboard and its permission dialog.
+	if d.textEditor() != nil {
+		return d.withRecovery(ctx, func() error {
+			return d.textEditor().InputText(ctx, text)
+		})
+	}
 	// The field target is only needed for the pasteboard path. Resolving it
 	// requires a describe-all, so the fast keyboard path skips that round-trip
 	// and lets inputText send the key presses directly.
@@ -538,6 +561,11 @@ func (d *Driver) resolveInputField(ctx context.Context) fieldTarget {
 }
 
 func (d *Driver) EraseText(ctx context.Context, characterCount int) error {
+	if d.textEditor() != nil {
+		return d.withRecovery(ctx, func() error {
+			return d.textEditor().EraseText(ctx, characterCount)
+		})
+	}
 	return eraseText(ctx, d.makeRunner(), characterCount)
 }
 

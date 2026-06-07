@@ -490,3 +490,86 @@ func TestNewChildOutlivesStartup(t *testing.T) {
 		t.Fatal("spawn context still alive after Close; child lifetime leaks")
 	}
 }
+
+// fakeTextEditingCompanion extends fakeCompanion with the optional TextEditor
+// capability so routing through the native text path is testable.
+type fakeTextEditingCompanion struct {
+	fakeCompanion
+
+	inputTexts  []string
+	eraseCounts []int
+	pressedKeys []string
+}
+
+func (f *fakeTextEditingCompanion) InputText(_ context.Context, text string) error {
+	f.record("inputtext")
+	f.inputTexts = append(f.inputTexts, text)
+	return nil
+}
+
+func (f *fakeTextEditingCompanion) EraseText(_ context.Context, characterCount int) error {
+	f.record("erasetext")
+	f.eraseCounts = append(f.eraseCounts, characterCount)
+	return nil
+}
+
+func (f *fakeTextEditingCompanion) PressKey(_ context.Context, key string) error {
+	f.record("presskey")
+	f.pressedKeys = append(f.pressedKeys, key)
+	return nil
+}
+
+var _ transport.TextEditor = (*fakeTextEditingCompanion)(nil)
+
+func TestInputTextRoutesThroughTextEditor(t *testing.T) {
+	companion := &fakeTextEditingCompanion{}
+	d := newTestDriver(companion)
+	if err := d.InputText(context.Background(), "héllo 🌟"); err != nil {
+		t.Fatal(err)
+	}
+	if len(companion.inputTexts) != 1 || companion.inputTexts[0] != "héllo 🌟" {
+		t.Fatalf("inputTexts = %v, want the typed text once", companion.inputTexts)
+	}
+	for _, call := range companion.calls {
+		if call == "hid" {
+			t.Fatal("text editor path must not compose HID streams")
+		}
+	}
+}
+
+func TestEraseTextRoutesThroughTextEditor(t *testing.T) {
+	companion := &fakeTextEditingCompanion{}
+	d := newTestDriver(companion)
+	if err := d.EraseText(context.Background(), 7); err != nil {
+		t.Fatal(err)
+	}
+	if len(companion.eraseCounts) != 1 || companion.eraseCounts[0] != 7 {
+		t.Fatalf("eraseCounts = %v, want [7]", companion.eraseCounts)
+	}
+}
+
+func TestPressKeyRoutesThroughTextEditor(t *testing.T) {
+	companion := &fakeTextEditingCompanion{}
+	d := newTestDriver(companion)
+	if err := d.PressKey(context.Background(), "enter"); err != nil {
+		t.Fatal(err)
+	}
+	if len(companion.pressedKeys) != 1 || companion.pressedKeys[0] != "enter" {
+		t.Fatalf("pressedKeys = %v, want [enter]", companion.pressedKeys)
+	}
+	for _, call := range companion.calls {
+		if call == "hid" {
+			t.Fatal("text editor path must not compose HID streams")
+		}
+	}
+}
+
+func TestIsConnectionErrorRecognizesUnavailableSentinel(t *testing.T) {
+	wrapped := errors.Join(errors.New("dial tcp: connection refused"), transport.ErrCompanionUnavailable)
+	if !isConnectionError(wrapped) {
+		t.Fatal("wrapped ErrCompanionUnavailable must count as a connection error")
+	}
+	if isConnectionError(errors.New("ordinary failure")) {
+		t.Fatal("ordinary errors must not count as connection errors")
+	}
+}
