@@ -122,6 +122,19 @@ final class Server {
             let bundleIdentifier = params["bundleId"] as? String ?? currentBundleIdentifier
             try TextInput.type(text: text, replace: replace, bundleIdentifier: bundleIdentifier)
             return ["ok": true]
+        case "eraseText":
+            let count = params["count"] as? Int ?? 0
+            let bundleIdentifier = params["bundleId"] as? String ?? currentBundleIdentifier
+            try TextInput.erase(count: count, bundleIdentifier: bundleIdentifier)
+            return ["ok": true]
+        case "pressKey":
+            let key = params["key"] as? String ?? ""
+            let bundleIdentifier = params["bundleId"] as? String ?? currentBundleIdentifier
+            try TextInput.pressKey(key: key, bundleIdentifier: bundleIdentifier)
+            return ["ok": true]
+        case "appState":
+            let bundleIdentifier = params["bundleId"] as? String ?? currentBundleIdentifier
+            return ["state": AppLifecycle.state(bundleIdentifier: bundleIdentifier)]
         case "screenshot":
             return try screenshot()
         default:
