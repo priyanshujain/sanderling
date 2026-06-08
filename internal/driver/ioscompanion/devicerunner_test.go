@@ -21,6 +21,8 @@ func TestBuildForTestingArgs(t *testing.T) {
 		"-authenticationKeyPath /k/AuthKey.p8",
 		"-authenticationKeyID KID",
 		"-authenticationKeyIssuerID ISS",
+		"CODE_SIGNING_ALLOWED=YES",
+		"CODE_SIGNING_REQUIRED=YES",
 		"CODE_SIGN_STYLE=Automatic",
 		"DEVELOPMENT_TEAM=TEAM1",
 		"GENERATE_INFOPLIST_FILE=YES",

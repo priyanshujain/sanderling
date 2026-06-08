@@ -211,6 +211,11 @@ func buildForTestingArgs(projectPath, derivedDataPath string, creds signingCrede
 		"-authenticationKeyPath", creds.authKeyPath,
 		"-authenticationKeyID", creds.authKeyID,
 		"-authenticationKeyIssuerID", creds.authIssuerID,
+		// companion/project.yml disables signing for the simulator build; the
+		// device install rejects an unsigned runner (0xe8008018), so signing is
+		// re-enabled here and the team drives automatic provisioning.
+		"CODE_SIGNING_ALLOWED=YES",
+		"CODE_SIGNING_REQUIRED=YES",
 		"CODE_SIGN_STYLE=Automatic",
 		"DEVELOPMENT_TEAM=" + creds.team,
 		"GENERATE_INFOPLIST_FILE=YES",
