@@ -6,8 +6,12 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/priyanshujain/sanderling/internal/ios"
 )
 
 func TestRunDoctorChecks_AllPass(t *testing.T) {
@@ -142,15 +146,63 @@ func TestDoctorChecksFor_iOSSimulator_OmitsJava(t *testing.T) {
 	}
 }
 
-func TestDoctorChecksFor_iOSDevice_IncludesJava(t *testing.T) {
-	found := false
-	for _, c := range doctorChecksFor("ios-device") {
-		if strings.Contains(c.Name, "java") {
-			found = true
+func TestDoctorChecksFor_iOSDevice_CoversDevicePrereqs(t *testing.T) {
+	checks := doctorChecksFor("ios-device")
+	for _, c := range checks {
+		if strings.Contains(c.Name, "java") || strings.Contains(c.Name, "sidecar") {
+			t.Errorf("device checks must not include the retired %q", c.Name)
 		}
 	}
-	if !found {
-		t.Error("ios-device checks must include java for the sidecar path")
+	for _, want := range []string{"devicectl", "iproxy", "connected and paired", "signing credentials"} {
+		found := false
+		for _, c := range checks {
+			if strings.Contains(c.Name, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("ios-device checks missing %q: %+v", want, checks)
+		}
+	}
+}
+
+func TestCheckDeviceConnected(t *testing.T) {
+	original := doctorConnectedDevices
+	t.Cleanup(func() { doctorConnectedDevices = original })
+
+	doctorConnectedDevices = func(context.Context) ([]ios.Device, error) {
+		return []ios.Device{{Name: "iPhone"}}, nil
+	}
+	if err := checkDeviceConnected(context.Background()); err != nil {
+		t.Fatalf("a connected device must pass: %v", err)
+	}
+
+	doctorConnectedDevices = func(context.Context) ([]ios.Device, error) { return nil, nil }
+	if err := checkDeviceConnected(context.Background()); err == nil {
+		t.Fatal("no device must fail")
+	}
+}
+
+func TestCheckDeviceSigning_EnvAndKeyFile(t *testing.T) {
+	// The signing check defers to the driver's credential verification, which
+	// reads the same environment a real build would.
+	for _, key := range []string{"SANDERLING_IOS_TEAM", "DEVELOPMENT_TEAM", "ASC_API_KEY_PATH", "ASC_API_KEY_ID", "ASC_API_ISSUER_ID"} {
+		t.Setenv(key, "")
+	}
+	if err := checkDeviceSigning(context.Background()); err == nil {
+		t.Fatal("missing signing env must fail")
+	}
+
+	keyPath := filepath.Join(t.TempDir(), "AuthKey.p8")
+	if err := os.WriteFile(keyPath, []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SANDERLING_IOS_TEAM", "TEAM1")
+	t.Setenv("ASC_API_KEY_ID", "KID")
+	t.Setenv("ASC_API_ISSUER_ID", "ISS")
+	t.Setenv("ASC_API_KEY_PATH", keyPath)
+	if err := checkDeviceSigning(context.Background()); err != nil {
+		t.Fatalf("complete signing env with a present key must pass: %v", err)
 	}
 }
 

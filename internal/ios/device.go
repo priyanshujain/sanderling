@@ -39,6 +39,12 @@ type coreDeviceList struct {
 // canned devicectl output without invoking xcrun.
 var listDevices = coreDevices
 
+// ConnectedDevices lists the physical iOS devices devicectl reports. The doctor
+// uses it to confirm at least one device is connected and paired.
+func ConnectedDevices(ctx context.Context) ([]Device, error) {
+	return listDevices(ctx)
+}
+
 // ResolveDevice picks the physical iOS device a run drives. An empty query
 // resolves the single connected device (an error names them all when several
 // are connected). A non-empty query matches a device by name, hardware UDID, or

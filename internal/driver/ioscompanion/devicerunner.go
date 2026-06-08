@@ -75,6 +75,14 @@ func readSigningCredentials() (signingCredentials, error) {
 	return creds, nil
 }
 
+// VerifyDeviceSigning reports whether the device signing environment is complete
+// and the App Store Connect key file exists. The doctor calls it so the device
+// preflight surfaces missing credentials before a run reaches the build step.
+func VerifyDeviceSigning() error {
+	_, err := readSigningCredentials()
+	return err
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
