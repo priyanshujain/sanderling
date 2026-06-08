@@ -44,8 +44,6 @@ configurations.all {
 dependencies {
     implementation("dev.mobile:maestro-client:$maestroVersion")
     implementation("dev.mobile:maestro-utils:$maestroVersion")
-    implementation("dev.mobile:maestro-ios:$maestroVersion")
-    implementation("dev.mobile:maestro-ios-driver:$maestroVersion")
 
     implementation("io.grpc:grpc-netty-shaded:$grpcVersion")
     implementation("io.grpc:grpc-protobuf:$grpcVersion")
@@ -100,6 +98,12 @@ application {
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
     archiveFileName.set("sidecar-all.jar")
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+    // The iOS driving modules arrive transitively through maestro-client but
+    // the sidecar only drives Android, so strip the iOS UITest runner bundles
+    // and iOS-only classes from the fat JAR. Compilation keeps the full
+    // classpath; only the packaged artifact drops these.
+    exclude("driver-iphoneos/**", "driver-iPhoneSimulator/**")
+    exclude("ios/**", "xcuitest/**", "hierarchy/**")
 }
 
 // JUnit 4 (vintage) for the gRPC GrpcCleanupRule + JUnit 5 (jupiter)

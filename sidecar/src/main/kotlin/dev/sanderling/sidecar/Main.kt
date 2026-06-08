@@ -66,13 +66,9 @@ fun main(arguments: Array<String>) {
     val serial = arguments.indexOf("--serial").let { index ->
         if (index >= 0 && index + 1 < arguments.size) arguments[index + 1] else null
     }
-    val udid = arguments.indexOf("--udid").let { index ->
-        if (index >= 0 && index + 1 < arguments.size) arguments[index + 1] else null
-    }
 
     val backend: DriverBackend = when (platform) {
         "android" -> MaestroDriverBackend(serial)
-        "ios" -> IosDriverBackend(udid ?: error("--udid required for ios platform"))
         else -> StubDriverBackend(platform)
     }
     val service = DriverService(platform = platform, backend = backend)
