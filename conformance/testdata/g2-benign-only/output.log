@@ -1,0 +1,5 @@
+companion pid=4242 listening on 127.0.0.1:51000
+objc[4242]: Class FBSDKError is implemented in both /a (0x1) and /b (0x2). One of the two will be used. Which one is undefined.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+archived previous runs under runs/ERRORS_archive
+run complete

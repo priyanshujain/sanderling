@@ -47,17 +47,17 @@ func bundleIntegrationSpec(t *testing.T) string {
 
 func listSnapshots() Snapshots {
 	return Snapshots{
-		"route":          json.RawMessage(`"list"`),
-		"item_count":     json.RawMessage(`0`),
-		"has_submitted":  json.RawMessage(`false`),
+		"route":         json.RawMessage(`"list"`),
+		"item_count":    json.RawMessage(`0`),
+		"has_submitted": json.RawMessage(`false`),
 	}
 }
 
 func formSnapshots() Snapshots {
 	return Snapshots{
-		"route":          json.RawMessage(`"form"`),
-		"item_count":     json.RawMessage(`0`),
-		"has_submitted":  json.RawMessage(`false`),
+		"route":         json.RawMessage(`"form"`),
+		"item_count":    json.RawMessage(`0`),
+		"has_submitted": json.RawMessage(`false`),
 	}
 }
 

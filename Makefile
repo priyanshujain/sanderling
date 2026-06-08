@@ -8,6 +8,11 @@ BUF := buf
 GO_PACKAGES := ./...
 SIDECAR_JAR := sidecar/build/libs/sidecar-all.jar
 SIDECAR_EMBED := internal/sidecarassets/assets/sidecar-all.jar
+COMPANION_EMBED := internal/driver/ioscompanion/companionassets/assets/companion-1.1.8.tar.gz
+COMPANION_PREPARE := internal/driver/ioscompanion/companionassets/prepare.sh
+RUNNER_EMBED := internal/driver/ioscompanion/runnerassets/assets/runner-1.0.0.tar.gz
+RUNNER_PREPARE := companion/prepare.sh
+RUNNER_SRC := $(shell find companion/Sources -type f -name '*.swift' 2>/dev/null) companion/project.yml
 SIDECAR_SRC := $(shell find sidecar/src -type f \( -name '*.kt' -o -name '*.kts' \) 2>/dev/null) build.gradle.kts settings.gradle.kts
 SANDERLING_BIN := bin/sanderling
 
@@ -22,7 +27,7 @@ DOCS_TEMPLATE := docs/_template/page.html
 REPLAY_DIST := internal/replay/dist
 WEB_DIST := replay-ui/dist
 
-.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-kotlin test-spec-api web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry
+.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-companion test-kotlin test-spec-api web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry
 
 bootstrap:
 	$(GO) mod download
@@ -37,14 +42,14 @@ sidecar: $(SIDECAR_JAR)
 
 sanderling: $(SANDERLING_BIN)
 
-$(SANDERLING_BIN): $(SIDECAR_EMBED) web-build
+$(SANDERLING_BIN): $(SIDECAR_EMBED) $(COMPANION_EMBED) $(RUNNER_EMBED) web-build
 	mkdir -p bin
-	$(GO) build -tags withsidecar -o $(SANDERLING_BIN) ./cmd/sanderling
+	$(GO) build -tags "withsidecar withcompanion" -o $(SANDERLING_BIN) ./cmd/sanderling
 
 # Installs `sanderling` into $GOBIN (or $GOPATH/bin) so it's directly on PATH for
 # anyone with a standard Go toolchain setup.
-install: $(SIDECAR_EMBED) web-build
-	$(GO) install -tags withsidecar ./cmd/sanderling
+install: $(SIDECAR_EMBED) $(COMPANION_EMBED) $(RUNNER_EMBED) web-build
+	$(GO) install -tags "withsidecar withcompanion" ./cmd/sanderling
 	@dest="$$($(GO) env GOBIN)"; [ -n "$$dest" ] || dest="$$($(GO) env GOPATH)/bin"; echo "installed sanderling to $$dest"
 
 web-build:
@@ -69,6 +74,12 @@ $(SIDECAR_EMBED): $(SIDECAR_JAR)
 	mkdir -p $(dir $@)
 	cp $< $@
 
+$(COMPANION_EMBED): $(COMPANION_PREPARE)
+	$(COMPANION_PREPARE)
+
+$(RUNNER_EMBED): $(RUNNER_SRC) $(RUNNER_PREPARE)
+	$(RUNNER_PREPARE)
+
 test: test-go test-spec-api web-typecheck web-test
 
 test-go:
@@ -81,6 +92,12 @@ web-test:
 # Kept out of `test` because it needs a Chrome binary on PATH.
 test-browser:
 	$(GO) test -tags browser ./test/browser/... ./internal/driver/chrome/...
+
+# Runs the withcompanion-tagged tests (asset embedding, extraction, checksum
+# reuse) against the real companion and runner bundles. Kept out of `test`
+# because preparing the companion bundle needs the darwin toolchain.
+test-companion: $(COMPANION_EMBED) $(RUNNER_EMBED)
+	$(GO) test -tags withcompanion ./internal/driver/ioscompanion/...
 
 test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test

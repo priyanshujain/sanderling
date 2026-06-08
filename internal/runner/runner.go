@@ -935,4 +935,3 @@ const maxConsecutiveApplyFailures = 3
 func isWDADrop(err error) bool {
 	return strings.Contains(err.Error(), "WDA reconnect failed")
 }
-

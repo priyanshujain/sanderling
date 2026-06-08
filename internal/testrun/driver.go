@@ -14,14 +14,15 @@ import (
 	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/driver/chrome"
+	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion"
 	driverSidecar "github.com/priyanshujain/sanderling/internal/driver/sidecar"
-	"github.com/priyanshujain/sanderling/internal/ios"
 	"github.com/priyanshujain/sanderling/internal/sidecarassets"
 )
 
 // buildDriver creates the appropriate DeviceDriver for the platform and returns
-// a cleanup function. For web, ChromeDriver is used directly; for android/ios
-// the JVM sidecar is extracted, spawned, and dialed.
+// a cleanup function. For web, ChromeDriver is used directly. An iOS simulator
+// is driven by the native simulator companion (no JVM). Android and physical
+// iOS devices use the JVM sidecar, which is extracted, spawned, and dialed.
 func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver.DeviceDriver, func(), error) {
 	if err := Preflight(ctx, options.Platform); err != nil {
 		return nil, nil, err
@@ -29,6 +30,24 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	if options.Platform == "web" {
 		d := chrome.New()
 		return d, func() { _ = d.Terminate(context.Background()) }, nil
+	}
+
+	if options.Platform == "ios" && options.iosIsSimulator {
+		d, err := ioscompanion.New(ctx, ioscompanion.Options{
+			UniqueDeviceIdentifier: options.iosUDID,
+			BundleID:               options.BundleID,
+			AppPath:                options.IosAppPath,
+			Output:                 stdout,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("ios simulator driver: %w", err)
+		}
+		return d, d.Close, nil
+	}
+
+	// Physical iOS devices and Android use the JVM sidecar, which requires java.
+	if err := preflightDevice(options.Platform); err != nil {
+		return nil, nil, err
 	}
 
 	sidecarDirectory := os.TempDir() + "/sanderling-sidecar"
@@ -47,8 +66,8 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 		"--platform", options.Platform,
 	}
 	if options.Platform == "ios" {
-		if udid := ios.BootedUDID(ctx); udid != "" {
-			sidecarArgs = append(sidecarArgs, "--udid", udid)
+		if options.iosUDID != "" {
+			sidecarArgs = append(sidecarArgs, "--udid", options.iosUDID)
 		}
 	}
 	sidecarCommand := exec.CommandContext(ctx, "java", sidecarArgs...)

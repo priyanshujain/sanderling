@@ -32,6 +32,14 @@ node_modules/
 # `go build -tags withsidecar`. Never commit: it's ~130 MB.
 internal/sidecarassets/assets/sidecar-all.jar
 
+# Simulator companion bundle. Build artifact produced by prepare.sh before
+# `go build -tags withcompanion`. Never commit: it's ~16 MB.
+internal/driver/ioscompanion/companionassets/assets/companion-*.tar.gz
+
+# In-simulator runner bundle. Build artifact produced by companion/prepare.sh
+# before `go build -tags withcompanion`. Never commit: it's ~5 MB.
+internal/driver/ioscompanion/runnerassets/assets/runner-*.tar.gz
+
 # spec-api compiled output
 pkg/spec/dist/
 
@@ -47,6 +55,10 @@ pkg/spec/dist/
 replay-ui/node_modules/
 replay-ui/dist/
 replay-ui/.vite/
+
+# Simulator runner generated project and build output (xcodegen artifacts)
+companion/CompanionRunner.xcodeproj/
+companion/build/
 
 # folio-web frontend
 examples/folio-web/node_modules/

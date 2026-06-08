@@ -23,15 +23,21 @@ const sidecarStartupTimeout = 30 * time.Second
 
 // Options are the parameters for a single test pipeline run.
 type Options struct {
-	Spec      string
-	BundleID  string
-	Platform  string
-	AVD       string
-	IosDevice string
-	Duration  time.Duration
-	Seed      int64
-	Output    string
-	ClearData bool
+	Spec       string
+	BundleID   string
+	Platform   string
+	AVD        string
+	IosDevice  string
+	IosAppPath string
+	Duration   time.Duration
+	Seed       int64
+	Output     string
+	ClearData  bool
+
+	// iosUDID and iosIsSimulator are filled by Execute after resolving the iOS
+	// target, then read by buildDriver to choose the companion or sidecar path.
+	iosUDID        string
+	iosIsSimulator bool
 }
 
 // Execute runs the full test pipeline: bundle, launch app, verify properties.
@@ -42,9 +48,30 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 			return err
 		}
 	case "ios":
-		if err := ios.EnsureSimulator(ctx, options.IosDevice, stdout); err != nil {
-			return err
+		udid, isSimulator, err := ios.ResolveTarget(ctx, options.IosDevice)
+		if err != nil {
+			// No query and nothing booted: keep boot-first behavior, then resolve
+			// the simulator that EnsureSimulator just brought up.
+			if options.IosDevice == "" {
+				if bootErr := ios.EnsureSimulator(ctx, "", stdout); bootErr != nil {
+					return bootErr
+				}
+				udid, isSimulator, err = ios.ResolveTarget(ctx, "")
+			}
+			if err != nil {
+				return err
+			}
+		} else if isSimulator {
+			if err := ios.EnsureSimulator(ctx, options.IosDevice, stdout); err != nil {
+				return err
+			}
+			udid, isSimulator, err = ios.ResolveTarget(ctx, options.IosDevice)
+			if err != nil {
+				return err
+			}
 		}
+		options.iosUDID = udid
+		options.iosIsSimulator = isSimulator
 	}
 	prep, err := prepareBundleInputs(options)
 	if err != nil {

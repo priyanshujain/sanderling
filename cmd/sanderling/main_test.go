@@ -181,6 +181,31 @@ func TestParseTestArgs_IosDeviceFlag(t *testing.T) {
 	}
 }
 
+func TestParseTestArgs_IosAppPathFlag(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example.app",
+		"--platform", "ios",
+		"--ios-app-path", "/tmp/build/iosApp.app",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.iosAppPath != "/tmp/build/iosApp.app" {
+		t.Errorf("expected iosAppPath=/tmp/build/iosApp.app, got %q", options.iosAppPath)
+	}
+}
+
+func TestParseTestArgs_IosAppPathOptional(t *testing.T) {
+	options, err := parseTestArgs([]string{"--spec", "s.ts", "--bundle-id", "com.example.app"}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.iosAppPath != "" {
+		t.Errorf("iosAppPath default: got %q, want empty", options.iosAppPath)
+	}
+}
+
 func TestRun_TestSubcommand_PipelineErrors(t *testing.T) {
 	// Web skips host-dependent device boot and bundles first, so a missing spec
 	// deterministically surfaces a bundle-resolution error. This proves the

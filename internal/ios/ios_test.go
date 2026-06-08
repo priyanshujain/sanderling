@@ -208,6 +208,125 @@ func TestEnsureSimulator_BootsPickedSimulator(t *testing.T) {
 	}
 }
 
+func swapResolveSeams(t *testing.T) {
+	t.Helper()
+	origBootedAll, origAvailable := listBootedAll, listAvailable
+	t.Cleanup(func() { listBootedAll, listAvailable = origBootedAll, origAvailable })
+}
+
+func TestResolveTarget_ExplicitMatchesBootedSimulator(t *testing.T) {
+	swapResolveSeams(t)
+	listBootedAll = func(context.Context) ([]simDevice, error) {
+		return []simDevice{{UDID: "booted-udid", Name: "iPhone 15", State: "Booted", IsAvailable: true}}, nil
+	}
+	listAvailable = func(context.Context) ([]simDevice, error) {
+		t.Fatal("should not list available when a booted simulator matches")
+		return nil, nil
+	}
+	udid, isSimulator, err := ResolveTarget(context.Background(), "iPhone 15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if udid != "booted-udid" || !isSimulator {
+		t.Errorf("got (%q, %v), want (booted-udid, true)", udid, isSimulator)
+	}
+}
+
+func TestResolveTarget_ExplicitMatchesAvailableByUDID(t *testing.T) {
+	swapResolveSeams(t)
+	listBootedAll = func(context.Context) ([]simDevice, error) { return nil, nil }
+	listAvailable = func(context.Context) ([]simDevice, error) {
+		return []simDevice{{UDID: "shutdown-udid", Name: "iPhone 16", IsAvailable: true}}, nil
+	}
+	udid, isSimulator, err := ResolveTarget(context.Background(), "shutdown-udid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if udid != "shutdown-udid" || !isSimulator {
+		t.Errorf("got (%q, %v), want (shutdown-udid, true)", udid, isSimulator)
+	}
+}
+
+func TestResolveTarget_UnknownQueryResolvesAsPhysicalDevice(t *testing.T) {
+	swapResolveSeams(t)
+	listBootedAll = func(context.Context) ([]simDevice, error) { return nil, nil }
+	listAvailable = func(context.Context) ([]simDevice, error) {
+		return []simDevice{{UDID: "sim-udid", Name: "iPhone 16", IsAvailable: true}}, nil
+	}
+	udid, isSimulator, err := ResolveTarget(context.Background(), "00008110-physical-device-udid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if udid != "00008110-physical-device-udid" || isSimulator {
+		t.Errorf("got (%q, %v), want (00008110-physical-device-udid, false)", udid, isSimulator)
+	}
+}
+
+func TestResolveTarget_NoQuerySingleBooted(t *testing.T) {
+	swapResolveSeams(t)
+	listBootedAll = func(context.Context) ([]simDevice, error) {
+		return []simDevice{{UDID: "only-booted", Name: "iPhone 15", State: "Booted", IsAvailable: true}}, nil
+	}
+	udid, isSimulator, err := ResolveTarget(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if udid != "only-booted" || !isSimulator {
+		t.Errorf("got (%q, %v), want (only-booted, true)", udid, isSimulator)
+	}
+}
+
+func TestResolveTarget_NoQueryZeroBootedErrors(t *testing.T) {
+	swapResolveSeams(t)
+	listBootedAll = func(context.Context) ([]simDevice, error) { return nil, nil }
+	_, _, err := ResolveTarget(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error when no simulator is booted")
+	}
+}
+
+func TestResolveTarget_NoQueryMultipleBootedErrors(t *testing.T) {
+	swapResolveSeams(t)
+	listBootedAll = func(context.Context) ([]simDevice, error) {
+		return []simDevice{
+			{UDID: "udid-a", Name: "iPhone 15", State: "Booted", IsAvailable: true},
+			{UDID: "udid-b", Name: "iPad Pro", State: "Booted", IsAvailable: true},
+		}, nil
+	}
+	_, _, err := ResolveTarget(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected ambiguity error for multiple booted simulators")
+	}
+	message := err.Error()
+	for _, want := range []string{"--ios-device", "iPhone 15", "udid-a", "iPad Pro", "udid-b"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("ambiguity error missing %q: %v", want, message)
+		}
+	}
+}
+
+func TestResolveTarget_BootedListError(t *testing.T) {
+	swapResolveSeams(t)
+	listBootedAll = func(context.Context) ([]simDevice, error) { return nil, errors.New("xcrun blew up") }
+	if _, _, err := ResolveTarget(context.Background(), ""); err == nil {
+		t.Fatal("expected booted-list error to propagate")
+	}
+}
+
+func TestParseBootedDevices_CollectsAllBooted(t *testing.T) {
+	got, err := parseBootedDevices([]byte(`{"devices":{"r":[
+		{"udid":"a","state":"Booted","name":"iPhone 15","isAvailable":true},
+		{"udid":"b","state":"Shutdown","name":"iPad","isAvailable":true},
+		{"udid":"c","state":"Booted","name":"iPhone 16","isAvailable":true}
+	]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d booted, want 2", len(got))
+	}
+}
+
 func TestEnsureSimulator_BootedListError(t *testing.T) {
 	origListBooted := listBooted
 	t.Cleanup(func() { listBooted = origListBooted })

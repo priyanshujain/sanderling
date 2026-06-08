@@ -33,6 +33,8 @@ func doctorChecksFor(platform string) []doctorCheck {
 		return androidChecks()
 	case "ios":
 		return iosChecks()
+	case "ios-device":
+		return append(iosChecks(), iosDeviceChecks()...)
 	case "all":
 		return allChecks()
 	default:
@@ -55,19 +57,30 @@ func androidChecks() []doctorCheck {
 	}
 }
 
+// iosChecks covers the simulator path, which the native companion drives with
+// no JVM. A simulator host with no Java still passes. Physical-device runs
+// additionally need java and the sidecar JAR, covered by iosDeviceChecks and
+// surfaced through the "all" union.
 func iosChecks() []doctorCheck {
 	return []doctorCheck{
-		{Name: "xcrun on PATH", Run: checkExecutableOnPath("xcrun")},
-		{Name: "simctl on PATH", Run: checkExecutableOnPath("simctl")},
-		{Name: "java 17+ on PATH", Run: checkJavaVersion},
-		{Name: "sidecar JAR is real (not placeholder)", Run: checkSidecarJAR},
+		{Name: "xcrun on PATH (ios simulator)", Run: checkExecutableOnPath("xcrun")},
+		{Name: "simctl available (ios simulator)", Run: checkSimctl},
+	}
+}
+
+// iosDeviceChecks covers the extra prerequisites a physical iOS device needs:
+// the JVM and a real sidecar JAR for the sidecar driver path.
+func iosDeviceChecks() []doctorCheck {
+	return []doctorCheck{
+		{Name: "java 17+ on PATH (ios physical device)", Run: checkJavaVersion},
+		{Name: "sidecar JAR is real (ios physical device)", Run: checkSidecarJAR},
 	}
 }
 
 func allChecks() []doctorCheck {
 	seen := map[string]bool{}
 	var combined []doctorCheck
-	for _, group := range [][]doctorCheck{webChecks(), androidChecks(), iosChecks()} {
+	for _, group := range [][]doctorCheck{webChecks(), androidChecks(), iosChecks(), iosDeviceChecks()} {
 		for _, c := range group {
 			if seen[c.Name] {
 				continue
@@ -98,6 +111,15 @@ func checkChromiumLaunch(ctx context.Context) error {
 	return nil
 }
 
+// checkSimctl exercises `xcrun simctl help`: simctl is an xcrun subcommand,
+// not a standalone binary, so a PATH lookup can never find it.
+func checkSimctl(ctx context.Context) error {
+	if err := exec.CommandContext(ctx, "xcrun", "simctl", "help").Run(); err != nil {
+		return fmt.Errorf("xcrun simctl help: %w", err)
+	}
+	return nil
+}
+
 func checkSidecarJAR(_ context.Context) error {
 	if sidecarassets.IsPlaceholder() {
 		return fmt.Errorf("placeholder JAR embedded; run `make sidecar && make sanderling` to embed the real fat JAR")
@@ -116,15 +138,15 @@ func parseDoctorArgs(args []string, stderr io.Writer) (doctorOptions, error) {
 	flagSet := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	flagSet.SetOutput(stderr)
 	var options doctorOptions
-	flagSet.StringVar(&options.platform, "platform", "all", "target platform: web, android, ios, all")
+	flagSet.StringVar(&options.platform, "platform", "all", "target platform: web, android, ios, ios-device, all")
 	if err := flagSet.Parse(args); err != nil {
 		return doctorOptions{}, err
 	}
 	switch options.platform {
-	case "web", "android", "ios", "all":
+	case "web", "android", "ios", "ios-device", "all":
 		return options, nil
 	default:
-		return doctorOptions{}, fmt.Errorf("unsupported platform: %q (web, android, ios, all)", options.platform)
+		return doctorOptions{}, fmt.Errorf("unsupported platform: %q (web, android, ios, ios-device, all)", options.platform)
 	}
 }
 
