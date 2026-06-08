@@ -125,6 +125,16 @@ type Driver struct {
 	dialRunner    func(address string) (transport.Companion, error)
 	hybrid        bool
 
+	// Device-mode fields. On the physical-device path d.companion is the runner
+	// dialed over a usbmux tunnel, hybrid is false, and runnerClient is nil.
+	// coreDeviceID feeds devicectl; tunnelChild is the iproxy process forwarding
+	// the host loopback port to the runner's device-side port.
+	deviceMode        bool
+	coreDeviceID      string
+	tunnelChild       *exec.Cmd
+	spawnTunnel       func(ctx context.Context, hardwareUDID, localPort, devicePort string) (*exec.Cmd, error)
+	pickDeviceAddress func() (string, error)
+
 	// processContext owns the companion child's lifetime: it is derived from
 	// New's context (so a canceled run still reaps the child) and canceled by
 	// Close. Spawning under a startup-scoped context would SIGTERM the child
@@ -985,9 +995,19 @@ func (d *Driver) Close() {
 		d.runnerClient = nil
 	}
 	d.stopRunnerChild()
+	d.stopTunnelChild()
 	if d.processCancel != nil {
 		d.processCancel()
 	}
+}
+
+// stopTunnelChild terminates the iproxy usbmux tunnel on the device path.
+// SIGTERM lets it close its forwarded sockets before exit; a nil child (the
+// simulator path) is a no-op.
+func (d *Driver) stopTunnelChild() {
+	child := d.tunnelChild
+	d.tunnelChild = nil
+	stopProcess(child)
 }
 
 // stopChild terminates the companion child gracefully (SIGTERM, grace window,
