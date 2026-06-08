@@ -21,8 +21,9 @@ import (
 
 // buildDriver creates the appropriate DeviceDriver for the platform and returns
 // a cleanup function. For web, ChromeDriver is used directly. An iOS simulator
-// is driven by the native simulator companion (no JVM). Android and physical
-// iOS devices use the JVM sidecar, which is extracted, spawned, and dialed.
+// is driven by the native simulator companion (no JVM). Android uses the JVM
+// sidecar, which is extracted, spawned, and dialed. Physical iOS devices are
+// not yet supported.
 func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver.DeviceDriver, func(), error) {
 	if err := Preflight(ctx, options.Platform); err != nil {
 		return nil, nil, err
@@ -45,7 +46,11 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 		return d, d.Close, nil
 	}
 
-	// Physical iOS devices and Android use the JVM sidecar, which requires java.
+	if options.Platform == "ios" {
+		return nil, nil, fmt.Errorf("physical-device iOS is not yet supported; run against a simulator instead")
+	}
+
+	// Android uses the JVM sidecar, which requires java.
 	if err := preflightDevice(options.Platform); err != nil {
 		return nil, nil, err
 	}
@@ -64,11 +69,6 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	sidecarArgs := []string{"-jar", jarPath,
 		"--port", strconv.Itoa(sidecarPort),
 		"--platform", options.Platform,
-	}
-	if options.Platform == "ios" {
-		if options.iosUDID != "" {
-			sidecarArgs = append(sidecarArgs, "--udid", options.iosUDID)
-		}
 	}
 	sidecarCommand := exec.CommandContext(ctx, "java", sidecarArgs...)
 	sidecarCommand.Stdout = stdout
