@@ -13,7 +13,6 @@ import (
 	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/driver"
-	"github.com/priyanshujain/sanderling/internal/ios"
 	"github.com/priyanshujain/sanderling/internal/runner"
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
@@ -34,10 +33,13 @@ type Options struct {
 	Output     string
 	ClearData  bool
 
-	// iosUDID and iosIsSimulator are filled by Execute after resolving the iOS
-	// target, then read by buildDriver to choose the companion or sidecar path.
-	iosUDID        string
-	iosIsSimulator bool
+	// iosUDID, iosIsSimulator, and iosCoreDeviceID are filled by Execute after
+	// resolving the iOS target, then read by buildDriver to choose the simulator
+	// companion or the physical-device driver. On the device path iosUDID is the
+	// hardware UDID and iosCoreDeviceID is the CoreDevice id.
+	iosUDID         string
+	iosIsSimulator  bool
+	iosCoreDeviceID string
 }
 
 // Execute runs the full test pipeline: bundle, launch app, verify properties.
@@ -48,30 +50,11 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 			return err
 		}
 	case "ios":
-		udid, isSimulator, err := ios.ResolveTarget(ctx, options.IosDevice)
+		resolved, err := resolveIOSTarget(ctx, options, stdout)
 		if err != nil {
-			// No query and nothing booted: keep boot-first behavior, then resolve
-			// the simulator that EnsureSimulator just brought up.
-			if options.IosDevice == "" {
-				if bootErr := ios.EnsureSimulator(ctx, "", stdout); bootErr != nil {
-					return bootErr
-				}
-				udid, isSimulator, err = ios.ResolveTarget(ctx, "")
-			}
-			if err != nil {
-				return err
-			}
-		} else if isSimulator {
-			if err := ios.EnsureSimulator(ctx, options.IosDevice, stdout); err != nil {
-				return err
-			}
-			udid, isSimulator, err = ios.ResolveTarget(ctx, options.IosDevice)
-			if err != nil {
-				return err
-			}
+			return err
 		}
-		options.iosUDID = udid
-		options.iosIsSimulator = isSimulator
+		options = resolved
 	}
 	prep, err := prepareBundleInputs(options)
 	if err != nil {

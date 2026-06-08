@@ -16,14 +16,75 @@ import (
 	"github.com/priyanshujain/sanderling/internal/driver/chrome"
 	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion"
 	driverSidecar "github.com/priyanshujain/sanderling/internal/driver/sidecar"
+	"github.com/priyanshujain/sanderling/internal/ios"
 	"github.com/priyanshujain/sanderling/internal/sidecarassets"
 )
 
+// iOS resolution seams: package-level so routing tests substitute canned
+// resolvers instead of shelling out to xcrun.
+var (
+	iosResolveTarget   = ios.ResolveTarget
+	iosResolveDevice   = ios.ResolveDevice
+	iosEnsureSimulator = ios.EnsureSimulator
+)
+
+// resolveIOSTarget decides whether a run drives a simulator or a physical
+// device and fills the iOS fields on Options. A simulator target is booted if
+// needed; a physical-device target is resolved to its hardware UDID and
+// CoreDevice id via devicectl.
+func resolveIOSTarget(ctx context.Context, options Options, stdout io.Writer) (Options, error) {
+	udid, isSimulator, err := iosResolveTarget(ctx, options.IosDevice)
+	if err != nil {
+		// No query and nothing booted: keep boot-first behavior, then resolve
+		// the simulator that EnsureSimulator just brought up.
+		if options.IosDevice == "" {
+			if bootErr := iosEnsureSimulator(ctx, "", stdout); bootErr != nil {
+				return options, bootErr
+			}
+			udid, isSimulator, err = iosResolveTarget(ctx, "")
+		}
+		if err != nil {
+			return options, err
+		}
+	} else if isSimulator {
+		if err := iosEnsureSimulator(ctx, options.IosDevice, stdout); err != nil {
+			return options, err
+		}
+		udid, isSimulator, err = iosResolveTarget(ctx, options.IosDevice)
+		if err != nil {
+			return options, err
+		}
+	}
+	options.iosUDID = udid
+	options.iosIsSimulator = isSimulator
+	if !isSimulator {
+		device, err := iosResolveDevice(ctx, options.IosDevice)
+		if err != nil {
+			return options, err
+		}
+		options.iosUDID = device.HardwareUDID
+		options.iosCoreDeviceID = device.CoreDeviceID
+		fmt.Fprintf(stdout, "using device: %s (udid %s, id %s)\n", device.Name, device.HardwareUDID, device.CoreDeviceID)
+	}
+	return options, nil
+}
+
+// newDeviceDriver constructs the physical-device iOS driver and its cleanup. A
+// seam so routing tests assert the resolved identifiers reach DeviceOptions
+// without building or spawning a real runner.
+var newDeviceDriver = func(ctx context.Context, options ioscompanion.DeviceOptions) (driver.DeviceDriver, func(), error) {
+	d, err := ioscompanion.NewDevice(ctx, options)
+	if err != nil {
+		return nil, nil, err
+	}
+	return d, d.Close, nil
+}
+
 // buildDriver creates the appropriate DeviceDriver for the platform and returns
 // a cleanup function. For web, ChromeDriver is used directly. An iOS simulator
-// is driven by the native simulator companion (no JVM). Android uses the JVM
-// sidecar, which is extracted, spawned, and dialed. Physical iOS devices are
-// not yet supported.
+// is driven by the native simulator companion (no JVM). A physical iOS device
+// is driven runner-only over a usbmux tunnel. Android uses the JVM sidecar,
+// which is extracted, spawned, and dialed.
 func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver.DeviceDriver, func(), error) {
 	if err := Preflight(ctx, options.Platform); err != nil {
 		return nil, nil, err
@@ -47,7 +108,17 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	}
 
 	if options.Platform == "ios" {
-		return nil, nil, fmt.Errorf("physical-device iOS is not yet supported; run against a simulator instead")
+		d, cleanup, err := newDeviceDriver(ctx, ioscompanion.DeviceOptions{
+			HardwareUDID: options.iosUDID,
+			CoreDeviceID: options.iosCoreDeviceID,
+			BundleID:     options.BundleID,
+			AppPath:      options.IosAppPath,
+			Output:       stdout,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("ios device driver: %w", err)
+		}
+		return d, cleanup, nil
 	}
 
 	// Android uses the JVM sidecar, which requires java.
