@@ -13,7 +13,7 @@ COMPANION_PREPARE := internal/driver/ioscompanion/companionassets/prepare.sh
 RUNNER_EMBED := internal/driver/ioscompanion/runnerassets/assets/runner-1.0.0.tar.gz
 RUNNER_PREPARE := companion/prepare.sh
 RUNNER_SRC := $(shell find companion/Sources -type f -name '*.swift' 2>/dev/null) companion/project.yml
-SIDECAR_SRC := $(shell find sidecar/src -type f \( -name '*.kt' -o -name '*.kts' \) 2>/dev/null) build.gradle.kts settings.gradle.kts
+SIDECAR_SRC := $(shell find sidecar/src -type f \( -name '*.kt' -o -name '*.kts' \) 2>/dev/null) sidecar/build.gradle.kts build.gradle.kts settings.gradle.kts
 SANDERLING_BIN := bin/sanderling
 
 DOCS_SRC      := $(shell find docs -type f -name '*.md' -not -path 'docs/_*')
