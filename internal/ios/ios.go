@@ -79,8 +79,8 @@ func BootedUDID(ctx context.Context) string {
 // available) resolves to that simulator. With no query, exactly one booted
 // simulator resolves to it; multiple booted simulators is an error that lists
 // them and asks the caller to pass --ios-device. A query that matches no
-// simulator resolves as a physical device (udid = query, simulator false) so
-// the sidecar path drives it.
+// simulator resolves as a physical device (udid = query, simulator false),
+// which the caller then resolves through ResolveDevice for the device driver.
 func ResolveTarget(ctx context.Context, query string) (udid string, isSimulator bool, err error) {
 	if query != "" {
 		booted, err := listBootedAll(ctx)
