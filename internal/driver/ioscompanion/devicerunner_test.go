@@ -147,6 +147,25 @@ func TestReadSigningCredentialsAcceptsPresentKey(t *testing.T) {
 	}
 }
 
+func TestReadSigningCredentialsResolvesRelativeKeyPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile("AuthKey.p8", []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envTeam, "TEAM1")
+	t.Setenv(envAuthKeyID, "KID")
+	t.Setenv(envAuthIssuer, "ISS")
+	t.Setenv(envAuthKeyPath, "AuthKey.p8")
+	creds, err := readSigningCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(creds.authKeyPath) {
+		t.Fatalf("authKeyPath = %q, want an absolute path for xcodebuild", creds.authKeyPath)
+	}
+}
+
 func TestSourceHashChangesWithSources(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "Sources"), 0o755); err != nil {

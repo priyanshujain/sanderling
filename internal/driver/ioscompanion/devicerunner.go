@@ -67,10 +67,14 @@ func readSigningCredentials() (signingCredentials, error) {
 	if len(missing) > 0 {
 		return creds, fmt.Errorf("device signing requires environment variables: %s", strings.Join(missing, ", "))
 	}
-	if creds.authKeyPath != "" {
-		if _, err := os.Stat(creds.authKeyPath); err != nil {
-			return creds, fmt.Errorf("App Store Connect key not found at %s: %w", creds.authKeyPath, err)
-		}
+	// xcodebuild's -authenticationKeyPath demands an absolute path, but .env
+	// files commonly carry a repo-relative one. Resolve it against the working
+	// directory before the stat so a relative key still works.
+	if absolute, err := filepath.Abs(creds.authKeyPath); err == nil {
+		creds.authKeyPath = absolute
+	}
+	if _, err := os.Stat(creds.authKeyPath); err != nil {
+		return creds, fmt.Errorf("App Store Connect key not found at %s: %w", creds.authKeyPath, err)
 	}
 	return creds, nil
 }
