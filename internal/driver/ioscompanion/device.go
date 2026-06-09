@@ -23,7 +23,7 @@ import (
 // carried here: realSpawnDeviceRunner reads them from the environment at the
 // point of use so secrets never reach the Options struct or run artifacts.
 type DeviceOptions struct {
-	// HardwareUDID feeds xcodebuild -destination and iproxy -u.
+	// HardwareUDID feeds xcodebuild -destination and the usbmux device match.
 	HardwareUDID string
 	// CoreDeviceID feeds devicectl install/uninstall.
 	CoreDeviceID string
@@ -39,7 +39,7 @@ type DeviceOptions struct {
 	// Test seams. Production leaves them nil and NewDevice wires the real
 	// build/spawn/tunnel/dial.
 	spawnRunner func(ctx context.Context, address string) (*exec.Cmd, error)
-	spawnTunnel func(ctx context.Context, hardwareUDID, localPort, devicePort string) (*exec.Cmd, error)
+	startTunnel func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
 	dialRunner  func(address string) (transport.Companion, error)
 	pickAddress func() (string, error)
 }
@@ -80,13 +80,13 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 		deviceMode:               true,
 		hybrid:                   false,
 		spawnRunner:              options.spawnRunner,
-		spawnTunnel:              options.spawnTunnel,
+		startTunnel:              options.startTunnel,
 	}
 	if d.spawnRunner == nil {
 		d.spawnRunner = d.realSpawnDeviceRunner
 	}
-	if d.spawnTunnel == nil {
-		d.spawnTunnel = spawnTunnel
+	if d.startTunnel == nil {
+		d.startTunnel = startUsbmuxTunnel
 	}
 	d.dialRunner = options.dialRunner
 	if d.dialRunner == nil {
@@ -147,25 +147,27 @@ func (d *Driver) bringUpDevice(ctx context.Context) error {
 	}
 	d.runnerChild = runnerChild
 
-	tunnelChild, err := d.spawnTunnel(d.processContext, d.udid, port, port)
+	// The forwarder listens on the host loopback port and bridges to the same
+	// port number on the device, where the runner listens.
+	tunnel, err := d.startTunnel(d.processContext, d.udid, address, port)
 	if err != nil {
 		d.stopRunnerChild()
-		return fmt.Errorf("spawn tunnel: %w", err)
+		return fmt.Errorf("start tunnel: %w", err)
 	}
-	d.tunnelChild = tunnelChild
+	d.tunnel = tunnel
 
 	startupCtx, cancel := context.WithTimeout(ctx, deviceStartupTimeout)
 	defer cancel()
 
 	if err := waitForListener(startupCtx, address); err != nil {
-		d.stopTunnelChild()
+		d.stopTunnel()
 		d.stopRunnerChild()
 		return fmt.Errorf("device runner listener: %w", err)
 	}
 
 	companion, err := d.dialRunner(address)
 	if err != nil {
-		d.stopTunnelChild()
+		d.stopTunnel()
 		d.stopRunnerChild()
 		return fmt.Errorf("dial device runner: %w", err)
 	}
@@ -173,7 +175,7 @@ func (d *Driver) bringUpDevice(ctx context.Context) error {
 
 	if err := d.waitForHealth(startupCtx); err != nil {
 		_ = companion.Close()
-		d.stopTunnelChild()
+		d.stopTunnel()
 		d.stopRunnerChild()
 		return fmt.Errorf("device runner health: %w", err)
 	}
@@ -189,7 +191,7 @@ func (d *Driver) respawnDevice(ctx context.Context) error {
 		_ = d.companion.Close()
 	}
 	d.stopRunnerChild()
-	d.stopTunnelChild()
+	d.stopTunnel()
 	return d.bringUpDevice(ctx)
 }
 

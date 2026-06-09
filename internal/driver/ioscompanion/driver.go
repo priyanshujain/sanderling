@@ -127,12 +127,12 @@ type Driver struct {
 
 	// Device-mode fields. On the physical-device path d.companion is the runner
 	// dialed over a usbmux tunnel, hybrid is false, and runnerClient is nil.
-	// coreDeviceID feeds devicectl; tunnelChild is the iproxy process forwarding
-	// the host loopback port to the runner's device-side port.
+	// coreDeviceID feeds devicectl; tunnel is the in-process usbmux forwarder
+	// bridging the host loopback port to the runner's device-side port.
 	deviceMode        bool
 	coreDeviceID      string
-	tunnelChild       *exec.Cmd
-	spawnTunnel       func(ctx context.Context, hardwareUDID, localPort, devicePort string) (*exec.Cmd, error)
+	tunnel            io.Closer
+	startTunnel       func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
 	pickDeviceAddress func() (string, error)
 
 	// processContext owns the companion child's lifetime: it is derived from
@@ -995,19 +995,21 @@ func (d *Driver) Close() {
 		d.runnerClient = nil
 	}
 	d.stopRunnerChild()
-	d.stopTunnelChild()
+	d.stopTunnel()
 	if d.processCancel != nil {
 		d.processCancel()
 	}
 }
 
-// stopTunnelChild terminates the iproxy usbmux tunnel on the device path.
-// SIGTERM lets it close its forwarded sockets before exit; a nil child (the
-// simulator path) is a no-op.
-func (d *Driver) stopTunnelChild() {
-	child := d.tunnelChild
-	d.tunnelChild = nil
-	stopProcess(child)
+// stopTunnel closes the in-process usbmux forwarder on the device path. Closing
+// its listener ends the accept loop and lets the open bridges drain; a nil
+// tunnel (the simulator path) is a no-op.
+func (d *Driver) stopTunnel() {
+	tunnel := d.tunnel
+	d.tunnel = nil
+	if tunnel != nil {
+		_ = tunnel.Close()
+	}
 }
 
 // stopChild terminates the companion child gracefully (SIGTERM, grace window,
