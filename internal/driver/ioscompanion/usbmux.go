@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,16 @@ import (
 // usbmuxdSocket is the macOS usbmuxd unix socket. It is part of the base OS, not
 // an installed dependency.
 const usbmuxdSocket = "/var/run/usbmuxd"
+
+// VerifyUsbmuxdSocket reports whether the macOS usbmuxd socket is present. The
+// doctor calls it so the device preflight confirms the tunnel's transport
+// before a run reaches the build step.
+func VerifyUsbmuxdSocket() error {
+	if _, err := os.Stat(usbmuxdSocket); err != nil {
+		return fmt.Errorf("usbmuxd socket not found at %s: %w", usbmuxdSocket, err)
+	}
+	return nil
+}
 
 // usbmux message framing: a 16-byte little-endian header (length including the
 // header, protocol version, payload type, request tag) precedes an XML plist.

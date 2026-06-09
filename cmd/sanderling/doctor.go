@@ -134,6 +134,7 @@ func checkSimctl(ctx context.Context) error {
 var (
 	doctorConnectedDevices = ios.ConnectedDevices
 	doctorVerifySigning    = ioscompanion.VerifyDeviceSigning
+	doctorVerifyUsbmuxd    = ioscompanion.VerifyUsbmuxdSocket
 )
 
 // checkDevicectl exercises `xcrun devicectl --version`: devicectl is an xcrun
@@ -145,17 +146,10 @@ func checkDevicectl(ctx context.Context) error {
 	return nil
 }
 
-// usbmuxdSocketPath is the macOS usbmuxd unix socket. It ships with the OS, so
-// the device tunnel needs nothing installed.
-const usbmuxdSocketPath = "/var/run/usbmuxd"
-
 // checkUsbmuxd confirms the macOS usbmuxd socket is present: the native device
 // tunnel speaks to it directly instead of shelling out to a third-party client.
 func checkUsbmuxd(_ context.Context) error {
-	if _, err := os.Stat(usbmuxdSocketPath); err != nil {
-		return fmt.Errorf("usbmuxd socket not found at %s: %w", usbmuxdSocketPath, err)
-	}
-	return nil
+	return doctorVerifyUsbmuxd()
 }
 
 // checkDeviceConnected confirms at least one physical iOS device is connected
