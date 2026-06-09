@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -92,9 +91,9 @@ func VerifyDeviceSigning() error {
 }
 
 // realSpawnDeviceRunner regenerates the runner project, builds it for the device
-// (skipping when the cached build matches the current sources), injects the
-// session port into the device xctestrun, and spawns the test session that hosts
-// the runner on the device. address carries the host loopback port, reused as
+// (skipping when the cached build matches the current sources), and spawns the
+// test session that hosts the runner on the device, passing the session port via
+// TEST_RUNNER_COMPANION_PORT. address carries the host loopback port, reused as
 // the device-side COMPANION_PORT.
 func (d *Driver) realSpawnDeviceRunner(ctx context.Context, address string) (*exec.Cmd, error) {
 	_, port, err := net.SplitHostPort(address)
@@ -123,9 +122,6 @@ func (d *Driver) realSpawnDeviceRunner(ctx context.Context, address string) (*ex
 	if err != nil {
 		return nil, err
 	}
-	if err := injectCompanionPort(ctx, xctestrunPath, port); err != nil {
-		return nil, fmt.Errorf("inject companion port: %w", err)
-	}
 
 	logPath := filepath.Join(derivedDataPath, "device-session-"+port+".log")
 	logFile, err := os.Create(logPath)
@@ -139,11 +135,15 @@ func (d *Driver) realSpawnDeviceRunner(ctx context.Context, address string) (*ex
 	command.Stderr = logFile
 	// Minimal environment: the session can echo its environment into the run
 	// log, so secrets in the parent environment must not reach it. Signing is
-	// passed by flag (a key-file path), not env.
+	// passed by flag (a key-file path), not env. xcodebuild forwards any
+	// TEST_RUNNER_-prefixed var into the runner with the prefix stripped, so the
+	// non-secret COMPANION_PORT reaches the device that way instead of a plist
+	// patch.
 	command.Env = []string{
 		"HOME=" + os.Getenv("HOME"),
 		"PATH=/usr/bin:/bin",
 		"TMPDIR=" + os.TempDir(),
+		"TEST_RUNNER_COMPANION_PORT=" + port,
 	}
 	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
 	command.WaitDelay = shutdownGrace
@@ -253,69 +253,6 @@ func locateDeviceXctestrun(derivedDataPath string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no xctestrun under %s", products)
-}
-
-// injectCompanionPort sets COMPANION_PORT in the runner's environment inside the
-// device xctestrun. The device xctestrun has no port placeholder and its
-// test-target dict name embeds the SDK, so the name is parsed from the plist and
-// the key is set (created when absent).
-func injectCompanionPort(ctx context.Context, xctestrunPath, port string) error {
-	jsonBytes, err := plistAsJSON(ctx, xctestrunPath)
-	if err != nil {
-		return err
-	}
-	target, err := testTargetNameFromJSON(jsonBytes)
-	if err != nil {
-		return err
-	}
-	keyPath := ":" + target + ":EnvironmentVariables:COMPANION_PORT"
-	// Set updates an existing key; when the key is absent (the common device
-	// case) Set fails and Add creates it. Running both, ignoring Set's failure,
-	// makes the injection idempotent across reruns against a cached build.
-	_ = exec.CommandContext(ctx, "/usr/libexec/PlistBuddy", "-c", "Set "+keyPath+" "+port, xctestrunPath).Run()
-	if out, err := exec.CommandContext(ctx, "/usr/libexec/PlistBuddy",
-		"-c", "Add "+keyPath+" string "+port, xctestrunPath).CombinedOutput(); err != nil {
-		// Add fails when the key already exists, which means Set above succeeded.
-		if !strings.Contains(string(out), "Entry Already Exists") {
-			return fmt.Errorf("PlistBuddy: %w: %s", err, strings.TrimSpace(string(out)))
-		}
-	}
-	return nil
-}
-
-// plistAsJSON converts a plist to JSON via plutil so it can be parsed without a
-// plist library.
-func plistAsJSON(ctx context.Context, plistPath string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, "plutil", "-convert", "json", "-o", "-", plistPath).Output()
-	if err != nil {
-		return nil, fmt.Errorf("plutil convert %s: %w", plistPath, err)
-	}
-	return out, nil
-}
-
-// testTargetNameFromJSON returns the single test-target dict name in a parsed
-// xctestrun: the lone top-level key that is not the metadata entry.
-func testTargetNameFromJSON(data []byte) (string, error) {
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(data, &top); err != nil {
-		return "", fmt.Errorf("parse xctestrun json: %w", err)
-	}
-	var names []string
-	for key := range top {
-		if key == "__xctestrun_metadata__" || strings.HasPrefix(key, "CodeCoverageBuildableInfos") {
-			continue
-		}
-		names = append(names, key)
-	}
-	sort.Strings(names)
-	switch len(names) {
-	case 1:
-		return names[0], nil
-	case 0:
-		return "", fmt.Errorf("xctestrun has no test-target dict")
-	default:
-		return "", fmt.Errorf("xctestrun has multiple test-target dicts: %s", strings.Join(names, ", "))
-	}
 }
 
 // sourceHash digests the runner sources and project spec so a source edit

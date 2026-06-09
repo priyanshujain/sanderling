@@ -7,43 +7,6 @@ import (
 	"testing"
 )
 
-func TestTestTargetNameFromJSON(t *testing.T) {
-	// A device xctestrun-as-json: one test-target dict plus the metadata entry.
-	data := []byte(`{
-	  "CompanionRunnerUITests": {"EnvironmentVariables": {}},
-	  "__xctestrun_metadata__": {"FormatVersion": 1}
-	}`)
-	name, err := testTargetNameFromJSON(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "CompanionRunnerUITests" {
-		t.Fatalf("name = %q, want CompanionRunnerUITests", name)
-	}
-}
-
-func TestTestTargetNameFromJSON_IgnoresCodeCoverageInfo(t *testing.T) {
-	data := []byte(`{
-	  "CompanionRunnerUITests": {},
-	  "CodeCoverageBuildableInfos": {},
-	  "__xctestrun_metadata__": {}
-	}`)
-	name, err := testTargetNameFromJSON(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "CompanionRunnerUITests" {
-		t.Fatalf("name = %q, want CompanionRunnerUITests", name)
-	}
-}
-
-func TestTestTargetNameFromJSON_MultipleTargetsError(t *testing.T) {
-	data := []byte(`{"A": {}, "B": {}, "__xctestrun_metadata__": {}}`)
-	if _, err := testTargetNameFromJSON(data); err == nil {
-		t.Fatal("multiple test-target dicts must error so the wrong dict is never patched")
-	}
-}
-
 func TestReadSigningCredentialsReportsMissing(t *testing.T) {
 	for _, key := range []string{envTeam, envTeamFallback, envAuthKeyPath, envAuthKeyID, envAuthIssuer} {
 		t.Setenv(key, "")
