@@ -630,12 +630,24 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     }
 }
 
-private fun buildDadb(serial: String?): dadb.Dadb {
-    return if (serial == null) {
-        dadb.Dadb.create("localhost", 5555)
-    } else {
-        dadb.Dadb.create(serial.substringBefore(":"), serial.substringAfter(":").toIntOrNull() ?: 5555)
-    }
+internal sealed interface DadbTarget {
+    data class Tcp(val host: String, val port: Int) : DadbTarget
+    data class Server(val serial: String) : DadbTarget
+}
+
+// A host:port serial connects to adbd directly; any other serial is reached
+// through the adb server, the only path to a USB-attached device. A null serial
+// keeps the emulator loopback default.
+internal fun dadbTargetFor(serial: String?): DadbTarget {
+    if (serial == null) return DadbTarget.Tcp("localhost", 5555)
+    val colon = serial.lastIndexOf(':')
+    val port = if (colon >= 0) serial.substring(colon + 1).toIntOrNull() else null
+    return if (port != null) DadbTarget.Tcp(serial.substring(0, colon), port) else DadbTarget.Server(serial)
+}
+
+private fun buildDadb(serial: String?): dadb.Dadb = when (val target = dadbTargetFor(serial)) {
+    is DadbTarget.Tcp -> dadb.Dadb.create(target.host, target.port)
+    is DadbTarget.Server -> dadb.adbserver.AdbServer.createDadb("localhost", 5037, "host:transport:${target.serial}")
 }
 
 internal fun findBoundsBySelector(root: maestro.TreeNode, selector: String): IntArray? {
