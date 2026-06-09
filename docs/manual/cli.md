@@ -36,7 +36,7 @@ Serve a local web UI for browsing traces. The positional argument is optional an
 | `--no-open` | `false` | Skip opening the default browser on startup. |
 | `--dev` | `false` | Reverse-proxy non-API requests to the Vite dev server on `127.0.0.1:5173`. |
 
-See [the replay UI page](./replay/) for the panel reference and keyboard shortcuts.
+See [the replay UI page](../replay/) for the panel reference and keyboard shortcuts.
 
 ## `sanderling doctor`
 
@@ -65,4 +65,4 @@ Print the CLI version.
 - `--max-steps` hard cap on step count.
 - `--exit-on-violation` stop the run on the first property violation.
 
-Tracked in [issue #4](https://github.com/priyanshujain/sanderling/issues/4).
+Tracked in the [v0.1.0 milestone](https://github.com/priyanshujain/sanderling/milestone/1).
