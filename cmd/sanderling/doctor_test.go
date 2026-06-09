@@ -6,8 +6,6 @@ import (
 	"errors"
 	"flag"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -183,26 +181,21 @@ func TestCheckDeviceConnected(t *testing.T) {
 	}
 }
 
-func TestCheckDeviceSigning_EnvAndKeyFile(t *testing.T) {
-	// The signing check defers to the driver's credential verification, which
-	// reads the same environment a real build would.
-	for _, key := range []string{"SANDERLING_IOS_TEAM", "DEVELOPMENT_TEAM", "ASC_API_KEY_PATH", "ASC_API_KEY_ID", "ASC_API_ISSUER_ID"} {
-		t.Setenv(key, "")
-	}
-	if err := checkDeviceSigning(context.Background()); err == nil {
-		t.Fatal("missing signing env must fail")
+func TestCheckDeviceSigning_SurfacesSeamResult(t *testing.T) {
+	// checkDeviceSigning is a passthrough to the driver's credential check; the
+	// credential logic itself is covered by TestReadSigningCredentials* in the
+	// ioscompanion package. Here we only confirm the wiring through the seam.
+	original := doctorVerifySigning
+	t.Cleanup(func() { doctorVerifySigning = original })
+
+	doctorVerifySigning = func() error { return nil }
+	if err := checkDeviceSigning(context.Background()); err != nil {
+		t.Fatalf("a passing signing check must surface nil: %v", err)
 	}
 
-	keyPath := filepath.Join(t.TempDir(), "AuthKey.p8")
-	if err := os.WriteFile(keyPath, []byte("key"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SANDERLING_IOS_TEAM", "TEAM1")
-	t.Setenv("ASC_API_KEY_ID", "KID")
-	t.Setenv("ASC_API_ISSUER_ID", "ISS")
-	t.Setenv("ASC_API_KEY_PATH", keyPath)
-	if err := checkDeviceSigning(context.Background()); err != nil {
-		t.Fatalf("complete signing env with a present key must pass: %v", err)
+	doctorVerifySigning = func() error { return errors.New("missing credentials") }
+	if err := checkDeviceSigning(context.Background()); err == nil {
+		t.Fatal("a failing signing check must surface the error")
 	}
 }
 
