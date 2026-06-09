@@ -69,6 +69,10 @@ func resolveIOSTarget(ctx context.Context, options Options, stdout io.Writer) (O
 	return options, nil
 }
 
+// preflight is a seam so routing tests exercise driver construction without the
+// host-readiness checks (xcrun, java) that are absent on a Linux CI runner.
+var preflight = Preflight
+
 // newDeviceDriver constructs the physical-device iOS driver and its cleanup. A
 // seam so routing tests assert the resolved identifiers reach DeviceOptions
 // without building or spawning a real runner.
@@ -86,7 +90,7 @@ var newDeviceDriver = func(ctx context.Context, options ioscompanion.DeviceOptio
 // is driven runner-only over a usbmux tunnel. Android uses the JVM sidecar,
 // which is extracted, spawned, and dialed.
 func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver.DeviceDriver, func(), error) {
-	if err := Preflight(ctx, options.Platform); err != nil {
+	if err := preflight(ctx, options.Platform); err != nil {
 		return nil, nil, err
 	}
 	if options.Platform == "web" {

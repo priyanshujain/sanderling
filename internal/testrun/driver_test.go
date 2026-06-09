@@ -16,6 +16,7 @@ import (
 type stubDeviceDriver struct{ driver.DeviceDriver }
 
 func TestBuildDriverRoutesPhysicalIOSToDeviceDriver(t *testing.T) {
+	stubPreflight(t)
 	original := newDeviceDriver
 	t.Cleanup(func() { newDeviceDriver = original })
 
@@ -51,6 +52,7 @@ func TestBuildDriverRoutesPhysicalIOSToDeviceDriver(t *testing.T) {
 }
 
 func TestBuildDriverSurfacesDeviceConstructionError(t *testing.T) {
+	stubPreflight(t)
 	original := newDeviceDriver
 	t.Cleanup(func() { newDeviceDriver = original })
 	newDeviceDriver = func(context.Context, ioscompanion.DeviceOptions) (driver.DeviceDriver, func(), error) {
@@ -61,6 +63,15 @@ func TestBuildDriverSurfacesDeviceConstructionError(t *testing.T) {
 	if _, _, err := buildDriver(context.Background(), options, io.Discard); err == nil {
 		t.Fatal("expected the device construction error to surface")
 	}
+}
+
+// stubPreflight bypasses the host-readiness checks so routing tests exercise
+// driver construction on a Linux CI runner that lacks xcrun/java.
+func stubPreflight(t *testing.T) {
+	t.Helper()
+	original := preflight
+	t.Cleanup(func() { preflight = original })
+	preflight = func(context.Context, string) error { return nil }
 }
 
 func swapIOSResolveSeams(t *testing.T) {
