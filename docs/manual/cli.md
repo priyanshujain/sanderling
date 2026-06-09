@@ -65,4 +65,4 @@ Print the CLI version.
 - `--max-steps` hard cap on step count.
 - `--exit-on-violation` stop the run on the first property violation.
 
-Tracked in [issue #4](https://github.com/priyanshujain/sanderling/issues/4).
+Tracked in the [v0.1.0 milestone](https://github.com/priyanshujain/sanderling/milestone/1).

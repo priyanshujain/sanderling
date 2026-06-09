@@ -30,7 +30,7 @@ The trace is written incrementally. An interrupted run is complete up to the ste
 
 ## App state across runs
 
-By default the installed app stays in place between runs, so whatever the previous run left behind (an account, cached responses, completed onboarding) carries over. Pass `--clear-data` to wipe app data before launch and start cold every time. See the [CLI reference](../cli/#sanderling-test).
+By default each run wipes app data before launch and starts cold. Pass `--clear-data=false` to resume whatever the previous run left behind (an account, cached responses, completed onboarding). See the [CLI reference](../cli/#sanderling-test).
 
 ## Why runs are long
 
@@ -44,7 +44,7 @@ Long runs reach states that restart-per-test approaches structurally cannot.
 
 ## Setup cost is paid once
 
-Preconditions like login run through the spec's `setup` export (see [writing specs](../writing-specs/#getting-past-login)). They fire when their condition is unmet and go quiet after, so login costs a few seconds once per run, not once per test case.
+Preconditions like login run through the spec's `setup` export (see the [case study](../case-study/#reaching-the-screens-that-matter)). They fire when their condition is unmet and go quiet after, so login costs a few seconds once per run, not once per test case.
 
 | Run length | Login cost | Share of run |
 |---|---|---|
@@ -63,4 +63,4 @@ A run ends when:
 - `--duration` elapses, or
 - the process is interrupted (Ctrl+C).
 
-Additional conditions (`--max-steps`, `--exit-on-violation`, hard crash handling) land in [v0.1.0](https://github.com/priyanshujain/sanderling/issues/4).
+Additional conditions (`--max-steps`, `--exit-on-violation`, hard crash handling) land in the [v0.1.0 milestone](https://github.com/priyanshujain/sanderling/milestone/1).

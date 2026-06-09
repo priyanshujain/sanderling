@@ -4,7 +4,7 @@ title: Spec language reference
 
 # Spec language reference
 
-Lookup reference for everything importable from `@sanderling/spec`. For a guided walkthrough, read [writing specs](../writing-specs/) first.
+Lookup reference for everything importable from `@sanderling/spec`. For a worked example, read the [case study](../case-study/) first.
 
 ## Module structure
 
