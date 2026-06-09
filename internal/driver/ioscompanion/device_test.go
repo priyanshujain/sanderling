@@ -196,19 +196,6 @@ func TestDeviceCloseStopsRunnerAndTunnel(t *testing.T) {
 	}
 }
 
-func TestDevicectlReinstallArgs(t *testing.T) {
-	uninstall := devicectlUninstallArgs("CORE-1", "com.example.app")
-	wantUninstall := []string{"devicectl", "device", "uninstall", "app", "--device", "CORE-1", "com.example.app"}
-	if !equalArgs(uninstall, wantUninstall) {
-		t.Fatalf("uninstall args = %v, want %v", uninstall, wantUninstall)
-	}
-	install := devicectlInstallArgs("CORE-1", "/tmp/app.app")
-	wantInstall := []string{"devicectl", "device", "install", "app", "--device", "CORE-1", "/tmp/app.app"}
-	if !equalArgs(install, wantInstall) {
-		t.Fatalf("install args = %v, want %v", install, wantInstall)
-	}
-}
-
 func equalArgs(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

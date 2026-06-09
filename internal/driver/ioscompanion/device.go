@@ -199,22 +199,12 @@ func (d *Driver) respawnDevice(ctx context.Context) error {
 // keyed on the CoreDevice id. App lifecycle stays with devicectl: the runner's
 // own install path is simulator-specific.
 func (d *Driver) devicectlReinstall(ctx context.Context) error {
-	_ = exec.CommandContext(ctx, "xcrun", devicectlUninstallArgs(d.coreDeviceID, d.bundleID)...).Run()
-	output, err := exec.CommandContext(ctx, "xcrun", devicectlInstallArgs(d.coreDeviceID, d.appPath)...).CombinedOutput()
+	_ = exec.CommandContext(ctx, "xcrun", "devicectl", "device", "uninstall", "app", "--device", d.coreDeviceID, d.bundleID).Run()
+	output, err := exec.CommandContext(ctx, "xcrun", "devicectl", "device", "install", "app", "--device", d.coreDeviceID, d.appPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("devicectl install: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
-}
-
-// devicectlUninstallArgs and devicectlInstallArgs build the devicectl app
-// lifecycle commands keyed on the CoreDevice id, as xcrun subcommand arguments.
-func devicectlUninstallArgs(coreDeviceID, bundleID string) []string {
-	return []string{"devicectl", "device", "uninstall", "app", "--device", coreDeviceID, bundleID}
-}
-
-func devicectlInstallArgs(coreDeviceID, appPath string) []string {
-	return []string{"devicectl", "device", "install", "app", "--device", coreDeviceID, appPath}
 }
 
 // deviceResetContainerUnsupported warns once that device clear-state needs an
