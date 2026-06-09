@@ -15,9 +15,9 @@ import (
 	"syscall"
 )
 
-// developmentTeam is read from the environment so the account-specific team id
-// is never committed. The App Store Connect API key path/id/issuer come from the
-// same source. These back the no-Xcode-UI signing path.
+// These env vars name the signing inputs so the account-specific team id is
+// never committed. The App Store Connect API key path/id/issuer come from the
+// same source. They back the no-Xcode-UI signing path.
 const (
 	envTeam         = "SANDERLING_IOS_TEAM"
 	envTeamFallback = "DEVELOPMENT_TEAM"
@@ -27,7 +27,7 @@ const (
 	envCompanionDir = "SANDERLING_COMPANION_DIR"
 )
 
-// deviceRunnerScheme and deviceRunnerTarget mirror companion/project.yml. The
+// deviceRunnerScheme and deviceRunnerProject mirror companion/project.yml. The
 // build product is the runner whose xctestrun the test session consumes.
 const (
 	deviceRunnerScheme  = "CompanionRunner"
