@@ -54,6 +54,33 @@ func EnsureDevice(ctx context.Context, serial, avdName string, stdout io.Writer)
 	return nil
 }
 
+// PrepareDevice keeps the device awake, wakes the screen, and dismisses a
+// non-secure keyguard so the launched app stays in the foreground for the whole
+// run. The fuzzer drives whatever is on screen, so a sleeping or locked device
+// would have it explore system UI instead of the app. A secure lock
+// (PIN/password) cannot be dismissed here and must be unlocked out of band.
+func PrepareDevice(ctx context.Context, serial string) error {
+	adb, err := AdbBinary()
+	if err != nil {
+		return err
+	}
+	for _, shellCommand := range [][]string{
+		{"svc", "power", "stayon", "true"},
+		{"input", "keyevent", "KEYCODE_WAKEUP"},
+		{"wm", "dismiss-keyguard"},
+	} {
+		args := []string{}
+		if serial != "" {
+			args = append(args, "-s", serial)
+		}
+		args = append(append(args, "shell"), shellCommand...)
+		if err := exec.CommandContext(ctx, adb, args...).Run(); err != nil {
+			return fmt.Errorf("adb %s: %w", strings.Join(shellCommand, " "), err)
+		}
+	}
+	return nil
+}
+
 // AdbReverse sets up adb reverse forwarding for a local abstract socket.
 func AdbReverse(socket string, port int) error {
 	adb, err := AdbBinary()
