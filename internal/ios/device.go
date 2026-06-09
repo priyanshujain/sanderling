@@ -10,8 +10,8 @@ import (
 )
 
 // Device is a physical iOS device resolved from devicectl. A device carries two
-// identifiers: HardwareUDID feeds xcodebuild -destination and iproxy -u, while
-// CoreDeviceID feeds devicectl install/uninstall.
+// identifiers: HardwareUDID feeds xcodebuild -destination and the usbmux device
+// match, while CoreDeviceID feeds devicectl install/uninstall.
 type Device struct {
 	Name         string
 	HardwareUDID string
