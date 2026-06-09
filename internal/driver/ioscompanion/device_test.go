@@ -3,6 +3,7 @@ package ioscompanion
 import (
 	"bytes"
 	"context"
+	"io"
 	"net"
 	"os/exec"
 	"testing"
@@ -38,7 +39,7 @@ func testDeviceOptions(address string, companion transport.Companion) DeviceOpti
 		BundleID:     "com.example.app",
 		Output:       &bytes.Buffer{},
 		spawnRunner:  func(context.Context, string) (*exec.Cmd, error) { return &exec.Cmd{}, nil },
-		spawnTunnel:  func(context.Context, string, string, string) (*exec.Cmd, error) { return &exec.Cmd{}, nil },
+		startTunnel:  func(context.Context, string, string, string) (io.Closer, error) { return io.NopCloser(nil), nil },
 		dialRunner:   func(string) (transport.Companion, error) { return companion, nil },
 		pickAddress:  func() (string, error) { return address, nil },
 	}
@@ -165,29 +166,33 @@ func TestDeviceClearStateWithoutAppPathWarnsOnce(t *testing.T) {
 	}
 }
 
+type recordingCloser struct{ closed bool }
+
+func (c *recordingCloser) Close() error {
+	c.closed = true
+	return nil
+}
+
 func TestDeviceCloseStopsRunnerAndTunnel(t *testing.T) {
 	d := &Driver{output: &bytes.Buffer{}}
 	runner := exec.Command("sleep", "30")
-	tunnel := exec.Command("sleep", "30")
 	if err := runner.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if err := tunnel.Start(); err != nil {
-		t.Fatal(err)
-	}
+	tunnel := &recordingCloser{}
 	d.runnerChild = runner
-	d.tunnelChild = tunnel
+	d.tunnel = tunnel
 
 	d.Close()
 
-	if d.runnerChild != nil || d.tunnelChild != nil {
-		t.Fatal("Close must clear both child fields")
+	if d.runnerChild != nil || d.tunnel != nil {
+		t.Fatal("Close must clear the runner child and the tunnel")
 	}
 	if runner.ProcessState == nil {
 		t.Fatal("Close must reap the runner session child")
 	}
-	if tunnel.ProcessState == nil {
-		t.Fatal("Close must reap the tunnel child")
+	if !tunnel.closed {
+		t.Fatal("Close must close the usbmux tunnel")
 	}
 }
 
