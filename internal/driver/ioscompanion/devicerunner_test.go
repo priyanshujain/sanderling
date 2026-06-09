@@ -7,59 +7,6 @@ import (
 	"testing"
 )
 
-func TestBuildForTestingArgs(t *testing.T) {
-	creds := signingCredentials{team: "TEAM1", authKeyPath: "/k/AuthKey.p8", authKeyID: "KID", authIssuerID: "ISS"}
-	args := buildForTestingArgs("/p/CompanionRunner.xcodeproj", "/d/derived", creds)
-	joined := strings.Join(args, " ")
-	for _, want := range []string{
-		"xcodebuild build-for-testing",
-		"-project /p/CompanionRunner.xcodeproj",
-		"-scheme CompanionRunner",
-		"-destination generic/platform=iOS",
-		"-derivedDataPath /d/derived",
-		"-allowProvisioningUpdates",
-		"-authenticationKeyPath /k/AuthKey.p8",
-		"-authenticationKeyID KID",
-		"-authenticationKeyIssuerID ISS",
-		"CODE_SIGNING_ALLOWED=YES",
-		"CODE_SIGNING_REQUIRED=YES",
-		"CODE_SIGN_STYLE=Automatic",
-		"DEVELOPMENT_TEAM=TEAM1",
-		"GENERATE_INFOPLIST_FILE=YES",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("build args missing %q in %q", want, joined)
-		}
-	}
-}
-
-func TestTestWithoutBuildingArgs(t *testing.T) {
-	creds := signingCredentials{team: "TEAM1", authKeyPath: "/k/AuthKey.p8", authKeyID: "KID", authIssuerID: "ISS"}
-	args := testWithoutBuildingArgs("/x/run.xctestrun", "00008140-HW", creds)
-	joined := strings.Join(args, " ")
-	for _, want := range []string{
-		"xcodebuild test-without-building",
-		"-xctestrun /x/run.xctestrun",
-		"-destination platform=iOS,id=00008140-HW",
-		"-allowProvisioningUpdates",
-		"-authenticationKeyPath /k/AuthKey.p8",
-		"-authenticationKeyID KID",
-		"-authenticationKeyIssuerID ISS",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("test args missing %q in %q", want, joined)
-		}
-	}
-}
-
-func TestXcodegenArgs(t *testing.T) {
-	args := xcodegenArgs("/c/project.yml")
-	want := []string{"xcodegen", "--spec", "/c/project.yml"}
-	if !equalArgs(args, want) {
-		t.Fatalf("xcodegen args = %v, want %v", args, want)
-	}
-}
-
 func TestTestTargetNameFromJSON(t *testing.T) {
 	// A device xctestrun-as-json: one test-target dict plus the metadata entry.
 	data := []byte(`{

@@ -195,15 +195,3 @@ func TestDeviceCloseStopsRunnerAndTunnel(t *testing.T) {
 		t.Fatal("Close must close the usbmux tunnel")
 	}
 }
-
-func equalArgs(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
-}

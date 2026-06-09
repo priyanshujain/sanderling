@@ -176,7 +176,7 @@ func (d *Driver) buildDeviceRunnerIfNeeded(ctx context.Context, companionDir, de
 		return nil
 	}
 
-	if out, genErr := runQuiet(ctx, companionDir, xcodegenArgs(filepath.Join(companionDir, "project.yml"))...); genErr != nil {
+	if out, genErr := runQuiet(ctx, companionDir, "xcodegen", "--spec", filepath.Join(companionDir, "project.yml")); genErr != nil {
 		return fmt.Errorf("xcodegen: %w: %s", genErr, strings.TrimSpace(string(out)))
 	}
 
@@ -202,11 +202,6 @@ func buildCacheKey(companionDir string, creds signingCredentials) (string, error
 	}
 	sum := sha256.Sum256([]byte(sources + "\x00" + creds.team + "\x00" + creds.authKeyID))
 	return hex.EncodeToString(sum[:]), nil
-}
-
-// xcodegenArgs regenerates the runner project from its spec.
-func xcodegenArgs(specPath string) []string {
-	return []string{"xcodegen", "--spec", specPath}
 }
 
 // buildForTestingArgs builds the runner for a generic device destination, signed
