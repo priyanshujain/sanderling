@@ -153,7 +153,7 @@ func TestDoctorChecksFor_iOSDevice_CoversDevicePrereqs(t *testing.T) {
 			t.Errorf("device checks must not include the retired %q", c.Name)
 		}
 	}
-	for _, want := range []string{"devicectl", "iproxy", "connected and paired", "signing credentials"} {
+	for _, want := range []string{"devicectl", "usbmuxd", "connected and paired", "signing credentials"} {
 		found := false
 		for _, c := range checks {
 			if strings.Contains(c.Name, want) {

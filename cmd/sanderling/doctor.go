@@ -61,8 +61,9 @@ func androidChecks() []doctorCheck {
 
 // iosChecks covers the simulator path, which the native companion drives with
 // no JVM. A simulator host with no Java still passes. Physical-device runs
-// additionally need devicectl, iproxy, a connected device, and signing
-// credentials, covered by iosDeviceChecks and surfaced through the "all" union.
+// additionally need devicectl, the usbmuxd socket, a connected device, and
+// signing credentials, covered by iosDeviceChecks and surfaced through the
+// "all" union.
 func iosChecks() []doctorCheck {
 	return []doctorCheck{
 		{Name: "xcrun on PATH (ios simulator)", Run: checkExecutableOnPath("xcrun")},
@@ -71,13 +72,15 @@ func iosChecks() []doctorCheck {
 }
 
 // iosDeviceChecks covers the prerequisites a physical iOS device needs: the
-// runner is built and driven over a usbmux tunnel, so devicectl installs the
-// app, iproxy forwards the tunnel, a device must be connected and paired, and
-// App Store Connect signing credentials must be present for the no-UI build.
+// runner is built and driven over a native usbmux tunnel, so devicectl installs
+// the app, the macOS usbmuxd socket carries the tunnel, a device must be
+// connected and paired, and App Store Connect signing credentials must be
+// present for the no-UI build. Everything here is part of macOS + Xcode; nothing
+// is installed.
 func iosDeviceChecks() []doctorCheck {
 	return []doctorCheck{
 		{Name: "devicectl available (ios physical device)", Run: checkDevicectl},
-		{Name: "iproxy on PATH (ios physical device)", Run: checkExecutableOnPath("iproxy")},
+		{Name: "usbmuxd socket present (ios physical device)", Run: checkUsbmuxd},
 		{Name: "an iOS device is connected and paired", Run: checkDeviceConnected},
 		{Name: "App Store Connect signing credentials present", Run: checkDeviceSigning},
 	}
@@ -138,6 +141,19 @@ var (
 func checkDevicectl(ctx context.Context) error {
 	if err := exec.CommandContext(ctx, "xcrun", "devicectl", "--version").Run(); err != nil {
 		return fmt.Errorf("xcrun devicectl --version: %w", err)
+	}
+	return nil
+}
+
+// usbmuxdSocketPath is the macOS usbmuxd unix socket. It ships with the OS, so
+// the device tunnel needs nothing installed.
+const usbmuxdSocketPath = "/var/run/usbmuxd"
+
+// checkUsbmuxd confirms the macOS usbmuxd socket is present: the native device
+// tunnel speaks to it directly instead of shelling out to a third-party client.
+func checkUsbmuxd(_ context.Context) error {
+	if _, err := os.Stat(usbmuxdSocketPath); err != nil {
+		return fmt.Errorf("usbmuxd socket not found at %s: %w", usbmuxdSocketPath, err)
 	}
 	return nil
 }
