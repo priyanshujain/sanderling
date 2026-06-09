@@ -284,8 +284,18 @@ collect_run_artifacts() {
 
 run_gates() {
   if [[ "$BACKEND" == "android" ]]; then
+    # Build only; invoke_sanderling reinstalls per run via adb (gradle's ddmlib
+    # install is flaky on some physical devices).
     echo "preparing folio android build"
-    ( cd "$folio_directory" && ANDROID_DEVICE="$ANDROID_DEVICE" just install >/dev/null )
+    ( cd "$folio_directory" && just build >/dev/null )
+    # A physical device, unlike an emulator, lets system UI steal the foreground
+    # from the app the fuzzer is exploring. Keep the screen on so it never
+    # re-locks, silence the autofill save-password prompt that pops over the
+    # login form, and stop Play Protect from intercepting the per-run reinstall.
+    # The device must already be unlocked (a secure lock cannot be opened here).
+    adb_target shell svc power stayon true >/dev/null 2>&1 || true
+    adb_target shell settings put secure autofill_service null >/dev/null 2>&1 || true
+    adb_target shell settings put global verifier_verify_adb_installs 0 >/dev/null 2>&1 || true
   elif [[ "$BACKEND" == "simulator" ]]; then
     echo "preparing folio build for the simulator backend"
     ( cd "$folio_directory" && just ios >/dev/null )

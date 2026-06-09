@@ -78,6 +78,13 @@ _ensure-device:
     echo "emulator did not finish booting in time (see /tmp/folio-emulator.log)" >&2
     exit 1
 
+# Build the folio debug APK without installing it.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ANDROID_HOME="$(just _android-home)"
+    ./gradlew :app:androidApp:assembleDebug
+
 # Build and install the folio APK on a running emulator/device.
 install: _ensure-device
     #!/usr/bin/env bash
