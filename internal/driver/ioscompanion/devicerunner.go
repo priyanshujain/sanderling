@@ -162,16 +162,16 @@ func (d *Driver) realSpawnDeviceRunner(ctx context.Context, address string) (*ex
 }
 
 // buildDeviceRunnerIfNeeded regenerates the project and runs build-for-testing,
-// skipping the build when a marker recording the current source hash already
+// skipping the build when a marker recording the current build key already
 // matches. The device signature is per-account/per-device, so the build cannot
 // be embedded; the stable derivedDataPath makes the build incremental.
 func (d *Driver) buildDeviceRunnerIfNeeded(ctx context.Context, companionDir, derivedDataPath string, creds signingCredentials) error {
-	sources, err := sourceHash(companionDir)
+	key, err := buildCacheKey(companionDir, creds)
 	if err != nil {
 		return err
 	}
 	marker := filepath.Join(derivedDataPath, "device-runner.sha256")
-	if existing, readErr := os.ReadFile(marker); readErr == nil && string(existing) == sources {
+	if existing, readErr := os.ReadFile(marker); readErr == nil && string(existing) == key {
 		fmt.Fprintln(d.output, "device runner build is up to date; skipping build")
 		return nil
 	}
@@ -186,10 +186,22 @@ func (d *Driver) buildDeviceRunnerIfNeeded(ctx context.Context, companionDir, de
 	if out, buildErr := runQuiet(ctx, companionDir, append([]string{"xcrun"}, args...)...); buildErr != nil {
 		return fmt.Errorf("build-for-testing: %w: %s", buildErr, tailLines(string(out), 20))
 	}
-	if err := os.WriteFile(marker, []byte(sources), 0o644); err != nil {
+	if err := os.WriteFile(marker, []byte(key), 0o644); err != nil {
 		return err
 	}
 	return nil
+}
+
+// buildCacheKey combines the source hash with the signing identity so a changed
+// team or key invalidates the cached build. A runner signed with a stale
+// identity would otherwise be reused and rejected at install (0xe8008018).
+func buildCacheKey(companionDir string, creds signingCredentials) (string, error) {
+	sources, err := sourceHash(companionDir)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(sources + "\x00" + creds.team + "\x00" + creds.authKeyID))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // xcodegenArgs regenerates the runner project from its spec.

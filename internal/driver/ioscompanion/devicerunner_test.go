@@ -168,6 +168,37 @@ func TestReadSigningCredentialsResolvesRelativeKeyPath(t *testing.T) {
 	}
 }
 
+func TestBuildCacheKeyChangesWithSigningIdentity(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "Sources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Sources", "Server.swift"), []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "project.yml"), []byte("name: x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base, err := buildCacheKey(dir, signingCredentials{team: "TEAM1", authKeyID: "KID1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTeam, err := buildCacheKey(dir, signingCredentials{team: "TEAM2", authKeyID: "KID1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKey, err := buildCacheKey(dir, signingCredentials{team: "TEAM1", authKeyID: "KID2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base == otherTeam {
+		t.Fatal("a changed team must invalidate the cached build")
+	}
+	if base == otherKey {
+		t.Fatal("a changed signing key must invalidate the cached build")
+	}
+}
+
 func TestSourceHashChangesWithSources(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "Sources"), 0o755); err != nil {
