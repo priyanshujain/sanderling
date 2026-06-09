@@ -6,13 +6,13 @@ title: Sanderling Manual
 
 sanderling tests mobile and web apps by exploring them on its own and checking rules you write. You state properties that must always hold ("a new account starts at zero", "the app never throws"). sanderling drives the app for minutes or hours through thousands of taps, swipes, and inputs, and records every step where a property breaks. One TypeScript spec runs against Android, iOS, and web builds of the same app.
 
-Alpha: the scope of v0.1.0 is tracked in [issue #4](https://github.com/priyanshujain/sanderling/issues/4).
+Alpha: the scope of v0.1.0 is tracked in the [v0.1.0 milestone](https://github.com/priyanshujain/sanderling/milestone/1).
 
 ## Manual
 
 - [Introduction](./manual/introduction/): what property-based testing is and how sanderling works.
-- [Getting started](./manual/getting-started/): install and run a first test against the example app.
-- [Writing specs](./manual/writing-specs/): build a real spec from scratch, one concept at a time.
+- [Case study: Folio](./manual/case-study/): sanderling finding a real bug in a mobile app, and how the spec is written.
+- [Getting started](./manual/getting-started/): install the CLI and run it against Folio.
 - [Spec language reference](./manual/spec-language/): every selector, operator, action, and sampler.
 - [Runs](./manual/runs/): what happens during a run and why runs are long.
 - [Replay](./manual/replay/): the trace browser.
