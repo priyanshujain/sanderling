@@ -45,8 +45,12 @@ type signingCredentials struct {
 // readSigningCredentials gathers the signing inputs from the environment and
 // reports every missing one at once. The .p8 key must exist on disk.
 func readSigningCredentials() (signingCredentials, error) {
+	team := os.Getenv(envTeam)
+	if team == "" {
+		team = os.Getenv(envTeamFallback)
+	}
 	creds := signingCredentials{
-		team:         firstNonEmpty(os.Getenv(envTeam), os.Getenv(envTeamFallback)),
+		team:         team,
 		authKeyPath:  os.Getenv(envAuthKeyPath),
 		authKeyID:    os.Getenv(envAuthKeyID),
 		authIssuerID: os.Getenv(envAuthIssuer),
@@ -85,15 +89,6 @@ func readSigningCredentials() (signingCredentials, error) {
 func VerifyDeviceSigning() error {
 	_, err := readSigningCredentials()
 	return err
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 // realSpawnDeviceRunner regenerates the runner project, builds it for the device
