@@ -52,14 +52,6 @@ func TestTestWithoutBuildingArgs(t *testing.T) {
 	}
 }
 
-func TestIproxyArgs(t *testing.T) {
-	args := iproxyArgs("49200", "27753", "00008140-HW")
-	want := []string{"iproxy", "49200:27753", "-u", "00008140-HW"}
-	if !equalArgs(args, want) {
-		t.Fatalf("iproxy args = %v, want %v", args, want)
-	}
-}
-
 func TestXcodegenArgs(t *testing.T) {
 	args := xcodegenArgs("/c/project.yml")
 	want := []string{"xcodegen", "--spec", "/c/project.yml"}

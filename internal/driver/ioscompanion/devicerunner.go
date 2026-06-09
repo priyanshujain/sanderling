@@ -248,25 +248,6 @@ func testWithoutBuildingArgs(xctestrunPath, hardwareUDID string, creds signingCr
 	}
 }
 
-// iproxyArgs forwards the host loopback localPort to the device devicePort over
-// usbmux for the device selected by hardwareUDID.
-func iproxyArgs(localPort, devicePort, hardwareUDID string) []string {
-	return []string{"iproxy", localPort + ":" + devicePort, "-u", hardwareUDID}
-}
-
-// spawnTunnel opens the usbmux tunnel via iproxy. SIGTERM on cancel closes the
-// forwarded sockets cleanly so no orphan lingers.
-func spawnTunnel(ctx context.Context, hardwareUDID, localPort, devicePort string) (*exec.Cmd, error) {
-	args := iproxyArgs(localPort, devicePort, hardwareUDID)
-	command := exec.CommandContext(ctx, args[0], args[1:]...)
-	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
-	command.WaitDelay = shutdownGrace
-	if err := command.Start(); err != nil {
-		return nil, fmt.Errorf("start iproxy: %w", err)
-	}
-	return command, nil
-}
-
 // locateDeviceXctestrun finds the device build's xctestrun under the derived
 // data products. The name embeds the device SDK version, so it is discovered
 // rather than hardcoded.
