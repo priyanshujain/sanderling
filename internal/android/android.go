@@ -17,17 +17,22 @@ import (
 
 // EnsureDevice makes sure an Android device is ready for adb commands.
 // Resolution order:
-//   - if an adb device is already online, use it;
+//   - if serial is set, require that exact device to be online;
+//   - else if an adb device is already online, use it;
 //   - else if avdName is set, validate and boot it;
 //   - else if exactly one AVD exists locally, boot it;
 //   - else fail with a helpful message listing the available AVDs.
-func EnsureDevice(ctx context.Context, avdName string, stdout io.Writer) error {
+func EnsureDevice(ctx context.Context, serial, avdName string, stdout io.Writer) error {
 	devices, err := listAdbDevices(ctx)
 	if err != nil {
 		return fmt.Errorf("list adb devices: %w", err)
 	}
-	if len(devices) > 0 {
-		fmt.Fprintf(stdout, "using connected device: %s\n", devices[0])
+	chosen, found, err := pickDevice(serial, devices)
+	if err != nil {
+		return err
+	}
+	if found {
+		fmt.Fprintf(stdout, "using connected device: %s\n", chosen)
 		return nil
 	}
 	avds, err := listAVDs(ctx)
@@ -189,6 +194,22 @@ func parseAVDList(output string) []string {
 		avds = append(avds, line)
 	}
 	return avds
+}
+
+// pickDevice resolves which connected device to drive. A requested serial must
+// be online; with no request the first connected device is used, else found is
+// false so the caller falls back to booting an AVD.
+func pickDevice(requested string, connected []string) (serial string, found bool, err error) {
+	if requested != "" {
+		if !slices.Contains(connected, requested) {
+			return "", false, fmt.Errorf("device %q is not connected (online devices: %s)", requested, strings.Join(connected, ", "))
+		}
+		return requested, true, nil
+	}
+	if len(connected) > 0 {
+		return connected[0], true, nil
+	}
+	return "", false, nil
 }
 
 func pickAVD(requested string, available []string) (string, error) {

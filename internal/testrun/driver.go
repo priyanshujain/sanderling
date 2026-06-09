@@ -145,6 +145,9 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 		"--port", strconv.Itoa(sidecarPort),
 		"--platform", options.Platform,
 	}
+	if options.Device != "" {
+		sidecarArgs = append(sidecarArgs, "--serial", options.Device)
+	}
 	sidecarCommand := exec.CommandContext(ctx, "java", sidecarArgs...)
 	sidecarCommand.Stdout = stdout
 	sidecarCommand.Stderr = stdout

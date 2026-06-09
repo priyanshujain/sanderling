@@ -22,6 +22,7 @@ type testOptions struct {
 	bundleID   string
 	platform   string
 	avd        string
+	device     string
 	iosDevice  string
 	iosAppPath string
 	duration   time.Duration
@@ -52,6 +53,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.StringVar(&options.bundleID, "bundle-id", "", "target app bundle ID (required)")
 	flagSet.StringVar(&options.platform, "platform", "android", "target platform: android, ios, web")
 	flagSet.StringVar(&options.avd, "avd", "", "Android AVD name to boot if no device is connected")
+	flagSet.StringVar(&options.device, "device", "", "Android device serial (from `adb devices`) to target when several are connected")
 	flagSet.StringVar(&options.iosDevice, "ios-device", "", "iOS target: a simulator name/UDID to boot, or a connected device's name, UDID, or CoreDevice id")
 	flagSet.StringVar(&options.iosAppPath, "ios-app-path", "", "path to the .app bundle for iOS clear-state reinstall (simulator: simctl; device: devicectl)")
 	flagSet.DurationVar(&options.duration, "duration", 5*time.Minute, "total test duration")

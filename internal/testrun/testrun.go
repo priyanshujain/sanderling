@@ -26,6 +26,7 @@ type Options struct {
 	BundleID   string
 	Platform   string
 	AVD        string
+	Device     string
 	IosDevice  string
 	IosAppPath string
 	Duration   time.Duration
@@ -46,7 +47,7 @@ type Options struct {
 func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	switch options.Platform {
 	case "android":
-		if err := android.EnsureDevice(ctx, options.AVD, stdout); err != nil {
+		if err := android.EnsureDevice(ctx, options.Device, options.AVD, stdout); err != nil {
 			return err
 		}
 	case "ios":

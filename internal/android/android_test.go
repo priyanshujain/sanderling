@@ -28,6 +28,37 @@ func TestParseAdbDevices_Empty(t *testing.T) {
 	}
 }
 
+func TestPickDevice_RequestedOnline(t *testing.T) {
+	serial, found, err := pickDevice("physical-abc", []string{"emulator-5554", "physical-abc"})
+	if err != nil || !found || serial != "physical-abc" {
+		t.Fatalf("got (%q, %v, %v), want (physical-abc, true, nil)", serial, found, err)
+	}
+}
+
+func TestPickDevice_RequestedNotConnected(t *testing.T) {
+	_, found, err := pickDevice("physical-abc", []string{"emulator-5554"})
+	if err == nil {
+		t.Fatal("expected error for a serial that is not connected")
+	}
+	if found {
+		t.Fatal("found must be false when the requested device is absent")
+	}
+}
+
+func TestPickDevice_NoRequestUsesFirst(t *testing.T) {
+	serial, found, err := pickDevice("", []string{"emulator-5554", "physical-abc"})
+	if err != nil || !found || serial != "emulator-5554" {
+		t.Fatalf("got (%q, %v, %v), want (emulator-5554, true, nil)", serial, found, err)
+	}
+}
+
+func TestPickDevice_NoneConnectedFallsBackToAVD(t *testing.T) {
+	serial, found, err := pickDevice("", nil)
+	if err != nil || found || serial != "" {
+		t.Fatalf("got (%q, %v, %v), want (\"\", false, nil)", serial, found, err)
+	}
+}
+
 func TestParseAVDList_DropsInfoLines(t *testing.T) {
 	output := `INFO    | Storing crashdata in: /tmp/x
 Medium_Phone_API_36.0
