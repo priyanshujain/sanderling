@@ -193,7 +193,8 @@ print(samples[rank - 1])
 
 # G5 orphan check: report any lingering companion, runner session (the hybrid
 # simulator driver hosts an in-simulator runner), and, on the device backend,
-# the usbmux tunnel and the device runner session. Empty output means clean.
+# the device runner session. The usbmux tunnel is an in-process forwarder that
+# dies with sanderling, so it leaves no process to check. Empty output is clean.
 orphan_processes() {
   local found=""
   if pgrep -f "$companion_process_name" >/dev/null 2>&1; then
@@ -206,11 +207,8 @@ orphan_processes() {
     found+="runner-app "
   fi
   if [[ "$BACKEND" == "device" ]]; then
-    # The iproxy usbmux tunnel and the device test session that hosts the
-    # runner. The device session destination carries platform=iOS,id=<udid>.
-    if pgrep -f "iproxy" >/dev/null 2>&1; then
-      found+="iproxy "
-    fi
+    # The device test session that hosts the runner. Its destination carries
+    # platform=iOS,id=<udid>.
     if pgrep -f "xctestrun.*platform=iOS,id=" >/dev/null 2>&1; then
       found+="device-session "
     fi
