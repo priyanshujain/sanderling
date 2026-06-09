@@ -27,8 +27,8 @@ Every run produces a trace: one JSON line and one screenshot per step. `sanderli
 ## Docs
 
 - [Introduction](https://priyanshujain.github.io/sanderling/manual/introduction/): what property-based testing is and how sanderling works
-- [Getting started](https://priyanshujain.github.io/sanderling/manual/getting-started/): install and run a first test
-- [Writing specs](https://priyanshujain.github.io/sanderling/manual/writing-specs/): build a real spec from scratch
+- [Case study: Folio](https://priyanshujain.github.io/sanderling/manual/case-study/): sanderling finding a real bug in a mobile app
+- [Getting started](https://priyanshujain.github.io/sanderling/manual/getting-started/): install the CLI and run it against Folio
 - [Spec language reference](https://priyanshujain.github.io/sanderling/manual/spec-language/)
 - Examples: [folio](https://github.com/priyanshujain/sanderling/tree/master/examples/folio) (KMP, Android/iOS/web), [folio-web](https://github.com/priyanshujain/sanderling/tree/master/examples/folio-web) (React + Vite)
 - [Architecture](https://priyanshujain.github.io/sanderling/development/architecture/) for contributors
