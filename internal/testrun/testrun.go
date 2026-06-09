@@ -13,7 +13,6 @@ import (
 	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/driver"
-	"github.com/priyanshujain/sanderling/internal/ios"
 	"github.com/priyanshujain/sanderling/internal/runner"
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
@@ -23,15 +22,24 @@ const sidecarStartupTimeout = 30 * time.Second
 
 // Options are the parameters for a single test pipeline run.
 type Options struct {
-	Spec      string
-	BundleID  string
-	Platform  string
-	AVD       string
-	IosDevice string
-	Duration  time.Duration
-	Seed      int64
-	Output    string
-	ClearData bool
+	Spec       string
+	BundleID   string
+	Platform   string
+	AVD        string
+	IosDevice  string
+	IosAppPath string
+	Duration   time.Duration
+	Seed       int64
+	Output     string
+	ClearData  bool
+
+	// iosUDID, iosIsSimulator, and iosCoreDeviceID are filled by Execute after
+	// resolving the iOS target, then read by buildDriver to choose the simulator
+	// companion or the physical-device driver. On the device path iosUDID is the
+	// hardware UDID and iosCoreDeviceID is the CoreDevice id.
+	iosUDID         string
+	iosIsSimulator  bool
+	iosCoreDeviceID string
 }
 
 // Execute runs the full test pipeline: bundle, launch app, verify properties.
@@ -42,9 +50,11 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 			return err
 		}
 	case "ios":
-		if err := ios.EnsureSimulator(ctx, options.IosDevice, stdout); err != nil {
+		resolved, err := resolveIOSTarget(ctx, options, stdout)
+		if err != nil {
 			return err
 		}
+		options = resolved
 	}
 	prep, err := prepareBundleInputs(options)
 	if err != nil {

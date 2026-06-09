@@ -1,0 +1,19 @@
+# Dedicated generation template for the pinned simulator companion proto.
+# This is intentionally separate from the root buf.gen.yaml so that the
+# generated stubs land in the Go internal package rather than under proto/,
+# and so a normal `make proto` never touches these committed stubs.
+#
+# Reproduce the committed stubs from the repository root with:
+#   buf generate proto/idbcompanion --template proto/idbcompanion/buf.gen.yaml
+# The module= options strip the Go module prefix so the files land at
+# internal/driver/ioscompanion/companionpb relative to the repository root.
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: .
+    opt:
+      - module=github.com/priyanshujain/sanderling
+  - local: protoc-gen-go-grpc
+    out: .
+    opt:
+      - module=github.com/priyanshujain/sanderling

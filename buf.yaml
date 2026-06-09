@@ -1,6 +1,13 @@
 version: v2
+# The pinned simulator companion proto lives under proto/idbcompanion and is
+# deliberately excluded here. It is its own standalone buf module (see
+# proto/idbcompanion/buf.yaml) so the STANDARD lint rules below never apply to
+# it and a normal `make proto` never generates from it. Its stubs are committed
+# and regenerated only via proto/idbcompanion/buf.gen.yaml.
 modules:
   - path: proto
+    excludes:
+      - proto/idbcompanion
 lint:
   use:
     - STANDARD

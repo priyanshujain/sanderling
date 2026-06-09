@@ -1,0 +1,36 @@
+name: CompanionRunner
+options:
+  bundleIdPrefix: dev.sanderling
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    SWIFT_VERSION: "5.0"
+
+targets:
+  CompanionRunnerUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    productName: CompanionRunnerUITests
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.sanderling.companion
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/PrivateAutomation/PrivateAutomation.h
+        OTHER_LDFLAGS:
+          - "-framework"
+          - "XCTest"
+
+schemes:
+  CompanionRunner:
+    build:
+      targets:
+        CompanionRunnerUITests: all
+    test:
+      targets:
+        - CompanionRunnerUITests

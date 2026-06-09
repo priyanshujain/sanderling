@@ -1,0 +1,15 @@
+# Standalone buf module for the pinned simulator companion proto. It is kept
+# out of the root workspace so the root `buf lint` and `buf generate` never see
+# this file. Lint here is relaxed because the proto is copied verbatim from
+# upstream and must stay byte-identical apart from the go_package option.
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - MINIMAL
+  except:
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - FILE

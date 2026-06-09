@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -16,15 +18,16 @@ import (
 var Version = "dev"
 
 type testOptions struct {
-	spec      string
-	bundleID  string
-	platform  string
-	avd       string
-	iosDevice string
-	duration  time.Duration
-	seed      int64
-	output    string
-	clearData bool
+	spec       string
+	bundleID   string
+	platform   string
+	avd        string
+	iosDevice  string
+	iosAppPath string
+	duration   time.Duration
+	seed       int64
+	output     string
+	clearData  bool
 }
 
 const topUsage = `sanderling is a property-based UI fuzzer for mobile apps.
@@ -49,7 +52,8 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.StringVar(&options.bundleID, "bundle-id", "", "target app bundle ID (required)")
 	flagSet.StringVar(&options.platform, "platform", "android", "target platform: android, ios, web")
 	flagSet.StringVar(&options.avd, "avd", "", "Android AVD name to boot if no device is connected")
-	flagSet.StringVar(&options.iosDevice, "ios-device", "", "iOS simulator name or UDID to boot if none is running")
+	flagSet.StringVar(&options.iosDevice, "ios-device", "", "iOS target: a simulator name/UDID to boot, or a connected device's name, UDID, or CoreDevice id")
+	flagSet.StringVar(&options.iosAppPath, "ios-app-path", "", "path to the .app bundle for iOS clear-state reinstall (simulator: simctl; device: devicectl)")
 	flagSet.DurationVar(&options.duration, "duration", 5*time.Minute, "total test duration")
 	flagSet.Int64Var(&options.seed, "seed", 0, "RNG seed (0 = random)")
 	flagSet.StringVar(&options.output, "output", "./runs", "output directory for traces")
@@ -72,7 +76,11 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 }
 
 func runTest(options testOptions, stdout io.Writer) error {
-	ctx, cancel := context.WithCancel(context.Background())
+	// A signal-aware root context: on Ctrl-C the cancellation propagates into
+	// the drivers' process contexts, so spawned children (the iOS companion,
+	// the xcodebuild runner session) get their SIGTERM instead of outliving
+	// the run as orphans.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	return runTestPipeline(ctx, options, stdout)
 }

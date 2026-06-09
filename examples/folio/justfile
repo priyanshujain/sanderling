@@ -7,6 +7,8 @@ duration   := env_var_or_default("DURATION", "1m")
 seed       := env_var_or_default("SEED", "0")
 output     := env_var_or_default("OUTPUT", justfile_directory() / "sanderling" / "runs")
 ios_device := env_var_or_default("IOS_DEVICE", "iPhone 17 Pro")
+ios_app    := justfile_directory() / "app" / "iosApp" / "build" / "Build" / "Products" / "Debug-iphonesimulator" / "iosApp.app"
+ios_app_device := justfile_directory() / "app" / "iosApp" / "build" / "Build" / "Products" / "Debug-iphoneos" / "iosApp.app"
 
 default:
     @just --list
@@ -118,8 +120,27 @@ ios:
       -destination 'platform=iOS Simulator,name={{ios_device}}' \
       -derivedDataPath app/iosApp/build \
       build | tail -5
-    xcrun simctl install booted app/iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app
+    xcrun simctl install booted "{{ios_app}}"
     xcrun simctl launch booted app.folio
+
+# Build the folio app for a connected physical iOS device (signed via .env creds).
+# Signing reads ASC_API_* and DEVELOPMENT_TEAM/SANDERLING_IOS_TEAM from .env;
+# sanderling installs the build on the device per run via devicectl.
+ios-device:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ANDROID_HOME="$(just _android-home)"
+    just ios-gen
+    xcodebuild -project app/iosApp/iosApp.xcodeproj -scheme iosApp \
+      -destination 'generic/platform=iOS' \
+      -derivedDataPath app/iosApp/build \
+      -allowProvisioningUpdates \
+      -authenticationKeyPath "$ASC_API_KEY_PATH" \
+      -authenticationKeyID "$ASC_API_KEY_ID" \
+      -authenticationKeyIssuerID "$ASC_API_ISSUER_ID" \
+      CODE_SIGN_STYLE=Automatic \
+      DEVELOPMENT_TEAM="${SANDERLING_IOS_TEAM:-${DEVELOPMENT_TEAM:-}}" \
+      build | tail -5
 
 # Run 'sanderling test' against the folio app. Uses a connected device if one is
 # online; otherwise boots AVD=<name> when provided, or auto-boots a bootable AVD.
@@ -167,7 +188,25 @@ test-ios:
       --platform ios \
       --spec "{{justfile_directory()}}/sanderling/spec.ts" \
       --bundle-id app.folio \
+      --ios-app-path "{{ios_app}}" \
       "${ios_device_flag[@]}" \
+      --duration "{{duration}}" \
+      --seed "{{seed}}" \
+      --output "{{output}}"
+
+# Requires App Store Connect signing creds in .env and IOS_DEVICE set to the
+# connected device's name (or UDID / CoreDevice id).
+# Build + install + run sanderling spec on a connected physical iOS device.
+test-ios-device:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just ios-device
+    "{{sanderling}}" test \
+      --platform ios \
+      --spec "{{justfile_directory()}}/sanderling/spec.ts" \
+      --bundle-id app.folio \
+      --ios-app-path "{{ios_app_device}}" \
+      --ios-device "{{ios_device}}" \
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"
