@@ -3,6 +3,7 @@ set dotenv-load := true
 
 sanderling := env_var_or_default("SANDERLING", "sanderling")
 avd        := env_var_or_default("AVD", "")
+android_device := env_var_or_default("ANDROID_DEVICE", "")
 duration   := env_var_or_default("DURATION", "1m")
 seed       := env_var_or_default("SEED", "0")
 output     := env_var_or_default("OUTPUT", justfile_directory() / "sanderling" / "runs")
@@ -82,6 +83,8 @@ install: _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
+    # ANDROID_SERIAL routes the install to the chosen device when several attach.
+    [[ -n "{{android_device}}" ]] && export ANDROID_SERIAL="{{android_device}}"
     ./gradlew :app:androidApp:installDebug
 
 # Remove the folio APK from the connected device.
@@ -152,6 +155,9 @@ test: install
     avd_flag=()
     if [[ -n "{{avd}}" ]]; then
       avd_flag=(--avd "{{avd}}")
+    fi
+    if [[ -n "{{android_device}}" ]]; then
+      avd_flag+=(--device "{{android_device}}")
     fi
     "{{sanderling}}" test \
       --spec "{{justfile_directory()}}/sanderling/spec.ts" \
