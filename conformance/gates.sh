@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scripted conformance gate for the iOS simulator driver. Runs five serial,
+# Scripted conformance gate for the mobile drivers. Runs five serial,
 # non-overlapping 3-minute fuzz runs against the folio example app
 # (examples/folio) and scores five gates (G1..G5) over the captured traces and
 # output. Exits non-zero if any gate fails.
@@ -9,10 +9,14 @@
 #   BACKEND=device               drive an attached physical iPhone via the
 #                                driver's runner-only device path; select it
 #                                with IOS_DEVICE="<name>" (passed as --ios-device)
+#   BACKEND=android              drive an Android device/emulator over the JVM
+#                                sidecar; select a specific device with
+#                                ANDROID_DEVICE="<adb serial>" (passed as --device)
 #
 # Usage:
 #   ./gates.sh                          run the simulator gates
 #   BACKEND=device IOS_DEVICE="iPhone" ./gates.sh
+#   BACKEND=android ANDROID_DEVICE="663c91b1" ./gates.sh
 #   ./gates.sh --self-test              run the offline analyzer tests only
 #
 # Tunables (environment):
@@ -34,9 +38,11 @@ SEED="${SEED:-0}"
 P95_LIMIT_MS="${P95_LIMIT_MS:-2500}"
 SANDERLING="${SANDERLING:-sanderling}"
 IOS_DEVICE="${IOS_DEVICE:-iPhone 17 Pro}"
+ANDROID_DEVICE="${ANDROID_DEVICE:-}"
 
 bundle_id="app.folio"
 spec_path="${folio_directory}/sanderling/spec.ts"
+android_apk="${folio_directory}/app/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
 # The built app bundle differs by SDK: the simulator build lands under
 # Debug-iphonesimulator, the device build under Debug-iphoneos.
 if [[ "$BACKEND" == "device" ]]; then
@@ -44,6 +50,11 @@ if [[ "$BACKEND" == "device" ]]; then
 else
   ios_app="${folio_directory}/app/iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app"
 fi
+
+# Run adb against the selected Android device, or the only one if unset.
+adb_target() {
+  if [[ -n "$ANDROID_DEVICE" ]]; then adb -s "$ANDROID_DEVICE" "$@"; else adb "$@"; fi
+}
 
 # The companion binary, embedded for simulator runs. Referenced by file name
 # only for the orphan-process check; prose elsewhere says "the companion".
@@ -197,6 +208,12 @@ print(samples[rank - 1])
 # dies with sanderling, so it leaves no process to check. Empty output is clean.
 orphan_processes() {
   local found=""
+  if [[ "$BACKEND" == "android" ]]; then
+    # sanderling SIGTERMs the JVM sidecar on shutdown; a survivor is an orphan.
+    if pgrep -f "sanderling-sidecar.*\.jar" >/dev/null 2>&1; then found+="sidecar "; fi
+    printf '%s' "$found"
+    return
+  fi
   if pgrep -f "$companion_process_name" >/dev/null 2>&1; then
     found+="companion "
   fi
@@ -223,15 +240,26 @@ invoke_sanderling() {
   local output_log="$2"
   local exit_status_file="$3"
 
-  # Both backends pass --ios-app-path so each run reinstalls the current build
-  # for a clean clear-state start (device install via devicectl, simulator via
-  # simctl). The device backend selects the connected iPhone by name; the
-  # simulator backend boots IOS_DEVICE if nothing is booted.
-  local target_flags=(--ios-device "$IOS_DEVICE" --ios-app-path "$ios_app")
+  local platform target_flags=()
+  if [[ "$BACKEND" == "android" ]]; then
+    # pm clear is blocked on some OEM ROMs, so a fresh install (which wipes
+    # /data/data) provides the clean clear-state start; --clear-data=false
+    # then skips the sidecar's pm clear. Mirrors the iOS per-run reinstall.
+    platform=android
+    adb_target uninstall "$bundle_id" >/dev/null 2>&1 || true
+    adb_target install "$android_apk" >/dev/null
+    target_flags=(--clear-data=false)
+    [[ -n "$ANDROID_DEVICE" ]] && target_flags+=(--device "$ANDROID_DEVICE")
+  else
+    # The iOS backends pass --ios-app-path so each run reinstalls the current
+    # build for a clean start (device via devicectl, simulator via simctl).
+    platform=ios
+    target_flags=(--ios-device "$IOS_DEVICE" --ios-app-path "$ios_app")
+  fi
 
   local status=0
   "$SANDERLING" test \
-    --platform ios \
+    --platform "$platform" \
     --spec "$spec_path" \
     --bundle-id "$bundle_id" \
     "${target_flags[@]}" \
@@ -255,7 +283,10 @@ collect_run_artifacts() {
 }
 
 run_gates() {
-  if [[ "$BACKEND" == "simulator" ]]; then
+  if [[ "$BACKEND" == "android" ]]; then
+    echo "preparing folio android build"
+    ( cd "$folio_directory" && ANDROID_DEVICE="$ANDROID_DEVICE" just install >/dev/null )
+  elif [[ "$BACKEND" == "simulator" ]]; then
     echo "preparing folio build for the simulator backend"
     ( cd "$folio_directory" && just ios >/dev/null )
   else
