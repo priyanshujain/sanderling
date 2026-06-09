@@ -19,25 +19,33 @@ targets:
     sources:
       - iosApp
     dependencies:
-      - framework: ../shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework
-        embed: false
       - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.folio
         PRODUCT_NAME: iosApp
         INFOPLIST_FILE: iosApp/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # The Kotlin framework slice differs by SDK: device builds link the
+        # iosArm64 framework, simulator builds the iosSimulatorArm64 one. The
+        # search path and the prebuild gradle task both follow this variable.
+        KOTLIN_FRAMEWORK_DIR[sdk=iphoneos*]: iosArm64
+        KOTLIN_FRAMEWORK_DIR[sdk=iphonesimulator*]: iosSimulatorArm64
         FRAMEWORK_SEARCH_PATHS:
           - $(SRCROOT)/../shared/build/bin/$(KOTLIN_FRAMEWORK_DIR)/debugFramework
         OTHER_LDFLAGS:
           - -ObjC
-        KOTLIN_FRAMEWORK_DIR: iosSimulatorArm64
+          - -framework
+          - Shared
     preBuildScripts:
       - name: Build Kotlin framework
         script: |
           cd "$SRCROOT/../.."
+          if [[ "$PLATFORM_NAME" == iphoneos ]]; then
+            task=linkDebugFrameworkIosArm64
+          else
+            task=linkDebugFrameworkIosSimulatorArm64
+          fi
           ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}" \
-            ./gradlew :app:shared:linkDebugFrameworkIosSimulatorArm64
-        outputFiles:
-          - $(SRCROOT)/../shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Shared
+            ./gradlew :app:shared:$task
         basedOnDependencyAnalysis: false

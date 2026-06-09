@@ -14,6 +14,8 @@ import (
 
 	"github.com/chromedp/chromedp"
 
+	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion"
+	"github.com/priyanshujain/sanderling/internal/ios"
 	"github.com/priyanshujain/sanderling/internal/sidecarassets"
 )
 
@@ -59,8 +61,9 @@ func androidChecks() []doctorCheck {
 
 // iosChecks covers the simulator path, which the native companion drives with
 // no JVM. A simulator host with no Java still passes. Physical-device runs
-// additionally need java and the sidecar JAR, covered by iosDeviceChecks and
-// surfaced through the "all" union.
+// additionally need devicectl, the usbmuxd socket, a connected device, and
+// signing credentials, covered by iosDeviceChecks and surfaced through the
+// "all" union.
 func iosChecks() []doctorCheck {
 	return []doctorCheck{
 		{Name: "xcrun on PATH (ios simulator)", Run: checkExecutableOnPath("xcrun")},
@@ -68,12 +71,18 @@ func iosChecks() []doctorCheck {
 	}
 }
 
-// iosDeviceChecks covers the extra prerequisites a physical iOS device needs:
-// the JVM and a real sidecar JAR for the sidecar driver path.
+// iosDeviceChecks covers the prerequisites a physical iOS device needs: the
+// runner is built and driven over a native usbmux tunnel, so devicectl installs
+// the app, the macOS usbmuxd socket carries the tunnel, a device must be
+// connected and paired, and App Store Connect signing credentials must be
+// present for the no-UI build. Everything here is part of macOS + Xcode; nothing
+// is installed.
 func iosDeviceChecks() []doctorCheck {
 	return []doctorCheck{
-		{Name: "java 17+ on PATH (ios physical device)", Run: checkJavaVersion},
-		{Name: "sidecar JAR is real (ios physical device)", Run: checkSidecarJAR},
+		{Name: "devicectl available (ios physical device)", Run: checkDevicectl},
+		{Name: "usbmuxd socket present (ios physical device)", Run: checkUsbmuxd},
+		{Name: "an iOS device is connected and paired", Run: checkDeviceConnected},
+		{Name: "App Store Connect signing credentials present", Run: checkDeviceSigning},
 	}
 }
 
@@ -118,6 +127,48 @@ func checkSimctl(ctx context.Context) error {
 		return fmt.Errorf("xcrun simctl help: %w", err)
 	}
 	return nil
+}
+
+// Device-check seams: package-level so the doctor's device checks run against
+// canned results instead of a real device.
+var (
+	doctorConnectedDevices = ios.ConnectedDevices
+	doctorVerifySigning    = ioscompanion.VerifyDeviceSigning
+	doctorVerifyUsbmuxd    = ioscompanion.VerifyUsbmuxdSocket
+)
+
+// checkDevicectl exercises `xcrun devicectl --version`: devicectl is an xcrun
+// subcommand, so a PATH lookup cannot find it.
+func checkDevicectl(ctx context.Context) error {
+	if err := exec.CommandContext(ctx, "xcrun", "devicectl", "--version").Run(); err != nil {
+		return fmt.Errorf("xcrun devicectl --version: %w", err)
+	}
+	return nil
+}
+
+// checkUsbmuxd confirms the macOS usbmuxd socket is present: the native device
+// tunnel speaks to it directly instead of shelling out to a third-party client.
+func checkUsbmuxd(_ context.Context) error {
+	return doctorVerifyUsbmuxd()
+}
+
+// checkDeviceConnected confirms at least one physical iOS device is connected
+// and paired, the prerequisite for the tunnel and the install.
+func checkDeviceConnected(ctx context.Context) error {
+	devices, err := doctorConnectedDevices(ctx)
+	if err != nil {
+		return err
+	}
+	if len(devices) == 0 {
+		return fmt.Errorf("no connected iOS device; connect and pair an iPhone")
+	}
+	return nil
+}
+
+// checkDeviceSigning confirms the App Store Connect signing environment is
+// complete and the key file exists, so the no-UI device build can sign.
+func checkDeviceSigning(_ context.Context) error {
+	return doctorVerifySigning()
 }
 
 func checkSidecarJAR(_ context.Context) error {

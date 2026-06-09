@@ -31,6 +31,29 @@ enum AppLifecycle {
         }
     }
 
+    // state reports the app's run state in the vocabulary the Go transport maps
+    // to a process state: foreground, background, or notRunning. On the
+    // simulator the hybrid never calls it; on device it backs ForegroundApp.
+    static func state(bundleIdentifier: String) -> String {
+        var result = "notRunning"
+        let collect = {
+            switch XCUIApplication(bundleIdentifier: bundleIdentifier).state {
+            case .runningForeground:
+                result = "foreground"
+            case .runningBackground, .runningBackgroundSuspended:
+                result = "background"
+            default:
+                result = "notRunning"
+            }
+        }
+        if Thread.isMainThread {
+            collect()
+        } else {
+            DispatchQueue.main.sync(execute: collect)
+        }
+        return result
+    }
+
     // onMainCatching runs automation work on the main thread and converts a
     // framework assertion into a thrown error so the server survives it.
     private static func onMainCatching(_ work: @escaping () -> Void) throws {

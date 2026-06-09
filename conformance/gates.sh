@@ -7,8 +7,8 @@
 # Backends:
 #   BACKEND=simulator (default)  drive the booted iOS simulator
 #   BACKEND=device               drive an attached physical iPhone via the
-#                                native sidecar; select it with
-#                                IOS_DEVICE="<name>" (passed as --ios-device)
+#                                driver's runner-only device path; select it
+#                                with IOS_DEVICE="<name>" (passed as --ios-device)
 #
 # Usage:
 #   ./gates.sh                          run the simulator gates
@@ -37,7 +37,13 @@ IOS_DEVICE="${IOS_DEVICE:-iPhone 17 Pro}"
 
 bundle_id="app.folio"
 spec_path="${folio_directory}/sanderling/spec.ts"
-ios_app="${folio_directory}/app/iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app"
+# The built app bundle differs by SDK: the simulator build lands under
+# Debug-iphonesimulator, the device build under Debug-iphoneos.
+if [[ "$BACKEND" == "device" ]]; then
+  ios_app="${folio_directory}/app/iosApp/build/Build/Products/Debug-iphoneos/iosApp.app"
+else
+  ios_app="${folio_directory}/app/iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app"
+fi
 
 # The companion binary, embedded for simulator runs. Referenced by file name
 # only for the orphan-process check; prose elsewhere says "the companion".
@@ -187,7 +193,8 @@ print(samples[rank - 1])
 
 # G5 orphan check: report any lingering companion, runner session (the hybrid
 # simulator driver hosts an in-simulator runner), and, on the device backend,
-# the XCTest runner java sidecar. Empty output means clean.
+# the device runner session. The usbmux tunnel is an in-process forwarder that
+# dies with sanderling, so it leaves no process to check. Empty output is clean.
 orphan_processes() {
   local found=""
   if pgrep -f "$companion_process_name" >/dev/null 2>&1; then
@@ -200,9 +207,10 @@ orphan_processes() {
     found+="runner-app "
   fi
   if [[ "$BACKEND" == "device" ]]; then
-    # The native sidecar that drives the XCTest runner for physical devices.
-    if pgrep -f "sanderling.*sidecar.jar" >/dev/null 2>&1; then
-      found+="sidecar "
+    # The device test session that hosts the runner. Its destination carries
+    # platform=iOS,id=<udid>.
+    if pgrep -f "xctestrun.*platform=iOS,id=" >/dev/null 2>&1; then
+      found+="device-session "
     fi
   fi
   printf '%s' "$found"
@@ -215,15 +223,11 @@ invoke_sanderling() {
   local output_log="$2"
   local exit_status_file="$3"
 
-  local target_flags=()
-  if [[ "$BACKEND" == "device" ]]; then
-    target_flags=(--ios-device "$IOS_DEVICE")
-  else
-    # Simulator: build + install the current app so each run starts from the
-    # current build, matching the test-ios recipe. clear-state reinstall uses
-    # --ios-app-path. just ios boots IOS_DEVICE if nothing is booted.
-    target_flags=(--ios-device "$IOS_DEVICE" --ios-app-path "$ios_app")
-  fi
+  # Both backends pass --ios-app-path so each run reinstalls the current build
+  # for a clean clear-state start (device install via devicectl, simulator via
+  # simctl). The device backend selects the connected iPhone by name; the
+  # simulator backend boots IOS_DEVICE if nothing is booted.
+  local target_flags=(--ios-device "$IOS_DEVICE" --ios-app-path "$ios_app")
 
   local status=0
   "$SANDERLING" test \
@@ -254,6 +258,9 @@ run_gates() {
   if [[ "$BACKEND" == "simulator" ]]; then
     echo "preparing folio build for the simulator backend"
     ( cd "$folio_directory" && just ios >/dev/null )
+  else
+    echo "preparing folio device build"
+    ( cd "$folio_directory" && just ios-device >/dev/null )
   fi
 
   local timestamp

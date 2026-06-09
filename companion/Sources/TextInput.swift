@@ -37,6 +37,40 @@ enum TextInput {
         }
     }
 
+    // erase deletes count characters from the focused field by typing that many
+    // delete keys. Used on device, where EraseText routes to the runner instead
+    // of the legacy companion's HID stream.
+    static func erase(count: Int, bundleIdentifier: String) throws {
+        guard count > 0 else { return }
+        let deletes = String(repeating: XCUIKeyboardKey.delete.rawValue, count: count)
+        try typeOnFocus(deletes, bundleIdentifier: bundleIdentifier)
+    }
+
+    // pressKey types a single logical key into the focused field. Only return is
+    // supported, matching the simulator companion's key surface.
+    static func pressKey(key: String, bundleIdentifier: String) throws {
+        switch key {
+        case "return", "enter", "Return", "Enter":
+            try typeOnFocus(XCUIKeyboardKey.return.rawValue, bundleIdentifier: bundleIdentifier)
+        default:
+            throw TextInputError.typingFailed("unsupported key \(key)")
+        }
+    }
+
+    private static func typeOnFocus(_ payload: String, bundleIdentifier: String) throws {
+        let application = XCUIApplication(bundleIdentifier: bundleIdentifier)
+        var caughtError: NSError?
+        var completed = false
+        runOnMain {
+            completed = CompanionRunCatching({
+                application.typeText(payload)
+            }, &caughtError)
+        }
+        if !completed {
+            throw TextInputError.typingFailed(caughtError?.localizedDescription ?? "unknown")
+        }
+    }
+
     private static func runOnMain(_ work: () -> Void) {
         if Thread.isMainThread {
             work()

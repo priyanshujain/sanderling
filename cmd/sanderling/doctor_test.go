@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/priyanshujain/sanderling/internal/ios"
 )
 
 func TestRunDoctorChecks_AllPass(t *testing.T) {
@@ -142,15 +144,58 @@ func TestDoctorChecksFor_iOSSimulator_OmitsJava(t *testing.T) {
 	}
 }
 
-func TestDoctorChecksFor_iOSDevice_IncludesJava(t *testing.T) {
-	found := false
-	for _, c := range doctorChecksFor("ios-device") {
-		if strings.Contains(c.Name, "java") {
-			found = true
+func TestDoctorChecksFor_iOSDevice_CoversDevicePrereqs(t *testing.T) {
+	checks := doctorChecksFor("ios-device")
+	for _, c := range checks {
+		if strings.Contains(c.Name, "java") || strings.Contains(c.Name, "sidecar") {
+			t.Errorf("device checks must not include the retired %q", c.Name)
 		}
 	}
-	if !found {
-		t.Error("ios-device checks must include java for the sidecar path")
+	for _, want := range []string{"devicectl", "usbmuxd", "connected and paired", "signing credentials"} {
+		found := false
+		for _, c := range checks {
+			if strings.Contains(c.Name, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("ios-device checks missing %q: %+v", want, checks)
+		}
+	}
+}
+
+func TestCheckDeviceConnected(t *testing.T) {
+	original := doctorConnectedDevices
+	t.Cleanup(func() { doctorConnectedDevices = original })
+
+	doctorConnectedDevices = func(context.Context) ([]ios.Device, error) {
+		return []ios.Device{{Name: "iPhone"}}, nil
+	}
+	if err := checkDeviceConnected(context.Background()); err != nil {
+		t.Fatalf("a connected device must pass: %v", err)
+	}
+
+	doctorConnectedDevices = func(context.Context) ([]ios.Device, error) { return nil, nil }
+	if err := checkDeviceConnected(context.Background()); err == nil {
+		t.Fatal("no device must fail")
+	}
+}
+
+func TestCheckDeviceSigning_SurfacesSeamResult(t *testing.T) {
+	// checkDeviceSigning is a passthrough to the driver's credential check; the
+	// credential logic itself is covered by TestReadSigningCredentials* in the
+	// ioscompanion package. Here we only confirm the wiring through the seam.
+	original := doctorVerifySigning
+	t.Cleanup(func() { doctorVerifySigning = original })
+
+	doctorVerifySigning = func() error { return nil }
+	if err := checkDeviceSigning(context.Background()); err != nil {
+		t.Fatalf("a passing signing check must surface nil: %v", err)
+	}
+
+	doctorVerifySigning = func() error { return errors.New("missing credentials") }
+	if err := checkDeviceSigning(context.Background()); err == nil {
+		t.Fatal("a failing signing check must surface the error")
 	}
 }
 

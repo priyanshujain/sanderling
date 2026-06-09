@@ -125,6 +125,16 @@ type Driver struct {
 	dialRunner    func(address string) (transport.Companion, error)
 	hybrid        bool
 
+	// Device-mode fields. On the physical-device path d.companion is the runner
+	// dialed over a usbmux tunnel, hybrid is false, and runnerClient is nil.
+	// coreDeviceID feeds devicectl; tunnel is the in-process usbmux forwarder
+	// bridging the host loopback port to the runner's device-side port.
+	deviceMode        bool
+	coreDeviceID      string
+	tunnel            io.Closer
+	startTunnel       func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
+	pickDeviceAddress func() (string, error)
+
 	// processContext owns the companion child's lifetime: it is derived from
 	// New's context (so a canceled run still reaps the child) and canceled by
 	// Close. Spawning under a startup-scoped context would SIGTERM the child
@@ -985,8 +995,20 @@ func (d *Driver) Close() {
 		d.runnerClient = nil
 	}
 	d.stopRunnerChild()
+	d.stopTunnel()
 	if d.processCancel != nil {
 		d.processCancel()
+	}
+}
+
+// stopTunnel closes the in-process usbmux forwarder on the device path. Closing
+// its listener ends the accept loop and lets the open bridges drain; a nil
+// tunnel (the simulator path) is a no-op.
+func (d *Driver) stopTunnel() {
+	tunnel := d.tunnel
+	d.tunnel = nil
+	if tunnel != nil {
+		_ = tunnel.Close()
 	}
 }
 
