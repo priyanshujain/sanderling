@@ -65,6 +65,21 @@ IOS_DEVICE="iPhone 15" just test-ios   # pick a different simulator
 
 `just test-ios` boots the simulator if needed, builds and installs the app, then runs `sanderling test --platform ios`.
 
+#### Physical device
+
+A connected iPhone is driven over a usbmux tunnel by a runner the driver builds and signs at run time. It needs `iproxy` (libimobiledevice) on PATH and App Store Connect signing credentials in the environment (a gitignored `.env` is loaded by `just`):
+
+```sh
+SANDERLING_IOS_TEAM=<10-char team id>
+ASC_API_KEY_ID=<key id>
+ASC_API_ISSUER_ID=<issuer id>
+ASC_API_KEY_PATH=<absolute path to AuthKey_*.p8>
+
+IOS_DEVICE="iPhone" just test-ios-device   # name, UDID, or CoreDevice id
+```
+
+Run `sanderling doctor --platform ios-device` to check `devicectl`, `iproxy`, a connected and paired device, and the signing credentials before a run.
+
 ### Web
 
 From either example. For the KMP wasmJs build, use `examples/folio`:
