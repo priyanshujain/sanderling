@@ -25,6 +25,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.folio
         PRODUCT_NAME: iosApp
         INFOPLIST_FILE: iosApp/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # The Kotlin framework slice differs by SDK: device builds link the
         # iosArm64 framework, simulator builds the iosSimulatorArm64 one. The
         # search path and the prebuild gradle task both follow this variable.
