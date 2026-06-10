@@ -226,7 +226,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 
 		applySkipped := false
 		if nextErr == nil {
-			if err := applyAction(ctx, options.Driver, nextAction, tree, options.IdleTimeout); err != nil {
+			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
 				if isWDADrop(err) {
 					return summary, fmt.Errorf("step %d: the iOS XCTest runner could not be restarted - re-run the test: %w", stepIndex, err)
 				}
@@ -416,6 +416,12 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 // never hang the run.
 const foregroundReadyAttempts = 8
 
+// focusTapSettle is the pause after tapping a field to focus it, before typing.
+// Long enough for focus to land, short enough to avoid the ~500ms-1s full
+// settle the keyboard's open animation would otherwise cost every InputText
+// step on a physical device.
+const focusTapSettle = 250 * time.Millisecond
+
 // waitForForeground blocks until the app under test is actually on screen, so
 // the first observe never captures a leftover screen or a freshly-booted
 // device's system dialog (e.g. Android's "set a screen lock" prompt). Drivers
@@ -507,7 +513,7 @@ func settleForForeground(ctx context.Context, options Options) {
 	cancel()
 }
 
-func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree, idleTimeout time.Duration) error {
+func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
 	switch action.Kind {
 	case verifier.ActionKindTap:
 		x, y, ok := resolveCoordinates(action, tree)
@@ -556,13 +562,19 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 			}
 			tapped = true
 		}
-		// The focus tap raises the keyboard. Settle before sending key
-		// events so the keyboard animation cannot race them into the wrong
-		// field (or drop them entirely).
+		// The focus tap raises the keyboard. The tap registers focus
+		// immediately and the text is injected into the focused view (not typed
+		// on the visible keyboard), so a brief pause is enough for focus to land
+		// rather than a full settle, which costs ~500ms-1s per InputText step on
+		// a physical device while the keyboard animates in.
 		if tapped {
-			idleCtx, idleCancel := context.WithTimeout(ctx, idleTimeout)
-			_ = drv.WaitForIdle(idleCtx, idleTimeout)
-			idleCancel()
+			timer := time.NewTimer(focusTapSettle)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
 		}
 		// InputText replaces the field's content: erase what the target
 		// holds before typing. Appending instead lets repeated draws grow
