@@ -166,10 +166,12 @@ test: install
     if [[ -n "{{android_device}}" ]]; then
       avd_flag+=(--device "{{android_device}}")
     fi
+    apk="{{justfile_directory()}}/app/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
     "{{sanderling}}" test \
       --spec "{{justfile_directory()}}/sanderling/spec.ts" \
       --bundle-id app.folio \
       "${avd_flag[@]}" \
+      --android-app-path "$apk" \
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"
