@@ -1807,6 +1807,54 @@ func TestAwaitForeground_RelaunchesThenWaitsForWindow(t *testing.T) {
 	}
 }
 
+// TestClampGestureToSafeArea_KeepsOriginOutOfGestureZones locks the swipe fix:
+// a gesture origin in the top status-bar strip pulls down the notification
+// shade and drags the fuzzer out of the app. The origin must be pulled into the
+// safe inner area while the destination only stays on screen.
+func TestClampGestureToSafeArea_KeepsOriginOutOfGestureZones(t *testing.T) {
+	screen := hierarchy.Bounds{Left: 0, Top: 0, Right: 1080, Bottom: 2400}
+	// marginX = 1080/20 = 54, marginY = 2400/12 = 200.
+
+	// The real shade-opening swipe captured on device: origin y=62.
+	fromX, fromY, toX, toY := clampGestureToSafeArea(802, 62, 802, 447, screen)
+	if fromY < 200 {
+		t.Errorf("origin Y %d still inside the status-bar strip (need >= 200)", fromY)
+	}
+	if fromX != 802 || toX != 802 || toY != 447 {
+		t.Errorf("unexpected clamp of in-range coords: from=(%d,%d) to=(%d,%d)", fromX, fromY, toX, toY)
+	}
+
+	// Top-left corner origin pulled inside both margins.
+	fromX, fromY, _, _ = clampGestureToSafeArea(0, 0, 540, 1200, screen)
+	if fromX != 54 || fromY != 200 {
+		t.Errorf("corner origin not clamped to (54,200), got (%d,%d)", fromX, fromY)
+	}
+
+	// Unknown screen size leaves coordinates untouched.
+	fromX, fromY, toX, toY = clampGestureToSafeArea(802, 62, 802, 447, hierarchy.Bounds{})
+	if fromX != 802 || fromY != 62 || toX != 802 || toY != 447 {
+		t.Error("coordinates must pass through unchanged when screen size is unknown")
+	}
+}
+
+// TestScreenBounds_UsesMaxExtentNotRoot guards the screen-size source: the
+// Android hierarchy root reports zero bounds, so the screen rectangle must come
+// from the maximum element extent or the gesture clamp silently no-ops.
+func TestScreenBounds_UsesMaxExtentNotRoot(t *testing.T) {
+	tree := &hierarchy.Tree{
+		Root: &hierarchy.Node{Element: hierarchy.Element{Bounds: hierarchy.Bounds{}}},
+		Elements: []*hierarchy.Element{
+			{Bounds: hierarchy.Bounds{}},
+			{Bounds: hierarchy.Bounds{Left: 0, Top: 0, Right: 1080, Bottom: 2160}},
+			{Bounds: hierarchy.Bounds{Left: 0, Top: 2268, Right: 1080, Bottom: 2400}},
+		},
+	}
+	got := screenBounds(tree)
+	if got.Right != 1080 || got.Bottom != 2400 {
+		t.Fatalf("screenBounds = %+v, want right=1080 bottom=2400", got)
+	}
+}
+
 // TestEnsureForeground_DismissesSystemOverlay locks the shade fix: when the app
 // is still the resumed activity but a system overlay (notification shade) holds
 // the focused window, the guard must dismiss it with back rather than relaunch

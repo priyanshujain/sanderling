@@ -537,6 +537,7 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		return drv.LongPress(ctx, x, y)
 	case verifier.ActionKindScroll:
 		fromX, fromY, toX, toY := scrollEndpoints(action, tree)
+		fromX, fromY, toX, toY = clampGestureToSafeArea(fromX, fromY, toX, toY, screenBounds(tree))
 		duration := time.Duration(action.DurationMillis) * time.Millisecond
 		if duration <= 0 {
 			duration = 300 * time.Millisecond
@@ -581,7 +582,8 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		if duration <= 0 {
 			duration = 250 * time.Millisecond
 		}
-		return drv.Swipe(ctx, action.FromX, action.FromY, action.ToX, action.ToY, duration)
+		fromX, fromY, toX, toY := clampGestureToSafeArea(action.FromX, action.FromY, action.ToX, action.ToY, screenBounds(tree))
+		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindPressKey:
 		if action.Key == "" {
 			return nil
@@ -707,6 +709,58 @@ func scrollEndpoints(action verifier.Action, tree *hierarchy.Tree) (fromX, fromY
 
 // scrollBounds returns the container bounds for an authored Scroll: the node
 // named by On when it resolves, otherwise the root (whole-screen) bounds.
+// screenBounds returns the device screen rectangle as the maximum extent across
+// all elements. The hierarchy root often reports zero bounds on Android, so the
+// extent (driven by full-screen containers and the navigation bar) is the
+// reliable screen size. Returns a zero rectangle when unknown.
+func screenBounds(tree *hierarchy.Tree) hierarchy.Bounds {
+	if tree == nil {
+		return hierarchy.Bounds{}
+	}
+	var bounds hierarchy.Bounds
+	for _, element := range tree.Elements {
+		if element.Bounds.Right > bounds.Right {
+			bounds.Right = element.Bounds.Right
+		}
+		if element.Bounds.Bottom > bounds.Bottom {
+			bounds.Bottom = element.Bounds.Bottom
+		}
+	}
+	return bounds
+}
+
+// clampGestureToSafeArea keeps a swipe's origin out of the system gesture zones
+// at the screen edges. A gesture that starts in the top strip pulls down the
+// notification shade; the bottom strip is the home gesture and the side strips
+// are the back gesture. Any of these drags the fuzzer out of the app. The
+// destination only needs to stay on screen. With an unknown screen size the
+// coordinates pass through unchanged.
+func clampGestureToSafeArea(fromX, fromY, toX, toY int, screen hierarchy.Bounds) (int, int, int, int) {
+	width, height := screen.Width(), screen.Height()
+	if width <= 0 || height <= 0 {
+		return fromX, fromY, toX, toY
+	}
+	// Margins are a fraction of each axis so they scale across devices and
+	// densities. The vertical margin clears the status bar (calibrated: swipes
+	// from below ~7% of height no longer open the shade) and the home gesture.
+	marginX := width / 20
+	marginY := height / 12
+	clamp := func(value, low, high int) int {
+		if value < low {
+			return low
+		}
+		if value > high {
+			return high
+		}
+		return value
+	}
+	fromX = clamp(fromX, screen.Left+marginX, screen.Right-marginX)
+	fromY = clamp(fromY, screen.Top+marginY, screen.Bottom-marginY)
+	toX = clamp(toX, screen.Left, screen.Right)
+	toY = clamp(toY, screen.Top, screen.Bottom)
+	return fromX, fromY, toX, toY
+}
+
 func scrollBounds(action verifier.Action, tree *hierarchy.Tree) hierarchy.Bounds {
 	if tree == nil {
 		return hierarchy.Bounds{}
