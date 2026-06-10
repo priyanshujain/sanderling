@@ -2,6 +2,7 @@ package android
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -191,6 +192,16 @@ func TestParseFocusedWindowPackage(t *testing.T) {
 			dumpsys: "  mCurrentFocus=Window{885e289 u0 NotificationShade}",
 			want:    "com.android.systemui",
 		},
+		{
+			name:    "quick settings focused",
+			dumpsys: "  mCurrentFocus=Window{abc u0 QuickSettings}",
+			want:    "com.android.systemui",
+		},
+		{
+			name:    "volume dialog focused",
+			dumpsys: "  mCurrentFocus=Window{abc u0 VolumeUiDialog}",
+			want:    "com.android.systemui",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -218,8 +229,18 @@ func TestParseEnabledNavOverlay(t *testing.T) {
 			want:    "com.android.internal.systemui.navbar.threebutton",
 		},
 		{
+			name:    "two-button active",
+			listing: "[x] com.android.internal.systemui.navbar.twobutton\n[ ] com.android.internal.systemui.navbar.gestural",
+			want:    "com.android.internal.systemui.navbar.twobutton",
+		},
+		{
 			name:    "ignores enabled non-nav overlays",
 			listing: "[x] com.some.other.overlay\n[ ] com.android.internal.systemui.navbar.gestural",
+			want:    "",
+		},
+		{
+			name:    "no overlay enabled",
+			listing: "[ ] com.android.internal.systemui.navbar.gestural\n[ ] com.android.internal.systemui.navbar.threebutton",
 			want:    "",
 		},
 	}
@@ -234,29 +255,58 @@ func TestParseEnabledNavOverlay(t *testing.T) {
 
 func TestAntiFreezeCommands_DisablesFreezersAndExemptsDriver(t *testing.T) {
 	commands := antiFreezeCommands()
-	joined := make([]string, len(commands))
-	for i, c := range commands {
-		joined[i] = strings.Join(c, " ")
+	has := func(want ...string) bool {
+		return slices.ContainsFunc(commands, func(c []string) bool { return slices.Equal(c, want) })
 	}
-	all := strings.Join(joined, "\n")
+	for _, want := range [][]string{
+		{"device_config", "set_sync_disabled_for_tests", "persistent"},
+		{"device_config", "put", "activity_manager_native_boot", "use_freezer", "false"},
+		{"settings", "put", "global", "settings_enable_monitor_phantom_procs", "false"},
+		{"dumpsys", "deviceidle", "disable"},
+	} {
+		if !has(want...) {
+			t.Errorf("anti-freeze commands missing exact command %v", want)
+		}
+	}
 
-	wantContains := []string{
-		"device_config set_sync_disabled_for_tests persistent",
-		"device_config put activity_manager_native_boot use_freezer false",
-		"settings put global settings_enable_monitor_phantom_procs false",
-		"dumpsys deviceidle disable",
+	// The freezer exemption must be one device_config command whose final
+	// argument lists every driver package, not just the package string
+	// appearing somewhere among the commands.
+	exemption := findCommand(commands, "device_config", "put", "activity_manager_native_boot", "freeze_exempt_inst_pkg")
+	if exemption == nil {
+		t.Fatalf("no freeze_exempt_inst_pkg command found in %v", commands)
 	}
-	for _, want := range wantContains {
-		if !strings.Contains(all, want) {
-			t.Errorf("anti-freeze commands missing %q\ngot:\n%s", want, all)
-		}
-	}
+	value := exemption[len(exemption)-1]
 	for _, pkg := range driverPackages {
-		if !strings.Contains(all, "freeze_exempt_inst_pkg") || !strings.Contains(all, pkg) {
-			t.Errorf("driver package %q not exempted from freezer\ngot:\n%s", pkg, all)
+		if !strings.Contains(value, pkg) {
+			t.Errorf("freeze_exempt_inst_pkg value %q missing driver package %q", value, pkg)
 		}
-		if !strings.Contains(all, "deviceidle whitelist +"+pkg) {
-			t.Errorf("driver package %q not whitelisted from doze\ngot:\n%s", pkg, all)
+		if !has("dumpsys", "deviceidle", "whitelist", "+"+pkg) {
+			t.Errorf("driver package %q not whitelisted from doze", pkg)
+		}
+	}
+}
+
+// findCommand returns the first command whose leading tokens equal prefix.
+func findCommand(commands [][]string, prefix ...string) []string {
+	for _, c := range commands {
+		if len(c) >= len(prefix) && slices.Equal(c[:len(prefix)], prefix) {
+			return c
+		}
+	}
+	return nil
+}
+
+func TestNavModeToRestore(t *testing.T) {
+	cases := map[string]string{
+		"com.android.internal.systemui.navbar.gestural":    "com.android.internal.systemui.navbar.gestural",
+		"com.android.internal.systemui.navbar.twobutton":   "com.android.internal.systemui.navbar.twobutton",
+		"com.android.internal.systemui.navbar.threebutton": "", // already 3-button: nothing to change
+		"": "", // unknown current mode: must not switch what cannot be restored
+	}
+	for original, want := range cases {
+		if got := navModeToRestore(original); got != want {
+			t.Errorf("navModeToRestore(%q) = %q, want %q", original, got, want)
 		}
 	}
 }

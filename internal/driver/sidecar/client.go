@@ -54,7 +54,7 @@ func (c *Client) ForegroundApp(ctx context.Context) (string, error) {
 	if c.platform != "android" {
 		return "", nil
 	}
-	return android.ForegroundPackage(ctx)
+	return android.ForegroundPackage(ctx, c.serial)
 }
 
 // FocusedWindowApp reports the package owning the focused window. Only Android
@@ -64,7 +64,7 @@ func (c *Client) FocusedWindowApp(ctx context.Context) (string, error) {
 	if c.platform != "android" {
 		return "", nil
 	}
-	return android.FocusedWindowPackage(ctx)
+	return android.FocusedWindowPackage(ctx, c.serial)
 }
 
 // Dial connects to the sidecar gRPC server at the given address.

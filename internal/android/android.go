@@ -63,6 +63,17 @@ func EnsureDevice(ctx context.Context, serial, avdName string, stdout io.Writer)
 // Every step is best effort: some OEM builds restrict or kill these commands
 // (e.g. HyperOS SIGKILLs `svc power stayon`), and none is required for a run to
 // proceed, so a failure is logged and skipped rather than aborting the run.
+// adbArgs prepends the device selector when a serial is set, so every adb
+// invocation targets the chosen device. Without it, `adb` fails on a host with
+// more than one device attached, which silently disables anything that reads
+// adb output (the foreground/scope guard).
+func adbArgs(serial string, args ...string) []string {
+	if serial == "" {
+		return args
+	}
+	return append([]string{"-s", serial}, args...)
+}
+
 func PrepareDevice(ctx context.Context, serial string, stdout io.Writer) error {
 	adb, err := AdbBinary()
 	if err != nil {
@@ -73,11 +84,7 @@ func PrepareDevice(ctx context.Context, serial string, stdout io.Writer) error {
 		{"input", "keyevent", "KEYCODE_WAKEUP"},
 		{"wm", "dismiss-keyguard"},
 	}, antiFreezeCommands()...) {
-		args := []string{}
-		if serial != "" {
-			args = append(args, "-s", serial)
-		}
-		args = append(append(args, "shell"), shellCommand...)
+		args := adbArgs(serial, append([]string{"shell"}, shellCommand...)...)
 		if err := exec.CommandContext(ctx, adb, args...).Run(); err != nil {
 			fmt.Fprintf(stdout, "device prep: skipping `adb %s` (%v)\n", strings.Join(shellCommand, " "), err)
 		}
@@ -121,16 +128,10 @@ func ReinstallApp(ctx context.Context, serial, bundleID, apkPath string, stdout 
 	if err != nil {
 		return err
 	}
-	withSerial := func(args ...string) []string {
-		if serial != "" {
-			return append([]string{"-s", serial}, args...)
-		}
-		return args
-	}
-	if output, err := exec.CommandContext(ctx, adb, withSerial("uninstall", bundleID)...).CombinedOutput(); err != nil {
+	if output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "uninstall", bundleID)...).CombinedOutput(); err != nil {
 		fmt.Fprintf(stdout, "clear-state: uninstall %s skipped (%v: %s)\n", bundleID, err, strings.TrimSpace(string(output)))
 	}
-	if output, err := exec.CommandContext(ctx, adb, withSerial("install", "-r", apkPath)...).CombinedOutput(); err != nil {
+	if output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "install", "-r", apkPath)...).CombinedOutput(); err != nil {
 		return fmt.Errorf("install %s: %w: %s", apkPath, err, strings.TrimSpace(string(output)))
 	}
 	return nil
@@ -157,30 +158,39 @@ func ForceThreeButtonNav(ctx context.Context, serial string, stdout io.Writer) f
 	if err != nil {
 		return func() {}
 	}
-	original := enabledNavOverlay(ctx, adb, serial)
+	// Decide before changing anything: if the current mode is unknown (an OEM
+	// overlay, or a parse failure) or already 3-button, there is nothing to
+	// restore, so leave navigation untouched rather than stranding the device in
+	// 3-button after the run.
+	restore := navModeToRestore(enabledNavOverlay(ctx, adb, serial))
+	if restore == "" {
+		return func() {}
+	}
 	if err := navOverlayCommand(ctx, adb, serial, threeButtonNavOverlay).Run(); err != nil {
 		fmt.Fprintf(stdout, "device prep: skipping 3-button nav (%v)\n", err)
 		return func() {}
 	}
-	if original == "" || original == threeButtonNavOverlay {
-		return func() {}
-	}
 	return func() {
-		if err := navOverlayCommand(context.Background(), adb, serial, original).Run(); err != nil {
-			fmt.Fprintf(stdout, "device prep: could not restore nav mode %s (%v)\n", original, err)
+		if err := navOverlayCommand(context.Background(), adb, serial, restore).Run(); err != nil {
+			fmt.Fprintf(stdout, "device prep: could not restore nav mode %s (%v)\n", restore, err)
 		}
 	}
+}
+
+// navModeToRestore returns the navigation overlay to restore after forcing
+// 3-button nav, or "" when nothing should change: an unknown current mode (not
+// restorable) or one that is already 3-button.
+func navModeToRestore(original string) string {
+	if original == "" || original == threeButtonNavOverlay {
+		return ""
+	}
+	return original
 }
 
 // enabledNavOverlay returns the currently active navigation-mode overlay, or ""
 // when it cannot be determined.
 func enabledNavOverlay(ctx context.Context, adb, serial string) string {
-	args := []string{}
-	if serial != "" {
-		args = append(args, "-s", serial)
-	}
-	args = append(args, "shell", "cmd", "overlay", "list")
-	output, err := exec.CommandContext(ctx, adb, args...).Output()
+	output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "cmd", "overlay", "list")...).Output()
 	if err != nil {
 		return ""
 	}
@@ -204,12 +214,7 @@ func parseEnabledNavOverlay(overlayList string) string {
 }
 
 func navOverlayCommand(ctx context.Context, adb, serial, overlay string) *exec.Cmd {
-	args := []string{}
-	if serial != "" {
-		args = append(args, "-s", serial)
-	}
-	args = append(args, "shell", "cmd", "overlay", "enable-exclusive", overlay)
-	return exec.CommandContext(ctx, adb, args...)
+	return exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "cmd", "overlay", "enable-exclusive", overlay)...)
 }
 
 // AdbReverse sets up adb reverse forwarding for a local abstract socket.
@@ -418,13 +423,13 @@ func waitForBoot(ctx context.Context, timeout time.Duration) error {
 }
 
 // ForegroundPackage returns the package of the currently resumed activity on
-// the connected device, or "" when it cannot be determined.
-func ForegroundPackage(ctx context.Context) (string, error) {
+// the given device, or "" when it cannot be determined.
+func ForegroundPackage(ctx context.Context, serial string) (string, error) {
 	adb, err := AdbBinary()
 	if err != nil {
 		return "", err
 	}
-	output, err := exec.CommandContext(ctx, adb, "shell", "dumpsys", "activity", "activities").Output()
+	output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "dumpsys", "activity", "activities")...).Output()
 	if err != nil {
 		return "", err
 	}
@@ -436,7 +441,7 @@ func ForegroundPackage(ctx context.Context) (string, error) {
 // Unlike ForegroundPackage, this reflects what is actually on screen:
 // ResumedActivity flips to a newly launched app before its first frame renders,
 // while mCurrentFocus only names the app once its window is up.
-func FocusedWindowPackage(ctx context.Context) (string, error) {
+func FocusedWindowPackage(ctx context.Context, serial string) (string, error) {
 	adb, err := AdbBinary()
 	if err != nil {
 		return "", err
@@ -444,7 +449,7 @@ func FocusedWindowPackage(ctx context.Context) (string, error) {
 	// Grep the focus line on-device: the full dumpsys window output is large and
 	// this runs on the per-step scope guard, so transferring it whole would add
 	// latency to every step.
-	output, err := exec.CommandContext(ctx, adb, "shell", "dumpsys window | grep mCurrentFocus").Output()
+	output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "dumpsys window | grep mCurrentFocus")...).Output()
 	if err != nil {
 		return "", err
 	}
