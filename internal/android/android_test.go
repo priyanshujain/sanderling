@@ -2,6 +2,7 @@ package android
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -185,6 +186,11 @@ func TestParseFocusedWindowPackage(t *testing.T) {
 			dumpsys: "  some unrelated dumpsys window output\n",
 			want:    "",
 		},
+		{
+			name:    "notification shade focused",
+			dumpsys: "  mCurrentFocus=Window{885e289 u0 NotificationShade}",
+			want:    "com.android.systemui",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -192,5 +198,34 @@ func TestParseFocusedWindowPackage(t *testing.T) {
 				t.Errorf("parseFocusedWindowPackage = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAntiFreezeCommands_DisablesFreezersAndExemptsDriver(t *testing.T) {
+	commands := antiFreezeCommands()
+	joined := make([]string, len(commands))
+	for i, c := range commands {
+		joined[i] = strings.Join(c, " ")
+	}
+	all := strings.Join(joined, "\n")
+
+	wantContains := []string{
+		"device_config set_sync_disabled_for_tests persistent",
+		"device_config put activity_manager_native_boot use_freezer false",
+		"settings put global settings_enable_monitor_phantom_procs false",
+		"dumpsys deviceidle disable",
+	}
+	for _, want := range wantContains {
+		if !strings.Contains(all, want) {
+			t.Errorf("anti-freeze commands missing %q\ngot:\n%s", want, all)
+		}
+	}
+	for _, pkg := range driverPackages {
+		if !strings.Contains(all, "freeze_exempt_inst_pkg") || !strings.Contains(all, pkg) {
+			t.Errorf("driver package %q not exempted from freezer\ngot:\n%s", pkg, all)
+		}
+		if !strings.Contains(all, "deviceidle whitelist +"+pkg) {
+			t.Errorf("driver package %q not whitelisted from doze\ngot:\n%s", pkg, all)
+		}
 	}
 }

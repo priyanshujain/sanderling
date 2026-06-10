@@ -68,11 +68,11 @@ func PrepareDevice(ctx context.Context, serial string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	for _, shellCommand := range [][]string{
+	for _, shellCommand := range append([][]string{
 		{"svc", "power", "stayon", "true"},
 		{"input", "keyevent", "KEYCODE_WAKEUP"},
 		{"wm", "dismiss-keyguard"},
-	} {
+	}, antiFreezeCommands()...) {
 		args := []string{}
 		if serial != "" {
 			args = append(args, "-s", serial)
@@ -81,6 +81,57 @@ func PrepareDevice(ctx context.Context, serial string, stdout io.Writer) error {
 		if err := exec.CommandContext(ctx, adb, args...).Run(); err != nil {
 			fmt.Fprintf(stdout, "device prep: skipping `adb %s` (%v)\n", strings.Join(shellCommand, " "), err)
 		}
+	}
+	return nil
+}
+
+// driverPackages are the on-device native-driver instrumentation packages that
+// the platform and OEM background freezers must not suspend mid-run.
+var driverPackages = []string{"dev.mobile.maestro", "dev.mobile.maestro.test"}
+
+// antiFreezeCommands turns off the background-process freezers that suspend the
+// driver between actions. Android 12+ adds a cached-app freezer and a
+// phantom-process killer; OEM builds (e.g. OnePlus/Oppo ColorOS OSense) add
+// their own. Left on, they freeze the driver instrumentation while the app is
+// foreground and the run stalls. set_sync_disabled_for_tests keeps the
+// device_config writes from being reverted by server-side sync. All best effort:
+// the caller skips and logs any command an OEM build rejects.
+func antiFreezeCommands() [][]string {
+	commands := [][]string{
+		{"device_config", "set_sync_disabled_for_tests", "persistent"},
+		{"device_config", "put", "activity_manager_native_boot", "use_freezer", "false"},
+		{"device_config", "put", "activity_manager_native_boot", "freeze_exempt_inst_pkg", strings.Join(driverPackages, ",")},
+		{"settings", "put", "global", "settings_enable_monitor_phantom_procs", "false"},
+		{"device_config", "put", "activity_manager", "max_phantom_processes", "2147483647"},
+		{"dumpsys", "deviceidle", "disable"},
+	}
+	for _, pkg := range driverPackages {
+		commands = append(commands, []string{"dumpsys", "deviceidle", "whitelist", "+" + pkg})
+	}
+	return commands
+}
+
+// ReinstallApp resets an app to first-launch state by uninstalling and
+// reinstalling it. This replaces `pm clear` for clear-state: ColorOS and other
+// hardened OEM builds deny CLEAR_APP_USER_DATA even to the adb shell user, so a
+// clear aborts the launch, whereas uninstall+install is always permitted.
+// The uninstall is best effort so a not-installed app is not an error.
+func ReinstallApp(ctx context.Context, serial, bundleID, apkPath string, stdout io.Writer) error {
+	adb, err := AdbBinary()
+	if err != nil {
+		return err
+	}
+	withSerial := func(args ...string) []string {
+		if serial != "" {
+			return append([]string{"-s", serial}, args...)
+		}
+		return args
+	}
+	if output, err := exec.CommandContext(ctx, adb, withSerial("uninstall", bundleID)...).CombinedOutput(); err != nil {
+		fmt.Fprintf(stdout, "clear-state: uninstall %s skipped (%v: %s)\n", bundleID, err, strings.TrimSpace(string(output)))
+	}
+	if output, err := exec.CommandContext(ctx, adb, withSerial("install", "-r", apkPath)...).CombinedOutput(); err != nil {
+		return fmt.Errorf("install %s: %w: %s", apkPath, err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
@@ -314,7 +365,10 @@ func FocusedWindowPackage(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	output, err := exec.CommandContext(ctx, adb, "shell", "dumpsys", "window").Output()
+	// Grep the focus line on-device: the full dumpsys window output is large and
+	// this runs on the per-step scope guard, so transferring it whole would add
+	// latency to every step.
+	output, err := exec.CommandContext(ctx, adb, "shell", "dumpsys window | grep mCurrentFocus").Output()
 	if err != nil {
 		return "", err
 	}
@@ -340,9 +394,22 @@ func parseForegroundPackage(dumpsys string) string {
 	return ""
 }
 
+// systemUIPackage is the owner reported for system overlays (notification
+// shade, quick settings) that take window focus without a package/activity
+// component name. The scope guard treats it as "not the app" and dismisses it.
+const systemUIPackage = "com.android.systemui"
+
+// systemOverlayWindowNames are the mCurrentFocus window names for the system
+// panels a fuzzer gesture can pull over the app (a swipe from the status bar
+// opens NotificationShade). They own focus while the app stays the resumed
+// activity, so the resumed-activity signal alone misses them.
+var systemOverlayWindowNames = []string{"NotificationShade", "ShadePanel", "QuickSettings", "VolumeUiDialog"}
+
 // parseFocusedWindowPackage extracts the focused-window package from
 // `dumpsys window` output by reading the mCurrentFocus component name. A
-// "mCurrentFocus=null" line (no focused window) yields "".
+// "mCurrentFocus=null" line (no focused window) yields "". A system overlay
+// (e.g. the notification shade) yields systemUIPackage so callers can tell it
+// apart from the app and from "no focus".
 func parseFocusedWindowPackage(dumpsys string) string {
 	for line := range strings.SplitSeq(dumpsys, "\n") {
 		if !strings.Contains(line, "mCurrentFocus") {
@@ -350,6 +417,11 @@ func parseFocusedWindowPackage(dumpsys string) string {
 		}
 		if match := resumedActivityPackage.FindStringSubmatch(line); match != nil {
 			return match[1]
+		}
+		for _, overlay := range systemOverlayWindowNames {
+			if strings.Contains(line, overlay) {
+				return systemUIPackage
+			}
 		}
 	}
 	return ""
