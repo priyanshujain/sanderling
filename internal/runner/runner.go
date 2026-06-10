@@ -719,8 +719,6 @@ func scrollEndpoints(action verifier.Action, tree *hierarchy.Tree) (fromX, fromY
 	return cx, cy, toX, toY
 }
 
-// scrollBounds returns the container bounds for an authored Scroll: the node
-// named by On when it resolves, otherwise the root (whole-screen) bounds.
 // screenBounds returns the device screen rectangle as the maximum extent across
 // all elements. The hierarchy root often reports zero bounds on Android, so the
 // extent (driven by full-screen containers and the navigation bar) is the
@@ -773,6 +771,8 @@ func clampGestureToSafeArea(fromX, fromY, toX, toY int, screen hierarchy.Bounds)
 	return fromX, fromY, toX, toY
 }
 
+// scrollBounds returns the container bounds for an authored Scroll: the node
+// named by On when it resolves, otherwise the root (whole-screen) bounds.
 func scrollBounds(action verifier.Action, tree *hierarchy.Tree) hierarchy.Bounds {
 	if tree == nil {
 		return hierarchy.Bounds{}
