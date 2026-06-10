@@ -4,6 +4,7 @@ package sidecar
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"google.golang.org/grpc"
@@ -18,12 +19,34 @@ type Client struct {
 	connection *grpc.ClientConn
 	stub       driverpb.DriverClient
 	platform   string
+
+	// serial, apkPath, and output drive the Android clear-state reinstall: when
+	// apkPath is set, Launch resets state by uninstalling and reinstalling the
+	// APK instead of asking the sidecar to `pm clear`, which hardened OEM builds
+	// deny. Empty apkPath leaves the legacy `pm clear` path in place.
+	serial  string
+	apkPath string
+	output  io.Writer
+
+	// reinstallApp resets an Android app to first-launch state. A seam so tests
+	// exercise the clear-state branch without a connected device; defaults to
+	// android.ReinstallApp.
+	reinstallApp func(ctx context.Context, serial, bundleID, apkPath string, output io.Writer) error
 }
 
 // SetPlatform records the target platform so capability methods (e.g.
 // ForegroundApp) can pick the right backend. The caller sets this right after
 // Dial.
 func (c *Client) SetPlatform(platform string) { c.platform = platform }
+
+// SetClearStateReinstall makes Android clear-state reset the app by reinstalling
+// the APK at apkPath (uninstall+install) rather than `pm clear`. serial targets
+// the device when several are connected; output receives progress lines.
+func (c *Client) SetClearStateReinstall(serial, apkPath string, output io.Writer) {
+	c.serial = serial
+	c.apkPath = apkPath
+	c.output = output
+}
 
 // ForegroundApp reports the foreground package. Only Android is supported (via
 // adb); other platforms return "" so the runner skips app-scope enforcement.
@@ -51,7 +74,11 @@ func Dial(address string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial sidecar: %w", err)
 	}
-	return &Client{connection: connection, stub: driverpb.NewDriverClient(connection)}, nil
+	return &Client{
+		connection:   connection,
+		stub:         driverpb.NewDriverClient(connection),
+		reinstallApp: android.ReinstallApp,
+	}, nil
 }
 
 func (c *Client) Close() error { return c.connection.Close() }
@@ -76,9 +103,19 @@ func (c *Client) WaitForHealth(ctx context.Context, pollInterval time.Duration) 
 }
 
 func (c *Client) Launch(ctx context.Context, bundleID string, clearState bool, env map[string]string) error {
+	sidecarClearState := clearState
+	if clearState && c.platform == "android" && c.apkPath != "" {
+		if c.output != nil {
+			fmt.Fprintf(c.output, "clear-state: reinstalling %s from %s\n", bundleID, c.apkPath)
+		}
+		if err := c.reinstallApp(ctx, c.serial, bundleID, c.apkPath, c.output); err != nil {
+			return fmt.Errorf("clear-state reinstall: %w", err)
+		}
+		sidecarClearState = false
+	}
 	_, err := c.stub.Launch(ctx, &driverpb.LaunchRequest{
 		BundleId:   bundleID,
-		ClearState: clearState,
+		ClearState: sidecarClearState,
 		Env:        env,
 	})
 	return err

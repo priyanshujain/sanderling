@@ -2,6 +2,7 @@ package sidecar
 
 import (
 	"context"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -297,6 +298,77 @@ func TestClient_LaunchAndTerminate(t *testing.T) {
 	}
 	if state.fake.terminateCalls != 1 {
 		t.Errorf("terminate calls: %d", state.fake.terminateCalls)
+	}
+}
+
+func TestClient_LaunchClearStateReinstallsOnAndroid(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+	client.SetPlatform("android")
+	client.SetClearStateReinstall("serial123", "/tmp/app.apk", io.Discard)
+
+	var got struct {
+		serial, bundleID, apkPath string
+	}
+	called := 0
+	client.reinstallApp = func(_ context.Context, serial, bundleID, apkPath string, _ io.Writer) error {
+		called++
+		got.serial, got.bundleID, got.apkPath = serial, bundleID, apkPath
+		return nil
+	}
+
+	if err := client.Launch(context.Background(), "app.folio", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if called != 1 {
+		t.Fatalf("reinstall called %d times, want 1", called)
+	}
+	if got.serial != "serial123" || got.bundleID != "app.folio" || got.apkPath != "/tmp/app.apk" {
+		t.Errorf("reinstall args wrong: %+v", got)
+	}
+	// The sidecar must not also clear: the host reinstall already reset state.
+	if state.fake.clearState {
+		t.Error("sidecar clearState should be false after host reinstall")
+	}
+	if state.fake.launchedBundleID != "app.folio" {
+		t.Errorf("launched bundle wrong: %q", state.fake.launchedBundleID)
+	}
+}
+
+func TestClient_LaunchClearStateReinstallFailureAborts(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+	client.SetPlatform("android")
+	client.SetClearStateReinstall("", "/tmp/app.apk", io.Discard)
+	client.reinstallApp = func(_ context.Context, _, _, _ string, _ io.Writer) error {
+		return context.DeadlineExceeded
+	}
+
+	if err := client.Launch(context.Background(), "app.folio", true, nil); err == nil {
+		t.Fatal("expected launch to fail when reinstall fails")
+	}
+	if state.fake.launchedBundleID == "app.folio" {
+		t.Error("sidecar launch should not be called after a failed reinstall")
+	}
+}
+
+func TestClient_LaunchClearStateWithoutApkPathUsesSidecarClear(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+	client.SetPlatform("android")
+	client.reinstallApp = func(_ context.Context, _, _, _ string, _ io.Writer) error {
+		t.Fatal("reinstall should not run without an apk path")
+		return nil
+	}
+
+	if err := client.Launch(context.Background(), "app.folio", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !state.fake.clearState {
+		t.Error("without an apk path the sidecar clearState path must remain")
 	}
 }
 
