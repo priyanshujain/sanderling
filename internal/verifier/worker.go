@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"math"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/dop251/goja"
@@ -587,15 +585,47 @@ func (v *Verifier) formulaThunk(index int) func() (bool, error) {
 	}
 }
 
-// inScope reports whether an element belongs to the app under test. Nodes from
-// another package (the soft keyboard, system UI, permission dialogs) are out of
-// scope. An unset app package or an element with no package falls through to in
-// scope, preserving behavior on platforms that omit the attribute (e.g. iOS).
-func (v *Verifier) inScope(element *hierarchy.Element) bool {
-	if v.appPackage == "" || element.Package == "" {
-		return true
+// frameworkPackage is the AOSP framework package. Both the app's own window
+// (android:id/content) and system chrome carry it, so it is treated as neutral
+// (transparent) when deciding which window owns a node, rather than as a foreign
+// package that would put the app's content out of scope.
+const frameworkPackage = "android"
+
+// scopedElements returns the set of elements that belong to the app under test.
+// It walks the window tree propagating each node's owning package: a node's
+// owner is the nearest ancestor-or-self with a concrete package (empty and the
+// neutral android framework package are transparent). A node is in scope when no
+// concrete foreign package owns it -- the app's own window carries no package on
+// Compose apps -- or the owner is the app package itself. This drops whole
+// foreign windows (the soft keyboard, system UI, the launcher) AND their
+// empty-package child wrappers, e.g. a keyboard's "Settings" key, which a
+// per-element package check admits because the wrapper itself has no package.
+//
+// With no app package configured (iOS/web, or an unscoped run) every node is in
+// scope, preserving prior behavior.
+func (v *Verifier) scopedElements() map[*hierarchy.Element]bool {
+	scope := make(map[*hierarchy.Element]bool, len(v.lastTree.Elements))
+	unscoped := v.appPackage == ""
+	if v.lastTree.Root == nil {
+		for _, element := range v.lastTree.Elements {
+			scope[element] = true
+		}
+		return scope
 	}
-	return element.Package == v.appPackage
+	var walk func(node *hierarchy.Node, owner string)
+	walk = func(node *hierarchy.Node, owner string) {
+		if pkg := node.Element.Package; pkg != "" && pkg != frameworkPackage {
+			owner = pkg
+		}
+		if unscoped || owner == "" || owner == v.appPackage {
+			scope[&node.Element] = true
+		}
+		for _, child := range node.Children {
+			walk(child, owner)
+		}
+	}
+	walk(v.lastTree.Root, "")
+	return scope
 }
 
 // selectorForElement builds a canonical "key:value" selector that resolves
@@ -649,72 +679,22 @@ func selectorForElement(tree *hierarchy.Tree, element *hierarchy.Element) string
 //	swipes:                      any in-scope element with positive bounds
 //
 // Every candidate carries the resolving selector so the runner can re-route by
-// id/text. Out-of-scope nodes (the soft keyboard, system UI) are always dropped.
-// keyboardRegionTop returns the Y above which the on-screen keyboard occupies
-// the display, or math.MaxInt when no keyboard is up. Taps below this line land
-// on the keyboard, not the app, so candidates there are dropped: a tap on a key
-// (e.g. Gboard's "Settings") navigates out of the app under test. The IME's
-// root view reports inflated full-screen bounds, so only IME elements anchored
-// in the lower half of the screen set the line.
-func keyboardRegionTop(tree *hierarchy.Tree) int {
-	if tree == nil {
-		return math.MaxInt
-	}
-	screenBottom := 0
-	for _, element := range tree.Elements {
-		if element.Bounds.Bottom > screenBottom {
-			screenBottom = element.Bounds.Bottom
-		}
-	}
-	top := math.MaxInt
-	for _, element := range tree.Elements {
-		if !isInputMethodElement(element) {
-			continue
-		}
-		if element.Bounds.Top*2 < screenBottom {
-			continue // a full-screen IME decor view, not the keyboard itself
-		}
-		if element.Bounds.Top < top {
-			top = element.Bounds.Top
-		}
-	}
-	return top
-}
-
-// isInputMethodElement reports whether an element belongs to the soft keyboard,
-// identified by its IME resource-id or package. iOS keyboards do not match, so
-// this exclusion is effectively Android-only.
-func isInputMethodElement(element *hierarchy.Element) bool {
-	return strings.Contains(element.ResourceID, "inputmethod") ||
-		strings.Contains(element.Package, "inputmethod")
-}
-
+// id/text. Out-of-scope nodes (the soft keyboard, system UI, the launcher) are
+// dropped by scopedElements.
 func (v *Verifier) candidatesForVerb(verb string) []candidate {
 	if v.lastTree == nil {
 		return nil
 	}
-	// The keyboard-region exclusion is part of keeping exploration in the app,
-	// so it is opt-in with app scoping: an unscoped run keeps every node.
-	keyboardTop := math.MaxInt
-	if v.appPackage != "" {
-		keyboardTop = keyboardRegionTop(v.lastTree)
-	}
+	scope := v.scopedElements()
 	var result []candidate
 	for _, element := range v.lastTree.Elements {
-		if !v.inScope(element) {
+		if !scope[element] {
 			continue
 		}
 		if !verbAccepts(verb, element) {
 			continue
 		}
 		x, y := element.Bounds.Center()
-		// Drop candidates the on-screen keyboard occludes: a tap there hits a
-		// key, not the app, and keys like Gboard's "Settings" navigate out of
-		// the app under test. The keyboard's own elements carry no package, so
-		// the scope filter alone misses them.
-		if y >= keyboardTop {
-			continue
-		}
 		result = append(result, candidate{
 			x:        x,
 			y:        y,

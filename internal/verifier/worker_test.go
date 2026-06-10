@@ -1,7 +1,6 @@
 package verifier
 
 import (
-	"math"
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -23,43 +22,53 @@ func TestVerbAcceptsSwipeRequiresPositiveBounds(t *testing.T) {
 	}
 }
 
-// TestKeyboardRegionTop covers the region detection that keeps the fuzzer off
-// keyboard keys, especially the guard that ignores the IME's full-screen decor
-// view (which otherwise reports a huge bounds and would push the keyboard line
-// to the top of the screen, excluding the whole app).
-func TestKeyboardRegionTop(t *testing.T) {
-	ime := func(top, bottom int) *hierarchy.Element {
-		return &hierarchy.Element{
-			ResourceID: "com.google.android.inputmethod.latin:id/keyboard_holder",
-			Bounds:     hierarchy.Bounds{Right: 1080, Top: top, Bottom: bottom},
+// TestScopedElements is the core of keeping the fuzzer in the app. It checks
+// the window-ownership rule against a realistic tree: the app window carries no
+// package (Compose), even under android:id/content; the soft keyboard and system
+// UI are separate windows with concrete packages, and their empty-package child
+// wrappers (a keyboard "Settings" key) must inherit the foreign owner and drop
+// out -- the exact node that used to leak in and navigate to system Settings.
+func TestScopedElements(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"bounds": "[0,0,1080,2400]"},
+	  "children": [
+	    {"attributes": {"resource-id": "LoginEmail", "bounds": "[0,100,1080,200]"}, "children": []},
+	    {"attributes": {"resource-id": "android:id/content", "bounds": "[0,0,1080,2400]"}, "children": [
+	      {"attributes": {"resource-id": "AccountNameField", "bounds": "[0,300,1080,400]"}, "children": []}
+	    ]},
+	    {"attributes": {"resource-id": "com.oplus.securitykeyboard:id/keyboard", "bounds": "[0,1503,1080,2268]"}, "children": [
+	      {"attributes": {"content-desc": "Settings", "bounds": "[461,1503,618,1635]"}, "children": []}
+	    ]},
+	    {"attributes": {"resource-id": "com.android.systemui:id/nav", "bounds": "[0,2268,1080,2400]"}, "children": []}
+	  ]
+	}`
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &Verifier{appPackage: "app.folio", lastTree: tree}
+	scope := v.scopedElements()
+	inScope := func(selector string) bool {
+		element := tree.Find(selector)
+		if element == nil {
+			t.Fatalf("element %q not found in tree", selector)
+		}
+		return scope[element]
+	}
+
+	// App nodes carry no package and stay in scope, even under the android
+	// framework content wrapper.
+	for _, selector := range []string{"id:LoginEmail", "id:AccountNameField"} {
+		if !inScope(selector) {
+			t.Errorf("%s should be in scope (app window)", selector)
 		}
 	}
-	app := func(top, bottom int) *hierarchy.Element {
-		return &hierarchy.Element{ResourceID: "app/field", Bounds: hierarchy.Bounds{Right: 1080, Top: top, Bottom: bottom}}
+	// The keyboard's empty-package "Settings" key inherits the IME window owner
+	// and drops out; the system UI node drops out by its own package.
+	if inScope("desc:Settings") {
+		t.Error("keyboard Settings key must be out of scope (owned by the IME window)")
 	}
-
-	t.Run("no keyboard yields sentinel", func(t *testing.T) {
-		tree := &hierarchy.Tree{Elements: []*hierarchy.Element{app(0, 2400)}}
-		if got := keyboardRegionTop(tree); got != math.MaxInt {
-			t.Errorf("keyboardRegionTop = %d, want MaxInt with no keyboard", got)
-		}
-	})
-
-	t.Run("decor view ignored, real keyboard sets the line", func(t *testing.T) {
-		tree := &hierarchy.Tree{Elements: []*hierarchy.Element{
-			app(0, 2400),
-			ime(0, 2400),    // full-screen IME decor view: must be ignored
-			ime(1503, 2268), // the actual keyboard
-		}}
-		if got := keyboardRegionTop(tree); got != 1503 {
-			t.Errorf("keyboardRegionTop = %d, want 1503 (keyboard top, not the decor view's 0)", got)
-		}
-	})
-
-	t.Run("decor-only view yields sentinel", func(t *testing.T) {
-		tree := &hierarchy.Tree{Elements: []*hierarchy.Element{app(0, 2400), ime(0, 2400)}}
-		if got := keyboardRegionTop(tree); got != math.MaxInt {
-			t.Errorf("keyboardRegionTop = %d, want MaxInt when only a full-screen IME decor view is present", got)
-		}
-	})
+	if inScope("id:nav") {
+		t.Error("system UI node must be out of scope")
+	}
 }

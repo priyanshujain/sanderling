@@ -48,18 +48,19 @@ func TestTaps_ExcludeOffAppPackage(t *testing.T) {
 	}
 }
 
-// TestTaps_ExcludeKeyboardRegionNoPackageKey proves the region exclusion catches
-// a keyboard key that carries no package (Gboard's "Settings" key is a bare
-// FrameLayout with a content-desc and no resource-id, so the package filter
-// alone misses it). The IME's own elements set the keyboard's top edge; any
-// candidate below it is dropped, leaving only the in-app button above it.
+// TestTaps_ExcludeKeyboardRegionNoPackageKey proves a keyboard key that carries
+// no package (the keyboard's "Settings" key is a bare node with a content-desc
+// and no package) is still dropped: it is a child of the IME window, so it
+// inherits the IME package as its owner and falls out of scope. A per-element
+// package check would admit it. Only the in-app button remains a target.
 func TestTaps_ExcludeKeyboardRegionNoPackageKey(t *testing.T) {
 	const treeJSON = `{
 	  "attributes": {"resource-id": "root", "bounds": "[0,0,1080,2400]", "package": "com.folio"},
 	  "children": [
 	    {"attributes": {"testTag": "SubmitButton", "bounds": "[100,400,500,500]", "package": "com.folio"}, "clickable": true, "enabled": true, "children": []},
-	    {"attributes": {"resource-id": "com.google.android.inputmethod.latin:id/keyboard_holder", "bounds": "[0,1503,1080,2268]"}, "children": []},
-	    {"attributes": {"content-desc": "Settings", "bounds": "[461,1503,618,1635]"}, "clickable": true, "enabled": true, "children": []}
+	    {"attributes": {"resource-id": "com.google.android.inputmethod.latin:id/keyboard_holder", "bounds": "[0,1503,1080,2268]"}, "children": [
+	      {"attributes": {"content-desc": "Settings", "bounds": "[461,1503,618,1635]"}, "clickable": true, "enabled": true, "children": []}
+	    ]}
 	  ]
 	}`
 	verifier := newVerifier(t, WithAppPackage("com.folio"))
