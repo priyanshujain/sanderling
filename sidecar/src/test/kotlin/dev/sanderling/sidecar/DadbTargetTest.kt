@@ -16,4 +16,10 @@ class DadbTargetTest {
     @Test fun usbSerialRoutesThroughAdbServer() {
         assertEquals(DadbTarget.Server("663c91b1"), dadbTargetFor("663c91b1"))
     }
+
+    // A colon with a non-numeric port is a USB serial that merely contains a
+    // colon, not a host:port, so it must route through the adb server.
+    @Test fun colonWithNonNumericPortIsAServerSerial() {
+        assertEquals(DadbTarget.Server("emulator:5554x"), dadbTargetFor("emulator:5554x"))
+    }
 }

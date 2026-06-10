@@ -552,7 +552,9 @@ class StubDriverBackend(
 // FAST_INPUT_SAFE matches text that can be typed with adb `input text`: short,
 // ASCII, and free of shell metacharacters and spaces. Anything else (unicode,
 // injection payloads, overflow-length strings) falls back to the driver path.
-internal val FAST_INPUT_SAFE = Regex("^[A-Za-z0-9@._+-]{1,64}$")
+// The first character excludes '-' so the text can never be read as an option
+// by `input text`.
+internal val FAST_INPUT_SAFE = Regex("^[A-Za-z0-9@._+][A-Za-z0-9@._+-]{0,63}$")
 
 class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     private val dadb: dadb.Dadb
