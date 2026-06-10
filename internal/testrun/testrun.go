@@ -50,7 +50,7 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		if err := android.EnsureDevice(ctx, options.Device, options.AVD, stdout); err != nil {
 			return err
 		}
-		if err := android.PrepareDevice(ctx, options.Device); err != nil {
+		if err := android.PrepareDevice(ctx, options.Device, stdout); err != nil {
 			return err
 		}
 	case "ios":

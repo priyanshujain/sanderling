@@ -59,7 +59,11 @@ func EnsureDevice(ctx context.Context, serial, avdName string, stdout io.Writer)
 // run. The fuzzer drives whatever is on screen, so a sleeping or locked device
 // would have it explore system UI instead of the app. A secure lock
 // (PIN/password) cannot be dismissed here and must be unlocked out of band.
-func PrepareDevice(ctx context.Context, serial string) error {
+//
+// Every step is best effort: some OEM builds restrict or kill these commands
+// (e.g. HyperOS SIGKILLs `svc power stayon`), and none is required for a run to
+// proceed, so a failure is logged and skipped rather than aborting the run.
+func PrepareDevice(ctx context.Context, serial string, stdout io.Writer) error {
 	adb, err := AdbBinary()
 	if err != nil {
 		return err
@@ -75,7 +79,7 @@ func PrepareDevice(ctx context.Context, serial string) error {
 		}
 		args = append(append(args, "shell"), shellCommand...)
 		if err := exec.CommandContext(ctx, adb, args...).Run(); err != nil {
-			return fmt.Errorf("adb %s: %w", strings.Join(shellCommand, " "), err)
+			fmt.Fprintf(stdout, "device prep: skipping `adb %s` (%v)\n", strings.Join(shellCommand, " "), err)
 		}
 	}
 	return nil
