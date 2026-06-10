@@ -48,6 +48,36 @@ func TestTaps_ExcludeOffAppPackage(t *testing.T) {
 	}
 }
 
+// TestTaps_ExcludeKeyboardRegionNoPackageKey proves the region exclusion catches
+// a keyboard key that carries no package (Gboard's "Settings" key is a bare
+// FrameLayout with a content-desc and no resource-id, so the package filter
+// alone misses it). The IME's own elements set the keyboard's top edge; any
+// candidate below it is dropped, leaving only the in-app button above it.
+func TestTaps_ExcludeKeyboardRegionNoPackageKey(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,1080,2400]", "package": "com.folio"},
+	  "children": [
+	    {"attributes": {"testTag": "SubmitButton", "bounds": "[100,400,500,500]", "package": "com.folio"}, "clickable": true, "enabled": true, "children": []},
+	    {"attributes": {"resource-id": "com.google.android.inputmethod.latin:id/keyboard_holder", "bounds": "[0,1503,1080,2268]"}, "children": []},
+	    {"attributes": {"content-desc": "Settings", "bounds": "[461,1503,618,1635]"}, "clickable": true, "enabled": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t, WithAppPackage("com.folio"))
+	loadActionSpec(t, verifier, `
+		import { taps } from "@sanderling/spec";
+		globalThis.actions = taps;
+	`)
+	pushTree(t, verifier, treeJSON)
+
+	action, err := verifier.NextAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.X != 300 || action.Y != 450 {
+		t.Errorf("coords = (%d,%d), want (300,450) at SubmitButton; a keyboard key leaked into targets", action.X, action.Y)
+	}
+}
+
 // TestTyping_ExcludeOffAppPackage proves keyboard glyph buttons that report as
 // editable never become typing targets once the app package is set.
 func TestTyping_ExcludeOffAppPackage(t *testing.T) {

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/dop251/goja"
@@ -648,9 +650,54 @@ func selectorForElement(tree *hierarchy.Tree, element *hierarchy.Element) string
 //
 // Every candidate carries the resolving selector so the runner can re-route by
 // id/text. Out-of-scope nodes (the soft keyboard, system UI) are always dropped.
+// keyboardRegionTop returns the Y above which the on-screen keyboard occupies
+// the display, or math.MaxInt when no keyboard is up. Taps below this line land
+// on the keyboard, not the app, so candidates there are dropped: a tap on a key
+// (e.g. Gboard's "Settings") navigates out of the app under test. The IME's
+// root view reports inflated full-screen bounds, so only IME elements anchored
+// in the lower half of the screen set the line.
+func keyboardRegionTop(tree *hierarchy.Tree) int {
+	if tree == nil {
+		return math.MaxInt
+	}
+	screenBottom := 0
+	for _, element := range tree.Elements {
+		if element.Bounds.Bottom > screenBottom {
+			screenBottom = element.Bounds.Bottom
+		}
+	}
+	top := math.MaxInt
+	for _, element := range tree.Elements {
+		if !isInputMethodElement(element) {
+			continue
+		}
+		if element.Bounds.Top*2 < screenBottom {
+			continue // a full-screen IME decor view, not the keyboard itself
+		}
+		if element.Bounds.Top < top {
+			top = element.Bounds.Top
+		}
+	}
+	return top
+}
+
+// isInputMethodElement reports whether an element belongs to the soft keyboard,
+// identified by its IME resource-id or package. iOS keyboards do not match, so
+// this exclusion is effectively Android-only.
+func isInputMethodElement(element *hierarchy.Element) bool {
+	return strings.Contains(element.ResourceID, "inputmethod") ||
+		strings.Contains(element.Package, "inputmethod")
+}
+
 func (v *Verifier) candidatesForVerb(verb string) []candidate {
 	if v.lastTree == nil {
 		return nil
+	}
+	// The keyboard-region exclusion is part of keeping exploration in the app,
+	// so it is opt-in with app scoping: an unscoped run keeps every node.
+	keyboardTop := math.MaxInt
+	if v.appPackage != "" {
+		keyboardTop = keyboardRegionTop(v.lastTree)
 	}
 	var result []candidate
 	for _, element := range v.lastTree.Elements {
@@ -661,6 +708,13 @@ func (v *Verifier) candidatesForVerb(verb string) []candidate {
 			continue
 		}
 		x, y := element.Bounds.Center()
+		// Drop candidates the on-screen keyboard occludes: a tap there hits a
+		// key, not the app, and keys like Gboard's "Settings" navigate out of
+		// the app under test. The keyboard's own elements carry no package, so
+		// the scope filter alone misses them.
+		if y >= keyboardTop {
+			continue
+		}
 		result = append(result, candidate{
 			x:        x,
 			y:        y,
