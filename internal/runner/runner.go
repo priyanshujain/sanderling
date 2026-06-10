@@ -225,7 +225,17 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		applySkipped := false
-		if nextErr == nil {
+		if nextErr == nil && !appIsForeground(ctx, options) {
+			// The app left the foreground between observe and apply (a prior
+			// action's gesture settling late, or an async navigation). The
+			// chosen action's coordinates reference a tree that no longer
+			// applies, so firing it would act on whatever screen is now up.
+			// Skip it and record the escape; the next step's guard relaunches.
+			logger.Warn("app not in foreground at action time; skipping (relaunch next step)",
+				"step", stepIndex, "action", nextAction.Kind)
+			applySkipped = true
+			lastAction = nil
+		} else if nextErr == nil {
 			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
 				if isWDADrop(err) {
 					return summary, fmt.Errorf("step %d: the iOS XCTest runner could not be restarted - re-run the test: %w", stepIndex, err)
@@ -409,6 +419,25 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 	}
 	settleForForeground(ctx, options)
 	return true
+}
+
+// appIsForeground reports whether the app under test currently owns the
+// foreground. It is the apply-time half of the scope guard: ensureForeground
+// runs before observe, but the app can leave between observe and apply (a prior
+// gesture settling late, an async navigation), and swipes/keys carry stale
+// coordinates with no selector to re-resolve. An absent capability or an unknown
+// foreground returns true so the run is never blocked where the signal is
+// unavailable (web, iOS, a transient read).
+func appIsForeground(ctx context.Context, options Options) bool {
+	checker, ok := options.Driver.(driver.ForegroundChecker)
+	if !ok || options.BundleID == "" {
+		return true
+	}
+	foreground, err := checker.ForegroundApp(ctx)
+	if err != nil || foreground == "" {
+		return true
+	}
+	return foreground == options.BundleID
 }
 
 // foregroundReadyAttempts bounds how many times waitForForeground tries to
