@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1762,5 +1763,79 @@ func TestRunner_WaitsForWindowDrawnBeforeFirstAction(t *testing.T) {
 		if a.Kind == mockdriver.ActionPressKey && a.Key == "back" {
 			t.Fatal("expected no back-press while waiting for the window to draw")
 		}
+	}
+}
+
+// TestAwaitForeground_RelaunchesThenWaitsForWindow locks the per-step scope
+// guard's recovery: after the app leaves to the launcher, it must relaunch AND
+// keep polling the focused window until it names the app, so the step never
+// observes or acts while the launcher is on screen (where InputText would land
+// in the launcher's type-to-search filter). A single fire-and-forget relaunch,
+// which returns before the window draws on a slow physical device, is the bug
+// this guards against.
+func TestAwaitForeground_RelaunchesThenWaitsForWindow(t *testing.T) {
+	m := mockdriver.New()
+	// Foreground: launcher on the first poll (still gone), then the app. Focus:
+	// the launcher window lingers one extra poll before the app's window draws.
+	m.ForegroundResults = []string{"com.android.launcher", "app.folio"}
+	m.FocusedWindowResults = []string{"com.android.launcher", "app.folio"}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	options := Options{BundleID: "app.folio", Driver: m, IdleTimeout: 10 * time.Millisecond}
+
+	awaitForeground(context.Background(), options, logger, 7)
+
+	relaunches, backs := 0, 0
+	for _, a := range m.Actions() {
+		switch {
+		case a.Kind == mockdriver.ActionLaunch && a.BundleID == "app.folio" && !a.ClearState:
+			relaunches++
+		case a.Kind == mockdriver.ActionPressKey && a.Key == "back":
+			backs++
+		}
+	}
+	if relaunches != 1 {
+		t.Fatalf("expected exactly one relaunch while the app was gone, got %d", relaunches)
+	}
+	if backs != 1 {
+		t.Fatalf("expected one back-press to dismiss a possible dialog before relaunch, got %d", backs)
+	}
+	// The window lagged one poll behind the resumed activity, so the focused
+	// window must have been queried at least twice before the gate returned.
+	if calls := m.FocusedWindowCalls(); calls < 2 {
+		t.Fatalf("expected the guard to poll the focused window until drawn (>=2), got %d", calls)
+	}
+}
+
+// TestEnsureForeground_DismissesSystemOverlay locks the shade fix: when the app
+// is still the resumed activity but a system overlay (notification shade) holds
+// the focused window, the guard must dismiss it with back rather than relaunch
+// or act on the obscured app.
+func TestEnsureForeground_DismissesSystemOverlay(t *testing.T) {
+	m := mockdriver.New()
+	// Resumed activity stays the app; the focused window is the shade.
+	m.ForegroundResults = []string{"app.folio"}
+	m.FocusedWindowResults = []string{"com.android.systemui"}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	options := Options{BundleID: "app.folio", Driver: m, IdleTimeout: 10 * time.Millisecond}
+
+	if !ensureForeground(context.Background(), options, logger, 5) {
+		t.Fatal("expected the guard to act on the focus-stealing overlay")
+	}
+	backs, relaunches := 0, 0
+	for _, a := range m.Actions() {
+		switch {
+		case a.Kind == mockdriver.ActionPressKey && a.Key == "back":
+			backs++
+		case a.Kind == mockdriver.ActionLaunch:
+			relaunches++
+		}
+	}
+	if backs != 1 {
+		t.Fatalf("expected one back-press to collapse the shade, got %d", backs)
+	}
+	if relaunches != 0 {
+		t.Fatalf("a resumed-but-obscured app must not be relaunched, got %d relaunches", relaunches)
 	}
 }

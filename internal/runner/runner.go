@@ -371,12 +371,44 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 		logger.Warn("foreground check failed", "step", stepIndex, "err", err)
 		return false
 	}
-	if foreground == "" || foreground == options.BundleID {
+	if foreground != "" && foreground != options.BundleID {
+		logger.Warn("app left foreground; relaunching",
+			"step", stepIndex, "foreground", foreground, "want", options.BundleID)
+		// Relaunch and confirm the app is genuinely back on screen before the
+		// step observes or acts. A single relaunch returns before the window
+		// draws on a slow physical device, which would let the observe and the
+		// next action land on the launcher (its type-to-search swallows
+		// InputText). awaitForeground re-checks the foreground and focused
+		// window, so it never acts outside the app no matter how slow the
+		// relaunch settles.
+		awaitForeground(ctx, options, logger, stepIndex)
+		return true
+	}
+	// The app is the resumed activity, but a system overlay can still own the
+	// focused window while the app stays resumed: a fuzzer swipe starting in the
+	// status bar pulls the notification shade over the app. The resumed-activity
+	// signal misses this, so observing or acting would land on the shade.
+	// Dismiss it with back (which collapses the shade) so the next observe sees
+	// the app again.
+	focusChecker, hasFocus := options.Driver.(driver.FocusedWindowChecker)
+	if !hasFocus {
 		return false
 	}
-	logger.Warn("app left foreground; relaunching",
-		"step", stepIndex, "foreground", foreground, "want", options.BundleID)
-	return bringToForeground(ctx, options, logger, stepIndex)
+	focused, err := focusChecker.FocusedWindowApp(ctx)
+	if err != nil {
+		logger.Warn("focus check failed", "step", stepIndex, "err", err)
+		return false
+	}
+	if focused == "" || focused == options.BundleID {
+		return false
+	}
+	logger.Warn("system window obscuring app; dismissing",
+		"step", stepIndex, "focused", focused, "want", options.BundleID)
+	if err := options.Driver.PressKey(ctx, "back"); err != nil {
+		logger.Warn("dismiss overlay failed", "step", stepIndex, "err", err)
+	}
+	settleForForeground(ctx, options)
+	return true
 }
 
 // foregroundReadyAttempts bounds how many times waitForForeground tries to
@@ -395,6 +427,20 @@ const foregroundReadyAttempts = 8
 // report the focused window, the gate additionally waits for that window to
 // name the app, which only happens once it is genuinely drawn.
 func waitForForeground(ctx context.Context, options Options, logger *slog.Logger) {
+	awaitForeground(ctx, options, logger, 0)
+}
+
+// awaitForeground brings the app under test forward when it is not already
+// resumed and blocks until its window is actually drawn, bounded by
+// foregroundReadyAttempts so a stuck system dialog can never hang the run. It
+// re-checks the foreground each iteration and only presses back + relaunches
+// while the app is genuinely absent, so once the app is resumed it polls the
+// focused-window signal instead of mashing back (which would re-exit the app
+// from its root screen). Shared by the pre-run startup gate (stepIndex 0) and
+// the per-step scope guard so neither lets an observe or action land outside
+// the app. Drivers without ForegroundChecker (web) and an unknown foreground
+// both skip the gate.
+func awaitForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
 	checker, ok := options.Driver.(driver.ForegroundChecker)
 	if !ok || options.BundleID == "" {
 		return
@@ -406,16 +452,16 @@ func waitForForeground(ctx context.Context, options Options, logger *slog.Logger
 		}
 		foreground, err := checker.ForegroundApp(ctx)
 		if err != nil {
-			logger.Warn("foreground check failed before first step", "err", err)
+			logger.Warn("foreground check failed", "step", stepIndex, "err", err)
 			return
 		}
 		if foreground == "" {
 			return // foreground unknowable (e.g. iOS); don't block the run
 		}
 		if foreground != options.BundleID {
-			logger.Warn("app not in foreground at start; bringing it forward",
-				"foreground", foreground, "want", options.BundleID, "attempt", attempt)
-			bringToForeground(ctx, options, logger, 0)
+			logger.Warn("app not in foreground; bringing it forward",
+				"step", stepIndex, "foreground", foreground, "want", options.BundleID, "attempt", attempt)
+			bringToForeground(ctx, options, logger, stepIndex)
 			continue
 		}
 		if !hasFocus {
@@ -423,18 +469,18 @@ func waitForForeground(ctx context.Context, options Options, logger *slog.Logger
 		}
 		focused, err := focusChecker.FocusedWindowApp(ctx)
 		if err != nil {
-			logger.Warn("focus check failed before first step", "err", err)
+			logger.Warn("focus check failed", "step", stepIndex, "err", err)
 			return
 		}
 		if focused == options.BundleID {
 			return // window is drawn; safe to observe
 		}
 		logger.Warn("app resumed but window not yet drawn; waiting",
-			"focused", focused, "want", options.BundleID, "attempt", attempt)
+			"step", stepIndex, "focused", focused, "want", options.BundleID, "attempt", attempt)
 		settleForForeground(ctx, options)
 	}
-	logger.Warn("app never reached foreground before first step; proceeding anyway",
-		"want", options.BundleID)
+	logger.Warn("app never reached foreground; proceeding anyway",
+		"step", stepIndex, "want", options.BundleID)
 }
 
 // bringToForeground returns the app under test to the foreground. It first
