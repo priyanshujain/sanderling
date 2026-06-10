@@ -7,6 +7,24 @@ import kotlin.test.assertTrue
 
 class InputTextTest {
 
+    // The fast `adb input text` path only handles short shell-safe ASCII. Common
+    // app inputs take it; unicode, injection payloads, whitespace, and
+    // overflow-length strings must fall back to the driver, which types them
+    // correctly. A regression here would corrupt edge-case input or shell-inject
+    // the device.
+    @Test fun fastInputPathAcceptsOnlyShellSafeAscii() {
+        for (safe in listOf("demo@folio.app", "ledger123", "Checking", "-1", "1e10", "0.0000001")) {
+            assertTrue(FAST_INPUT_SAFE.matches(safe), "expected fast path for: $safe")
+        }
+        val fallback = listOf(
+            "Emergency Fund", "🙂🔥💸", "  ", "\t\n", "'; DROP TABLE--",
+            "<script>alert(1)</script>", "../../etc/passwd", "%s%n", "", "a".repeat(4096),
+        )
+        for (text in fallback) {
+            assertTrue(!FAST_INPUT_SAFE.matches(text), "expected driver fallback for: $text")
+        }
+    }
+
     // A logical key name must map to the right Android keycode; a typo'd table
     // entry would silently dispatch the wrong key (e.g. 'back' issuing HOME).
     @Test fun pressKeyDispatchesMappedKeycode() {

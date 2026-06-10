@@ -549,6 +549,11 @@ class StubDriverBackend(
     override fun metrics(bundleId: String): MetricsSample = readProcMetrics(null, bundleId)
 }
 
+// FAST_INPUT_SAFE matches text that can be typed with adb `input text`: short,
+// ASCII, and free of shell metacharacters and spaces. Anything else (unicode,
+// injection payloads, overflow-length strings) falls back to the driver path.
+internal val FAST_INPUT_SAFE = Regex("^[A-Za-z0-9@._+-]{1,64}$")
+
 class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     private val dadb: dadb.Dadb
     private val driver: maestro.drivers.AndroidDriver
@@ -577,7 +582,18 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         driver.tap(maestro.Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2))
     }
 
-    override fun inputText(text: String) = driver.inputText(text)
+    override fun inputText(text: String) {
+        if (FAST_INPUT_SAFE.matches(text)) {
+            // adb `input text` is ~5x faster than the driver's per-character
+            // path. Restricted to short shell-safe ASCII so unicode, injection
+            // payloads, and overflow-length strings still go through the driver,
+            // which handles them correctly. The runner focuses the field with a
+            // tap before InputText, so the keystrokes land in it.
+            dadb.shell("input text $text")
+        } else {
+            driver.inputText(text)
+        }
+    }
 
     override fun eraseText(characterCount: Int) = driver.eraseText(characterCount)
 
@@ -604,20 +620,13 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         readLogcat(serial, sinceUnixMillis, minLevel)
 
     override fun waitForIdle(durationMillis: Long) {
-        // waitForAppToSettle returns early on Compose cross-fade transitions
-        // where both source and destination composables are semantically
-        // alive; a follow-up short structural-hash poll lands on a single
-        // stable frame before the runner reads hierarchy + screenshot
-        // concurrently. The structural poll is hard-capped independently of
-        // durationMillis so we don't pile on hierarchy fetches when settle
-        // never converges.
+        // waitForAppToSettle blocks on the View-system animation and maestro's
+        // own structural settle, which is enough on its own. A follow-up
+        // structural-hash poll used to run here, but each hierarchy fetch is
+        // ~500ms on a physical device, so it cost ~2.8s per mutating step for
+        // marginal benefit; the runner already re-fetches while a frame still
+        // looks transitional.
         driver.waitForAppToSettle(null, null, durationMillis.toInt())
-        pollUntilStable(STABILITY_POLL_CAP_MILLIS) {
-            stabilitySnapshot(
-                com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
-                    .writeValueAsString(driver.contentDescriptor(false)),
-            )
-        }
     }
 
     override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
