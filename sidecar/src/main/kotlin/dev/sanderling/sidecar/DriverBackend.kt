@@ -562,7 +562,27 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         dadb = buildDadb(serial)
         val hostPort = java.net.ServerSocket(0).use { it.localPort }
         driver = maestro.drivers.AndroidDriver(dadb, hostPort)
-        driver.open()
+        openWithRetry()
+    }
+
+    // openWithRetry tolerates the maestro Android driver's occasional startup
+    // timeout (its instrumentation host can miss the dadb.open() deadline,
+    // especially right after a device reboot or per-run reinstall). A transient
+    // failure should not abort the whole run, so retry a few times with a short
+    // backoff before giving up.
+    private fun openWithRetry() {
+        val attempts = 4
+        for (attempt in 1..attempts) {
+            try {
+                driver.open()
+                return
+            } catch (cause: Exception) {
+                runCatching { driver.close() }
+                if (attempt == attempts) throw cause
+                System.err.println("android driver open failed (attempt $attempt/$attempts): ${cause.message}; retrying")
+                Thread.sleep(2000)
+            }
+        }
     }
 
     override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
