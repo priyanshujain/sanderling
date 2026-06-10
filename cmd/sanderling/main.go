@@ -18,11 +18,11 @@ import (
 var Version = "dev"
 
 type testOptions struct {
-	spec       string
-	bundleID   string
-	platform   string
-	avd        string
-	device     string
+	spec           string
+	bundleID       string
+	platform       string
+	avd            string
+	device         string
 	iosDevice      string
 	iosAppPath     string
 	androidAppPath string
