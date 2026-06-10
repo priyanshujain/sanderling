@@ -201,6 +201,37 @@ func TestParseFocusedWindowPackage(t *testing.T) {
 	}
 }
 
+func TestParseEnabledNavOverlay(t *testing.T) {
+	cases := []struct {
+		name    string
+		listing string
+		want    string
+	}{
+		{
+			name:    "gesture nav active",
+			listing: "[ ] com.android.internal.systemui.navbar.threebutton\n[x] com.android.internal.systemui.navbar.gestural\n[ ] com.android.internal.systemui.navbar.transparent",
+			want:    "com.android.internal.systemui.navbar.gestural",
+		},
+		{
+			name:    "three-button active",
+			listing: "[x] com.android.internal.systemui.navbar.threebutton\n[ ] com.android.internal.systemui.navbar.gestural",
+			want:    "com.android.internal.systemui.navbar.threebutton",
+		},
+		{
+			name:    "ignores enabled non-nav overlays",
+			listing: "[x] com.some.other.overlay\n[ ] com.android.internal.systemui.navbar.gestural",
+			want:    "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseEnabledNavOverlay(tc.listing); got != tc.want {
+				t.Errorf("parseEnabledNavOverlay = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAntiFreezeCommands_DisablesFreezersAndExemptsDriver(t *testing.T) {
 	commands := antiFreezeCommands()
 	joined := make([]string, len(commands))

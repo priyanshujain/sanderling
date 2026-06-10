@@ -54,6 +54,11 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		if err := android.PrepareDevice(ctx, options.Device, stdout); err != nil {
 			return err
 		}
+		// Switch to 3-button navigation for the run so fuzzer swipes cannot
+		// trigger the gesture-nav home/back and fling the app off screen;
+		// restore the original mode when the run ends.
+		restoreNav := android.ForceThreeButtonNav(ctx, options.Device, stdout)
+		defer restoreNav()
 	case "ios":
 		resolved, err := resolveIOSTarget(ctx, options, stdout)
 		if err != nil {

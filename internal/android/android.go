@@ -136,6 +136,82 @@ func ReinstallApp(ctx context.Context, serial, bundleID, apkPath string, stdout 
 	return nil
 }
 
+const threeButtonNavOverlay = "com.android.internal.systemui.navbar.threebutton"
+
+// navModeOverlays are the system navigation-mode overlays. Only one is active at
+// a time; the active one is restored after the run.
+var navModeOverlays = []string{
+	"com.android.internal.systemui.navbar.gestural",
+	threeButtonNavOverlay,
+	"com.android.internal.systemui.navbar.twobutton",
+}
+
+// ForceThreeButtonNav switches the device to 3-button navigation for the run, so
+// the fuzzer's swipes cannot trigger the gesture-nav home/back actions and fling
+// the app off screen (the nav bar's own buttons are systemui-owned and already
+// dropped from action candidates). It returns a function that restores the
+// original navigation mode. Best effort: on any failure it leaves navigation
+// untouched and returns a no-op restore.
+func ForceThreeButtonNav(ctx context.Context, serial string, stdout io.Writer) func() {
+	adb, err := AdbBinary()
+	if err != nil {
+		return func() {}
+	}
+	original := enabledNavOverlay(ctx, adb, serial)
+	if err := navOverlayCommand(ctx, adb, serial, threeButtonNavOverlay).Run(); err != nil {
+		fmt.Fprintf(stdout, "device prep: skipping 3-button nav (%v)\n", err)
+		return func() {}
+	}
+	if original == "" || original == threeButtonNavOverlay {
+		return func() {}
+	}
+	return func() {
+		if err := navOverlayCommand(context.Background(), adb, serial, original).Run(); err != nil {
+			fmt.Fprintf(stdout, "device prep: could not restore nav mode %s (%v)\n", original, err)
+		}
+	}
+}
+
+// enabledNavOverlay returns the currently active navigation-mode overlay, or ""
+// when it cannot be determined.
+func enabledNavOverlay(ctx context.Context, adb, serial string) string {
+	args := []string{}
+	if serial != "" {
+		args = append(args, "-s", serial)
+	}
+	args = append(args, "shell", "cmd", "overlay", "list")
+	output, err := exec.CommandContext(ctx, adb, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return parseEnabledNavOverlay(string(output))
+}
+
+// parseEnabledNavOverlay reads `cmd overlay list` output and returns the
+// enabled ("[x]") navigation-mode overlay package.
+func parseEnabledNavOverlay(overlayList string) string {
+	for line := range strings.SplitSeq(overlayList, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "[x]") {
+			continue
+		}
+		package_ := strings.TrimSpace(strings.TrimPrefix(trimmed, "[x]"))
+		if slices.Contains(navModeOverlays, package_) {
+			return package_
+		}
+	}
+	return ""
+}
+
+func navOverlayCommand(ctx context.Context, adb, serial, overlay string) *exec.Cmd {
+	args := []string{}
+	if serial != "" {
+		args = append(args, "-s", serial)
+	}
+	args = append(args, "shell", "cmd", "overlay", "enable-exclusive", overlay)
+	return exec.CommandContext(ctx, adb, args...)
+}
+
 // AdbReverse sets up adb reverse forwarding for a local abstract socket.
 func AdbReverse(socket string, port int) error {
 	adb, err := AdbBinary()
