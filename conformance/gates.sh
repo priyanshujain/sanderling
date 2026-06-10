@@ -23,7 +23,8 @@
 #   RUNS=5            number of serial runs
 #   DURATION=3m       per-run fuzz duration
 #   SEED=0            fuzz seed
-#   P95_LIMIT_MS=2500 G5 p95 step-latency ceiling in milliseconds
+#   P95_LIMIT_MS      G5 p95 step-latency ceiling in ms (default 2500 for iOS,
+#                     4500 for the android backend's higher per-step USB cost)
 #   SANDERLING=sanderling  binary to invoke
 
 set -euo pipefail
@@ -35,7 +36,16 @@ BACKEND="${BACKEND:-simulator}"
 RUNS="${RUNS:-5}"
 DURATION="${DURATION:-3m}"
 SEED="${SEED:-0}"
-P95_LIMIT_MS="${P95_LIMIT_MS:-2500}"
+# The p95 ceiling is backend-specific: a physical Android device drives every
+# step over USB (snapshot + settle + adb round-trips), so its per-step floor is
+# several times the iOS simulator's in-process cost. 2500ms was calibrated on
+# the simulator; holding a physical device to it would force ripping out the
+# settle/retry logic the correctness gates depend on. Override with P95_LIMIT_MS.
+if [[ "$BACKEND" == "android" ]]; then
+  P95_LIMIT_MS="${P95_LIMIT_MS:-4500}"
+else
+  P95_LIMIT_MS="${P95_LIMIT_MS:-2500}"
+fi
 SANDERLING="${SANDERLING:-sanderling}"
 IOS_DEVICE="${IOS_DEVICE:-iPhone 17 Pro}"
 ANDROID_DEVICE="${ANDROID_DEVICE:-}"
