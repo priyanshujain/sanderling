@@ -644,7 +644,7 @@ func selectorForElement(tree *hierarchy.Tree, element *hierarchy.Element) string
 //	taps/doubleTaps/longPresses: clickable + enabled + positive bounds
 //	typing:                      editable + enabled + positive bounds
 //	scrolls:                     scrollable attribute + positive bounds
-//	swipes:                      any in-scope element
+//	swipes:                      any in-scope element with positive bounds
 //
 // Every candidate carries the resolving selector so the runner can re-route by
 // id/text. Out-of-scope nodes (the soft keyboard, system UI) are always dropped.
@@ -689,7 +689,11 @@ func verbAccepts(verb string, element *hierarchy.Element) bool {
 	case "scrolls":
 		return element.Attributes["scrollable"] == "true" && positiveBounds
 	case "swipes":
-		return true
+		// Any visible element is a valid swipe origin, but it must have real
+		// bounds: a zero-bounds node centers at (0,0), and a downward swipe from
+		// the top-left corner is the system gesture that pulls down the
+		// notification shade, dragging the fuzzer out of the app.
+		return positiveBounds
 	default:
 		return false
 	}
