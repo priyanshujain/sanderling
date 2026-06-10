@@ -22,17 +22,18 @@ const sidecarStartupTimeout = 30 * time.Second
 
 // Options are the parameters for a single test pipeline run.
 type Options struct {
-	Spec       string
-	BundleID   string
-	Platform   string
-	AVD        string
-	Device     string
-	IosDevice  string
-	IosAppPath string
-	Duration   time.Duration
-	Seed       int64
-	Output     string
-	ClearData  bool
+	Spec           string
+	BundleID       string
+	Platform       string
+	AVD            string
+	Device         string
+	IosDevice      string
+	IosAppPath     string
+	AndroidAppPath string
+	Duration       time.Duration
+	Seed           int64
+	Output         string
+	ClearData      bool
 
 	// iosUDID, iosIsSimulator, and iosCoreDeviceID are filled by Execute after
 	// resolving the iOS target, then read by buildDriver to choose the simulator
