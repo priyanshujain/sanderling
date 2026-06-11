@@ -47,10 +47,20 @@ func TestPickDevice_RequestedNotConnected(t *testing.T) {
 	}
 }
 
-func TestPickDevice_NoRequestUsesFirst(t *testing.T) {
-	serial, found, err := pickDevice("", []string{"emulator-5554", "physical-abc"})
+func TestPickDevice_NoRequestSingleDeviceUsesIt(t *testing.T) {
+	serial, found, err := pickDevice("", []string{"emulator-5554"})
 	if err != nil || !found || serial != "emulator-5554" {
 		t.Fatalf("got (%q, %v, %v), want (emulator-5554, true, nil)", serial, found, err)
+	}
+}
+
+func TestPickDevice_NoRequestMultipleDevicesErrors(t *testing.T) {
+	serial, found, err := pickDevice("", []string{"emulator-5554", "physical-abc"})
+	if err == nil {
+		t.Fatal("expected an error asking for --device when several devices are connected")
+	}
+	if found || serial != "" {
+		t.Fatalf("ambiguous selection must not pick a device, got (%q, %v)", serial, found)
 	}
 }
 

@@ -360,8 +360,11 @@ func parseAVDList(output string) []string {
 }
 
 // pickDevice resolves which connected device to drive. A requested serial must
-// be online; with no request the first connected device is used, else found is
-// false so the caller falls back to booting an AVD.
+// be online. With no request: a single connected device is used; more than one
+// is ambiguous and errors asking for --device, because the chosen serial is not
+// threaded into the per-step adb calls, so silently picking one would leave
+// every later bare `adb` command failing with "more than one device". No device
+// connected returns found=false so the caller falls back to booting an AVD.
 func pickDevice(requested string, connected []string) (serial string, found bool, err error) {
 	if requested != "" {
 		if !slices.Contains(connected, requested) {
@@ -369,10 +372,14 @@ func pickDevice(requested string, connected []string) (serial string, found bool
 		}
 		return requested, true, nil
 	}
-	if len(connected) > 0 {
+	switch len(connected) {
+	case 0:
+		return "", false, nil
+	case 1:
 		return connected[0], true, nil
+	default:
+		return "", false, fmt.Errorf("%d devices connected (%s); select one with --device", len(connected), strings.Join(connected, ", "))
 	}
-	return "", false, nil
 }
 
 func pickAVD(requested string, available []string) (string, error) {
