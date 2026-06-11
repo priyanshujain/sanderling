@@ -1,7 +1,11 @@
 package dev.sanderling.sidecar
 
 interface DriverBackend {
-    fun launch(bundleId: String, clearState: Boolean, env: Map<String, String> = emptyMap())
+    fun launch(
+        bundleId: String,
+        clearState: Boolean,
+        env: Map<String, String> = emptyMap(),
+    )
     fun terminate(bundleId: String)
     fun tap(x: Int, y: Int)
 
@@ -106,8 +110,11 @@ internal fun stabilitySnapshot(treeJson: String): String? {
 }
 
 private val ROUTE_TAG_KEYS = setOf(
-    "resource-id", "resourceId", "testTag",
-    "identifier", "accessibilityIdentifier",
+    "resource-id",
+    "resourceId",
+    "testTag",
+    "identifier",
+    "accessibilityIdentifier",
 )
 
 internal fun countRouteScreens(treeJson: String): Int {
@@ -121,7 +128,9 @@ internal fun countRouteScreens(treeJson: String): Int {
     }
 }
 
-private fun countRouteScreens(node: com.fasterxml.jackson.databind.JsonNode): Int {
+private fun countRouteScreens(
+    node: com.fasterxml.jackson.databind.JsonNode,
+): Int {
     var count = 0
     val attributes = node.get("attributes")
     if (attributes != null && attributes.isObject) {
@@ -167,7 +176,10 @@ private val STABLE_ATTRIBUTE_KEYS = listOf(
     "testTag", "identifier", "accessibilityIdentifier",
 )
 
-private fun walkForStructuralHash(node: com.fasterxml.jackson.databind.JsonNode, out: StringBuilder) {
+private fun walkForStructuralHash(
+    node: com.fasterxml.jackson.databind.JsonNode,
+    out: StringBuilder,
+) {
     out.append('(')
     val attributes = node.get("attributes")
     if (attributes != null && attributes.isObject) {
@@ -191,7 +203,9 @@ private fun walkForStructuralHash(node: com.fasterxml.jackson.databind.JsonNode,
 // then lands sequentially after the surviving one instead of failing the
 // step.
 internal fun overlappedDoubleTap(tapAction: () -> Unit) {
-    val firstTap = java.util.concurrent.CompletableFuture.runAsync { tapAction() }
+    val firstTap = java.util.concurrent.CompletableFuture.runAsync {
+        tapAction()
+    }
     Thread.sleep(40)
     try {
         tapAction()
@@ -220,16 +234,28 @@ data class LogLine(
     val message: String,
 )
 
-internal fun readLogcat(serial: String?, sinceUnixMillis: Long, minLevel: String): List<LogLine> {
+internal fun readLogcat(
+    serial: String?,
+    sinceUnixMillis: Long,
+    minLevel: String,
+): List<LogLine> {
     val level = if (minLevel.isEmpty()) "E" else minLevel
-    val since = if (sinceUnixMillis > 0) StubDriverBackend.formatAdbLogcatTimestamp(sinceUnixMillis) else null
+    val since = if (sinceUnixMillis >
+        0
+    ) {
+        StubDriverBackend.formatAdbLogcatTimestamp(sinceUnixMillis)
+    } else {
+        null
+    }
     val arguments = mutableListOf("logcat", "-d", "*:$level")
     if (since != null) {
         arguments.add("-T")
         arguments.add(since)
     }
     return try {
-        val process = ProcessBuilder(adbCmd(serial) + arguments).redirectErrorStream(false).start()
+        val process = ProcessBuilder(
+            adbCmd(serial) + arguments,
+        ).redirectErrorStream(false).start()
         val output = process.inputStream.bufferedReader().readText()
         process.waitFor()
         StubDriverBackend.parseLogcatOutput(output)
@@ -257,15 +283,15 @@ internal fun readProcMetrics(serial: String?, bundleId: String): MetricsSample {
 private fun adbCmd(serial: String?): List<String> =
     if (serial == null) listOf("adb") else listOf("adb", "-s", serial)
 
-private fun adbOutput(serial: String?, arguments: List<String>): String {
-    return try {
-        val process = ProcessBuilder(adbCmd(serial) + arguments).redirectErrorStream(false).start()
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor()
-        output
-    } catch (cause: Exception) {
-        ""
-    }
+private fun adbOutput(serial: String?, arguments: List<String>): String = try {
+    val process = ProcessBuilder(
+        adbCmd(serial) + arguments,
+    ).redirectErrorStream(false).start()
+    val output = process.inputStream.bufferedReader().readText()
+    process.waitFor()
+    output
+} catch (cause: Exception) {
+    ""
 }
 
 private fun sampleCpuTwice(serial: String?, pid: Int): Double {
@@ -276,8 +302,14 @@ private fun sampleCpuTwice(serial: String?, pid: Int): Double {
     if (lines.size < 2) return 0.0
     val first = parseCpuTicks(lines[0]) ?: return 0.0
     val second = parseCpuTicks(lines[1]) ?: return 0.0
-    val clockHz = adbOutput(serial, listOf("shell", "getconf", "CLK_TCK")).trim().toLongOrNull() ?: 100L
-    val deltaCpuNanos = (second - first) * 1_000_000_000.0 / clockHz.coerceAtLeast(1L)
+    val clockHz =
+        adbOutput(
+            serial,
+            listOf("shell", "getconf", "CLK_TCK"),
+        ).trim().toLongOrNull()
+            ?: 100L
+    val deltaCpuNanos =
+        (second - first) * 1_000_000_000.0 / clockHz.coerceAtLeast(1L)
     return (deltaCpuNanos / 50_000_000.0) * 100.0
 }
 
@@ -312,7 +344,9 @@ internal fun parseKb(line: String): Long? {
 
 private fun execAdb(arguments: List<String>) {
     try {
-        val command = ProcessBuilder(listOf("adb") + arguments).redirectErrorStream(true).start()
+        val command = ProcessBuilder(
+            listOf("adb") + arguments,
+        ).redirectErrorStream(true).start()
         command.inputStream.bufferedReader().readText()
         command.waitFor()
     } catch (cause: Exception) {
@@ -326,22 +360,39 @@ class StubDriverBackend(
 ) : DriverBackend {
     @Volatile var launchCount: Int = 0
         private set
+
     @Volatile var lastBundleId: String? = null
         private set
+
     @Volatile var lastTap: Pair<Int, Int>? = null
         private set
+
     @Volatile var lastTapSelector: String? = null
         private set
+
     @Volatile var lastInputText: String? = null
         private set
 
-    override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
+    override fun launch(
+        bundleId: String,
+        clearState: Boolean,
+        env: Map<String, String>,
+    ) {
         launchCount++
         lastBundleId = bundleId
         if (clearState) {
             runAdb(listOf("shell", "pm", "clear", bundleId))
         }
-        runAdb(listOf("shell", "am", "start", "-W", "-n", "$bundleId/.MainActivity"))
+        runAdb(
+            listOf(
+                "shell",
+                "am",
+                "start",
+                "-W",
+                "-n",
+                "$bundleId/.MainActivity",
+            ),
+        )
     }
 
     companion object {
@@ -350,7 +401,10 @@ class StubDriverBackend(
         internal fun isAnimationCountIdle(grepOutput: String): Boolean =
             (grepOutput.trim().toIntOrNull() ?: 0) == 0
 
-        internal fun parseResolvedActivity(bundleId: String, output: String): String? {
+        internal fun parseResolvedActivity(
+            bundleId: String,
+            output: String,
+        ): String? {
             val prefix = "$bundleId/"
             for (line in output.lines()) {
                 val trimmed = line.trim()
@@ -366,8 +420,13 @@ class StubDriverBackend(
             for (ch in text) {
                 when (ch) {
                     ' ' -> sb.append("%s")
+
                     '\\', '"', '\'', '&', '|', ';', '<', '>', '(', ')', '*', '?',
-                    '$', '`', '[', ']', '{', '}', '~', '#', -> sb.append('\\').append(ch)
+                    '$', '`', '[', ']', '{', '}', '~', '#',
+                    -> sb.append(
+                        '\\',
+                    ).append(ch)
+
                     else -> sb.append(ch)
                 }
             }
@@ -452,19 +511,31 @@ class StubDriverBackend(
 
     @Volatile var lastSwipe: SwipeRecord? = null
         private set
+
     @Volatile var lastKey: String? = null
         private set
+
     @Volatile var lastLongPress: Pair<Int, Int>? = null
         private set
 
-    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {
+    override fun swipe(
+        fromX: Int,
+        fromY: Int,
+        toX: Int,
+        toY: Int,
+        durationMillis: Long,
+    ) {
         lastSwipe = SwipeRecord(fromX, fromY, toX, toY, durationMillis)
         val effectiveDuration = if (durationMillis > 0) durationMillis else 250L
         runAdb(
             listOf(
-                "shell", "input", "swipe",
-                fromX.toString(), fromY.toString(),
-                toX.toString(), toY.toString(),
+                "shell",
+                "input",
+                "swipe",
+                fromX.toString(),
+                fromY.toString(),
+                toX.toString(),
+                toY.toString(),
                 effectiveDuration.toString(),
             ),
         )
@@ -473,51 +544,71 @@ class StubDriverBackend(
     override fun pressKey(key: String) {
         lastKey = key
         val keyCode = KEY_MAP[key.lowercase()]
-            ?: throw IllegalArgumentException("unsupported pressKey value: $key")
+            ?: throw IllegalArgumentException(
+                "unsupported pressKey value: $key",
+            )
         runAdb(listOf("shell", "input", "keyevent", keyCode))
     }
 
     override fun longPress(x: Int, y: Int) {
         lastLongPress = x to y
-        runAdb(listOf("shell", "input", "swipe", x.toString(), y.toString(), x.toString(), y.toString(), "600"))
+        runAdb(
+            listOf(
+                "shell",
+                "input",
+                "swipe",
+                x.toString(),
+                y.toString(),
+                x.toString(),
+                y.toString(),
+                "600",
+            ),
+        )
     }
 
-    override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> =
-        readLogcat(null, sinceUnixMillis, minLevel)
+    override fun recentLogs(
+        sinceUnixMillis: Long,
+        minLevel: String,
+    ): List<LogLine> = readLogcat(null, sinceUnixMillis, minLevel)
 
-    data class SwipeRecord(val fromX: Int, val fromY: Int, val toX: Int, val toY: Int, val durationMillis: Long)
+    data class SwipeRecord(
+        val fromX: Int,
+        val fromY: Int,
+        val toX: Int,
+        val toY: Int,
+        val durationMillis: Long,
+    )
 
     private fun runAdb(arguments: List<String>) = commandRunner(arguments)
 
-    override fun screenshot(): Triple<ByteArray, Int, Int> {
-        return try {
-            val process = ProcessBuilder(listOf("adb", "exec-out", "screencap", "-p"))
-                .redirectErrorStream(false)
-                .start()
-            val png = process.inputStream.readAllBytes()
-            process.waitFor()
-            if (png.isEmpty()) Triple(ByteArray(0), 0, 0) else Triple(png, 0, 0)
-        } catch (cause: Exception) {
-            println("adb screencap failed: $cause")
-            Triple(ByteArray(0), 0, 0)
-        }
+    override fun screenshot(): Triple<ByteArray, Int, Int> = try {
+        val process = ProcessBuilder(
+            listOf("adb", "exec-out", "screencap", "-p"),
+        )
+            .redirectErrorStream(false)
+            .start()
+        val png = process.inputStream.readAllBytes()
+        process.waitFor()
+        if (png.isEmpty()) Triple(ByteArray(0), 0, 0) else Triple(png, 0, 0)
+    } catch (cause: Exception) {
+        println("adb screencap failed: $cause")
+        Triple(ByteArray(0), 0, 0)
     }
 
-    override fun hierarchy(): String {
-        return try {
-            val process = ProcessBuilder(
-                listOf(
-                    "adb", "exec-out",
-                    "uiautomator dump /data/local/tmp/window_dump.xml >/dev/null 2>&1 && cat /data/local/tmp/window_dump.xml",
-                ),
-            ).redirectErrorStream(false).start()
-            val output = process.inputStream.bufferedReader().readText()
-            process.waitFor()
-            if (output.isBlank()) "<hierarchy/>" else output
-        } catch (cause: Exception) {
-            println("adb uiautomator dump failed: $cause")
-            "<hierarchy/>"
-        }
+    override fun hierarchy(): String = try {
+        val process = ProcessBuilder(
+            listOf(
+                "adb",
+                "exec-out",
+                "uiautomator dump /data/local/tmp/window_dump.xml >/dev/null 2>&1 && cat /data/local/tmp/window_dump.xml",
+            ),
+        ).redirectErrorStream(false).start()
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor()
+        if (output.isBlank()) "<hierarchy/>" else output
+    } catch (cause: Exception) {
+        println("adb uiautomator dump failed: $cause")
+        "<hierarchy/>"
     }
 
     override fun waitForIdle(durationMillis: Long) {
@@ -532,21 +623,29 @@ class StubDriverBackend(
             if (isDeviceIdle()) break
             Thread.sleep(IDLE_POLL_INTERVAL_MILLIS)
         }
-        pollUntilStable(STABILITY_POLL_CAP_MILLIS) { stabilitySnapshot(hierarchy()) }
+        pollUntilStable(STABILITY_POLL_CAP_MILLIS) {
+            stabilitySnapshot(hierarchy())
+        }
     }
 
-    private fun isDeviceIdle(): Boolean {
-        return try {
-            val output = adbOutput(null, listOf("shell", "dumpsys window -a | grep -c mAnimating=true"))
-            isAnimationCountIdle(output)
-        } catch (cause: Exception) {
-            false
-        }
+    private fun isDeviceIdle(): Boolean = try {
+        val output =
+            adbOutput(
+                null,
+                listOf(
+                    "shell",
+                    "dumpsys window -a | grep -c mAnimating=true",
+                ),
+            )
+        isAnimationCountIdle(output)
+    } catch (cause: Exception) {
+        false
     }
 
     override fun healthy(): Boolean = true
 
-    override fun metrics(bundleId: String): MetricsSample = readProcMetrics(null, bundleId)
+    override fun metrics(bundleId: String): MetricsSample =
+        readProcMetrics(null, bundleId)
 }
 
 // FAST_INPUT_SAFE matches text that can be typed with adb `input text`: ASCII,
@@ -583,38 +682,106 @@ internal fun chunkForInput(text: String, size: Int): List<String> {
     return chunks
 }
 
-class MaestroDriverBackend(private val serial: String?) : DriverBackend {
-    private val dadb: dadb.Dadb
-    private val driver: maestro.drivers.AndroidDriver
-
-    init {
-        dadb = buildDadb(serial)
-        val hostPort = java.net.ServerSocket(0).use { it.localPort }
-        driver = maestro.drivers.AndroidDriver(dadb, hostPort)
-        openWithRetry()
+// typeChunks sends each chunk via `send`, re-reading the foreground owner with
+// `currentForeground` before every chunk after the first. If the owner changed
+// from `startOwner`, it stops (returning the count already typed) so keystrokes
+// never spray into a window that stole focus mid-type. The first chunk is always
+// sent (there is nothing typed yet to leak), and a null startOwner (foreground
+// unknown) disables the check so typing proceeds. Returns the chars sent.
+internal fun typeChunks(
+    chunks: List<String>,
+    startOwner: String?,
+    currentForeground: () -> String?,
+    send: (String) -> Unit,
+): Int {
+    var typed = 0
+    for (chunk in chunks) {
+        if (startOwner != null && typed > 0 &&
+            currentForeground() != startOwner
+        ) {
+            return typed
+        }
+        send(chunk)
+        typed += chunk.length
     }
+    return typed
+}
 
-    // openWithRetry tolerates the maestro Android driver's occasional startup
-    // timeout (its instrumentation host can miss the dadb.open() deadline,
-    // especially right after a device reboot or per-run reinstall). A transient
-    // failure should not abort the whole run, so retry a few times with a short
-    // backoff before giving up.
-    private fun openWithRetry() {
-        val attempts = 4
-        for (attempt in 1..attempts) {
-            try {
-                driver.open()
-                return
-            } catch (cause: Exception) {
-                runCatching { driver.close() }
-                if (attempt == attempts) throw cause
-                System.err.println("android driver open failed (attempt $attempt/$attempts): ${cause.message}; retrying")
-                Thread.sleep(2000)
-            }
+// resumedActivityPackage matches a "package/activity" component, mirroring the
+// Go scope guard's regex so both read the same dumpsys wording.
+private val resumedActivityPackage =
+    Regex("""([a-zA-Z][a-zA-Z0-9_.]*)/[a-zA-Z0-9_.$]+""")
+
+// parseResumedPackage extracts the foreground package from `dumpsys activity
+// activities` output. It reads any *ResumedActivity line (topResumedActivity=,
+// mResumedActivity:, ResumedActivity:) rather than one OEM-specific phrasing, so
+// a ROM that words the line differently does not silently disable the mid-type
+// foreground guard. Returns null when no such line is present.
+internal fun parseResumedPackage(dumpsys: String): String? {
+    for (line in dumpsys.lineSequence()) {
+        if (!line.contains("ResumedActivity")) continue
+        resumedActivityPackage.find(line)?.let { return it.groupValues[1] }
+    }
+    return null
+}
+
+// DRIVER_OPEN_ATTEMPTS / DRIVER_OPEN_BACKOFF_MILLIS tune the retry around the
+// maestro Android driver's occasional startup timeout (its instrumentation host
+// can miss the open() deadline right after a reboot or per-run reinstall).
+internal const val DRIVER_OPEN_ATTEMPTS = 4
+internal const val DRIVER_OPEN_BACKOFF_MILLIS = 2000L
+
+// retryOpen runs open() up to `attempts` times, sleeping `backoffMillis` between
+// tries and rethrowing the last failure if none succeed. It holds no driver
+// state (sleep and log are injectable) so the retry policy is unit testable.
+internal fun <T> retryOpen(
+    attempts: Int,
+    backoffMillis: Long,
+    sleep: (Long) -> Unit = { Thread.sleep(it) },
+    log: (String) -> Unit = { System.err.println(it) },
+    open: () -> T,
+): T {
+    var lastError: Exception? = null
+    for (attempt in 1..attempts) {
+        try {
+            return open()
+        } catch (cause: Exception) {
+            lastError = cause
+            if (attempt == attempts) break
+            log(
+                "android driver open failed (attempt $attempt/$attempts): ${cause.message}; retrying",
+            )
+            sleep(backoffMillis)
         }
     }
+    throw lastError
+        ?: IllegalStateException("retryOpen called with attempts=$attempts")
+}
 
-    override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {
+class MaestroDriverBackend(private val serial: String?) : DriverBackend {
+    private val dadb: dadb.Dadb = buildDadb(serial)
+
+    // A fresh AndroidDriver per open attempt. Its gRPC channel is built once in
+    // the constructor and permanently shut down by close(), so reopening a
+    // closed instance would reuse a dead channel; rebuild it each try instead.
+    private val driver: maestro.drivers.AndroidDriver =
+        retryOpen(DRIVER_OPEN_ATTEMPTS, DRIVER_OPEN_BACKOFF_MILLIS) {
+            val hostPort = java.net.ServerSocket(0).use { it.localPort }
+            val candidate = maestro.drivers.AndroidDriver(dadb, hostPort)
+            try {
+                candidate.open()
+                candidate
+            } catch (cause: Exception) {
+                runCatching { candidate.close() }
+                throw cause
+            }
+        }
+
+    override fun launch(
+        bundleId: String,
+        clearState: Boolean,
+        env: Map<String, String>,
+    ) {
         if (clearState) driver.clearAppState(bundleId)
         driver.launchApp(bundleId, env)
     }
@@ -623,12 +790,18 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
 
     override fun tap(x: Int, y: Int) = driver.tap(maestro.Point(x, y))
 
-    override fun longPress(x: Int, y: Int) = driver.longPress(maestro.Point(x, y))
+    override fun longPress(x: Int, y: Int) =
+        driver.longPress(maestro.Point(x, y))
 
     override fun tapSelector(selector: String) {
         val root = driver.contentDescriptor(false)
         val bounds = findBoundsBySelector(root, selector) ?: return
-        driver.tap(maestro.Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2))
+        driver.tap(
+            maestro.Point(
+                (bounds[0] + bounds[2]) / 2,
+                (bounds[1] + bounds[3]) / 2,
+            ),
+        )
     }
 
     override fun inputText(text: String) {
@@ -651,36 +824,45 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     // typing stops instead of leaking out of the app under test.
     private fun typeShellSafe(text: String) {
         val owner = foregroundPackage()
-        var typed = 0
-        for (chunk in chunkForInput(text, INPUT_CHUNK_CHARS)) {
-            if (owner != null && typed > 0 && foregroundPackage() != owner) {
-                System.err.println(
-                    "warn: inputText stopped; foreground left $owner mid-type after $typed/${text.length} chars",
-                )
-                return
+        val typed =
+            typeChunks(chunkForInput(text, INPUT_CHUNK_CHARS), owner, {
+                foregroundPackage()
+            }) { chunk ->
+                dadb.shell("input text $chunk")
             }
-            dadb.shell("input text $chunk")
-            typed += chunk.length
+        if (typed < text.length) {
+            System.err.println(
+                "warn: inputText stopped; foreground left $owner mid-type after $typed/${text.length} chars",
+            )
         }
     }
 
     // foregroundPackage returns the package of the top resumed activity, or null
     // if it cannot be read. Used to detect mid-type focus escapes.
-    private fun foregroundPackage(): String? {
-        val output = adbOutput(serial, listOf("shell", "dumpsys", "activity", "activities"))
-        return Regex("""topResumedActivity=ActivityRecord\{\S+ \S+ ([^/\s]+)/""")
-            .find(output)?.groupValues?.get(1)
-    }
+    private fun foregroundPackage(): String? = parseResumedPackage(
+        adbOutput(
+            serial,
+            listOf("shell", "dumpsys", "activity", "activities"),
+        ),
+    )
 
-    override fun eraseText(characterCount: Int) = driver.eraseText(characterCount)
+    override fun eraseText(characterCount: Int) =
+        driver.eraseText(characterCount)
 
-    override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) =
-        driver.swipe(maestro.Point(fromX, fromY), maestro.Point(toX, toY), maxOf(durationMillis, 250L))
+    override fun swipe(
+        fromX: Int,
+        fromY: Int,
+        toX: Int,
+        toY: Int,
+        durationMillis: Long,
+    ) = driver.swipe(
+        maestro.Point(fromX, fromY),
+        maestro.Point(toX, toY),
+        maxOf(durationMillis, 250L),
+    )
 
     override fun pressKey(key: String) {
-        StubDriverBackend.KEY_MAP[key]?.let { keyCode ->
-            keyCodeToMaestro(keyCode)?.let { driver.pressKey(it) }
-        }
+        maestroKeyFor(key)?.let { driver.pressKey(it) }
     }
 
     override fun screenshot(): Triple<ByteArray, Int, Int> {
@@ -691,7 +873,9 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     }
 
     override fun hierarchy(): String =
-        com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().writeValueAsString(driver.contentDescriptor(false))
+        com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().writeValueAsString(
+            driver.contentDescriptor(false),
+        )
 
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String) =
         readLogcat(serial, sinceUnixMillis, minLevel)
@@ -706,7 +890,10 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         driver.waitForAppToSettle(null, null, durationMillis.toInt())
     }
 
-    override fun healthy() = runCatching { driver.contentDescriptor(false); true }.getOrElse { false }
+    override fun healthy() = runCatching {
+        driver.contentDescriptor(false)
+        true
+    }.getOrElse { false }
 
     override fun metrics(bundleId: String) = readProcMetrics(serial, bundleId)
 
@@ -727,16 +914,37 @@ internal sealed interface DadbTarget {
 internal fun dadbTargetFor(serial: String?): DadbTarget {
     if (serial == null) return DadbTarget.Tcp("localhost", 5555)
     val colon = serial.lastIndexOf(':')
-    val port = if (colon >= 0) serial.substring(colon + 1).toIntOrNull() else null
-    return if (port != null) DadbTarget.Tcp(serial.substring(0, colon), port) else DadbTarget.Server(serial)
+    val port = if (colon >=
+        0
+    ) {
+        serial.substring(colon + 1).toIntOrNull()
+    } else {
+        null
+    }
+    return if (port !=
+        null
+    ) {
+        DadbTarget.Tcp(serial.substring(0, colon), port)
+    } else {
+        DadbTarget.Server(serial)
+    }
 }
 
-private fun buildDadb(serial: String?): dadb.Dadb = when (val target = dadbTargetFor(serial)) {
-    is DadbTarget.Tcp -> dadb.Dadb.create(target.host, target.port)
-    is DadbTarget.Server -> dadb.adbserver.AdbServer.createDadb("localhost", 5037, "host:transport:${target.serial}")
-}
+private fun buildDadb(serial: String?): dadb.Dadb =
+    when (val target = dadbTargetFor(serial)) {
+        is DadbTarget.Tcp -> dadb.Dadb.create(target.host, target.port)
 
-internal fun findBoundsBySelector(root: maestro.TreeNode, selector: String): IntArray? {
+        is DadbTarget.Server -> dadb.adbserver.AdbServer.createDadb(
+            "localhost",
+            5037,
+            "host:transport:${target.serial}",
+        )
+    }
+
+internal fun findBoundsBySelector(
+    root: maestro.TreeNode,
+    selector: String,
+): IntArray? {
     val colon = selector.indexOf(':')
     if (colon < 0) return null
     val kind = selector.substring(0, colon)
@@ -744,13 +952,25 @@ internal fun findBoundsBySelector(root: maestro.TreeNode, selector: String): Int
     return findBoundsInTree(root, kind, value)
 }
 
-internal fun findBoundsInTree(node: maestro.TreeNode, kind: String, value: String): IntArray? {
+internal fun findBoundsInTree(
+    node: maestro.TreeNode,
+    kind: String,
+    value: String,
+): IntArray? {
     val attrs = node.attributes
     val matches = when (kind) {
-        "id" -> attrs["resource-id"]?.let { it == value || it.endsWith(":id/$value") } == true
+        "id" -> attrs["resource-id"]?.let {
+            it == value ||
+                it.endsWith(":id/$value")
+        } ==
+            true
+
         "text" -> attrs["text"] == value
+
         "desc" -> attrs["content-desc"] == value
+
         "descPrefix" -> attrs["content-desc"]?.startsWith(value) == true
+
         else -> false
     }
     if (matches) {
@@ -770,13 +990,15 @@ internal fun parseBounds(s: String): IntArray? {
 
 internal fun pngWidth(bytes: ByteArray): Int {
     if (bytes.size < 24) return 0
-    return (bytes[16].toInt() and 0xFF shl 24) or (bytes[17].toInt() and 0xFF shl 16) or
+    return (bytes[16].toInt() and 0xFF shl 24) or
+        (bytes[17].toInt() and 0xFF shl 16) or
         (bytes[18].toInt() and 0xFF shl 8) or (bytes[19].toInt() and 0xFF)
 }
 
 internal fun pngHeight(bytes: ByteArray): Int {
     if (bytes.size < 24) return 0
-    return (bytes[20].toInt() and 0xFF shl 24) or (bytes[21].toInt() and 0xFF shl 16) or
+    return (bytes[20].toInt() and 0xFF shl 24) or
+        (bytes[21].toInt() and 0xFF shl 16) or
         (bytes[22].toInt() and 0xFF shl 8) or (bytes[23].toInt() and 0xFF)
 }
 
@@ -787,9 +1009,24 @@ internal const val IOS_XCTEST_RUNNER_BUNDLE_ID = "dev.mobile.maestro-driver-iosU
 // session alive; xcodebuild later restarts its dead runner, which terminates
 // the active run's session and steals the simulator's gesture daemon. Returns
 // true when an orphaned xcodebuild session was found and killed.
-internal fun reapOrphanIosRunners(udid: String, execute: (List<String>) -> Int): Boolean {
-    val killed = execute(listOf("pkill", "-f", "xcodebuild.*test-without-building.*$udid")) == 0
-    execute(listOf("xcrun", "simctl", "terminate", udid, IOS_XCTEST_RUNNER_BUNDLE_ID))
+internal fun reapOrphanIosRunners(
+    udid: String,
+    execute: (List<String>) -> Int,
+): Boolean {
+    val killed =
+        execute(
+            listOf("pkill", "-f", "xcodebuild.*test-without-building.*$udid"),
+        ) ==
+            0
+    execute(
+        listOf(
+            "xcrun",
+            "simctl",
+            "terminate",
+            udid,
+            IOS_XCTEST_RUNNER_BUNDLE_ID,
+        ),
+    )
     return killed
 }
 
@@ -811,30 +1048,34 @@ internal class WdaRecovery(
     // can fail client-side after the device already applied it, so replaying
     // types text or taps twice. Non-idempotent actions surface UNAVAILABLE,
     // which the runner treats as transient.
-    fun <T> run(replay: Boolean, block: () -> T): T {
-        return try {
+    fun <T> run(replay: Boolean, block: () -> T): T = try {
+        block()
+    } catch (e: Exception) {
+        if (!isIoFailure(e)) throw e
+        recover(e)
+        if (!replay) {
+            throw io.grpc.Status.UNAVAILABLE
+                .withDescription(
+                    "connection dropped mid-action; the action may have applied: ${e.message}",
+                )
+                .withCause(e).asRuntimeException()
+        }
+        try {
             block()
-        } catch (e: Exception) {
-            if (!isIoFailure(e)) throw e
-            recover(e)
-            if (!replay) {
-                throw io.grpc.Status.UNAVAILABLE
-                    .withDescription("connection dropped mid-action; the action may have applied: ${e.message}")
-                    .withCause(e).asRuntimeException()
-            }
-            try {
-                block()
-            } catch (retryErr: Exception) {
-                if (!isIoFailure(retryErr)) throw retryErr
-                throw io.grpc.Status.UNAVAILABLE
-                    .withDescription("read retry failed after channel recovery: ${retryErr.message}")
-                    .withCause(retryErr).asRuntimeException()
-            }
+        } catch (retryErr: Exception) {
+            if (!isIoFailure(retryErr)) throw retryErr
+            throw io.grpc.Status.UNAVAILABLE
+                .withDescription(
+                    "read retry failed after channel recovery: ${retryErr.message}",
+                )
+                .withCause(retryErr).asRuntimeException()
         }
     }
 
     private fun isIoFailure(e: Exception): Boolean =
-        generateSequence(e as Throwable) { it.cause }.any { it is java.io.IOException }
+        generateSequence(e as Throwable) {
+            it.cause
+        }.any { it is java.io.IOException }
 
     private fun recover(cause: Exception) {
         lock.lock()
@@ -848,17 +1089,32 @@ internal class WdaRecovery(
             try {
                 restart()
             } catch (restartErr: Exception) {
-                throw IllegalStateException("WDA reconnect failed: $restartErr", cause)
+                throw IllegalStateException(
+                    "WDA reconnect failed: $restartErr",
+                    cause,
+                )
             }
-            log("XCTest runner restarted in ${System.currentTimeMillis() - startedAt} ms")
+            log(
+                "XCTest runner restarted in ${System.currentTimeMillis() - startedAt} ms",
+            )
         } finally {
             lock.unlock()
         }
     }
 }
 
-private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? {
-    return when (adbKeyCode) {
+// maestroKeyFor resolves a logical key name to a maestro KeyCode. It lowercases
+// and rejects an unknown name (matching StubDriverBackend's contract, so an
+// unmapped or wrong-case key fails loudly instead of being silently dropped),
+// and returns null only when the key is known but maestro has no enum for it.
+internal fun maestroKeyFor(key: String): maestro.KeyCode? {
+    val keyCode = StubDriverBackend.KEY_MAP[key.lowercase()]
+        ?: throw IllegalArgumentException("unsupported pressKey value: $key")
+    return keyCodeToMaestro(keyCode)
+}
+
+private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? =
+    when (adbKeyCode) {
         "KEYCODE_BACK" -> maestro.KeyCode.BACK
         "KEYCODE_HOME" -> maestro.KeyCode.HOME
         "KEYCODE_ENTER" -> maestro.KeyCode.ENTER
@@ -869,4 +1125,3 @@ private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? {
         "KEYCODE_DPAD_RIGHT" -> maestro.KeyCode.REMOTE_RIGHT
         else -> null
     }
-}

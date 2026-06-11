@@ -15,8 +15,19 @@ class InputTextTest {
     // enough for keystrokes to spray into the launcher search box. A regression
     // here would corrupt edge-case input or shell-inject the device.
     @Test fun fastInputPathAcceptsShellSafeAsciiOfAnyLength() {
-        for (safe in listOf("demo@folio.app", "ledger123", "Checking", "1e10", "0.0000001", "42", "a".repeat(4096))) {
-            assertTrue(FAST_INPUT_SAFE.matches(safe), "expected fast path for length ${safe.length}")
+        for (safe in listOf(
+            "demo@folio.app",
+            "ledger123",
+            "Checking",
+            "1e10",
+            "0.0000001",
+            "42",
+            "a".repeat(4096),
+        )) {
+            assertTrue(
+                FAST_INPUT_SAFE.matches(safe),
+                "expected fast path for length ${safe.length}",
+            )
         }
         val fallback = listOf(
             "Emergency Fund", "🙂🔥💸", "  ", "\t\n", "'; DROP TABLE--",
@@ -24,7 +35,10 @@ class InputTextTest {
             "-1", "-rf", // a leading dash could be read as an option by `input text`
         )
         for (text in fallback) {
-            assertTrue(!FAST_INPUT_SAFE.matches(text), "expected driver fallback for: $text")
+            assertTrue(
+                !FAST_INPUT_SAFE.matches(text),
+                "expected driver fallback for: $text",
+            )
         }
     }
 
@@ -34,7 +48,12 @@ class InputTextTest {
         val text = "a".repeat(4096)
         val chunks = chunkForInput(text, 512)
         assertEquals(text, chunks.joinToString(""))
-        assertTrue(chunks.all { it.length <= 512 }, "no chunk may exceed the size")
+        assertTrue(
+            chunks.all {
+                it.length <= 512
+            },
+            "no chunk may exceed the size",
+        )
         assertTrue(chunks.size >= 8, "4096/512 should be at least 8 chunks")
     }
 
@@ -42,7 +61,12 @@ class InputTextTest {
         // a boundary that would fall on '-' is pushed past the dashes
         val chunks = chunkForInput("ab--cd", 2)
         assertEquals("ab--cd", chunks.joinToString(""))
-        assertTrue(chunks.drop(1).none { it.startsWith("-") }, "no later chunk may start with '-'")
+        assertTrue(
+            chunks.drop(1).none {
+                it.startsWith("-")
+            },
+            "no later chunk may start with '-'",
+        )
     }
 
     // A logical key name must map to the right Android keycode; a typo'd table
@@ -56,7 +80,11 @@ class InputTextTest {
         for ((key, keycode) in cases) {
             val commands = mutableListOf<List<String>>()
             StubDriverBackend("android") { commands.add(it) }.pressKey(key)
-            assertEquals(listOf(listOf("shell", "input", "keyevent", keycode)), commands, key)
+            assertEquals(
+                listOf(listOf("shell", "input", "keyevent", keycode)),
+                commands,
+                key,
+            )
         }
     }
 
@@ -73,7 +101,10 @@ class InputTextTest {
 
         backend.inputText("Emergency Fund")
 
-        assertEquals(listOf(listOf("shell", "input", "text", "Emergency%sFund")), commands)
+        assertEquals(
+            listOf(listOf("shell", "input", "text", "Emergency%sFund")),
+            commands,
+        )
     }
 
     @Test fun eraseTextSendsOneDeleteKeyPerCharacter() {
@@ -89,7 +120,10 @@ class InputTextTest {
     }
 
     @Test fun escapeForAdbInputTextSubstitutesSpaces() {
-        assertEquals("hello%sworld", StubDriverBackend.escapeForAdbInputText("hello world"))
+        assertEquals(
+            "hello%sworld",
+            StubDriverBackend.escapeForAdbInputText("hello world"),
+        )
     }
 
     @Test fun escapeForAdbInputTextEscapesShellMetacharacters() {
@@ -105,7 +139,93 @@ class InputTextTest {
 
     @Test fun escapeForAdbInputTextLeavesSimpleTextAlone() {
         assertEquals("12.34", StubDriverBackend.escapeForAdbInputText("12.34"))
-        assertEquals("Coffee", StubDriverBackend.escapeForAdbInputText("Coffee"))
+        assertEquals(
+            "Coffee",
+            StubDriverBackend.escapeForAdbInputText("Coffee"),
+        )
         assertTrue("-5" == StubDriverBackend.escapeForAdbInputText("-5"))
+    }
+
+    // typeChunks sends every chunk while the foreground holds steady, so a normal
+    // type completes in full.
+    @Test fun typeChunksSendsAllChunksWhenForegroundStable() {
+        val sent = mutableListOf<String>()
+        val typed =
+            typeChunks(listOf("aaa", "bbb", "cc"), "app.folio", {
+                "app.folio"
+            }) { sent.add(it) }
+        assertEquals(listOf("aaa", "bbb", "cc"), sent)
+        assertEquals(8, typed)
+    }
+
+    // The core guard: once the app under test loses the foreground mid-type, the
+    // remaining chunks must NOT be sent (they would spray into the window that
+    // stole focus, e.g. the launcher search box).
+    @Test fun typeChunksStopsWhenForegroundLeavesMidType() {
+        val sent = mutableListOf<String>()
+        var calls = 0
+        // Foreground holds for the check before chunk 2, then goes foreign before
+        // chunk 3: two chunks land, the third is suppressed.
+        val typed = typeChunks(listOf("aaa", "bbb", "ccc"), "app.folio", {
+            calls++
+            if (calls == 1) "app.folio" else "com.android.launcher"
+        }) { sent.add(it) }
+        assertEquals(
+            listOf("aaa", "bbb"),
+            sent,
+            "typing must stop at the chunk after focus left",
+        )
+        assertEquals(6, typed)
+    }
+
+    // The first chunk is always sent: there is nothing typed yet to leak, so the
+    // guard must not check before the very first send.
+    @Test fun typeChunksAlwaysSendsFirstChunkEvenIfForegroundAlreadyForeign() {
+        val sent = mutableListOf<String>()
+        val typed =
+            typeChunks(listOf("aaa", "bbb"), "app.folio", {
+                "com.android.launcher"
+            }) { sent.add(it) }
+        assertEquals(listOf("aaa"), sent)
+        assertEquals(3, typed)
+    }
+
+    // A null start owner (foreground unreadable) disables the guard so typing is
+    // not blocked where the signal is unavailable.
+    @Test fun typeChunksWithUnknownOwnerSendsEverything() {
+        val sent = mutableListOf<String>()
+        typeChunks(listOf("aaa", "bbb"), null, { "anything" }) { sent.add(it) }
+        assertEquals(listOf("aaa", "bbb"), sent)
+    }
+
+    // parseResumedPackage must read the foreground package off any *ResumedActivity
+    // wording, not one OEM-specific phrasing, or the mid-type guard silently
+    // no-ops on ROMs that word the line differently.
+    @Test fun parseResumedPackageReadsEachResumedActivityWording() {
+        val cases = mapOf(
+            "    topResumedActivity=ActivityRecord{8b u0 app.folio/.MainActivity t42}" to
+                "app.folio",
+            "  mResumedActivity: ActivityRecord{1c u0 com.example.app/.Home t9}" to
+                "com.example.app",
+            "  ResumedActivity: ActivityRecord{2d u0 app.folio/com.folio.Detail t9}" to
+                "app.folio",
+        )
+        for ((line, want) in cases) {
+            assertEquals(want, parseResumedPackage(line), line)
+        }
+        assertEquals(
+            null,
+            parseResumedPackage("  mFocusedApp=null\n  no resumed line here"),
+        )
+    }
+
+    // maestroKeyFor resolves the production pressKey path: it lowercases and
+    // rejects an unknown key (the Maestro backend used to silently drop both
+    // unknown and wrong-case keys).
+    @Test fun maestroKeyForResolvesAndRejects() {
+        assertEquals(maestro.KeyCode.BACK, maestroKeyFor("back"))
+        assertEquals(maestro.KeyCode.BACK, maestroKeyFor("BACK"))
+        assertEquals(maestro.KeyCode.ENTER, maestroKeyFor("enter"))
+        assertFailsWith<IllegalArgumentException> { maestroKeyFor("zorp") }
     }
 }
