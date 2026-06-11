@@ -437,7 +437,22 @@ func appIsForeground(ctx context.Context, options Options) bool {
 	if err != nil || foreground == "" {
 		return true
 	}
-	return foreground == options.BundleID
+	if foreground != options.BundleID {
+		return false
+	}
+	// The app is the resumed activity, but a system overlay (the notification
+	// shade) can own the focused window while the app stays resumed; firing the
+	// action would land on the overlay. Mirror ensureForeground's focus check
+	// here so the apply-time guard skips and the next step dismisses it.
+	focusChecker, ok := options.Driver.(driver.FocusedWindowChecker)
+	if !ok {
+		return true
+	}
+	focused, err := focusChecker.FocusedWindowApp(ctx)
+	if err != nil || focused == "" {
+		return true
+	}
+	return focused == options.BundleID
 }
 
 // foregroundReadyAttempts bounds how many times waitForForeground tries to
