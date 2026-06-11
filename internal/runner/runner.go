@@ -535,18 +535,16 @@ func awaitForeground(ctx context.Context, options Options, logger *slog.Logger, 
 
 // bringToForeground returns the app under test to the foreground. It first
 // presses BACK to dismiss any modal system dialog (a relaunch alone does not
-// close one), then relaunches and waits for the UI to settle. Returns true
-// when the relaunch itself succeeded.
-func bringToForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) bool {
+// close one), then relaunches and waits for the UI to settle.
+func bringToForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
 	if err := options.Driver.PressKey(ctx, "back"); err != nil {
 		logger.Warn("dismiss key before relaunch failed", "step", stepIndex, "err", err)
 	}
 	if err := options.Driver.Launch(ctx, options.BundleID, false, nil); err != nil {
 		logger.Warn("relaunch failed", "step", stepIndex, "err", err)
-		return false
+		return
 	}
 	settleForForeground(ctx, options)
-	return true
 }
 
 // settleForForeground waits one idle window for the UI to settle, bounding the

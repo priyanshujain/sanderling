@@ -456,8 +456,9 @@ func FocusedWindowPackage(ctx context.Context, serial string) (string, error) {
 	}
 	// Grep the focus line on-device: the full dumpsys window output is large and
 	// this runs on the per-step scope guard, so transferring it whole would add
-	// latency to every step.
-	output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "dumpsys window | grep mCurrentFocus")...).Output()
+	// latency to every step. `|| true` keeps a no-match (grep exit 1) from
+	// surfacing as an error so it yields "" per the contract.
+	output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "dumpsys window | grep mCurrentFocus || true")...).Output()
 	if err != nil {
 		return "", err
 	}
