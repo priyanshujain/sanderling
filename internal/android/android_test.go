@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+func TestWakeCommands(t *testing.T) {
+	want := [][]string{
+		{"svc", "power", "stayon", "true"},
+		{"input", "keyevent", "KEYCODE_WAKEUP"},
+		{"wm", "dismiss-keyguard"},
+	}
+	if got := wakeCommands(); !reflect.DeepEqual(got, want) {
+		t.Errorf("wakeCommands() = %v, want %v", got, want)
+	}
+}
+
 func TestParseAdbDevices_OnlineOnly(t *testing.T) {
 	output := `List of devices attached
 emulator-5554	device

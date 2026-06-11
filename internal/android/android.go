@@ -54,15 +54,6 @@ func EnsureDevice(ctx context.Context, serial, avdName string, stdout io.Writer)
 	return nil
 }
 
-// PrepareDevice keeps the device awake, wakes the screen, and dismisses a
-// non-secure keyguard so the launched app stays in the foreground for the whole
-// run. The fuzzer drives whatever is on screen, so a sleeping or locked device
-// would have it explore system UI instead of the app. A secure lock
-// (PIN/password) cannot be dismissed here and must be unlocked out of band.
-//
-// Every step is best effort: some OEM builds restrict or kill these commands
-// (e.g. HyperOS SIGKILLs `svc power stayon`), and none is required for a run to
-// proceed, so a failure is logged and skipped rather than aborting the run.
 // adbArgs prepends the device selector when a serial is set, so every adb
 // invocation targets the chosen device. Without it, `adb` fails on a host with
 // more than one device attached, which silently disables anything that reads
@@ -74,16 +65,26 @@ func adbArgs(serial string, args ...string) []string {
 	return append([]string{"-s", serial}, args...)
 }
 
+// wakeCommands keep the screen on and unlocked. A secure lock (PIN/password)
+// cannot be dismissed here and must be unlocked out of band.
+func wakeCommands() [][]string {
+	return [][]string{
+		{"svc", "power", "stayon", "true"},
+		{"input", "keyevent", "KEYCODE_WAKEUP"},
+		{"wm", "dismiss-keyguard"},
+	}
+}
+
+// PrepareDevice wakes and unlocks the device and disables the background
+// freezers that would suspend the driver. Best effort: some OEM builds kill
+// these commands (e.g. HyperOS SIGKILLs `svc power stayon`), so a failure is
+// logged and skipped rather than aborting the run.
 func PrepareDevice(ctx context.Context, serial string, stdout io.Writer) error {
 	adb, err := AdbBinary()
 	if err != nil {
 		return err
 	}
-	for _, shellCommand := range append([][]string{
-		{"svc", "power", "stayon", "true"},
-		{"input", "keyevent", "KEYCODE_WAKEUP"},
-		{"wm", "dismiss-keyguard"},
-	}, antiFreezeCommands()...) {
+	for _, shellCommand := range append(wakeCommands(), antiFreezeCommands()...) {
 		args := adbArgs(serial, append([]string{"shell"}, shellCommand...)...)
 		if err := exec.CommandContext(ctx, adb, args...).Run(); err != nil {
 			fmt.Fprintf(stdout, "device prep: skipping `adb %s` (%v)\n", strings.Join(shellCommand, " "), err)
