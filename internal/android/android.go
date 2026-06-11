@@ -218,25 +218,6 @@ func navOverlayCommand(ctx context.Context, adb, serial, overlay string) *exec.C
 	return exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "cmd", "overlay", "enable-exclusive", overlay)...)
 }
 
-// AdbReverse sets up adb reverse forwarding for a local abstract socket.
-func AdbReverse(socket string, port int) error {
-	adb, err := AdbBinary()
-	if err != nil {
-		return err
-	}
-	command := exec.Command(adb, "reverse", "localabstract:"+socket, fmt.Sprintf("tcp:%d", port))
-	return command.Run()
-}
-
-// AdbReverseRemove removes an adb reverse forwarding rule.
-func AdbReverseRemove(socket string) error {
-	adb, err := AdbBinary()
-	if err != nil {
-		return err
-	}
-	return exec.Command(adb, "reverse", "--remove", "localabstract:"+socket).Run()
-}
-
 // EnvWithAndroidPlatformTools returns env with the directory containing adb
 // prepended to PATH, so child processes (the sidecar) can invoke adb even
 // when the user hasn't set up their shell PATH.
