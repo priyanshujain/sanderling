@@ -1951,3 +1951,76 @@ func TestEnsureForeground_DismissesSystemOverlay(t *testing.T) {
 		t.Fatalf("a resumed-but-obscured app must not be relaunched, got %d relaunches", relaunches)
 	}
 }
+
+// TestAppIsForeground covers the apply-time guard's decision table, including
+// the bug fix: the app being the resumed activity is not enough; a system
+// overlay owning the focused window means the action must be skipped. Unknown
+// signals (no bundle, empty foreground, a transient read error) return true so
+// the run is never blocked where the signal is unavailable.
+func TestAppIsForeground(t *testing.T) {
+	readErr := errors.New("adb read failed")
+	cases := []struct {
+		name       string
+		bundleID   string
+		foreground []string
+		foregErr   error
+		focused    []string
+		focusErr   error
+		want       bool
+	}{
+		{name: "no bundle id", bundleID: "", foreground: []string{"app.folio"}, want: true},
+		{name: "foreground unknown", bundleID: "app.folio", foreground: nil, want: true},
+		{name: "foreground read error", bundleID: "app.folio", foregErr: readErr, want: true},
+		{name: "foreign foreground", bundleID: "app.folio", foreground: []string{"com.android.chrome"}, want: false},
+		{name: "app resumed and focused", bundleID: "app.folio", foreground: []string{"app.folio"}, focused: []string{"app.folio"}, want: true},
+		{name: "app resumed but overlay focused", bundleID: "app.folio", foreground: []string{"app.folio"}, focused: []string{"com.android.systemui"}, want: false},
+		{name: "app resumed, focus unknown", bundleID: "app.folio", foreground: []string{"app.folio"}, focused: []string{""}, want: true},
+		{name: "app resumed, focus read error", bundleID: "app.folio", foreground: []string{"app.folio"}, focusErr: readErr, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := mockdriver.New()
+			m.ForegroundResults = tc.foreground
+			m.ForegroundErr = tc.foregErr
+			m.FocusedWindowResults = tc.focused
+			m.FocusedWindowErr = tc.focusErr
+			options := Options{BundleID: tc.bundleID, Driver: m}
+			if got := appIsForeground(context.Background(), options); got != tc.want {
+				t.Errorf("appIsForeground = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime locks the apply-time
+// half of the scope guard end to end: when a system overlay owns the focused
+// window while the app stays the resumed activity, the chosen action must be
+// dropped rather than dispatched onto the overlay. The fixture spec taps id:next
+// every step; with the guard working, none of those taps reach the driver.
+func TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime(t *testing.T) {
+	state := newHarness(t)
+	state.mock.ForegroundResults = []string{"app.folio"}
+	state.mock.FocusedWindowResults = []string{"app.folio", "com.android.systemui"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		BundleID:    "app.folio",
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps == 0 {
+		t.Fatal("expected the loop to run steps")
+	}
+	// The only thing standing between the picked action and the driver is the
+	// apply-time guard; a dispatched tap means it failed (e.g. dead-coded).
+	if containsAction(state.mock.Actions(), mockdriver.ActionTapSelector, "id:next") {
+		t.Error("apply-time guard failed: a tap fired while a system overlay held focus")
+	}
+}
