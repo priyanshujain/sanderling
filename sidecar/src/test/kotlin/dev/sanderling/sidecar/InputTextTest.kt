@@ -146,8 +146,6 @@ class InputTextTest {
         assertTrue("-5" == StubDriverBackend.escapeForAdbInputText("-5"))
     }
 
-    // typeChunks sends every chunk while the foreground holds steady, so a normal
-    // type completes in full.
     @Test fun typeChunksSendsAllChunksWhenForegroundStable() {
         val sent = mutableListOf<String>()
         val typed =
@@ -158,14 +156,10 @@ class InputTextTest {
         assertEquals(8, typed)
     }
 
-    // The core guard: once the app under test loses the foreground mid-type, the
-    // remaining chunks must NOT be sent (they would spray into the window that
-    // stole focus, e.g. the launcher search box).
     @Test fun typeChunksStopsWhenForegroundLeavesMidType() {
         val sent = mutableListOf<String>()
         var calls = 0
-        // Foreground holds for the check before chunk 2, then goes foreign before
-        // chunk 3: two chunks land, the third is suppressed.
+        // Foreground holds before chunk 2, then goes foreign before chunk 3.
         val typed = typeChunks(listOf("aaa", "bbb", "ccc"), "app.folio", {
             calls++
             if (calls == 1) "app.folio" else "com.android.launcher"
@@ -178,8 +172,6 @@ class InputTextTest {
         assertEquals(6, typed)
     }
 
-    // The first chunk is always sent: there is nothing typed yet to leak, so the
-    // guard must not check before the very first send.
     @Test fun typeChunksAlwaysSendsFirstChunkEvenIfForegroundAlreadyForeign() {
         val sent = mutableListOf<String>()
         val typed =
@@ -190,17 +182,12 @@ class InputTextTest {
         assertEquals(3, typed)
     }
 
-    // A null start owner (foreground unreadable) disables the guard so typing is
-    // not blocked where the signal is unavailable.
     @Test fun typeChunksWithUnknownOwnerSendsEverything() {
         val sent = mutableListOf<String>()
         typeChunks(listOf("aaa", "bbb"), null, { "anything" }) { sent.add(it) }
         assertEquals(listOf("aaa", "bbb"), sent)
     }
 
-    // parseResumedPackage must read the foreground package off any *ResumedActivity
-    // wording, not one OEM-specific phrasing, or the mid-type guard silently
-    // no-ops on ROMs that word the line differently.
     @Test fun parseResumedPackageReadsEachResumedActivityWording() {
         val cases = mapOf(
             "    topResumedActivity=ActivityRecord{8b u0 app.folio/.MainActivity t42}" to
@@ -219,9 +206,6 @@ class InputTextTest {
         )
     }
 
-    // maestroKeyFor resolves the production pressKey path: it lowercases and
-    // rejects an unknown key (the Maestro backend used to silently drop both
-    // unknown and wrong-case keys).
     @Test fun maestroKeyForResolvesAndRejects() {
         assertEquals(maestro.KeyCode.BACK, maestroKeyFor("back"))
         assertEquals(maestro.KeyCode.BACK, maestroKeyFor("BACK"))

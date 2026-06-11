@@ -682,12 +682,9 @@ internal fun chunkForInput(text: String, size: Int): List<String> {
     return chunks
 }
 
-// typeChunks sends each chunk via `send`, re-reading the foreground owner with
-// `currentForeground` before every chunk after the first. If the owner changed
-// from `startOwner`, it stops (returning the count already typed) so keystrokes
-// never spray into a window that stole focus mid-type. The first chunk is always
-// sent (there is nothing typed yet to leak), and a null startOwner (foreground
-// unknown) disables the check so typing proceeds. Returns the chars sent.
+// typeChunks sends each chunk, stopping if the foreground owner changed from
+// startOwner so the remaining keystrokes can't spray into a window that stole
+// focus. The first chunk always sends; a null startOwner skips the check.
 internal fun typeChunks(
     chunks: List<String>,
     startOwner: String?,
@@ -712,11 +709,9 @@ internal fun typeChunks(
 private val resumedActivityPackage =
     Regex("""([a-zA-Z][a-zA-Z0-9_.]*)/[a-zA-Z0-9_.$]+""")
 
-// parseResumedPackage extracts the foreground package from `dumpsys activity
-// activities` output. It reads any *ResumedActivity line (topResumedActivity=,
-// mResumedActivity:, ResumedActivity:) rather than one OEM-specific phrasing, so
-// a ROM that words the line differently does not silently disable the mid-type
-// foreground guard. Returns null when no such line is present.
+// parseResumedPackage reads the foreground package off any *ResumedActivity line,
+// matching the Go guard's marker set so OEM wording can't disable the mid-type
+// guard. Null if none present.
 internal fun parseResumedPackage(dumpsys: String): String? {
     for (line in dumpsys.lineSequence()) {
         if (!line.contains("ResumedActivity")) continue
@@ -1101,10 +1096,8 @@ internal class WdaRecovery(
     }
 }
 
-// maestroKeyFor resolves a logical key name to a maestro KeyCode. It lowercases
-// and rejects an unknown name (matching StubDriverBackend's contract, so an
-// unmapped or wrong-case key fails loudly instead of being silently dropped),
-// and returns null only when the key is known but maestro has no enum for it.
+// maestroKeyFor rejects an unknown key (matching StubDriverBackend) so an
+// unmapped or wrong-case key fails loudly instead of being silently dropped.
 internal fun maestroKeyFor(key: String): maestro.KeyCode? {
     val keyCode = StubDriverBackend.KEY_MAP[key.lowercase()]
         ?: throw IllegalArgumentException("unsupported pressKey value: $key")
