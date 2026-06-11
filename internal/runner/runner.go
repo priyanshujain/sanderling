@@ -463,8 +463,8 @@ const foregroundReadyAttempts = 8
 // focusTapSettle is the pause after tapping a field to focus it, before typing.
 // Long enough for focus to land, short enough to avoid the ~500ms-1s full
 // settle the keyboard's open animation would otherwise cost every InputText
-// step on a physical device.
-const focusTapSettle = 250 * time.Millisecond
+// step on a physical device. A var so tests can shorten it.
+var focusTapSettle = 250 * time.Millisecond
 
 // waitForForeground blocks until the app under test is actually on screen, so
 // the first observe never captures a leftover screen or a freshly-booted

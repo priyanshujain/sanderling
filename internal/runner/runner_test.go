@@ -54,6 +54,12 @@ func newHarness(t *testing.T) *harness {
 	return newHarnessWithSpec(t, fixtureSpec)
 }
 
+func fastFocusSettle(t *testing.T) {
+	prev := focusTapSettle
+	focusTapSettle = time.Millisecond
+	t.Cleanup(func() { focusTapSettle = prev })
+}
+
 // bundleSpec compiles an authored TS spec with the goja runtime entry so the
 // loaded bundle installs __sanderlingNextAction__ (the shared picker).
 func bundleSpec(t *testing.T, specSource string) string {
@@ -653,6 +659,7 @@ func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 }
 
 func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
+	fastFocusSettle(t)
 	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
 		{"attributes":{"resource-id":"username","text":"stale-value","bounds":"[10,10,500,100]"},"children":[]}
 	]}`)
@@ -702,6 +709,7 @@ func TestApplyAction_InputTextWithoutTargetSkipsFocusTap(t *testing.T) {
 // asserting the TextReplacer capability never pays the pre-erase round-trip:
 // its InputText already replaces the field's content.
 func TestApplyAction_InputTextSkipsEraseForReplacingDriver(t *testing.T) {
+	fastFocusSettle(t)
 	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
 		{"attributes":{"resource-id":"username","text":"stale-value","bounds":"[10,10,500,100]"},"children":[]}
 	]}`)
@@ -724,6 +732,7 @@ func TestApplyAction_InputTextSkipsEraseForReplacingDriver(t *testing.T) {
 }
 
 func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
+	fastFocusSettle(t)
 	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
 		{"attributes":{"resource-id":"username","bounds":"[10,10,500,100]"},"children":[]}
 	]}`)
@@ -771,6 +780,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 }
 
 func TestApplyAction_V8InputTextTapsAtCoordinates(t *testing.T) {
+	fastFocusSettle(t)
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 50, Y: 100, Text: "alice"}
 
@@ -787,6 +797,7 @@ func TestApplyAction_V8InputTextTapsAtCoordinates(t *testing.T) {
 }
 
 func TestApplyAction_V8InputTextAtOriginStillTaps(t *testing.T) {
+	fastFocusSettle(t)
 	driverMock := mockdriver.New()
 	// V8 emits real (0,0) coordinates for an element at viewport top-left
 	// (post-#15 the runtime nullifies unresolved actions, so a non-null
