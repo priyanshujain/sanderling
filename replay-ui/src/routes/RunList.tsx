@@ -62,41 +62,43 @@ export default function RunList() {
   }
 
   return (
-    <table className="run-table">
-      <thead>
-        <tr>
-          <th>started</th>
-          <th>spec</th>
-          <th>seed</th>
-          <th>platform</th>
-          <th>duration</th>
-          <th>steps</th>
-          <th>violations</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {runs.map((run) => (
-          <tr key={run.id}>
-            <td>
-              <Link to={`/runs/${run.id}`}>{formatStartedAt(run.started_at)}</Link>
-            </td>
-            <td title={run.spec_path}>{basename(run.spec_path)}</td>
-            <td>{run.seed}</td>
-            <td>{run.platform}</td>
-            <td>{formatDuration(run.duration_millis)}</td>
-            <td>{run.step_count}</td>
-            <td>
-              {run.violation_count > 0 ? (
-                <span className="chip chip-violation">{run.violation_count}</span>
-              ) : (
-                "0"
-              )}
-            </td>
-            <td>{run.in_progress ? <span className="chip chip-progress">in progress</span> : null}</td>
+    <div className="run-list">
+      <table className="run-table">
+        <thead>
+          <tr>
+            <th>started</th>
+            <th>spec</th>
+            <th>seed</th>
+            <th>platform</th>
+            <th>duration</th>
+            <th>steps</th>
+            <th>violations</th>
+            <th></th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {runs.map((run) => (
+            <tr key={run.id}>
+              <td>
+                <Link to={`/runs/${run.id}`}>{formatStartedAt(run.started_at)}</Link>
+              </td>
+              <td title={run.spec_path}>{basename(run.spec_path)}</td>
+              <td>{run.seed}</td>
+              <td>{run.platform}</td>
+              <td>{formatDuration(run.duration_millis)}</td>
+              <td>{run.step_count}</td>
+              <td>
+                {run.violation_count > 0 ? (
+                  <span className="chip chip-violation">{run.violation_count}</span>
+                ) : (
+                  "0"
+                )}
+              </td>
+              <td>{run.in_progress ? <span className="chip chip-progress">in progress</span> : null}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -51,6 +52,12 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	return newHarnessWithSpec(t, fixtureSpec)
+}
+
+func fastFocusSettle(t *testing.T) {
+	prev := focusTapSettle
+	focusTapSettle = time.Millisecond
+	t.Cleanup(func() { focusTapSettle = prev })
 }
 
 // bundleSpec compiles an authored TS spec with the goja runtime entry so the
@@ -652,6 +659,7 @@ func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 }
 
 func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
+	fastFocusSettle(t)
 	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
 		{"attributes":{"resource-id":"username","text":"stale-value","bounds":"[10,10,500,100]"},"children":[]}
 	]}`)
@@ -661,41 +669,39 @@ func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
 		t.Fatalf("applyAction: %v", err)
 	}
+	// The post-tap settle is now a brief internal sleep, not a WaitForIdle RPC,
+	// so the recorded driver actions are tap, erase, input.
 	actions := driverMock.Actions()
-	if len(actions) != 4 {
-		t.Fatalf("want tap, wait_for_idle, erase, input; got %v", actions)
+	if len(actions) != 3 {
+		t.Fatalf("want tap, erase, input; got %v", actions)
 	}
 	if actions[0].Kind != mockdriver.ActionTap {
 		t.Errorf("first action = %v, want tap", actions[0].Kind)
 	}
-	if actions[1].Kind != mockdriver.ActionWaitForIdle {
-		t.Errorf("second action = %v, want wait_for_idle (settle after focus tap)", actions[1].Kind)
+	if actions[1].Kind != mockdriver.ActionEraseText || actions[1].CharacterCount != len("stale-value") {
+		t.Errorf("second action = %+v, want erase_text of %d characters", actions[1], len("stale-value"))
 	}
-	if actions[2].Kind != mockdriver.ActionEraseText || actions[2].CharacterCount != len("stale-value") {
-		t.Errorf("third action = %+v, want erase_text of %d characters", actions[2], len("stale-value"))
-	}
-	if actions[3].Kind != mockdriver.ActionInputText || actions[3].Text != "alice" {
-		t.Errorf("fourth action = %+v, want input_text alice", actions[3])
+	if actions[2].Kind != mockdriver.ActionInputText || actions[2].Text != "alice" {
+		t.Errorf("third action = %+v, want input_text alice", actions[2])
 	}
 }
 
-// TestApplyAction_InputTextWithoutTargetSkipsSettle pins that the post-tap
-// settle only runs when a focus tap actually happened: with no resolvable
-// target there is no keyboard animation to absorb.
-func TestApplyAction_InputTextWithoutTargetSkipsSettle(t *testing.T) {
+// TestApplyAction_InputTextWithoutTargetSkipsFocusTap pins that with no
+// resolvable target there is no focus tap (and so no settle), and InputText
+// still runs at the cursor.
+func TestApplyAction_InputTextWithoutTargetSkipsFocusTap(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: -1, Y: -1, Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
 		t.Fatalf("applyAction: %v", err)
 	}
-	for _, recorded := range driverMock.Actions() {
-		if recorded.Kind == mockdriver.ActionWaitForIdle {
-			t.Errorf("no focus tap happened; settle must be skipped: %v", driverMock.Actions())
-		}
+	actions := driverMock.Actions()
+	if len(actions) != 1 || actions[0].Kind != mockdriver.ActionInputText {
+		t.Errorf("no target: want input_text only (no focus tap), got %v", actions)
 	}
 }
 
@@ -703,6 +709,7 @@ func TestApplyAction_InputTextWithoutTargetSkipsSettle(t *testing.T) {
 // asserting the TextReplacer capability never pays the pre-erase round-trip:
 // its InputText already replaces the field's content.
 func TestApplyAction_InputTextSkipsEraseForReplacingDriver(t *testing.T) {
+	fastFocusSettle(t)
 	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
 		{"attributes":{"resource-id":"username","text":"stale-value","bounds":"[10,10,500,100]"},"children":[]}
 	]}`)
@@ -713,7 +720,7 @@ func TestApplyAction_InputTextSkipsEraseForReplacingDriver(t *testing.T) {
 	driverMock.ReplacesText = true
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
 		t.Fatalf("applyAction: %v", err)
 	}
 	if containsAction(driverMock.Actions(), mockdriver.ActionEraseText, "") {
@@ -725,6 +732,7 @@ func TestApplyAction_InputTextSkipsEraseForReplacingDriver(t *testing.T) {
 }
 
 func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
+	fastFocusSettle(t)
 	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
 		{"attributes":{"resource-id":"username","bounds":"[10,10,500,100]"},"children":[]}
 	]}`)
@@ -734,7 +742,7 @@ func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
 		t.Fatalf("applyAction: %v", err)
 	}
 	if containsAction(driverMock.Actions(), mockdriver.ActionEraseText, "") {
@@ -748,7 +756,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 		driverMock.Failures[mockdriver.ActionTapSelector] = errors.New("adb unreachable")
 		action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-		err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond)
+		err := applyAction(context.Background(), driverMock, action, nil)
 		if err == nil {
 			t.Fatalf("expected focus tap failure to surface, got nil")
 		}
@@ -761,7 +769,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 		driverMock.Failures[mockdriver.ActionTap] = errors.New("tap driver error")
 		action := verifier.Action{Kind: verifier.ActionKindInputText, X: 10, Y: 20, Text: "alice"}
 
-		err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond)
+		err := applyAction(context.Background(), driverMock, action, nil)
 		if err == nil {
 			t.Fatalf("expected focus tap failure to surface, got nil")
 		}
@@ -772,10 +780,11 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 }
 
 func TestApplyAction_V8InputTextTapsAtCoordinates(t *testing.T) {
+	fastFocusSettle(t)
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 50, Y: 100, Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	actions := driverMock.Actions()
@@ -788,13 +797,14 @@ func TestApplyAction_V8InputTextTapsAtCoordinates(t *testing.T) {
 }
 
 func TestApplyAction_V8InputTextAtOriginStillTaps(t *testing.T) {
+	fastFocusSettle(t)
 	driverMock := mockdriver.New()
 	// V8 emits real (0,0) coordinates for an element at viewport top-left
 	// (post-#15 the runtime nullifies unresolved actions, so a non-null
 	// InputText with (0,0) is a deliberate edge tap, not a sentinel).
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 0, Y: 0, Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	if !containsAction(driverMock.Actions(), mockdriver.ActionTap, "") {
@@ -806,7 +816,7 @@ func TestApplyAction_DoubleTapDispatchesDoubleTapAtCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, X: 100, Y: 200}
 
-	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	taps := 0
@@ -824,7 +834,7 @@ func TestApplyAction_DoubleTapDispatchesDoubleTapSelector(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, On: "id:save"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	taps := 0
@@ -842,7 +852,7 @@ func TestApplyAction_LongPressDispatchesAtResolvedCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindLongPress, X: 120, Y: 240}
 
-	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	found := false
@@ -868,7 +878,7 @@ func TestApplyAction_ScrollWithPrecomputedEndpointsSwipes(t *testing.T) {
 		DurationMillis: 300,
 	}
 
-	if err := applyAction(context.Background(), driverMock, action, nil, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	found := false
@@ -891,7 +901,7 @@ func TestApplyAction_ScrollDirectionUsesInversion(t *testing.T) {
 	}
 	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "down", On: "id:list"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	var swipe *mockdriver.Action
@@ -910,6 +920,40 @@ func TestApplyAction_ScrollDirectionUsesInversion(t *testing.T) {
 	}
 }
 
+func TestApplyAction_ScrollNearTopKeepsDirectionAfterClamp(t *testing.T) {
+	driverMock := mockdriver.New()
+	// Full-screen root sets the 1080x2400 screen (marginY=200); the scrollable
+	// list sits inside the top margin (y 20..180), where the clamp must fire.
+	treeJSON := `{"attributes":{"bounds":"[0,0,1080,2400]"},"children":[
+		{"attributes":{"resource-id":"com.fixture:id/toplist","scrollable":"true","bounds":"[0,20,1080,180]"},"children":[],"enabled":true}
+	]}`
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatalf("parse tree: %v", err)
+	}
+	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "up", On: "id:toplist"}
+
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	var swipe *mockdriver.Action
+	for i := range driverMock.Actions() {
+		if driverMock.Actions()[i].Kind == mockdriver.ActionSwipe {
+			a := driverMock.Actions()[i]
+			swipe = &a
+		}
+	}
+	if swipe == nil {
+		t.Fatalf("expected a Swipe, got %v", driverMock.Actions())
+	}
+	if swipe.FromY != 200 {
+		t.Errorf("origin not pushed below the shade strip, got fromY=%d want 200", swipe.FromY)
+	}
+	if swipe.ToY <= swipe.FromY {
+		t.Errorf("scroll up reversed by the clamp: from=%d to=%d (want toY > fromY)", swipe.FromY, swipe.ToY)
+	}
+}
+
 func TestApplyAction_ScrollScreenFallback(t *testing.T) {
 	driverMock := mockdriver.New()
 	treeJSON := `{"attributes":{"bounds":"[0,0,400,800]"},"children":[],"enabled":true}`
@@ -920,7 +964,7 @@ func TestApplyAction_ScrollScreenFallback(t *testing.T) {
 	// On unset: container falls back to whole-screen (root) bounds.
 	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "up"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree, time.Millisecond); err != nil {
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
 		t.Fatalf("apply action: %v", err)
 	}
 	var swipe *mockdriver.Action
@@ -1762,5 +1806,196 @@ func TestRunner_WaitsForWindowDrawnBeforeFirstAction(t *testing.T) {
 		if a.Kind == mockdriver.ActionPressKey && a.Key == "back" {
 			t.Fatal("expected no back-press while waiting for the window to draw")
 		}
+	}
+}
+
+// TestAwaitForeground_RelaunchesThenWaitsForWindow locks the per-step scope
+// guard's recovery: after the app leaves to the launcher, it must relaunch AND
+// keep polling the focused window until it names the app, so the step never
+// observes or acts while the launcher is on screen (where InputText would land
+// in the launcher's type-to-search filter). A single fire-and-forget relaunch,
+// which returns before the window draws on a slow physical device, is the bug
+// this guards against.
+func TestAwaitForeground_RelaunchesThenWaitsForWindow(t *testing.T) {
+	m := mockdriver.New()
+	// Foreground: launcher on the first poll (still gone), then the app. Focus:
+	// the launcher window lingers one extra poll before the app's window draws.
+	m.ForegroundResults = []string{"com.android.launcher", "app.folio"}
+	m.FocusedWindowResults = []string{"com.android.launcher", "app.folio"}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	options := Options{BundleID: "app.folio", Driver: m, IdleTimeout: 10 * time.Millisecond}
+
+	awaitForeground(context.Background(), options, logger, 7)
+
+	relaunches, backs := 0, 0
+	for _, a := range m.Actions() {
+		switch {
+		case a.Kind == mockdriver.ActionLaunch && a.BundleID == "app.folio" && !a.ClearState:
+			relaunches++
+		case a.Kind == mockdriver.ActionPressKey && a.Key == "back":
+			backs++
+		}
+	}
+	if relaunches != 1 {
+		t.Fatalf("expected exactly one relaunch while the app was gone, got %d", relaunches)
+	}
+	if backs != 1 {
+		t.Fatalf("expected one back-press to dismiss a possible dialog before relaunch, got %d", backs)
+	}
+	// The window lagged one poll behind the resumed activity, so the focused
+	// window must have been queried at least twice before the gate returned.
+	if calls := m.FocusedWindowCalls(); calls < 2 {
+		t.Fatalf("expected the guard to poll the focused window until drawn (>=2), got %d", calls)
+	}
+}
+
+func TestClampGestureToSafeArea_KeepsOriginBelowShadeStrip(t *testing.T) {
+	screen := hierarchy.Bounds{Left: 0, Top: 0, Right: 1080, Bottom: 2400} // marginY = 200
+
+	// Origin in the shade strip: the whole segment shifts down by 138, so the
+	// downward gesture stays downward (447 -> 585) instead of reversing.
+	fromX, fromY, toX, toY := clampGestureToSafeArea(802, 62, 802, 447, screen)
+	if fromX != 802 || fromY != 200 || toX != 802 || toY != 585 {
+		t.Errorf("segment not translated below the shade strip: from=(%d,%d) to=(%d,%d), want from=(802,200) to=(802,585)", fromX, fromY, toX, toY)
+	}
+
+	fromX, fromY, _, _ = clampGestureToSafeArea(5, 1200, 540, 1200, screen)
+	if fromX != 5 || fromY != 1200 {
+		t.Errorf("side origin must pass through, got (%d,%d), want (5,1200)", fromX, fromY)
+	}
+
+	fromX, fromY, _, _ = clampGestureToSafeArea(540, 2399, 540, 1200, screen)
+	if fromX != 540 || fromY != 2399 {
+		t.Errorf("bottom origin must pass through, got (%d,%d), want (540,2399)", fromX, fromY)
+	}
+
+	_, _, toX, toY = clampGestureToSafeArea(540, 1200, -50, 9999, screen)
+	if toX != 0 || toY != 2400 {
+		t.Errorf("off-screen destination not clamped to screen edges: got (%d,%d), want (0,2400)", toX, toY)
+	}
+
+	fromX, _, _, _ = clampGestureToSafeArea(-30, 1200, 540, 1200, screen)
+	if fromX != 0 {
+		t.Errorf("off-screen origin x must clamp to 0, got %d", fromX)
+	}
+
+	fromX, fromY, toX, toY = clampGestureToSafeArea(802, 62, 802, 447, hierarchy.Bounds{})
+	if fromX != 802 || fromY != 62 || toX != 802 || toY != 447 {
+		t.Error("coordinates must pass through unchanged when screen size is unknown")
+	}
+}
+
+// TestScreenBounds_UsesMaxExtentNotRoot guards the screen-size source: the
+// Android hierarchy root reports zero bounds, so the screen rectangle must come
+// from the maximum element extent or the gesture clamp silently no-ops.
+func TestScreenBounds_UsesMaxExtentNotRoot(t *testing.T) {
+	tree := &hierarchy.Tree{
+		Root: &hierarchy.Node{Element: hierarchy.Element{Bounds: hierarchy.Bounds{}}},
+		Elements: []*hierarchy.Element{
+			{Bounds: hierarchy.Bounds{}},
+			{Bounds: hierarchy.Bounds{Left: 0, Top: 0, Right: 1080, Bottom: 2160}},
+			{Bounds: hierarchy.Bounds{Left: 0, Top: 2268, Right: 1080, Bottom: 2400}},
+		},
+	}
+	got := screenBounds(tree)
+	if got.Right != 1080 || got.Bottom != 2400 {
+		t.Fatalf("screenBounds = %+v, want right=1080 bottom=2400", got)
+	}
+}
+
+// TestEnsureForeground_DismissesSystemOverlay locks the shade fix: when the app
+// is still the resumed activity but a system overlay (notification shade) holds
+// the focused window, the guard must dismiss it with back rather than relaunch
+// or act on the obscured app.
+func TestEnsureForeground_DismissesSystemOverlay(t *testing.T) {
+	m := mockdriver.New()
+	// Resumed activity stays the app; the focused window is the shade.
+	m.ForegroundResults = []string{"app.folio"}
+	m.FocusedWindowResults = []string{"com.android.systemui"}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	options := Options{BundleID: "app.folio", Driver: m, IdleTimeout: 10 * time.Millisecond}
+
+	if !ensureForeground(context.Background(), options, logger, 5) {
+		t.Fatal("expected the guard to act on the focus-stealing overlay")
+	}
+	backs, relaunches := 0, 0
+	for _, a := range m.Actions() {
+		switch {
+		case a.Kind == mockdriver.ActionPressKey && a.Key == "back":
+			backs++
+		case a.Kind == mockdriver.ActionLaunch:
+			relaunches++
+		}
+	}
+	if backs != 1 {
+		t.Fatalf("expected one back-press to collapse the shade, got %d", backs)
+	}
+	if relaunches != 0 {
+		t.Fatalf("a resumed-but-obscured app must not be relaunched, got %d relaunches", relaunches)
+	}
+}
+
+func TestAppIsForeground(t *testing.T) {
+	readErr := errors.New("adb read failed")
+	cases := []struct {
+		name       string
+		bundleID   string
+		foreground []string
+		foregErr   error
+		focused    []string
+		focusErr   error
+		want       bool
+	}{
+		{name: "no bundle id", bundleID: "", foreground: []string{"app.folio"}, want: true},
+		{name: "foreground unknown", bundleID: "app.folio", foreground: nil, want: true},
+		{name: "foreground read error", bundleID: "app.folio", foregErr: readErr, want: true},
+		{name: "foreign foreground", bundleID: "app.folio", foreground: []string{"com.android.chrome"}, want: false},
+		{name: "app resumed and focused", bundleID: "app.folio", foreground: []string{"app.folio"}, focused: []string{"app.folio"}, want: true},
+		{name: "app resumed but overlay focused", bundleID: "app.folio", foreground: []string{"app.folio"}, focused: []string{"com.android.systemui"}, want: false},
+		{name: "app resumed, focus unknown", bundleID: "app.folio", foreground: []string{"app.folio"}, focused: []string{""}, want: true},
+		{name: "app resumed, focus read error", bundleID: "app.folio", foreground: []string{"app.folio"}, focusErr: readErr, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := mockdriver.New()
+			m.ForegroundResults = tc.foreground
+			m.ForegroundErr = tc.foregErr
+			m.FocusedWindowResults = tc.focused
+			m.FocusedWindowErr = tc.focusErr
+			options := Options{BundleID: tc.bundleID, Driver: m}
+			if got := appIsForeground(context.Background(), options); got != tc.want {
+				t.Errorf("appIsForeground = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A system overlay holds focus while the app stays resumed every step, so the
+// fixture's id:next tap must never reach the driver.
+func TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime(t *testing.T) {
+	state := newHarness(t)
+	state.mock.ForegroundResults = []string{"app.folio"}
+	state.mock.FocusedWindowResults = []string{"app.folio", "com.android.systemui"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 20 * time.Millisecond,
+		BundleID:    "app.folio",
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps == 0 {
+		t.Fatal("expected the loop to run steps")
+	}
+	if containsAction(state.mock.Actions(), mockdriver.ActionTapSelector, "id:next") {
+		t.Error("apply-time guard failed: a tap fired while a system overlay held focus")
 	}
 }

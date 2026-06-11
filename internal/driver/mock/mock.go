@@ -73,6 +73,11 @@ type Driver struct {
 	ForegroundResults []string
 	foregroundIndex   int
 
+	// ForegroundErr and FocusedWindowErr, when set, make the respective check
+	// return that error so tests can cover the guard's transient-read paths.
+	ForegroundErr    error
+	FocusedWindowErr error
+
 	// FocusedWindowResults is consumed one entry per FocusedWindowApp call
 	// (the last entry repeats). When empty, FocusedWindowApp mirrors the
 	// last ForegroundApp result, so the startup gate treats the window as
@@ -125,6 +130,9 @@ func (d *Driver) Launch(_ context.Context, bundleID string, clearState bool, _ m
 func (d *Driver) ForegroundApp(_ context.Context) (string, error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
+	if d.ForegroundErr != nil {
+		return "", d.ForegroundErr
+	}
 	if len(d.ForegroundResults) == 0 {
 		d.lastForeground = ""
 		return "", nil
@@ -142,6 +150,9 @@ func (d *Driver) FocusedWindowApp(_ context.Context) (string, error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 	d.focusedWindowCalls++
+	if d.FocusedWindowErr != nil {
+		return "", d.FocusedWindowErr
+	}
 	if len(d.FocusedWindowResults) == 0 {
 		return d.lastForeground, nil
 	}

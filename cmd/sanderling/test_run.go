@@ -9,15 +9,17 @@ import (
 
 func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer) error {
 	return testrun.Execute(ctx, testrun.Options{
-		Spec:       options.spec,
-		BundleID:   options.bundleID,
-		Platform:   options.platform,
-		AVD:        options.avd,
-		IosDevice:  options.iosDevice,
-		IosAppPath: options.iosAppPath,
-		Duration:   options.duration,
-		Seed:       options.seed,
-		Output:     options.output,
-		ClearData:  options.clearData,
+		Spec:           options.spec,
+		BundleID:       options.bundleID,
+		Platform:       options.platform,
+		AVD:            options.avd,
+		Device:         options.device,
+		IosDevice:      options.iosDevice,
+		IosAppPath:     options.iosAppPath,
+		AndroidAppPath: options.androidAppPath,
+		Duration:       options.duration,
+		Seed:           options.seed,
+		Output:         options.output,
+		ClearData:      options.clearData,
 	}, stdout)
 }

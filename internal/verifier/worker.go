@@ -35,6 +35,8 @@ type Verifier struct {
 	witnesses     map[string]Witness
 
 	lastTree       *hierarchy.Tree
+	scopeCache     map[*hierarchy.Element]bool
+	scopeCacheTree *hierarchy.Tree
 	lastAction     *Action
 	lastLogs       []LogEntry
 	lastExceptions []Exception
@@ -256,6 +258,7 @@ func (v *Verifier) buildFormulaNode(index int) (ltl.Formula, error) {
 // allowed and yields an empty ax scope.
 func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 	v.lastTree = input.Tree
+	v.scopeCache = nil
 	v.lastAction = input.LastAction
 	v.lastLogs = input.Logs
 	v.lastExceptions = input.Exceptions
@@ -585,15 +588,52 @@ func (v *Verifier) formulaThunk(index int) func() (bool, error) {
 	}
 }
 
-// inScope reports whether an element belongs to the app under test. Nodes from
-// another package (the soft keyboard, system UI, permission dialogs) are out of
-// scope. An unset app package or an element with no package falls through to in
-// scope, preserving behavior on platforms that omit the attribute (e.g. iOS).
-func (v *Verifier) inScope(element *hierarchy.Element) bool {
-	if v.appPackage == "" || element.Package == "" {
-		return true
+// frameworkPackage is the AOSP framework package. Both the app's own window
+// (android:id/content) and system chrome carry it, so it is treated as neutral
+// (transparent) when deciding which window owns a node, rather than as a foreign
+// package that would put the app's content out of scope.
+const frameworkPackage = "android"
+
+// scopedElements returns the set of elements that belong to the app under test.
+// It walks the window tree propagating each node's owning package: a node's
+// owner is the nearest ancestor-or-self with a concrete package (empty and the
+// neutral android framework package are transparent). A node is in scope when no
+// concrete foreign package owns it -- the app's own window carries no package on
+// Compose apps -- or the owner is the app package itself. This drops whole
+// foreign windows (the soft keyboard, system UI, the launcher) AND their
+// empty-package child wrappers, e.g. a keyboard's "Settings" key, which a
+// per-element package check admits because the wrapper itself has no package.
+//
+// With no app package configured (iOS/web, or an unscoped run) every node is in
+// scope, preserving prior behavior.
+func (v *Verifier) scopedElements() map[*hierarchy.Element]bool {
+	if v.scopeCacheTree == v.lastTree && v.scopeCache != nil {
+		return v.scopeCache
 	}
-	return element.Package == v.appPackage
+	scope := make(map[*hierarchy.Element]bool, len(v.lastTree.Elements))
+	unscoped := v.appPackage == ""
+	if v.lastTree.Root == nil {
+		for _, element := range v.lastTree.Elements {
+			scope[element] = true
+		}
+	} else {
+		var walk func(node *hierarchy.Node, owner string)
+		walk = func(node *hierarchy.Node, owner string) {
+			if pkg := node.Element.Package; pkg != "" && pkg != frameworkPackage {
+				owner = pkg
+			}
+			if unscoped || owner == "" || owner == v.appPackage {
+				scope[&node.Element] = true
+			}
+			for _, child := range node.Children {
+				walk(child, owner)
+			}
+		}
+		walk(v.lastTree.Root, "")
+	}
+	v.scopeCache = scope
+	v.scopeCacheTree = v.lastTree
+	return scope
 }
 
 // selectorForElement builds a canonical "key:value" selector that resolves
@@ -644,17 +684,19 @@ func selectorForElement(tree *hierarchy.Tree, element *hierarchy.Element) string
 //	taps/doubleTaps/longPresses: clickable + enabled + positive bounds
 //	typing:                      editable + enabled + positive bounds
 //	scrolls:                     scrollable attribute + positive bounds
-//	swipes:                      any in-scope element
+//	swipes:                      any in-scope element with positive bounds
 //
 // Every candidate carries the resolving selector so the runner can re-route by
-// id/text. Out-of-scope nodes (the soft keyboard, system UI) are always dropped.
+// id/text. Out-of-scope nodes (the soft keyboard, system UI, the launcher) are
+// dropped by scopedElements.
 func (v *Verifier) candidatesForVerb(verb string) []candidate {
 	if v.lastTree == nil {
 		return nil
 	}
+	scope := v.scopedElements()
 	var result []candidate
 	for _, element := range v.lastTree.Elements {
-		if !v.inScope(element) {
+		if !scope[element] {
 			continue
 		}
 		if !verbAccepts(verb, element) {
@@ -689,7 +731,11 @@ func verbAccepts(verb string, element *hierarchy.Element) bool {
 	case "scrolls":
 		return element.Attributes["scrollable"] == "true" && positiveBounds
 	case "swipes":
-		return true
+		// Any visible element is a valid swipe origin, but it must have real
+		// bounds: a zero-bounds node centers at (0,0), and a downward swipe from
+		// the top-left corner is the system gesture that pulls down the
+		// notification shade, dragging the fuzzer out of the app.
+		return positiveBounds
 	default:
 		return false
 	}

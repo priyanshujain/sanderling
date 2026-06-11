@@ -225,8 +225,18 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		applySkipped := false
-		if nextErr == nil {
-			if err := applyAction(ctx, options.Driver, nextAction, tree, options.IdleTimeout); err != nil {
+		if nextErr == nil && !appIsForeground(ctx, options) {
+			// The app left the foreground between observe and apply (a prior
+			// action's gesture settling late, or an async navigation). The
+			// chosen action's coordinates reference a tree that no longer
+			// applies, so firing it would act on whatever screen is now up.
+			// Skip it and record the escape; the next step's guard relaunches.
+			logger.Warn("app not in foreground at action time; skipping (relaunch next step)",
+				"step", stepIndex, "action", nextAction.Kind)
+			applySkipped = true
+			lastAction = nil
+		} else if nextErr == nil {
+			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
 				if isWDADrop(err) {
 					return summary, fmt.Errorf("step %d: the iOS XCTest runner could not be restarted - re-run the test: %w", stepIndex, err)
 				}
@@ -371,18 +381,88 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 		logger.Warn("foreground check failed", "step", stepIndex, "err", err)
 		return false
 	}
-	if foreground == "" || foreground == options.BundleID {
+	if foreground != "" && foreground != options.BundleID {
+		logger.Warn("app left foreground; relaunching",
+			"step", stepIndex, "foreground", foreground, "want", options.BundleID)
+		// Relaunch and confirm the app is genuinely back on screen before the
+		// step observes or acts. A single relaunch returns before the window
+		// draws on a slow physical device, which would let the observe and the
+		// next action land on the launcher (its type-to-search swallows
+		// InputText). awaitForeground re-checks the foreground and focused
+		// window, so it never acts outside the app no matter how slow the
+		// relaunch settles.
+		awaitForeground(ctx, options, logger, stepIndex)
+		return true
+	}
+	// The app is the resumed activity, but a system overlay can still own the
+	// focused window while the app stays resumed: a fuzzer swipe starting in the
+	// status bar pulls the notification shade over the app. The resumed-activity
+	// signal misses this, so observing or acting would land on the shade.
+	// Dismiss it with back (which collapses the shade) so the next observe sees
+	// the app again.
+	focusChecker, hasFocus := options.Driver.(driver.FocusedWindowChecker)
+	if !hasFocus {
 		return false
 	}
-	logger.Warn("app left foreground; relaunching",
-		"step", stepIndex, "foreground", foreground, "want", options.BundleID)
-	return bringToForeground(ctx, options, logger, stepIndex)
+	focused, err := focusChecker.FocusedWindowApp(ctx)
+	if err != nil {
+		logger.Warn("focus check failed", "step", stepIndex, "err", err)
+		return false
+	}
+	if focused == "" || focused == options.BundleID {
+		return false
+	}
+	logger.Warn("system window obscuring app; dismissing",
+		"step", stepIndex, "focused", focused, "want", options.BundleID)
+	if err := options.Driver.PressKey(ctx, "back"); err != nil {
+		logger.Warn("dismiss overlay failed", "step", stepIndex, "err", err)
+	}
+	settleForForeground(ctx, options)
+	return true
+}
+
+// appIsForeground reports whether the app under test currently owns the
+// foreground. It is the apply-time half of the scope guard: ensureForeground
+// runs before observe, but the app can leave between observe and apply (a prior
+// gesture settling late, an async navigation), and swipes/keys carry stale
+// coordinates with no selector to re-resolve. An absent capability or an unknown
+// foreground returns true so the run is never blocked where the signal is
+// unavailable (web, iOS, a transient read).
+func appIsForeground(ctx context.Context, options Options) bool {
+	checker, ok := options.Driver.(driver.ForegroundChecker)
+	if !ok || options.BundleID == "" {
+		return true
+	}
+	foreground, err := checker.ForegroundApp(ctx)
+	if err != nil || foreground == "" {
+		return true
+	}
+	if foreground != options.BundleID {
+		return false
+	}
+	// A system overlay can own the focused window while the app stays resumed,
+	// so mirror ensureForeground's focus check rather than act on the overlay.
+	focusChecker, ok := options.Driver.(driver.FocusedWindowChecker)
+	if !ok {
+		return true
+	}
+	focused, err := focusChecker.FocusedWindowApp(ctx)
+	if err != nil || focused == "" {
+		return true
+	}
+	return focused == options.BundleID
 }
 
 // foregroundReadyAttempts bounds how many times waitForForeground tries to
 // bring the app forward before the first step, so a stuck system dialog can
 // never hang the run.
 const foregroundReadyAttempts = 8
+
+// focusTapSettle is the pause after tapping a field to focus it, before typing.
+// Long enough for focus to land, short enough to avoid the ~500ms-1s full
+// settle the keyboard's open animation would otherwise cost every InputText
+// step on a physical device.
+var focusTapSettle = 250 * time.Millisecond
 
 // waitForForeground blocks until the app under test is actually on screen, so
 // the first observe never captures a leftover screen or a freshly-booted
@@ -395,6 +475,20 @@ const foregroundReadyAttempts = 8
 // report the focused window, the gate additionally waits for that window to
 // name the app, which only happens once it is genuinely drawn.
 func waitForForeground(ctx context.Context, options Options, logger *slog.Logger) {
+	awaitForeground(ctx, options, logger, 0)
+}
+
+// awaitForeground brings the app under test forward when it is not already
+// resumed and blocks until its window is actually drawn, bounded by
+// foregroundReadyAttempts so a stuck system dialog can never hang the run. It
+// re-checks the foreground each iteration and only presses back + relaunches
+// while the app is genuinely absent, so once the app is resumed it polls the
+// focused-window signal instead of mashing back (which would re-exit the app
+// from its root screen). Shared by the pre-run startup gate (stepIndex 0) and
+// the per-step scope guard so neither lets an observe or action land outside
+// the app. Drivers without ForegroundChecker (web) and an unknown foreground
+// both skip the gate.
+func awaitForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
 	checker, ok := options.Driver.(driver.ForegroundChecker)
 	if !ok || options.BundleID == "" {
 		return
@@ -406,16 +500,16 @@ func waitForForeground(ctx context.Context, options Options, logger *slog.Logger
 		}
 		foreground, err := checker.ForegroundApp(ctx)
 		if err != nil {
-			logger.Warn("foreground check failed before first step", "err", err)
+			logger.Warn("foreground check failed", "step", stepIndex, "err", err)
 			return
 		}
 		if foreground == "" {
 			return // foreground unknowable (e.g. iOS); don't block the run
 		}
 		if foreground != options.BundleID {
-			logger.Warn("app not in foreground at start; bringing it forward",
-				"foreground", foreground, "want", options.BundleID, "attempt", attempt)
-			bringToForeground(ctx, options, logger, 0)
+			logger.Warn("app not in foreground; bringing it forward",
+				"step", stepIndex, "foreground", foreground, "want", options.BundleID, "attempt", attempt)
+			bringToForeground(ctx, options, logger, stepIndex)
 			continue
 		}
 		if !hasFocus {
@@ -423,34 +517,32 @@ func waitForForeground(ctx context.Context, options Options, logger *slog.Logger
 		}
 		focused, err := focusChecker.FocusedWindowApp(ctx)
 		if err != nil {
-			logger.Warn("focus check failed before first step", "err", err)
+			logger.Warn("focus check failed", "step", stepIndex, "err", err)
 			return
 		}
 		if focused == options.BundleID {
 			return // window is drawn; safe to observe
 		}
 		logger.Warn("app resumed but window not yet drawn; waiting",
-			"focused", focused, "want", options.BundleID, "attempt", attempt)
+			"step", stepIndex, "focused", focused, "want", options.BundleID, "attempt", attempt)
 		settleForForeground(ctx, options)
 	}
-	logger.Warn("app never reached foreground before first step; proceeding anyway",
-		"want", options.BundleID)
+	logger.Warn("app never reached foreground; proceeding anyway",
+		"step", stepIndex, "want", options.BundleID)
 }
 
 // bringToForeground returns the app under test to the foreground. It first
 // presses BACK to dismiss any modal system dialog (a relaunch alone does not
-// close one), then relaunches and waits for the UI to settle. Returns true
-// when the relaunch itself succeeded.
-func bringToForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) bool {
+// close one), then relaunches and waits for the UI to settle.
+func bringToForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
 	if err := options.Driver.PressKey(ctx, "back"); err != nil {
 		logger.Warn("dismiss key before relaunch failed", "step", stepIndex, "err", err)
 	}
 	if err := options.Driver.Launch(ctx, options.BundleID, false, nil); err != nil {
 		logger.Warn("relaunch failed", "step", stepIndex, "err", err)
-		return false
+		return
 	}
 	settleForForeground(ctx, options)
-	return true
 }
 
 // settleForForeground waits one idle window for the UI to settle, bounding the
@@ -461,7 +553,7 @@ func settleForForeground(ctx context.Context, options Options) {
 	cancel()
 }
 
-func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree, idleTimeout time.Duration) error {
+func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
 	switch action.Kind {
 	case verifier.ActionKindTap:
 		x, y, ok := resolveCoordinates(action, tree)
@@ -491,6 +583,7 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		return drv.LongPress(ctx, x, y)
 	case verifier.ActionKindScroll:
 		fromX, fromY, toX, toY := scrollEndpoints(action, tree)
+		fromX, fromY, toX, toY = clampGestureToSafeArea(fromX, fromY, toX, toY, screenBounds(tree))
 		duration := time.Duration(action.DurationMillis) * time.Millisecond
 		if duration <= 0 {
 			duration = 300 * time.Millisecond
@@ -509,13 +602,19 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 			}
 			tapped = true
 		}
-		// The focus tap raises the keyboard. Settle before sending key
-		// events so the keyboard animation cannot race them into the wrong
-		// field (or drop them entirely).
+		// The focus tap raises the keyboard. The tap registers focus
+		// immediately and the text is injected into the focused view (not typed
+		// on the visible keyboard), so a brief pause is enough for focus to land
+		// rather than a full settle, which costs ~500ms-1s per InputText step on
+		// a physical device while the keyboard animates in.
 		if tapped {
-			idleCtx, idleCancel := context.WithTimeout(ctx, idleTimeout)
-			_ = drv.WaitForIdle(idleCtx, idleTimeout)
-			idleCancel()
+			timer := time.NewTimer(focusTapSettle)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
 		}
 		// InputText replaces the field's content: erase what the target
 		// holds before typing. Appending instead lets repeated draws grow
@@ -535,7 +634,8 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		if duration <= 0 {
 			duration = 250 * time.Millisecond
 		}
-		return drv.Swipe(ctx, action.FromX, action.FromY, action.ToX, action.ToY, duration)
+		fromX, fromY, toX, toY := clampGestureToSafeArea(action.FromX, action.FromY, action.ToX, action.ToY, screenBounds(tree))
+		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindPressKey:
 		if action.Key == "" {
 			return nil
@@ -657,6 +757,62 @@ func scrollEndpoints(action verifier.Action, tree *hierarchy.Tree) (fromX, fromY
 		toY = 0
 	}
 	return cx, cy, toX, toY
+}
+
+// screenBounds returns the device screen rectangle as the maximum extent across
+// all elements. The hierarchy root often reports zero bounds on Android, so the
+// extent (driven by full-screen containers and the navigation bar) is the
+// reliable screen size. Returns a zero rectangle when unknown.
+func screenBounds(tree *hierarchy.Tree) hierarchy.Bounds {
+	if tree == nil {
+		return hierarchy.Bounds{}
+	}
+	var bounds hierarchy.Bounds
+	for _, element := range tree.Elements {
+		if element.Bounds.Right > bounds.Right {
+			bounds.Right = element.Bounds.Right
+		}
+		if element.Bounds.Bottom > bounds.Bottom {
+			bounds.Bottom = element.Bounds.Bottom
+		}
+	}
+	return bounds
+}
+
+// clampGestureToSafeArea keeps a swipe's origin below the top status strip,
+// where a downward drag pulls the notification shade over the app. Runs force
+// 3-button navigation (ForceThreeButtonNav), which disables the side back and
+// bottom home gestures at the OS level; on-device probing confirmed side and
+// bottom origins then no longer drift, so the shade is the only edge gesture a
+// swipe can still trigger. Origin and destination are otherwise only kept on
+// screen. With an unknown screen size the coordinates pass through unchanged.
+func clampGestureToSafeArea(fromX, fromY, toX, toY int, screen hierarchy.Bounds) (int, int, int, int) {
+	width, height := screen.Width(), screen.Height()
+	if width <= 0 || height <= 0 {
+		return fromX, fromY, toX, toY
+	}
+	// Translate the whole segment when the origin is in the top margin, rather
+	// than clamping the origin alone, which could push it past the destination
+	// and reverse a near-top scroll.
+	marginY := height / 12
+	if shortfall := (screen.Top + marginY) - fromY; shortfall > 0 {
+		fromY += shortfall
+		toY += shortfall
+	}
+	clamp := func(value, low, high int) int {
+		if value < low {
+			return low
+		}
+		if value > high {
+			return high
+		}
+		return value
+	}
+	fromX = clamp(fromX, screen.Left, screen.Right)
+	fromY = clamp(fromY, screen.Top, screen.Bottom)
+	toX = clamp(toX, screen.Left, screen.Right)
+	toY = clamp(toY, screen.Top, screen.Bottom)
+	return fromX, fromY, toX, toY
 }
 
 // scrollBounds returns the container bounds for an authored Scroll: the node

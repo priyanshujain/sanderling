@@ -17,17 +17,22 @@ import (
 
 // EnsureDevice makes sure an Android device is ready for adb commands.
 // Resolution order:
-//   - if an adb device is already online, use it;
+//   - if serial is set, require that exact device to be online;
+//   - else if an adb device is already online, use it;
 //   - else if avdName is set, validate and boot it;
 //   - else if exactly one AVD exists locally, boot it;
 //   - else fail with a helpful message listing the available AVDs.
-func EnsureDevice(ctx context.Context, avdName string, stdout io.Writer) error {
+func EnsureDevice(ctx context.Context, serial, avdName string, stdout io.Writer) error {
 	devices, err := listAdbDevices(ctx)
 	if err != nil {
 		return fmt.Errorf("list adb devices: %w", err)
 	}
-	if len(devices) > 0 {
-		fmt.Fprintf(stdout, "using connected device: %s\n", devices[0])
+	chosen, found, err := pickDevice(serial, devices)
+	if err != nil {
+		return err
+	}
+	if found {
+		fmt.Fprintf(stdout, "using connected device: %s\n", chosen)
 		return nil
 	}
 	avds, err := listAVDs(ctx)
@@ -49,23 +54,168 @@ func EnsureDevice(ctx context.Context, avdName string, stdout io.Writer) error {
 	return nil
 }
 
-// AdbReverse sets up adb reverse forwarding for a local abstract socket.
-func AdbReverse(socket string, port int) error {
-	adb, err := AdbBinary()
-	if err != nil {
-		return err
+// adbArgs prepends the device selector when a serial is set, so every adb
+// invocation targets the chosen device. Without it, `adb` fails on a host with
+// more than one device attached, which silently disables anything that reads
+// adb output (the foreground/scope guard).
+func adbArgs(serial string, args ...string) []string {
+	if serial == "" {
+		return args
 	}
-	command := exec.Command(adb, "reverse", "localabstract:"+socket, fmt.Sprintf("tcp:%d", port))
-	return command.Run()
+	return append([]string{"-s", serial}, args...)
 }
 
-// AdbReverseRemove removes an adb reverse forwarding rule.
-func AdbReverseRemove(socket string) error {
+// wakeCommands keep the screen on and unlocked. A secure lock (PIN/password)
+// cannot be dismissed here and must be unlocked out of band.
+func wakeCommands() [][]string {
+	return [][]string{
+		{"svc", "power", "stayon", "true"},
+		{"input", "keyevent", "KEYCODE_WAKEUP"},
+		{"wm", "dismiss-keyguard"},
+	}
+}
+
+// PrepareDevice wakes and unlocks the device and disables the background
+// freezers that would suspend the driver. Best effort: some OEM builds kill
+// these commands (e.g. HyperOS SIGKILLs `svc power stayon`), so a failure is
+// logged and skipped rather than aborting the run.
+func PrepareDevice(ctx context.Context, serial string, stdout io.Writer) error {
 	adb, err := AdbBinary()
 	if err != nil {
 		return err
 	}
-	return exec.Command(adb, "reverse", "--remove", "localabstract:"+socket).Run()
+	for _, shellCommand := range append(wakeCommands(), antiFreezeCommands()...) {
+		args := adbArgs(serial, append([]string{"shell"}, shellCommand...)...)
+		if err := exec.CommandContext(ctx, adb, args...).Run(); err != nil {
+			fmt.Fprintf(stdout, "device prep: skipping `adb %s` (%v)\n", strings.Join(shellCommand, " "), err)
+		}
+	}
+	return nil
+}
+
+// driverPackages are the on-device native-driver instrumentation packages that
+// the platform and OEM background freezers must not suspend mid-run.
+var driverPackages = []string{"dev.mobile.maestro", "dev.mobile.maestro.test"}
+
+// antiFreezeCommands turns off the background-process freezers that suspend the
+// driver between actions. Android 12+ adds a cached-app freezer and a
+// phantom-process killer; OEM builds (e.g. OnePlus/Oppo ColorOS OSense) add
+// their own. Left on, they freeze the driver instrumentation while the app is
+// foreground and the run stalls. set_sync_disabled_for_tests keeps the
+// device_config writes from being reverted by server-side sync. All best effort:
+// the caller skips and logs any command an OEM build rejects.
+func antiFreezeCommands() [][]string {
+	commands := [][]string{
+		{"device_config", "set_sync_disabled_for_tests", "persistent"},
+		{"device_config", "put", "activity_manager_native_boot", "use_freezer", "false"},
+		{"device_config", "put", "activity_manager_native_boot", "freeze_exempt_inst_pkg", strings.Join(driverPackages, ",")},
+		{"settings", "put", "global", "settings_enable_monitor_phantom_procs", "false"},
+		{"device_config", "put", "activity_manager", "max_phantom_processes", "2147483647"},
+		{"dumpsys", "deviceidle", "disable"},
+	}
+	for _, pkg := range driverPackages {
+		commands = append(commands, []string{"dumpsys", "deviceidle", "whitelist", "+" + pkg})
+	}
+	return commands
+}
+
+// ReinstallApp resets an app to first-launch state by uninstalling and
+// reinstalling it. This replaces `pm clear` for clear-state: ColorOS and other
+// hardened OEM builds deny CLEAR_APP_USER_DATA even to the adb shell user, so a
+// clear aborts the launch, whereas uninstall+install is always permitted.
+// The uninstall is best effort so a not-installed app is not an error.
+func ReinstallApp(ctx context.Context, serial, bundleID, apkPath string, stdout io.Writer) error {
+	adb, err := AdbBinary()
+	if err != nil {
+		return err
+	}
+	if output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "uninstall", bundleID)...).CombinedOutput(); err != nil {
+		fmt.Fprintf(stdout, "clear-state: uninstall %s skipped (%v: %s)\n", bundleID, err, strings.TrimSpace(string(output)))
+	}
+	if output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "install", "-r", apkPath)...).CombinedOutput(); err != nil {
+		return fmt.Errorf("install %s: %w: %s", apkPath, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+const threeButtonNavOverlay = "com.android.internal.systemui.navbar.threebutton"
+
+// navModeOverlays are the system navigation-mode overlays. Only one is active at
+// a time; the active one is restored after the run.
+var navModeOverlays = []string{
+	"com.android.internal.systemui.navbar.gestural",
+	threeButtonNavOverlay,
+	"com.android.internal.systemui.navbar.twobutton",
+}
+
+// ForceThreeButtonNav switches the device to 3-button navigation for the run, so
+// the fuzzer's swipes cannot trigger the gesture-nav home/back actions and fling
+// the app off screen (the nav bar's own buttons are systemui-owned and already
+// dropped from action candidates). It returns a function that restores the
+// original navigation mode. Best effort: on any failure it leaves navigation
+// untouched and returns a no-op restore.
+func ForceThreeButtonNav(ctx context.Context, serial string, stdout io.Writer) func() {
+	adb, err := AdbBinary()
+	if err != nil {
+		return func() {}
+	}
+	// Decide before changing anything: if the current mode is unknown (an OEM
+	// overlay, or a parse failure) or already 3-button, there is nothing to
+	// restore, so leave navigation untouched rather than stranding the device in
+	// 3-button after the run.
+	restore := navModeToRestore(enabledNavOverlay(ctx, adb, serial))
+	if restore == "" {
+		return func() {}
+	}
+	if err := navOverlayCommand(ctx, adb, serial, threeButtonNavOverlay).Run(); err != nil {
+		fmt.Fprintf(stdout, "device prep: skipping 3-button nav (%v)\n", err)
+		return func() {}
+	}
+	return func() {
+		if err := navOverlayCommand(context.Background(), adb, serial, restore).Run(); err != nil {
+			fmt.Fprintf(stdout, "device prep: could not restore nav mode %s (%v)\n", restore, err)
+		}
+	}
+}
+
+// navModeToRestore returns the navigation overlay to restore after forcing
+// 3-button nav, or "" when nothing should change: an unknown current mode (not
+// restorable) or one that is already 3-button.
+func navModeToRestore(original string) string {
+	if original == "" || original == threeButtonNavOverlay {
+		return ""
+	}
+	return original
+}
+
+// enabledNavOverlay returns the currently active navigation-mode overlay, or ""
+// when it cannot be determined.
+func enabledNavOverlay(ctx context.Context, adb, serial string) string {
+	output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "cmd", "overlay", "list")...).Output()
+	if err != nil {
+		return ""
+	}
+	return parseEnabledNavOverlay(string(output))
+}
+
+// parseEnabledNavOverlay reads `cmd overlay list` output and returns the
+// enabled ("[x]") navigation-mode overlay package.
+func parseEnabledNavOverlay(overlayList string) string {
+	for line := range strings.SplitSeq(overlayList, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "[x]") {
+			continue
+		}
+		package_ := strings.TrimSpace(strings.TrimPrefix(trimmed, "[x]"))
+		if slices.Contains(navModeOverlays, package_) {
+			return package_
+		}
+	}
+	return ""
+}
+
+func navOverlayCommand(ctx context.Context, adb, serial, overlay string) *exec.Cmd {
+	return exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "cmd", "overlay", "enable-exclusive", overlay)...)
 }
 
 // EnvWithAndroidPlatformTools returns env with the directory containing adb
@@ -191,6 +341,29 @@ func parseAVDList(output string) []string {
 	return avds
 }
 
+// pickDevice resolves which connected device to drive. A requested serial must
+// be online. With no request: a single connected device is used; more than one
+// is ambiguous and errors asking for --device, because the chosen serial is not
+// threaded into the per-step adb calls, so silently picking one would leave
+// every later bare `adb` command failing with "more than one device". No device
+// connected returns found=false so the caller falls back to booting an AVD.
+func pickDevice(requested string, connected []string) (serial string, found bool, err error) {
+	if requested != "" {
+		if !slices.Contains(connected, requested) {
+			return "", false, fmt.Errorf("device %q is not connected (online devices: %s)", requested, strings.Join(connected, ", "))
+		}
+		return requested, true, nil
+	}
+	switch len(connected) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return connected[0], true, nil
+	default:
+		return "", false, fmt.Errorf("%d devices connected (%s); select one with --device", len(connected), strings.Join(connected, ", "))
+	}
+}
+
 func pickAVD(requested string, available []string) (string, error) {
 	if requested != "" {
 		if !slices.Contains(available, requested) {
@@ -239,13 +412,13 @@ func waitForBoot(ctx context.Context, timeout time.Duration) error {
 }
 
 // ForegroundPackage returns the package of the currently resumed activity on
-// the connected device, or "" when it cannot be determined.
-func ForegroundPackage(ctx context.Context) (string, error) {
+// the given device, or "" when it cannot be determined.
+func ForegroundPackage(ctx context.Context, serial string) (string, error) {
 	adb, err := AdbBinary()
 	if err != nil {
 		return "", err
 	}
-	output, err := exec.CommandContext(ctx, adb, "shell", "dumpsys", "activity", "activities").Output()
+	output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "dumpsys", "activity", "activities")...).Output()
 	if err != nil {
 		return "", err
 	}
@@ -257,12 +430,16 @@ func ForegroundPackage(ctx context.Context) (string, error) {
 // Unlike ForegroundPackage, this reflects what is actually on screen:
 // ResumedActivity flips to a newly launched app before its first frame renders,
 // while mCurrentFocus only names the app once its window is up.
-func FocusedWindowPackage(ctx context.Context) (string, error) {
+func FocusedWindowPackage(ctx context.Context, serial string) (string, error) {
 	adb, err := AdbBinary()
 	if err != nil {
 		return "", err
 	}
-	output, err := exec.CommandContext(ctx, adb, "shell", "dumpsys", "window").Output()
+	// Grep the focus line on-device: the full dumpsys window output is large and
+	// this runs on the per-step scope guard, so transferring it whole would add
+	// latency to every step. `|| true` keeps a no-match (grep exit 1) from
+	// surfacing as an error so it yields "" per the contract.
+	output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "dumpsys window | grep mCurrentFocus || true")...).Output()
 	if err != nil {
 		return "", err
 	}
@@ -288,9 +465,22 @@ func parseForegroundPackage(dumpsys string) string {
 	return ""
 }
 
+// systemUIPackage is the owner reported for system overlays (notification
+// shade, quick settings) that take window focus without a package/activity
+// component name. The scope guard treats it as "not the app" and dismisses it.
+const systemUIPackage = "com.android.systemui"
+
+// systemOverlayWindowNames are the mCurrentFocus window names for the system
+// panels a fuzzer gesture can pull over the app (a swipe from the status bar
+// opens NotificationShade). They own focus while the app stays the resumed
+// activity, so the resumed-activity signal alone misses them.
+var systemOverlayWindowNames = []string{"NotificationShade", "ShadePanel", "QuickSettings", "VolumeUiDialog"}
+
 // parseFocusedWindowPackage extracts the focused-window package from
 // `dumpsys window` output by reading the mCurrentFocus component name. A
-// "mCurrentFocus=null" line (no focused window) yields "".
+// "mCurrentFocus=null" line (no focused window) yields "". A system overlay
+// (e.g. the notification shade) yields systemUIPackage so callers can tell it
+// apart from the app and from "no focus".
 func parseFocusedWindowPackage(dumpsys string) string {
 	for line := range strings.SplitSeq(dumpsys, "\n") {
 		if !strings.Contains(line, "mCurrentFocus") {
@@ -298,6 +488,11 @@ func parseFocusedWindowPackage(dumpsys string) string {
 		}
 		if match := resumedActivityPackage.FindStringSubmatch(line); match != nil {
 			return match[1]
+		}
+		for _, overlay := range systemOverlayWindowNames {
+			if strings.Contains(line, overlay) {
+				return systemUIPackage
+			}
 		}
 	}
 	return ""

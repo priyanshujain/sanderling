@@ -22,16 +22,18 @@ const sidecarStartupTimeout = 30 * time.Second
 
 // Options are the parameters for a single test pipeline run.
 type Options struct {
-	Spec       string
-	BundleID   string
-	Platform   string
-	AVD        string
-	IosDevice  string
-	IosAppPath string
-	Duration   time.Duration
-	Seed       int64
-	Output     string
-	ClearData  bool
+	Spec           string
+	BundleID       string
+	Platform       string
+	AVD            string
+	Device         string
+	IosDevice      string
+	IosAppPath     string
+	AndroidAppPath string
+	Duration       time.Duration
+	Seed           int64
+	Output         string
+	ClearData      bool
 
 	// iosUDID, iosIsSimulator, and iosCoreDeviceID are filled by Execute after
 	// resolving the iOS target, then read by buildDriver to choose the simulator
@@ -46,9 +48,17 @@ type Options struct {
 func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	switch options.Platform {
 	case "android":
-		if err := android.EnsureDevice(ctx, options.AVD, stdout); err != nil {
+		if err := android.EnsureDevice(ctx, options.Device, options.AVD, stdout); err != nil {
 			return err
 		}
+		if err := android.PrepareDevice(ctx, options.Device, stdout); err != nil {
+			return err
+		}
+		// Switch to 3-button navigation for the run so fuzzer swipes cannot
+		// trigger the gesture-nav home/back and fling the app off screen;
+		// restore the original mode when the run ends.
+		restoreNav := android.ForceThreeButtonNav(ctx, options.Device, stdout)
+		defer restoreNav()
 	case "ios":
 		resolved, err := resolveIOSTarget(ctx, options, stdout)
 		if err != nil {

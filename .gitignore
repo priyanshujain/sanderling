@@ -11,6 +11,16 @@ local.properties
 
 # macOS
 .DS_Store
+__MACOSX/
+
+# Gate run artifacts (regenerable; conformance/runs is the current location)
+examples/folio/sanderling/gates/
+
+# Local scratch (talk archive, ad-hoc screenshots)
+talk.zip
+examples/folio/folio_web.png
+examples/folio/folio_web_favicon.png
+examples/folio/run-list-scrolled-bottom.png
 
 # Go
 /bin/
