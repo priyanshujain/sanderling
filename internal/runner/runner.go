@@ -768,21 +768,20 @@ func screenBounds(tree *hierarchy.Tree) hierarchy.Bounds {
 	return bounds
 }
 
-// clampGestureToSafeArea keeps a swipe's origin out of the system gesture zones
-// at the screen edges. A gesture that starts in the top strip pulls down the
-// notification shade; the bottom strip is the home gesture and the side strips
-// are the back gesture. Any of these drags the fuzzer out of the app. The
-// destination only needs to stay on screen. With an unknown screen size the
-// coordinates pass through unchanged.
+// clampGestureToSafeArea keeps a swipe's origin below the top status strip,
+// where a downward drag pulls the notification shade over the app. Runs force
+// 3-button navigation (ForceThreeButtonNav), which disables the side back and
+// bottom home gestures at the OS level; on-device probing confirmed side and
+// bottom origins then no longer drift, so the shade is the only edge gesture a
+// swipe can still trigger. Origin and destination are otherwise only kept on
+// screen. With an unknown screen size the coordinates pass through unchanged.
 func clampGestureToSafeArea(fromX, fromY, toX, toY int, screen hierarchy.Bounds) (int, int, int, int) {
 	width, height := screen.Width(), screen.Height()
 	if width <= 0 || height <= 0 {
 		return fromX, fromY, toX, toY
 	}
-	// Margins are a fraction of each axis so they scale across devices and
-	// densities. The vertical margin clears the status bar (calibrated: swipes
-	// from below ~7% of height no longer open the shade) and the home gesture.
-	marginX := width / 20
+	// The top margin clears the status bar; calibrated as a fraction of height
+	// so swipes from below ~8% of height no longer open the shade.
 	marginY := height / 12
 	clamp := func(value, low, high int) int {
 		if value < low {
@@ -793,8 +792,8 @@ func clampGestureToSafeArea(fromX, fromY, toX, toY int, screen hierarchy.Bounds)
 		}
 		return value
 	}
-	fromX = clamp(fromX, screen.Left+marginX, screen.Right-marginX)
-	fromY = clamp(fromY, screen.Top+marginY, screen.Bottom-marginY)
+	fromX = clamp(fromX, screen.Left, screen.Right)
+	fromY = clamp(fromY, screen.Top+marginY, screen.Bottom)
 	toX = clamp(toX, screen.Left, screen.Right)
 	toY = clamp(toY, screen.Top, screen.Bottom)
 	return fromX, fromY, toX, toY

@@ -1805,32 +1805,48 @@ func TestAwaitForeground_RelaunchesThenWaitsForWindow(t *testing.T) {
 	}
 }
 
-// TestClampGestureToSafeArea_KeepsOriginOutOfGestureZones locks the swipe fix:
-// a gesture origin in the top status-bar strip pulls down the notification
-// shade and drags the fuzzer out of the app. The origin must be pulled into the
-// safe inner area while the destination only stays on screen.
-func TestClampGestureToSafeArea_KeepsOriginOutOfGestureZones(t *testing.T) {
+// TestClampGestureToSafeArea_KeepsOriginBelowShadeStrip locks the swipe fix: a
+// gesture origin in the top status-bar strip pulls down the notification shade
+// and drags the fuzzer out of the app. The origin must be pushed below the top
+// margin. The side and bottom strips are NOT clamped: runs force 3-button
+// navigation, which disables the back and home gestures, so (verified on device)
+// those origins no longer drift.
+func TestClampGestureToSafeArea_KeepsOriginBelowShadeStrip(t *testing.T) {
 	screen := hierarchy.Bounds{Left: 0, Top: 0, Right: 1080, Bottom: 2400}
-	// marginX = 1080/20 = 54, marginY = 2400/12 = 200.
+	// marginY = 2400/12 = 200.
 
-	// The real shade-opening swipe captured on device: origin y=62 is pulled to
+	// The real shade-opening swipe captured on device: origin y=62 is pushed to
 	// the top margin (200); the in-range destination is untouched.
 	fromX, fromY, toX, toY := clampGestureToSafeArea(802, 62, 802, 447, screen)
 	if fromX != 802 || fromY != 200 || toX != 802 || toY != 447 {
-		t.Errorf("origin not clamped to the safe area: from=(%d,%d) to=(%d,%d), want from=(802,200) to=(802,447)", fromX, fromY, toX, toY)
+		t.Errorf("origin not pushed below the shade strip: from=(%d,%d) to=(%d,%d), want from=(802,200) to=(802,447)", fromX, fromY, toX, toY)
 	}
 
-	// Top-left corner origin pulled inside both margins.
-	fromX, fromY, _, _ = clampGestureToSafeArea(0, 0, 540, 1200, screen)
-	if fromX != 54 || fromY != 200 {
-		t.Errorf("corner origin not clamped to (54,200), got (%d,%d)", fromX, fromY)
+	// A side origin (left/right edge) passes through untouched: 3-button nav
+	// disables the back gesture, so only the top y is clamped.
+	fromX, fromY, _, _ = clampGestureToSafeArea(5, 1200, 540, 1200, screen)
+	if fromX != 5 || fromY != 1200 {
+		t.Errorf("side origin must pass through, got (%d,%d), want (5,1200)", fromX, fromY)
 	}
 
-	// An off-screen destination is clamped onto the screen (the destination only
-	// needs to stay on screen, not inside the gesture margins).
+	// A bottom origin passes through (home gesture disabled by 3-button nav);
+	// only the top edge is a hazard.
+	fromX, fromY, _, _ = clampGestureToSafeArea(540, 2399, 540, 1200, screen)
+	if fromX != 540 || fromY != 2399 {
+		t.Errorf("bottom origin must pass through, got (%d,%d), want (540,2399)", fromX, fromY)
+	}
+
+	// An off-screen destination is clamped onto the screen.
 	_, _, toX, toY = clampGestureToSafeArea(540, 1200, -50, 9999, screen)
 	if toX != 0 || toY != 2400 {
 		t.Errorf("off-screen destination not clamped to screen edges: got (%d,%d), want (0,2400)", toX, toY)
+	}
+
+	// An off-screen origin x is pulled back on screen even though it is not in a
+	// gesture zone.
+	fromX, _, _, _ = clampGestureToSafeArea(-30, 1200, 540, 1200, screen)
+	if fromX != 0 {
+		t.Errorf("off-screen origin x must clamp to 0, got %d", fromX)
 	}
 
 	// Unknown screen size leaves coordinates untouched.
