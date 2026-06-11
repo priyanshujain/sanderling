@@ -258,7 +258,13 @@ invoke_sanderling() {
     # then skips the sidecar's pm clear. Mirrors the iOS per-run reinstall.
     platform=android
     adb_target uninstall "$bundle_id" >/dev/null 2>&1 || true
-    adb_target install "$android_apk" >/dev/null
+    # A transient install hiccup must score this run as a failure, not abort the
+    # whole harness under `set -e` and discard the other runs' data.
+    if ! adb_target install "$android_apk" >"$output_log" 2>&1; then
+      echo "adb install failed for ${android_apk}; recording run as a failure" >>"$output_log"
+      printf '1' >"$exit_status_file"
+      return
+    fi
     target_flags=(--clear-data=false)
     [[ -n "$ANDROID_DEVICE" ]] && target_flags+=(--device "$ANDROID_DEVICE")
   else
@@ -403,6 +409,11 @@ run_gates() {
 self_test() {
   local testdata="${script_directory}/testdata"
   local failures=0
+  # The self-test fixtures (g5-slow-p95 = 4000ms) were calibrated against the
+  # 2500ms ceiling, so pin it here. Without this the backend-dependent default
+  # (5500ms under BACKEND=android) would rate the slow fixture as a PASS and the
+  # offline, device-free analyzer check would fail purely from an env var.
+  local P95_LIMIT_MS=2500
 
   assert() {
     local label="$1" expected="$2" actual="$3"
