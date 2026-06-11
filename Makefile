@@ -27,7 +27,9 @@ DOCS_TEMPLATE := docs/_template/page.html
 REPLAY_DIST := internal/replay/dist
 WEB_DIST := replay-ui/dist
 
-.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-companion test-kotlin test-spec-api web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry
+GOLINES := $(shell $(GO) env GOPATH)/bin/golines
+
+.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-companion test-kotlin test-spec-api web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
 
 bootstrap:
 	$(GO) mod download
@@ -79,6 +81,25 @@ $(COMPANION_EMBED): $(COMPANION_PREPARE)
 
 $(RUNNER_EMBED): $(RUNNER_SRC) $(RUNNER_PREPARE)
 	$(RUNNER_PREPARE)
+
+# Each language enforces an 80-column limit through its own formatter config:
+# Go via golines flags (gofmt has no width option), Kotlin via .editorconfig
+# (ktlint), TypeScript/JS via .prettierrc.json, Swift via .swift-format.
+fmt: fmt-go fmt-kotlin fmt-ts fmt-swift
+
+fmt-go:
+	$(GOLINES) -m 80 --ignore-generated -w ./internal ./cmd
+
+fmt-kotlin:
+	ktlint -F "sidecar/src/**/*.kt" "sidecar/src/**/*.kts"
+
+fmt-ts:
+	cd replay-ui && bunx prettier --write "src/**/*.{ts,tsx}"
+	cd examples/folio-web && bunx prettier --write "src/**/*.{ts,tsx}"
+	cd pkg/spec && npx --yes prettier --write "src/**/*.ts" "test/**/*.ts"
+
+fmt-swift:
+	xcrun swift-format format -i -r companion/Sources
 
 test: test-go test-spec-api web-typecheck web-test
 
