@@ -780,9 +780,20 @@ func clampGestureToSafeArea(fromX, fromY, toX, toY int, screen hierarchy.Bounds)
 	if width <= 0 || height <= 0 {
 		return fromX, fromY, toX, toY
 	}
-	// The top margin clears the status bar; calibrated as a fraction of height
-	// so swipes from below ~8% of height no longer open the shade.
+	// Only the touch-down point opens the shade, and only when it lands in the
+	// top status strip; the margin clears it (calibrated as a fraction of
+	// height so origins below ~8% of height no longer open the shade). When the
+	// origin is too high, translate the whole segment down by the same delta
+	// rather than clamping the origin alone, which could push it past the
+	// destination and reverse the gesture (a near-top scroll would then flip
+	// direction). Side and bottom edge gestures are disabled by
+	// ForceThreeButtonNav, so only the top needs a margin; endpoints are
+	// otherwise just kept on screen.
 	marginY := height / 12
+	if shortfall := (screen.Top + marginY) - fromY; shortfall > 0 {
+		fromY += shortfall
+		toY += shortfall
+	}
 	clamp := func(value, low, high int) int {
 		if value < low {
 			return low
@@ -793,7 +804,7 @@ func clampGestureToSafeArea(fromX, fromY, toX, toY int, screen hierarchy.Bounds)
 		return value
 	}
 	fromX = clamp(fromX, screen.Left, screen.Right)
-	fromY = clamp(fromY, screen.Top+marginY, screen.Bottom)
+	fromY = clamp(fromY, screen.Top, screen.Bottom)
 	toX = clamp(toX, screen.Left, screen.Right)
 	toY = clamp(toY, screen.Top, screen.Bottom)
 	return fromX, fromY, toX, toY

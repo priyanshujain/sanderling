@@ -909,6 +909,48 @@ func TestApplyAction_ScrollDirectionUsesInversion(t *testing.T) {
 	}
 }
 
+// TestApplyAction_ScrollNearTopKeepsDirectionAfterClamp pins the clamp fix
+// against a scrollable container pinned in the top status strip: the safe-area
+// clamp must translate the whole gesture down, not push the origin past the
+// destination. With the old origin-only clamp the downward finger (scroll up)
+// flipped to an upward finger, scrolling the opposite way.
+func TestApplyAction_ScrollNearTopKeepsDirectionAfterClamp(t *testing.T) {
+	driverMock := mockdriver.New()
+	// A full-screen root establishes the 1080x2400 screen (marginY=200); the
+	// scrollable list sits entirely inside the top margin (y 20..180).
+	treeJSON := `{"attributes":{"bounds":"[0,0,1080,2400]"},"children":[
+		{"attributes":{"resource-id":"com.fixture:id/toplist","scrollable":"true","bounds":"[0,20,1080,180]"},"children":[],"enabled":true}
+	]}`
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatalf("parse tree: %v", err)
+	}
+	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "up", On: "id:toplist"}
+
+	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
+		t.Fatalf("apply action: %v", err)
+	}
+	var swipe *mockdriver.Action
+	for i := range driverMock.Actions() {
+		if driverMock.Actions()[i].Kind == mockdriver.ActionSwipe {
+			a := driverMock.Actions()[i]
+			swipe = &a
+		}
+	}
+	if swipe == nil {
+		t.Fatalf("expected a Swipe, got %v", driverMock.Actions())
+	}
+	// The origin must clear the top margin (the clamp fired)...
+	if swipe.FromY != 200 {
+		t.Errorf("origin not pushed below the shade strip, got fromY=%d want 200", swipe.FromY)
+	}
+	// ...and "up" must still drag the finger DOWN (toY > fromY). The old clamp
+	// reversed this.
+	if swipe.ToY <= swipe.FromY {
+		t.Errorf("scroll up reversed by the clamp: from=%d to=%d (want toY > fromY)", swipe.FromY, swipe.ToY)
+	}
+}
+
 func TestApplyAction_ScrollScreenFallback(t *testing.T) {
 	driverMock := mockdriver.New()
 	treeJSON := `{"attributes":{"bounds":"[0,0,400,800]"},"children":[],"enabled":true}`
@@ -1808,18 +1850,21 @@ func TestAwaitForeground_RelaunchesThenWaitsForWindow(t *testing.T) {
 // TestClampGestureToSafeArea_KeepsOriginBelowShadeStrip locks the swipe fix: a
 // gesture origin in the top status-bar strip pulls down the notification shade
 // and drags the fuzzer out of the app. The origin must be pushed below the top
-// margin. The side and bottom strips are NOT clamped: runs force 3-button
-// navigation, which disables the back and home gestures, so (verified on device)
-// those origins no longer drift.
+// margin, and the WHOLE segment translates with it so the gesture direction is
+// preserved (clamping the origin alone could push it past the destination and
+// reverse a near-top scroll). The side and bottom strips are NOT clamped: runs
+// force 3-button navigation, which disables the back and home gestures, so
+// (verified on device) those origins no longer drift.
 func TestClampGestureToSafeArea_KeepsOriginBelowShadeStrip(t *testing.T) {
 	screen := hierarchy.Bounds{Left: 0, Top: 0, Right: 1080, Bottom: 2400}
 	// marginY = 2400/12 = 200.
 
 	// The real shade-opening swipe captured on device: origin y=62 is pushed to
-	// the top margin (200); the in-range destination is untouched.
+	// the top margin (200), and the destination shifts down by the same 138 so
+	// the downward gesture stays downward (447 -> 585), not reversed.
 	fromX, fromY, toX, toY := clampGestureToSafeArea(802, 62, 802, 447, screen)
-	if fromX != 802 || fromY != 200 || toX != 802 || toY != 447 {
-		t.Errorf("origin not pushed below the shade strip: from=(%d,%d) to=(%d,%d), want from=(802,200) to=(802,447)", fromX, fromY, toX, toY)
+	if fromX != 802 || fromY != 200 || toX != 802 || toY != 585 {
+		t.Errorf("segment not translated below the shade strip: from=(%d,%d) to=(%d,%d), want from=(802,200) to=(802,585)", fromX, fromY, toX, toY)
 	}
 
 	// A side origin (left/right edge) passes through untouched: 3-button nav
