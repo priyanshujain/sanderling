@@ -35,6 +35,8 @@ type Verifier struct {
 	witnesses     map[string]Witness
 
 	lastTree       *hierarchy.Tree
+	scopeCache     map[*hierarchy.Element]bool
+	scopeCacheTree *hierarchy.Tree
 	lastAction     *Action
 	lastLogs       []LogEntry
 	lastExceptions []Exception
@@ -256,6 +258,7 @@ func (v *Verifier) buildFormulaNode(index int) (ltl.Formula, error) {
 // allowed and yields an empty ax scope.
 func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 	v.lastTree = input.Tree
+	v.scopeCache = nil
 	v.lastAction = input.LastAction
 	v.lastLogs = input.Logs
 	v.lastExceptions = input.Exceptions
@@ -604,27 +607,32 @@ const frameworkPackage = "android"
 // With no app package configured (iOS/web, or an unscoped run) every node is in
 // scope, preserving prior behavior.
 func (v *Verifier) scopedElements() map[*hierarchy.Element]bool {
+	if v.scopeCacheTree == v.lastTree && v.scopeCache != nil {
+		return v.scopeCache
+	}
 	scope := make(map[*hierarchy.Element]bool, len(v.lastTree.Elements))
 	unscoped := v.appPackage == ""
 	if v.lastTree.Root == nil {
 		for _, element := range v.lastTree.Elements {
 			scope[element] = true
 		}
-		return scope
+	} else {
+		var walk func(node *hierarchy.Node, owner string)
+		walk = func(node *hierarchy.Node, owner string) {
+			if pkg := node.Element.Package; pkg != "" && pkg != frameworkPackage {
+				owner = pkg
+			}
+			if unscoped || owner == "" || owner == v.appPackage {
+				scope[&node.Element] = true
+			}
+			for _, child := range node.Children {
+				walk(child, owner)
+			}
+		}
+		walk(v.lastTree.Root, "")
 	}
-	var walk func(node *hierarchy.Node, owner string)
-	walk = func(node *hierarchy.Node, owner string) {
-		if pkg := node.Element.Package; pkg != "" && pkg != frameworkPackage {
-			owner = pkg
-		}
-		if unscoped || owner == "" || owner == v.appPackage {
-			scope[&node.Element] = true
-		}
-		for _, child := range node.Children {
-			walk(child, owner)
-		}
-	}
-	walk(v.lastTree.Root, "")
+	v.scopeCache = scope
+	v.scopeCacheTree = v.lastTree
 	return scope
 }
 
