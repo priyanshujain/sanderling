@@ -372,6 +372,25 @@ func TestClient_LaunchClearStateWithoutApkPathUsesSidecarClear(t *testing.T) {
 	}
 }
 
+func TestClient_LaunchClearStateNonAndroidUsesSidecarClear(t *testing.T) {
+	state := newHarness(t)
+	client, _ := Dial(state.address)
+	defer client.Close()
+	client.SetPlatform("ios")
+	client.SetClearStateReinstall("", "/tmp/app.app", io.Discard)
+	client.reinstallApp = func(_ context.Context, _, _, _ string, _ io.Writer) error {
+		t.Fatal("reinstall must not run on a non-android platform")
+		return nil
+	}
+
+	if err := client.Launch(context.Background(), "app.folio", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !state.fake.clearState {
+		t.Error("non-android clear-state must forward clearState to the sidecar")
+	}
+}
+
 func TestClient_TapAndTapSelector(t *testing.T) {
 	state := newHarness(t)
 	client, _ := Dial(state.address)

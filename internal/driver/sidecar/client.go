@@ -46,6 +46,9 @@ func (c *Client) SetClearStateReinstall(serial, apkPath string, output io.Writer
 	c.serial = serial
 	c.apkPath = apkPath
 	c.output = output
+	if c.reinstallApp == nil {
+		c.reinstallApp = android.ReinstallApp
+	}
 }
 
 // ForegroundApp reports the foreground package. Only Android is supported (via
