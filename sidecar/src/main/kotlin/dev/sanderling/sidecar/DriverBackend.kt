@@ -549,12 +549,39 @@ class StubDriverBackend(
     override fun metrics(bundleId: String): MetricsSample = readProcMetrics(null, bundleId)
 }
 
-// FAST_INPUT_SAFE matches text that can be typed with adb `input text`: short,
-// ASCII, and free of shell metacharacters and spaces. Anything else (unicode,
-// injection payloads, overflow-length strings) falls back to the driver path.
-// The first character excludes '-' so the text can never be read as an option
-// by `input text`.
-internal val FAST_INPUT_SAFE = Regex("^[A-Za-z0-9@._+][A-Za-z0-9@._+-]{0,63}$")
+// FAST_INPUT_SAFE matches text that can be typed with adb `input text`: ASCII,
+// free of shell metacharacters and spaces, regardless of length. Anything else
+// (unicode, injection payloads, whitespace) falls back to the driver path. The
+// first character excludes '-' so the text can never be read as an option by
+// `input text`. Length is unbounded on purpose: the slow per-character driver
+// path takes ~120s for a 4096-char string (blowing the RPC deadline) and leaves
+// focus unguarded long enough to spray keystrokes into the launcher search box
+// if the app loses the foreground mid-type; the shell path types in chunks with
+// a foreground re-check between them (see typeShellSafe).
+internal val FAST_INPUT_SAFE = Regex("^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$")
+
+// INPUT_CHUNK_CHARS bounds each `input text` shell invocation so a long string
+// is typed as a series of short, interruptible commands rather than one opaque
+// ~18s call. Small enough that a foreground re-check between chunks catches a
+// focus escape early; large enough that the per-chunk dumpsys cost stays minor.
+internal const val INPUT_CHUNK_CHARS = 512
+
+// chunkForInput splits text into pieces of at most `size` characters, never
+// ending a piece right before a '-': a chunk that began with '-' would be read
+// as an option by `input text`. The whole string's first character is already
+// guaranteed non-'-' by FAST_INPUT_SAFE, so the first chunk is always safe too.
+internal fun chunkForInput(text: String, size: Int): List<String> {
+    require(size > 0)
+    val chunks = mutableListOf<String>()
+    var start = 0
+    while (start < text.length) {
+        var end = minOf(start + size, text.length)
+        while (end < text.length && text[end] == '-') end++
+        chunks.add(text.substring(start, end))
+        start = end
+    }
+    return chunks
+}
 
 class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     private val dadb: dadb.Dadb
@@ -606,15 +633,43 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
 
     override fun inputText(text: String) {
         if (FAST_INPUT_SAFE.matches(text)) {
-            // adb `input text` is ~5x faster than the driver's per-character
-            // path. Restricted to short shell-safe ASCII so unicode, injection
-            // payloads, and overflow-length strings still go through the driver,
-            // which handles them correctly. The runner focuses the field with a
-            // tap before InputText, so the keystrokes land in it.
-            dadb.shell("input text $text")
+            // adb `input text` is far faster than the driver's per-character
+            // path. Restricted to shell-safe ASCII so unicode and injection
+            // payloads still go through the driver, which handles them. The
+            // runner focuses the field with a tap before InputText, so the
+            // keystrokes land in it.
+            typeShellSafe(text)
         } else {
             driver.inputText(text)
         }
+    }
+
+    // typeShellSafe types shell-safe ASCII through adb `input text` in chunks,
+    // re-checking the foreground app before each chunk. If the app the type
+    // started in has lost the foreground, the remaining keystrokes would spray
+    // into whatever window stole it (the launcher search box, in practice), so
+    // typing stops instead of leaking out of the app under test.
+    private fun typeShellSafe(text: String) {
+        val owner = foregroundPackage()
+        var typed = 0
+        for (chunk in chunkForInput(text, INPUT_CHUNK_CHARS)) {
+            if (owner != null && typed > 0 && foregroundPackage() != owner) {
+                System.err.println(
+                    "warn: inputText stopped; foreground left $owner mid-type after $typed/${text.length} chars",
+                )
+                return
+            }
+            dadb.shell("input text $chunk")
+            typed += chunk.length
+        }
+    }
+
+    // foregroundPackage returns the package of the top resumed activity, or null
+    // if it cannot be read. Used to detect mid-type focus escapes.
+    private fun foregroundPackage(): String? {
+        val output = adbOutput(serial, listOf("shell", "dumpsys", "activity", "activities"))
+        return Regex("""topResumedActivity=ActivityRecord\{\S+ \S+ ([^/\s]+)/""")
+            .find(output)?.groupValues?.get(1)
     }
 
     override fun eraseText(characterCount: Int) = driver.eraseText(characterCount)
