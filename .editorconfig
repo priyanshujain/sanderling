@@ -1,0 +1,13 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+max_line_length = 80
+
+[*.{kt,kts}]
+ktlint_code_style = intellij_idea
+
+[*.md]
+max_line_length = off
