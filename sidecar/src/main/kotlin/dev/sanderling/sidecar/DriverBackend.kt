@@ -117,11 +117,12 @@ private val ROUTE_TAG_KEYS = setOf(
     "accessibilityIdentifier",
 )
 
+private val jsonMapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+
 internal fun countRouteScreens(treeJson: String): Int {
     if (treeJson.isBlank()) return 0
     return try {
-        val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
-        val root = mapper.readTree(treeJson)
+        val root = jsonMapper.readTree(treeJson)
         countRouteScreens(root)
     } catch (_: Exception) {
         0
@@ -158,8 +159,7 @@ private fun countRouteScreens(
 internal fun structuralHash(treeJson: String): String {
     if (treeJson.isBlank()) return ""
     return try {
-        val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
-        val root = mapper.readTree(treeJson)
+        val root = jsonMapper.readTree(treeJson)
         val builder = StringBuilder()
         walkForStructuralHash(root, builder)
         builder.toString()
@@ -873,9 +873,7 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     }
 
     override fun hierarchy(): String =
-        com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().writeValueAsString(
-            driver.contentDescriptor(false),
-        )
+        jsonMapper.writeValueAsString(driver.contentDescriptor(false))
 
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String) =
         readLogcat(serial, sinceUnixMillis, minLevel)
