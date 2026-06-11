@@ -440,10 +440,8 @@ func appIsForeground(ctx context.Context, options Options) bool {
 	if foreground != options.BundleID {
 		return false
 	}
-	// The app is the resumed activity, but a system overlay (the notification
-	// shade) can own the focused window while the app stays resumed; firing the
-	// action would land on the overlay. Mirror ensureForeground's focus check
-	// here so the apply-time guard skips and the next step dismisses it.
+	// A system overlay can own the focused window while the app stays resumed,
+	// so mirror ensureForeground's focus check rather than act on the overlay.
 	focusChecker, ok := options.Driver.(driver.FocusedWindowChecker)
 	if !ok {
 		return true
@@ -463,7 +461,7 @@ const foregroundReadyAttempts = 8
 // focusTapSettle is the pause after tapping a field to focus it, before typing.
 // Long enough for focus to land, short enough to avoid the ~500ms-1s full
 // settle the keyboard's open animation would otherwise cost every InputText
-// step on a physical device. A var so tests can shorten it.
+// step on a physical device.
 var focusTapSettle = 250 * time.Millisecond
 
 // waitForForeground blocks until the app under test is actually on screen, so
@@ -793,15 +791,9 @@ func clampGestureToSafeArea(fromX, fromY, toX, toY int, screen hierarchy.Bounds)
 	if width <= 0 || height <= 0 {
 		return fromX, fromY, toX, toY
 	}
-	// Only the touch-down point opens the shade, and only when it lands in the
-	// top status strip; the margin clears it (calibrated as a fraction of
-	// height so origins below ~8% of height no longer open the shade). When the
-	// origin is too high, translate the whole segment down by the same delta
-	// rather than clamping the origin alone, which could push it past the
-	// destination and reverse the gesture (a near-top scroll would then flip
-	// direction). Side and bottom edge gestures are disabled by
-	// ForceThreeButtonNav, so only the top needs a margin; endpoints are
-	// otherwise just kept on screen.
+	// Translate the whole segment when the origin is in the top margin, rather
+	// than clamping the origin alone, which could push it past the destination
+	// and reverse a near-top scroll.
 	marginY := height / 12
 	if shortfall := (screen.Top + marginY) - fromY; shortfall > 0 {
 		fromY += shortfall

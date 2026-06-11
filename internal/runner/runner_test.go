@@ -920,15 +920,10 @@ func TestApplyAction_ScrollDirectionUsesInversion(t *testing.T) {
 	}
 }
 
-// TestApplyAction_ScrollNearTopKeepsDirectionAfterClamp pins the clamp fix
-// against a scrollable container pinned in the top status strip: the safe-area
-// clamp must translate the whole gesture down, not push the origin past the
-// destination. With the old origin-only clamp the downward finger (scroll up)
-// flipped to an upward finger, scrolling the opposite way.
 func TestApplyAction_ScrollNearTopKeepsDirectionAfterClamp(t *testing.T) {
 	driverMock := mockdriver.New()
-	// A full-screen root establishes the 1080x2400 screen (marginY=200); the
-	// scrollable list sits entirely inside the top margin (y 20..180).
+	// Full-screen root sets the 1080x2400 screen (marginY=200); the scrollable
+	// list sits inside the top margin (y 20..180), where the clamp must fire.
 	treeJSON := `{"attributes":{"bounds":"[0,0,1080,2400]"},"children":[
 		{"attributes":{"resource-id":"com.fixture:id/toplist","scrollable":"true","bounds":"[0,20,1080,180]"},"children":[],"enabled":true}
 	]}`
@@ -951,12 +946,9 @@ func TestApplyAction_ScrollNearTopKeepsDirectionAfterClamp(t *testing.T) {
 	if swipe == nil {
 		t.Fatalf("expected a Swipe, got %v", driverMock.Actions())
 	}
-	// The origin must clear the top margin (the clamp fired)...
 	if swipe.FromY != 200 {
 		t.Errorf("origin not pushed below the shade strip, got fromY=%d want 200", swipe.FromY)
 	}
-	// ...and "up" must still drag the finger DOWN (toY > fromY). The old clamp
-	// reversed this.
 	if swipe.ToY <= swipe.FromY {
 		t.Errorf("scroll up reversed by the clamp: from=%d to=%d (want toY > fromY)", swipe.FromY, swipe.ToY)
 	}
@@ -1858,54 +1850,36 @@ func TestAwaitForeground_RelaunchesThenWaitsForWindow(t *testing.T) {
 	}
 }
 
-// TestClampGestureToSafeArea_KeepsOriginBelowShadeStrip locks the swipe fix: a
-// gesture origin in the top status-bar strip pulls down the notification shade
-// and drags the fuzzer out of the app. The origin must be pushed below the top
-// margin, and the WHOLE segment translates with it so the gesture direction is
-// preserved (clamping the origin alone could push it past the destination and
-// reverse a near-top scroll). The side and bottom strips are NOT clamped: runs
-// force 3-button navigation, which disables the back and home gestures, so
-// (verified on device) those origins no longer drift.
 func TestClampGestureToSafeArea_KeepsOriginBelowShadeStrip(t *testing.T) {
-	screen := hierarchy.Bounds{Left: 0, Top: 0, Right: 1080, Bottom: 2400}
-	// marginY = 2400/12 = 200.
+	screen := hierarchy.Bounds{Left: 0, Top: 0, Right: 1080, Bottom: 2400} // marginY = 200
 
-	// The real shade-opening swipe captured on device: origin y=62 is pushed to
-	// the top margin (200), and the destination shifts down by the same 138 so
-	// the downward gesture stays downward (447 -> 585), not reversed.
+	// Origin in the shade strip: the whole segment shifts down by 138, so the
+	// downward gesture stays downward (447 -> 585) instead of reversing.
 	fromX, fromY, toX, toY := clampGestureToSafeArea(802, 62, 802, 447, screen)
 	if fromX != 802 || fromY != 200 || toX != 802 || toY != 585 {
 		t.Errorf("segment not translated below the shade strip: from=(%d,%d) to=(%d,%d), want from=(802,200) to=(802,585)", fromX, fromY, toX, toY)
 	}
 
-	// A side origin (left/right edge) passes through untouched: 3-button nav
-	// disables the back gesture, so only the top y is clamped.
 	fromX, fromY, _, _ = clampGestureToSafeArea(5, 1200, 540, 1200, screen)
 	if fromX != 5 || fromY != 1200 {
 		t.Errorf("side origin must pass through, got (%d,%d), want (5,1200)", fromX, fromY)
 	}
 
-	// A bottom origin passes through (home gesture disabled by 3-button nav);
-	// only the top edge is a hazard.
 	fromX, fromY, _, _ = clampGestureToSafeArea(540, 2399, 540, 1200, screen)
 	if fromX != 540 || fromY != 2399 {
 		t.Errorf("bottom origin must pass through, got (%d,%d), want (540,2399)", fromX, fromY)
 	}
 
-	// An off-screen destination is clamped onto the screen.
 	_, _, toX, toY = clampGestureToSafeArea(540, 1200, -50, 9999, screen)
 	if toX != 0 || toY != 2400 {
 		t.Errorf("off-screen destination not clamped to screen edges: got (%d,%d), want (0,2400)", toX, toY)
 	}
 
-	// An off-screen origin x is pulled back on screen even though it is not in a
-	// gesture zone.
 	fromX, _, _, _ = clampGestureToSafeArea(-30, 1200, 540, 1200, screen)
 	if fromX != 0 {
 		t.Errorf("off-screen origin x must clamp to 0, got %d", fromX)
 	}
 
-	// Unknown screen size leaves coordinates untouched.
 	fromX, fromY, toX, toY = clampGestureToSafeArea(802, 62, 802, 447, hierarchy.Bounds{})
 	if fromX != 802 || fromY != 62 || toX != 802 || toY != 447 {
 		t.Error("coordinates must pass through unchanged when screen size is unknown")
@@ -1963,11 +1937,6 @@ func TestEnsureForeground_DismissesSystemOverlay(t *testing.T) {
 	}
 }
 
-// TestAppIsForeground covers the apply-time guard's decision table, including
-// the bug fix: the app being the resumed activity is not enough; a system
-// overlay owning the focused window means the action must be skipped. Unknown
-// signals (no bundle, empty foreground, a transient read error) return true so
-// the run is never blocked where the signal is unavailable.
 func TestAppIsForeground(t *testing.T) {
 	readErr := errors.New("adb read failed")
 	cases := []struct {
@@ -2003,11 +1972,8 @@ func TestAppIsForeground(t *testing.T) {
 	}
 }
 
-// TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime locks the apply-time
-// half of the scope guard end to end: when a system overlay owns the focused
-// window while the app stays the resumed activity, the chosen action must be
-// dropped rather than dispatched onto the overlay. The fixture spec taps id:next
-// every step; with the guard working, none of those taps reach the driver.
+// A system overlay holds focus while the app stays resumed every step, so the
+// fixture's id:next tap must never reach the driver.
 func TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime(t *testing.T) {
 	state := newHarness(t)
 	state.mock.ForegroundResults = []string{"app.folio"}
@@ -2029,8 +1995,6 @@ func TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime(t *testing.T) {
 	if summary.Steps == 0 {
 		t.Fatal("expected the loop to run steps")
 	}
-	// The only thing standing between the picked action and the driver is the
-	// apply-time guard; a dispatched tap means it failed (e.g. dead-coded).
 	if containsAction(state.mock.Actions(), mockdriver.ActionTapSelector, "id:next") {
 		t.Error("apply-time guard failed: a tap fired while a system overlay held focus")
 	}
