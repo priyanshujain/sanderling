@@ -9,6 +9,7 @@
 
 import { Pcg } from "./pcg.ts";
 import { nextAction, walk } from "./pick.ts";
+import { INPUT_CORPUS } from "./corpus.ts";
 import type { ActionDescriptor, GeneratorNode, Host } from "./action-tree.ts";
 import type { Point } from "./types.ts";
 
@@ -130,6 +131,13 @@ export function installRuntime(
   const resolveRoot = typeof root === "function" ? root : () => root;
   const resolveSetup = () =>
     (globalThis as { setup?: GeneratorNode }).setup ?? null;
+  // The LLM action backend (Go) types InputText values by drawing from the same
+  // edge-case corpus the seeded `typing` builtin uses. Expose that draw here so
+  // Go reuses the exact sampler rather than reimplementing the corpus.
+  defineLockedGlobal(
+    "__sanderlingSampleInput__",
+    () => INPUT_CORPUS[rng.intN(INPUT_CORPUS.length)] ?? "",
+  );
   defineLockedGlobal("__sanderlingExtractors__", () => evaluateExtractors());
   defineLockedGlobal("__sanderlingNextAction__", () => {
     // resolveRoot runs first: on web it also resets the per-tick candidate
