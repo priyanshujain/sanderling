@@ -35,10 +35,11 @@ export function actions(generator: () => Action[]): GeneratorNode {
 }
 
 // llm selects the LLM action backend: instead of the seeded picker drawing a
-// random candidate, Go drives an OpenRouter model that chooses which candidate
-// to act on from the screenshot + the candidate list. The returned marker is
-// inert on the JS picker (pick.ts walks it to null); Go reads its config.model
-// off globalThis.actions. API key comes from OPENROUTER_API_KEY.
+// random candidate, Go drives an OpenAI-compatible model that chooses which
+// candidate to act on from the screenshot + the candidate list. The returned
+// marker is inert on the JS picker (pick.ts walks it to null); Go reads its
+// config.model off globalThis.actions. API key comes from OPENROUTER_API_KEY
+// (OpenRouter) or OPENAI_API_KEY (OpenAI); OpenRouter wins when both are set.
 export function llm(config: { model: string }): GeneratorNode {
   return { kind: "llm", config };
 }
