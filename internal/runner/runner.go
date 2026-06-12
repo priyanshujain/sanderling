@@ -105,6 +105,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var tree *hierarchy.Tree
 		var hierarchyErr error
 		var transitional bool
+		var screenshotPNG []byte
 		var metrics *trace.Metrics
 		var logs []verifier.LogEntry
 
@@ -118,7 +119,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// screenshot describe the same frame, then re-fetches the pair
 		// while the tree still looks transitional.
 		g.Go(func() error {
-			tree, transitional, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
+			tree, screenshotPNG, transitional, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
 			return nil
 		})
 		g.Go(func() error {
@@ -183,12 +184,13 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		skippedVerification := false
 		if !transitional {
 			if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
-				Tree:       tree,
-				LastAction: lastAction,
-				StepTime:   stepStart,
-				StepIndex:  stepIndex,
-				RunStart:   summary.StartTime,
-				Logs:       logs,
+				Tree:          tree,
+				ScreenshotPNG: screenshotPNG,
+				LastAction:    lastAction,
+				StepTime:      stepStart,
+				StepIndex:     stepIndex,
+				RunStart:      summary.StartTime,
+				Logs:          logs,
 			}); err != nil {
 				return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 			}
@@ -855,7 +857,7 @@ const (
 // on a still-transitional tree. Callers use it to skip the verifier for
 // that step so the previous/current extractor advance does not absorb
 // transient state.
-func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (tree *hierarchy.Tree, transitional bool, err error) {
+func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (tree *hierarchy.Tree, png []byte, transitional bool, err error) {
 	var pngBytes []byte
 	var previousJSON string
 retryLoop:
@@ -896,7 +898,7 @@ retryLoop:
 			logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
 		}
 	}
-	return tree, transitional, err
+	return tree, pngBytes, transitional, err
 }
 
 // isTransitionalHierarchy returns true when the tree carries more than one
