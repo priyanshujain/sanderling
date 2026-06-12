@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
-	"github.com/priyanshujain/sanderling/internal/openrouter"
+	"github.com/priyanshujain/sanderling/internal/llmclient"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
@@ -157,8 +157,8 @@ func newFakeOpenRouter(t *testing.T) *fakeOpenRouter {
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &fake.lastRequest)
 		content, _ := json.Marshal(map[string]any{"reasoning": fake.reasoning, "ranked": fake.ranked})
-		response, _ := json.Marshal(openrouter.Response{
-			Choices: []openrouter.Choice{{Message: openrouter.ResponseMessage{Content: string(content)}}},
+		response, _ := json.Marshal(llmclient.Response{
+			Choices: []llmclient.Choice{{Message: llmclient.ResponseMessage{Content: string(content)}}},
 		})
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(response)
@@ -171,9 +171,9 @@ func newLLMSource(t *testing.T, fake *fakeOpenRouter) (*llmSource, *verifier.Ver
 	t.Helper()
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("OPENROUTER_BASE_URL", fake.server.URL)
-	client, err := openrouter.New()
+	client, err := llmclient.New()
 	if err != nil {
-		t.Fatalf("openrouter.New: %v", err)
+		t.Fatalf("llmclient.New: %v", err)
 	}
 
 	verifierInstance, err := verifier.New()

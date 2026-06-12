@@ -7,7 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
-	"github.com/priyanshujain/sanderling/internal/openrouter"
+	"github.com/priyanshujain/sanderling/internal/llmclient"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
@@ -65,15 +65,16 @@ func (s webSource) ExtractorOverrides(ctx context.Context) (map[int]json.RawMess
 // pickSources selects the runtime's action and extractor sources ONCE at setup
 // from the driver's capabilities and the spec, so the step loop never
 // type-asserts. When the spec selected the LLM action backend (actions =
-// llm({...})) it constructs the OpenRouter client and returns an llmSource for
-// selection while extractor overrides still come from the goja path.
+// llm({...})) it constructs the chat-completions client and returns an
+// llmSource for selection while extractor overrides still come from the goja
+// path.
 func pickSources(options Options) (ActionSource, ExtractorSource, error) {
 	if web, ok := options.Driver.(driver.WebDriver); ok {
 		source := webSource{web: web}
 		return source, source, nil
 	}
 	if config, ok := options.Verifier.LLMConfig(); ok {
-		client, err := openrouter.New()
+		client, err := llmclient.New()
 		if err != nil {
 			return nil, nil, fmt.Errorf("llm action backend: %w", err)
 		}

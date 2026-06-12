@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/priyanshujain/sanderling/internal/openrouter"
+	"github.com/priyanshujain/sanderling/internal/llmclient"
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
@@ -36,14 +36,14 @@ const (
 // candidates the system already enumerated; it never invents actions.
 const llmSystemPrompt = "You are exploring this app to surface bugs. Choose the most useful next action from the numbered candidates. Avoid repeating recent actions; prefer progress into new screens. Return only your ranked choices."
 
-// llmSource selects each step's action with an OpenRouter model instead of the
-// seeded random pick. It replaces ONLY the pick: the candidate list, the input
+// llmSource selects each step's action with an OpenAI-compatible vision model
+// instead of the seeded random pick. It replaces ONLY the pick: the candidate list, the input
 // values, and action execution are all reused unchanged. The spec's JS setup
 // still runs first each tick (setup precedence), and the LLM drives once setup
 // yields nothing.
 type llmSource struct {
 	verifier *verifier.Verifier
-	client   *openrouter.Client
+	client   *llmclient.Client
 	model    string
 	logger   *slog.Logger
 	history  *actionHistory
@@ -126,17 +126,17 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (verifier.Action, string, 
 // buildRequest assembles the one-shot multimodal request: a system frame, the
 // numbered candidate list plus recent-action memory, and the downscaled
 // screenshot. The strict json_schema response format pins the ranked output.
-func (s *llmSource) buildRequest(candidates []verifier.ActionCandidate) openrouter.Request {
-	userParts := []openrouter.ContentPart{openrouter.TextPart(s.userPrompt(candidates))}
+func (s *llmSource) buildRequest(candidates []verifier.ActionCandidate) llmclient.Request {
+	userParts := []llmclient.ContentPart{llmclient.TextPart(s.userPrompt(candidates))}
 	if screenshot := s.verifier.Screenshot(); len(screenshot) > 0 {
 		if dataURL, ok := screenshotDataURL(screenshot, llmMaxImageEdge); ok {
-			userParts = append(userParts, openrouter.ImagePart(dataURL))
+			userParts = append(userParts, llmclient.ImagePart(dataURL))
 		}
 	}
-	return openrouter.Request{
+	return llmclient.Request{
 		Model: s.model,
-		Messages: []openrouter.Message{
-			{Role: "system", Content: []openrouter.ContentPart{openrouter.TextPart(llmSystemPrompt)}},
+		Messages: []llmclient.Message{
+			{Role: "system", Content: []llmclient.ContentPart{llmclient.TextPart(llmSystemPrompt)}},
 			{Role: "user", Content: userParts},
 		},
 		ResponseFormat: rankedResponseFormat(),
@@ -166,10 +166,10 @@ func (s *llmSource) userPrompt(candidates []verifier.ActionCandidate) string {
 
 // rankedResponseFormat is the strict structured-output schema: a short
 // reasoning string and a ranked list of candidate indices.
-func rankedResponseFormat() *openrouter.ResponseFormat {
-	return &openrouter.ResponseFormat{
+func rankedResponseFormat() *llmclient.ResponseFormat {
+	return &llmclient.ResponseFormat{
 		Type: "json_schema",
-		JSONSchema: openrouter.JSONSchema{
+		JSONSchema: llmclient.JSONSchema{
 			Name:   "ranked_actions",
 			Strict: true,
 			Schema: map[string]any{
