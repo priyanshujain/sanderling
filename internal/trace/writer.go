@@ -82,6 +82,11 @@ type Action struct {
 	Selector       string        `json:"selector,omitempty"`
 	ResolvedBounds *BoundsRecord `json:"resolved_bounds,omitempty"`
 	TapPoint       *PointRecord  `json:"tap_point,omitempty"`
+	// Source names the backend that chose this action: "llm" when the LLM
+	// action backend selected it, empty for the seeded picker. LLMReasoning is
+	// the model's short rationale, shown by the replay UI to explain the pick.
+	Source       string `json:"source,omitempty"`
+	LLMReasoning string `json:"llm_reasoning,omitempty"`
 }
 
 type BoundsRecord struct {
