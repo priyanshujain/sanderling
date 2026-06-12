@@ -78,6 +78,23 @@ DURATION=5m
 
 Traces land in `./sanderling/runs/<timestamp>/`.
 
+## Run with the LLM action backend
+
+`sanderling/spec-llm.ts` reuses the same properties and login setup but swaps the
+seeded fuzzer for `llm({ model })`: an OpenRouter vision model chooses which of
+the already-enumerated candidates to act on each step, from the screenshot.
+
+```sh
+export OPENROUTER_API_KEY=sk-or-...
+sanderling test --spec sanderling/spec-llm.ts --bundle-id app.folio --duration 2m
+```
+
+The model must support image input **and** strict `json_schema` structured
+outputs (e.g. `openai/gpt-4o`); edit the `model` string in `spec-llm.ts` to pick
+another. Each step is one multimodal call, so keep the duration / step budget
+modest. The trace records the model's reasoning and `source: "llm"` on each
+chosen action, so the replay UI shows why each pick was made.
+
 ## Run a sanderling test (iOS)
 
 ```sh
