@@ -57,10 +57,13 @@ export type ActionDescriptor =
 //   weighted: probabilistic choice over child nodes, scanned ascending.
 //   actions:  author callback returning a list to pick uniformly from.
 //   builtin:  host-backed leaf identified by a verb.
+//   llm:      marker selecting the LLM action backend; inert on the JS picker
+//             (walk returns null), Go reads config.model off globalThis.actions.
 export type GeneratorNode =
   | { kind: "weighted"; branches: ReadonlyArray<readonly [number, GeneratorNode]> }
   | { kind: "actions"; generate: () => ActionDescriptor[] }
-  | { kind: "builtin"; verb: BuiltinVerb };
+  | { kind: "builtin"; verb: BuiltinVerb }
+  | { kind: "llm"; config: { model: string } };
 
 // Candidate is one host-enumerated target for a builtin verb. The host
 // resolves geometry (and a native selector) so no element handle crosses into

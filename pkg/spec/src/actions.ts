@@ -34,6 +34,15 @@ export function actions(generator: () => Action[]): GeneratorNode {
   return { kind: "actions", generate: generator as () => ActionDescriptor[] };
 }
 
+// llm selects the LLM action backend: instead of the seeded picker drawing a
+// random candidate, Go drives an OpenRouter model that chooses which candidate
+// to act on from the screenshot + the candidate list. The returned marker is
+// inert on the JS picker (pick.ts walks it to null); Go reads its config.model
+// off globalThis.actions. API key comes from OPENROUTER_API_KEY.
+export function llm(config: { model: string }): GeneratorNode {
+  return { kind: "llm", config };
+}
+
 export function whenRoute(
   routeExtractor: { readonly current: string | null },
   routes: string | readonly string[],
