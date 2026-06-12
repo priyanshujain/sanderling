@@ -33,8 +33,15 @@ const (
 )
 
 // llmSystemPrompt frames the selection task. The model only ranks the numbered
-// candidates the system already enumerated; it never invents actions.
-const llmSystemPrompt = "You are exploring this app to surface bugs. Choose the most useful next action from the numbered candidates. Avoid repeating recent actions; prefer progress into new screens. Return only your ranked choices."
+// candidates the system already enumerated; it never invents actions. The kind
+// semantics matter: every visible element doubles as a Swipe origin, so a
+// control whose only candidate is Swipe is NOT pressable — without the
+// explanation models pick `Swipe "Submit"` intending to press Submit and loop
+// forever on a disabled button.
+const llmSystemPrompt = "You are exploring this app to surface bugs. Choose the most useful next action from the numbered candidates. " +
+	"Candidate kinds: Tap/DoubleTap/LongPress press a control; InputText types into a field; Scroll and Swipe only pan the view — they never press the element they are labeled with. " +
+	"A button that has no Tap candidate is disabled; satisfy its preconditions first (usually InputText into a field) instead of swiping it. " +
+	"Avoid repeating recent actions; prefer progress into new screens. Return only your ranked choices."
 
 // llmSource selects each step's action with an OpenAI-compatible vision model
 // instead of the seeded random pick. It replaces ONLY the pick: the candidate list, the input
@@ -252,7 +259,9 @@ func describeAction(action verifier.Action) string {
 	case verifier.ActionKindScroll:
 		return fmt.Sprintf("Scroll %s %s", action.Direction, action.On)
 	case verifier.ActionKindSwipe:
-		return "Swipe"
+		// Coordinates make a repeated identical swipe recognizable in the
+		// prompt's recent-action memory.
+		return fmt.Sprintf("Swipe from (%d,%d)", action.FromX, action.FromY)
 	case verifier.ActionKindPressKey:
 		return "PressKey " + action.Key
 	case verifier.ActionKindWait:
