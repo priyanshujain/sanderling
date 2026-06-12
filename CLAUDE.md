@@ -15,6 +15,11 @@
 
   - No slashes in branch names (e.g., use `fix-something` not `fix/something`).
 
+## PR Rules
+
+  - Simple PR title, few-line description. Never write a wall of text — nobody reads it.
+  - Everything lowercase in PR titles, descriptions, and comments.
+
 ## Git Commit Rules
 
   - Commit after every small, atomic change. Each commit should touch 1-3 files max.
