@@ -74,7 +74,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	// Pick the action and extractor sources once from the driver's
 	// capabilities so the step loop runs one uniform path with no per-step
 	// driver type assertion.
-	actionSource, extractorSource := pickSources(options)
+	actionSource, extractorSource, err := pickSources(options)
+	if err != nil {
+		return Summary{}, err
+	}
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -217,6 +220,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var traceAction *trace.Action
 		if nextErr == nil {
 			traceAction = traceActionFor(nextAction, tree)
+			stampActionSource(traceAction, actionSource)
 		} else if !errors.Is(nextErr, verifier.ErrNoAction) {
 			return summary, fmt.Errorf("step %d next action: %w", stepIndex, nextErr)
 		}
