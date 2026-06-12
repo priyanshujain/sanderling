@@ -28,6 +28,12 @@ type Verifier struct {
 	// the shared picker (pick.ts) over the shared Pcg.
 	nextActionFn goja.Callable
 
+	// sampleInputFn is the bundle-installed __sanderlingSampleInput__, which
+	// draws one value from the shared INPUT_CORPUS. The LLM action backend uses
+	// it to fill InputText values, reusing the exact corpus draw rather than
+	// reimplementing the corpus on the Go side.
+	sampleInputFn goja.Callable
+
 	evaluators map[string]*ltl.Evaluator
 
 	priorVerdicts map[string]ltl.Verdict
@@ -35,6 +41,7 @@ type Verifier struct {
 	witnesses     map[string]Witness
 
 	lastTree       *hierarchy.Tree
+	lastScreenshot []byte
 	scopeCache     map[*hierarchy.Element]bool
 	scopeCacheTree *hierarchy.Tree
 	lastAction     *Action
@@ -152,6 +159,15 @@ func (v *Verifier) Load(source string) error {
 		}
 	}
 
+	// __sanderlingSampleInput__ draws an InputText value from the shared corpus.
+	// The LLM action backend uses it; a raw-JS fixture without the runtime entry
+	// leaves it nil and SampleInput reports an error.
+	if fn := v.runtime.GlobalObject().Get("__sanderlingSampleInput__"); fn != nil {
+		if callable, ok := goja.AssertFunction(fn); ok {
+			v.sampleInputFn = callable
+		}
+	}
+
 	return nil
 }
 
@@ -258,6 +274,7 @@ func (v *Verifier) buildFormulaNode(index int) (ltl.Formula, error) {
 // allowed and yields an empty ax scope.
 func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 	v.lastTree = input.Tree
+	v.lastScreenshot = input.ScreenshotPNG
 	v.scopeCache = nil
 	v.lastAction = input.LastAction
 	v.lastLogs = input.Logs
@@ -386,9 +403,13 @@ func (v *Verifier) OverrideExtractorValues(overrides map[int]json.RawMessage) (s
 // other than Snapshots are optional; callers that only have snapshots can
 // populate Snapshots alone and leave the rest zero.
 type SnapshotInput struct {
-	Snapshots  Snapshots
-	Tree       *hierarchy.Tree
-	LastAction *Action
+	Snapshots Snapshots
+	Tree      *hierarchy.Tree
+	// ScreenshotPNG is the step's screenshot, captured alongside Tree. The LLM
+	// action backend reads it via Screenshot() to select a candidate; other
+	// callers may leave it nil.
+	ScreenshotPNG []byte
+	LastAction    *Action
 	StepTime   time.Time
 	// StepIndex is the runner's step number for this snapshot. Evaluators label
 	// observations with it so violation witnesses carry runner step numbers even
