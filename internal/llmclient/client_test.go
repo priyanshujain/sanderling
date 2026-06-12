@@ -1,4 +1,4 @@
-package openrouter
+package llmclient
 
 import (
 	"context"
@@ -108,8 +108,52 @@ func TestChatCompletionRequestShapeAndParse(t *testing.T) {
 
 func TestNewRequiresAPIKey(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
 	if _, err := New(); err == nil {
-		t.Fatal("expected error when OPENROUTER_API_KEY is unset")
+		t.Fatal("expected error when neither API key is set")
+	}
+}
+
+func TestNewFallsBackToOpenAIKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer openai-key" {
+			t.Errorf("Authorization = %q, want Bearer openai-key", got)
+		}
+		_, _ = w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "openai-key")
+	t.Setenv("OPENAI_BASE_URL", server.URL)
+	client, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := client.ChatCompletion(context.Background(), Request{Model: "m"}); err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+}
+
+func TestNewPrefersOpenRouterOverOpenAI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer router-key" {
+			t.Errorf("Authorization = %q, want Bearer router-key (OpenRouter must win)", got)
+		}
+		_, _ = w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "router-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+	t.Setenv("OPENAI_API_KEY", "openai-key")
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:1") // unreachable; must not be used
+	client, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := client.ChatCompletion(context.Background(), Request{Model: "m"}); err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
 	}
 }
 

@@ -1,8 +1,12 @@
-// Package openrouter is a minimal client for the OpenRouter chat-completions
-// API, covering only what the LLM action backend needs: a single multimodal
-// (text + one image) request per step with strict json_schema structured
-// output. No streaming, tools, or other extras.
-package openrouter
+// Package llmclient is a minimal client for the OpenAI-compatible
+// chat-completions API, covering only what the LLM action backend needs: a
+// single multimodal (text + one image) request per step with strict
+// json_schema structured output. No streaming, tools, or other extras.
+//
+// The provider comes from the environment: OPENROUTER_API_KEY routes to
+// OpenRouter, OPENAI_API_KEY to OpenAI; OpenRouter wins when both are set.
+// Both speak the same wire format, so there is no provider-specific code.
+package llmclient
 
 import (
 	"bytes"
@@ -16,30 +20,41 @@ import (
 	"time"
 )
 
-const defaultBaseURL = "https://openrouter.ai/api/v1"
+const (
+	openRouterBaseURL = "https://openrouter.ai/api/v1"
+	openAIBaseURL     = "https://api.openai.com/v1"
+)
 
 // requestTimeout bounds a single chat-completion round-trip. Vision + strict
 // structured output is slower than a plain text call, so this is generous; the
 // runner also passes a context the caller can cancel.
 const requestTimeout = 60 * time.Second
 
-// Client talks to the OpenRouter chat-completions endpoint.
+// Client talks to an OpenAI-compatible chat-completions endpoint.
 type Client struct {
 	httpClient *http.Client
 	apiKey     string
 	baseURL    string
 }
 
-// New builds a Client from the environment. OPENROUTER_API_KEY is required;
-// OPENROUTER_BASE_URL overrides the default endpoint (e.g. for tests).
+// New builds a Client from the environment. OPENROUTER_API_KEY selects
+// OpenRouter, OPENAI_API_KEY selects OpenAI; OpenRouter wins when both are
+// set. OPENROUTER_BASE_URL / OPENAI_BASE_URL override the chosen provider's
+// endpoint (tests, local OpenAI-compatible servers).
 func New() (*Client, error) {
 	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	baseURL := openRouterBaseURL
+	override := os.Getenv("OPENROUTER_BASE_URL")
 	if apiKey == "" {
-		return nil, errors.New("openrouter: OPENROUTER_API_KEY is not set")
+		apiKey = os.Getenv("OPENAI_API_KEY")
+		baseURL = openAIBaseURL
+		override = os.Getenv("OPENAI_BASE_URL")
 	}
-	baseURL := os.Getenv("OPENROUTER_BASE_URL")
-	if baseURL == "" {
-		baseURL = defaultBaseURL
+	if apiKey == "" {
+		return nil, errors.New("llmclient: neither OPENROUTER_API_KEY nor OPENAI_API_KEY is set")
+	}
+	if override != "" {
+		baseURL = override
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: requestTimeout},
@@ -120,32 +135,32 @@ type ResponseMessage struct {
 func (c *Client) ChatCompletion(ctx context.Context, req Request) (*Response, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("openrouter: marshal request: %w", err)
+		return nil, fmt.Errorf("llmclient: marshal request: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("openrouter: build request: %w", err)
+		return nil, fmt.Errorf("llmclient: build request: %w", err)
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("openrouter: request failed: %w", err)
+		return nil, fmt.Errorf("llmclient: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("openrouter: read response: %w", err)
+		return nil, fmt.Errorf("llmclient: read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("openrouter: status %d: %s", resp.StatusCode, string(responseBody))
+		return nil, fmt.Errorf("llmclient: status %d: %s", resp.StatusCode, string(responseBody))
 	}
 
 	var out Response
 	if err := json.Unmarshal(responseBody, &out); err != nil {
-		return nil, fmt.Errorf("openrouter: decode response: %w", err)
+		return nil, fmt.Errorf("llmclient: decode response: %w", err)
 	}
 	return &out, nil
 }
