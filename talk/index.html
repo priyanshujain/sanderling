@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Property-Based Testing for Mobile UI</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/theme/black.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gentium+Plus:ital,wght@0,400;0,700;1,400;1,700&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;600;700&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --r-background-color: #0a0a0a;
+      --r-main-font: 'Inter', sans-serif;
+      --r-code-font: 'JetBrains Mono', monospace;
+      --r-main-color: #e0d8c8;
+      --r-heading-color: #f0ebe0;
+      --r-link-color: #b8a888;
+      --sand: #c8b89a;
+      --dim: #7a7068;
+      --red: #c85c5c;
+      --green: #7a9e7e;
+      --warm-white: #e0d8c8;
+    }
+
+    .reveal {
+      font-family: 'Inter', sans-serif;
+      background: #0a0a0a;
+    }
+
+    .reveal h1,
+    .reveal h2,
+    .reveal h3 {
+      font-family: 'Inter', sans-serif;
+      letter-spacing: -0.02em;
+      text-transform: none;
+      color: var(--warm-white);
+    }
+
+    .reveal h1 {
+      font-size: 2.4em;
+    }
+
+    .reveal h2 {
+      font-size: 1.8em;
+    }
+
+    .reveal h3 {
+      font-size: 1.2em;
+      color: var(--dim);
+      font-weight: 400;
+    }
+
+    .reveal pre {
+      font-family: var(--r-code-font);
+      font-size: 0.52em;
+      border: 1px solid #222;
+      border-radius: 6px;
+      padding: 0.8em 1em;
+      background: #111;
+      box-shadow: none;
+      width: 100%;
+    }
+
+    .reveal code {
+      font-family: var(--r-code-font);
+      background: #1a1a1a;
+      padding: 0.1em 0.3em;
+      border-radius: 3px;
+      font-size: 0.9em;
+      color: var(--sand);
+    }
+
+    .reveal pre code {
+      background: transparent;
+      padding: 0;
+      font-size: 1em;
+      color: var(--warm-white);
+    }
+
+    .meme {
+      display: block;
+      margin: 0 auto !important;
+      max-width: 90%;
+      max-height: 40vh !important;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+
+    .meme-sm {
+      max-height: 40vh;
+    }
+
+    .caption {
+      font-size: 0.6em;
+      color: var(--dim);
+      margin-top: 0.4em;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5em;
+      align-items: start;
+    }
+
+    .pass {
+      color: var(--green);
+    }
+
+    .fail {
+      color: var(--red);
+    }
+
+    .dim {
+      color: var(--dim);
+    }
+
+    .sand {
+      color: var(--sand);
+    }
+
+    .label {
+      font-size: 0.6em;
+      color: var(--dim);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .reveal .slide-number {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.5em;
+    }
+
+    .step-list {
+      /* list-style: none; */
+      /* list-style-type: none !important; */
+      padding: 0;
+      text-align: left;
+    }
+
+    .step-list li {
+      padding: 0.3em 0;
+      font-size: 0.85em;
+    }
+
+    /* .step-list li::before {
+      content: "-> ";
+      color: var(--dim);
+    } */
+
+    .highlight-box {
+      background: #111;
+      border: 1px solid #2a2820;
+      border-radius: 6px;
+      padding: 0.8em 1.2em;
+      text-align: left;
+    }
+
+    .speaker-title {
+      font-size: 0.75em;
+      color: var(--dim);
+      margin-top: 0.3em;
+    }
+
+    .diagram {
+      display: block;
+      margin: 0 auto;
+      max-width: 92%;
+      max-height: 58vh;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+
+    .diagram-sm {
+      max-height: 46vh;
+    }
+
+    ol > li {
+      margin-bottom: 0.8em;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- 1. TITLE -->
+      <section>
+        <h1>Property-Based<br>Testing for<br>Mobile UI</h1>
+        <p class="speaker-title">Finding harder bugs earlier</p>
+      </section>
+
+      <!-- 2. WHO -->
+      <section>
+        <h2>Hey, I'm PJ</h2>
+        <ul class="step-list" style="margin:1em auto; max-width:600px;">
+          <li>Platform stuff @ OkCredit(YC S18)</li>
+          <li>I'm here to talk about tough bugs</li>
+        </ul>
+      </section>
+
+
+      <!-- 2. WHO -->
+      <section>
+        <h2>Let's talk testing</h2>
+      </section>
+
+
+
+      <!-- 3. EXAMPLE TESTS -->
+      <section>
+        <h2>We write unit tests</h2>
+        <p class="dim" style="font-size:0.8em; margin-bottom:0.8em;"></p>
+        <pre><code class="language-kotlin">
+@Test fun `balance of a single $5 debit is -$5`() {
+      val txns = listOf(Transaction(type = debit, amount = 500))
+      assertEquals(-500, balanceOf(txns))
+}
+</code></pre>
+        <p style="margin-top:1em;" class="pass"></p>
+      </section>
+
+      <!-- 4. EXAMPLE TESTS -->
+      <section>
+        <h2>We write integration tests</h2>
+        <p class="dim" style="font-size:0.8em; margin-bottom:0.8em;"></p>
+        <pre><code class="language-kotlin">@Test
+fun `submitting a transaction updates balance`() {
+    /*
+    1. open the app, log in
+    2. tap an account
+    3. tap "Add Transaction"
+    4. type 50, tap Submit
+    5. go back home
+    */
+
+    assertEquals(Balance(5000), homeScreen.totalBalance())
+}</code></pre>
+        <p style="margin-top:1em;" class="pass"></p>
+      </section>
+
+
+      <!-- 3. HOOK -->
+      <section>
+        <h2>All tests pass</h2>
+        <img
+          src="./testpass.webp"
+          class="meme" alt="">
+        <p class="caption"></p>
+      </section>
+
+      <!-- 3. HOOK -->
+      <section>
+        <h2>But user reported a bug</h2>
+        <img src="https://i.kym-cdn.com/entries/icons/original/000/018/012/this_is_fine.jpeg" class="meme" alt="">
+        <p class="caption"></p>
+      </section>
+
+      <section>
+        <h2>There are duplicate transactions, <br /><br />
+          same amount, same time.</h2>
+        <p class="caption"></p>
+      </section>
+
+
+      <section>
+        <h2>Why? We wrote tests for this and they passed????</h2>
+        <p class="caption"></p>
+      </section>
+
+      <!-- 5. THE GAP -->
+      <section>
+        <h2>The problem</h2>
+        <p>Example tests cover the paths<br><strong>we thought of.</strong></p>
+        <br>
+        <p>Bugs live in the paths<br><strong>we didn't cover.</strong></p>
+      </section>
+
+
+      <section>
+        <h2>Property-Based Testing</h2>
+
+        <ul class="step-list" style="margin: 1em auto; font-size:0.9em;">
+          <li>Write invariant properties for testing, not just examples</li>
+          <li>The machine generates 100s of random actions. Invariant has to
+            hold for all of them</li>
+        </ul>
+      </section>
+
+      <!-- 6. WHAT IS PBT -->
+      <section>
+        <h2>Property-Based Testing</h2>
+        <div class="two-col" style="margin-top:0.8em;">
+          <div class="highlight-box">
+            <p class="label">Example test</p>
+            <p style="font-size:0.8em; margin-top:0.5em;">
+              "When I type 50 and tap Submit,<br>
+              balance becomes $50"
+            </p>
+          </div>
+          <div class="highlight-box">
+            <p class="label">Property</p>
+            <p style="font-size:0.8em; margin-top:0.5em;">
+              "Transaction submit moves the balance exactly by the typed amount"
+            </p>
+          </div>
+        </div>
+        <br>
+      </section>
+
+
+      <!-- 6. WHAT IS PBT -->
+      <section>
+        <h2>Sanderling</h2>
+        <ul class="step-list" style="margin: 1em auto; font-size:0.9em;">
+          <li>Autonomous testing based on specifications</li>
+          <li>Explore application on device and finds invalid behaviors</li>
+          <li>Works directly on the device independent of application framework</li>
+        </ul>
+      </section>
+
+      <!-- 6. WHAT IS PBT -->
+      <section>
+        <h2>Sanderling</h2>
+        <p style="font-size:0.8em; margin-top:0.5em;">
+          Specifying and validating invariant properties<br>
+        </p>
+        <pre><code class="language-typescript">// property definition in spec.ts
+const submitMovesBalanceByTypedAmount = always(
+  next(() => {
+  const typedAmount = parseTypedAmount(txnAmountField.previous?.text);
+
+  const on = JSON.stringify(lastAction.on);
+  if (!on.includes("TxnSubmit")) return true;
+  if (typedAmount === 0) return true;
+
+  return Math.abs(totalBalance.current - totalBalance.previous) === typedAmount;
+}))</code></pre>
+      </section>
+
+      <section>
+        <img src="./arch-2.png" class="meme" style="max-width:100%; max-height:70vh !important;" alt="">
+      </section>
+
+      <section>
+        <h2>How it works</h2>
+
+        <ol style="max-width:900; margin: 1em auto; font-size:0.9em;">
+          <li>Extracts the current state from device</li>
+          <li>Checks all properties against the current state,<br /> recording violations</li>
+          <li>Selects the next action based on the current state using a fuzzer, and performs it on device</li>
+          <li>Repeats the process</li>
+        </ol>
+      </section>
+
+      <!-- 11. THE BUG -->
+      <section>
+        <h2>When we run it for our spec</h2>
+        <img src="./demo.png" class="meme" alt="Terminal output showing a property violation found by Sanderling">
+      </section>
+
+
+      <section>
+        <h2>Found the bug</h2>
+        <img src="double-tap.png" class="diagram diagram-sm"
+          alt="Diagram showing single tap giving +$50 vs double tap giving +$100">
+      </section>
+
+      <!-- 12. EXAMPLE TEST PASSES -->
+      <section>
+        <h2>With example test</h2>
+        <pre><code class="language-kotlin">@Test
+fun `adding $50 credit increases balance by $50`() {
+    // type 50
+    // tap Submit  <- just once, obviously
+    // go back home
+
+    assertEquals(5000, home.totalBalanceCents())
+}</code></pre>
+        <br>
+        <p class="pass" style="font-size:1.2em;">passed</p>
+        <p class="dim" style="font-size:0.7em; margin-top:0.5em;">
+          We never thought to tap twice. The test didn't either.
+        </p>
+      </section>
+
+      <!-- 15. FUZZER FINDS IT -->
+      <section>
+        <h2>With property test</h2>
+        <pre><code class="language-text">
+Step 14  Tap        -> AddTransactionButton
+Step 15  InputText  -> TxnAmountField  "49"
+Step 16  Tap  -> TxnSubmit      
+Step 17  Tap  -> TxnSubmit       
+
+Property violated: submitMovesBalanceByTypedAmount
+  expected balance change:  4900 cents
+  actual   balance change:  9800 cents  <- 2x the amount</code></pre>
+        <br>
+        <p class="fail" style="font-size:1.2em;">violation</p>
+        <p class="dim" style="font-size:0.7em; margin-top:0.5em;">
+          Step 17 was random. We never wrote it.
+        </p>
+      </section>
+
+      <section>
+        <h2>Recap</h2>
+        <ul class="step-list" style="margin: 1em auto; font-size:36px; line-height:2.2;">
+          <li>Example-based testing is limited with action space</li>
+          <li>Property-based testing lets us specify invariants that must hold for randomized action space</li>
+        </ul>
+      </section>
+
+      <!-- 21. CLOSE -->
+      <section>
+        <h2>Resources</h2>
+        <ul class="step-list" style="font-size:0.85em;">
+          <li>It's Open source <a href="https://github.com/priyanshujain/sanderling" target="_blank">github.com/priyanshujain/sanderling</a></li>
+        </ul>
+        <img src="./repo.svg"
+          class="meme" alt="">
+          <p>If you want to use this or contribute, please come talk to me.</p>
+        <br>
+      </section>
+
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/plugin/highlight/highlight.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/plugin/highlight/monokai.min.css">
+  <script>
+    Reveal.initialize({
+      hash: true,
+      slideNumber: 'c/t',
+      controls: true,
+      progress: true,
+      center: true,
+      transition: 'fade',
+      transitionSpeed: 'fast',
+      plugins: [RevealHighlight],
+    });
+  </script>
+</body>
+
+</html>
