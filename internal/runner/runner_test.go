@@ -673,14 +673,13 @@ func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
 		t.Fatalf("applyAction: %v", err)
 	}
 	// The post-tap settle is now a brief internal sleep, not a WaitForIdle RPC,
-	// so the recorded driver actions are focus-tap, erase, input. The focus tap
-	// goes by selector (live on-device resolution) since the action carries one.
+	// so the recorded driver actions are tap, erase, input.
 	actions := driverMock.Actions()
 	if len(actions) != 3 {
 		t.Fatalf("want tap, erase, input; got %v", actions)
 	}
-	if actions[0].Kind != mockdriver.ActionTapSelector || actions[0].Selector != "id:username" {
-		t.Errorf("first action = %+v, want tap_selector id:username", actions[0])
+	if actions[0].Kind != mockdriver.ActionTap {
+		t.Errorf("first action = %v, want tap", actions[0].Kind)
 	}
 	if actions[1].Kind != mockdriver.ActionEraseText || actions[1].CharacterCount != len("stale-value") {
 		t.Errorf("second action = %+v, want erase_text of %d characters", actions[1], len("stale-value"))
