@@ -300,6 +300,18 @@ func TestLLMSourceFirstValidIndexWins(t *testing.T) {
 	if action.Kind != verifier.ActionKindTap {
 		t.Errorf("action = %+v, want Tap from the first valid index", action)
 	}
+
+	// The trace records the full ranked list and the 1-based rank that won, so
+	// the reasoning (which describes the top pick) can be reconciled with the
+	// executed action when an earlier pick was skipped.
+	traceAction := traceActionFor(action, nil)
+	stampActionSource(traceAction, source)
+	if !slices.Equal(traceAction.LLMRanked, []int{-1, tapIndex}) {
+		t.Errorf("trace ranked = %v, want [-1 %d]", traceAction.LLMRanked, tapIndex)
+	}
+	if traceAction.LLMChosenRank != 2 {
+		t.Errorf("trace chosen rank = %d, want 2 (the second pick won)", traceAction.LLMChosenRank)
+	}
 }
 
 func TestLLMSourceSkipsOnHTTPError(t *testing.T) {

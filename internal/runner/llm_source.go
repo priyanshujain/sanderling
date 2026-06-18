@@ -57,9 +57,21 @@ type llmSource struct {
 
 	// lastSource/lastReasoning describe the most recent NextAction so the runner
 	// can stamp the trace. lastSource is "llm" only when the LLM (not setup)
-	// chose the action; lastReasoning is the model's rationale.
-	lastSource    string
-	lastReasoning string
+	// chose the action; lastReasoning is the model's rationale. lastRanked is
+	// the model's full ranked list and lastChosenRank the 1-based position in it
+	// that won (1 = top pick), so the trace can reconcile reasoning with action.
+	lastSource     string
+	lastReasoning  string
+	lastRanked     []int
+	lastChosenRank int
+}
+
+// llmSelection is the outcome of one LLM selection call.
+type llmSelection struct {
+	action     verifier.Action
+	reasoning  string
+	ranked     []int
+	chosenRank int // 1-based position in ranked that produced action
 }
 
 // NextAction returns the step's action. Setup precedence is preserved by
@@ -68,6 +80,8 @@ type llmSource struct {
 func (s *llmSource) NextAction(ctx context.Context) (verifier.Action, error) {
 	s.lastSource = ""
 	s.lastReasoning = ""
+	s.lastRanked = nil
+	s.lastChosenRank = 0
 	s.history.completeLast(s.verifier.CurrentScreen())
 
 	action, err := s.verifier.NextAction()
@@ -79,43 +93,45 @@ func (s *llmSource) NextAction(ctx context.Context) (verifier.Action, error) {
 		return verifier.Action{}, err
 	}
 
-	action, reasoning, ok := s.selectViaLLM(ctx)
+	selection, ok := s.selectViaLLM(ctx)
 	if !ok {
 		// Any failure (HTTP error, unusable output, no valid index) skips the
 		// step; the next step re-observes and tries again. No backend mixing.
 		return verifier.Action{}, verifier.ErrNoAction
 	}
 	s.lastSource = "llm"
-	s.lastReasoning = reasoning
-	s.history.add(describeAction(action))
-	return action, nil
+	s.lastReasoning = selection.reasoning
+	s.lastRanked = selection.ranked
+	s.lastChosenRank = selection.chosenRank
+	s.history.add(describeAction(selection.action))
+	return selection.action, nil
 }
 
 // selectViaLLM runs one multimodal call and maps the first valid ranked index
 // to an action. It returns ok=false on any error/empty/invalid output, logging
 // the cause; the caller turns that into a skipped step.
-func (s *llmSource) selectViaLLM(ctx context.Context) (verifier.Action, string, bool) {
+func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, bool) {
 	candidates := s.verifier.AllCandidates()
 	if len(candidates) == 0 {
-		return verifier.Action{}, "", false
+		return llmSelection{}, false
 	}
 
 	response, err := s.client.ChatCompletion(ctx, s.buildRequest(candidates))
 	if err != nil {
 		s.logger.Warn("llm action selection failed", "err", err)
-		return verifier.Action{}, "", false
+		return llmSelection{}, false
 	}
 	if len(response.Choices) == 0 {
 		s.logger.Warn("llm returned no choices")
-		return verifier.Action{}, "", false
+		return llmSelection{}, false
 	}
 
 	ranked, reasoning, err := parseRanked(response.Choices[0].Message.Content)
 	if err != nil {
 		s.logger.Warn("llm output unusable", "err", err)
-		return verifier.Action{}, "", false
+		return llmSelection{}, false
 	}
-	for _, index := range ranked {
+	for position, index := range ranked {
 		if index < 0 || index >= len(candidates) {
 			continue
 		}
@@ -124,10 +140,10 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (verifier.Action, string, 
 			s.logger.Warn("building action from candidate failed", "index", index, "err", err)
 			continue
 		}
-		return action, reasoning, true
+		return llmSelection{action: action, reasoning: reasoning, ranked: ranked, chosenRank: position + 1}, true
 	}
 	s.logger.Warn("llm returned no valid candidate index", "ranked", ranked, "candidates", len(candidates))
-	return verifier.Action{}, "", false
+	return llmSelection{}, false
 }
 
 // buildRequest assembles the one-shot multimodal request: a system frame, the
@@ -328,6 +344,8 @@ func stampActionSource(traceAction *trace.Action, source ActionSource) {
 	}
 	traceAction.Source = llm.lastSource
 	traceAction.LLMReasoning = llm.lastReasoning
+	traceAction.LLMRanked = llm.lastRanked
+	traceAction.LLMChosenRank = llm.lastChosenRank
 }
 
 // screenshotDataURL downscales the PNG and encodes it as a data URL for the
