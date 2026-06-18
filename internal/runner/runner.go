@@ -562,23 +562,27 @@ func settleForForeground(ctx context.Context, options Options) {
 func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
 	switch action.Kind {
 	case verifier.ActionKindTap:
-		x, y, ok := resolveCoordinates(action, tree)
-		if !ok {
-			if action.On == "" {
-				return nil
-			}
+		// A selector resolves live on-device at tap time, so it lands correctly
+		// even when the layout shifted between observe and apply (e.g. the soft
+		// keyboard finished animating out, moving every control down). Tapping
+		// the observe-time coordinates would miss the moved control. Coordinates
+		// are the fallback for selector-less actions (the web/V8 path only emits
+		// coordinates).
+		if action.On != "" {
 			return drv.TapSelector(ctx, action.On)
 		}
-		return drv.Tap(ctx, x, y)
+		if x, y, ok := resolveCoordinates(action, tree); ok {
+			return drv.Tap(ctx, x, y)
+		}
+		return nil
 	case verifier.ActionKindDoubleTap:
-		x, y, ok := resolveCoordinates(action, tree)
-		if !ok {
-			if action.On == "" {
-				return nil
-			}
+		if action.On != "" {
 			return drv.DoubleTapSelector(ctx, action.On)
 		}
-		return drv.DoubleTap(ctx, x, y)
+		if x, y, ok := resolveCoordinates(action, tree); ok {
+			return drv.DoubleTap(ctx, x, y)
+		}
+		return nil
 	case verifier.ActionKindLongPress:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
@@ -596,14 +600,18 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		}
 		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindInputText:
+		// Focus the field by selector when one is present, for the same
+		// layout-shift reason as Tap: InputText is the action that raises the
+		// keyboard, so its follow-on focus tap is the most likely to land on a
+		// stale position. Coordinates focus the selector-less web/V8 path.
 		tapped := false
-		if x, y, ok := resolveCoordinates(action, tree); ok {
-			if err := drv.Tap(ctx, x, y); err != nil {
+		if action.On != "" {
+			if err := drv.TapSelector(ctx, action.On); err != nil {
 				return err
 			}
 			tapped = true
-		} else if action.On != "" {
-			if err := drv.TapSelector(ctx, action.On); err != nil {
+		} else if x, y, ok := resolveCoordinates(action, tree); ok {
+			if err := drv.Tap(ctx, x, y); err != nil {
 				return err
 			}
 			tapped = true
