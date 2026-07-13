@@ -96,6 +96,20 @@ func TestLLMConfigDetectsMarker(t *testing.T) {
 	if config.Model != "vendor/model" {
 		t.Errorf("model = %q, want vendor/model", config.Model)
 	}
+	if config.Instructions != "" {
+		t.Errorf("instructions = %q, want empty when unset", config.Instructions)
+	}
+}
+
+func TestLLMConfigReadsInstructions(t *testing.T) {
+	v := newLoadedVerifier(t, `globalThis.actions = { kind: "llm", config: { model: "m", instructions: "find bugs" } };`)
+	config, ok := v.LLMConfig()
+	if !ok {
+		t.Fatal("LLMConfig not detected")
+	}
+	if config.Instructions != "find bugs" {
+		t.Errorf("instructions = %q, want %q", config.Instructions, "find bugs")
+	}
 }
 
 func TestLLMConfigAbsentForSeededSpec(t *testing.T) {

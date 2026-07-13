@@ -12,6 +12,9 @@ import (
 // read off globalThis.actions when the spec assigned `actions = llm({...})`.
 type LLMConfig struct {
 	Model string
+	// Instructions is optional spec-level guidance appended to the prompt to
+	// steer the model toward bug-hunting (empty when unset).
+	Instructions string
 }
 
 // LLMConfig reports the LLM action backend config when the spec selected it
@@ -42,7 +45,11 @@ func (v *Verifier) LLMConfig() (LLMConfig, bool) {
 	if value := configObject.Get("model"); value != nil && !goja.IsUndefined(value) {
 		model = value.String()
 	}
-	return LLMConfig{Model: model}, true
+	instructions := ""
+	if value := configObject.Get("instructions"); value != nil && !goja.IsUndefined(value) && !goja.IsNull(value) {
+		instructions = value.String()
+	}
+	return LLMConfig{Model: model, Instructions: instructions}, true
 }
 
 // Screenshot returns the most recent step's screenshot PNG (set by
