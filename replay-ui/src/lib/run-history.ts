@@ -14,6 +14,55 @@ export interface RunHistory {
   steps: (Step | null)[];
 }
 
+// A next/eventually obligation is evaluated one or more steps AFTER the action
+// that armed it, so the checker records the violation on the DETECTION step
+// while its witness names the CAUSE step. The timeline dot (the backend's
+// markViolations) already sits on the cause step; mirror that here so the
+// Violations tab and property lanes light up on the same step — the guilty
+// action — not the unrelated action that happened to be running when the
+// obligation resolved. Steps are cloned, never mutated in place.
+export function relocateViolationsToCause(
+  steps: (Step | null)[],
+): (Step | null)[] {
+  const byIndex = new Map<number, Step>();
+  for (const s of steps) if (s) byIndex.set(s.step, s);
+
+  const clones = new Map<number, Step>();
+  const clone = (s: Step): Step => {
+    let c = clones.get(s.step);
+    if (!c) {
+      c = {
+        ...s,
+        violations: [...(s.violations ?? [])],
+        witnesses: { ...(s.witnesses ?? {}) },
+      };
+      clones.set(s.step, c);
+    }
+    return c;
+  };
+
+  for (const s of steps) {
+    for (const name of s?.violations ?? []) {
+      const cause = s?.witnesses?.[name]?.step;
+      if (cause === undefined || cause === s?.step) continue;
+      const target = byIndex.get(cause);
+      if (!target) continue;
+      const from = clone(s as Step);
+      const to = clone(target);
+      from.violations = (from.violations ?? []).filter((n) => n !== name);
+      const witness = s?.witnesses?.[name];
+      if (witness) {
+        delete from.witnesses?.[name];
+        (to.witnesses ??= {})[name] = witness;
+      }
+      if (!(to.violations ?? []).includes(name)) (to.violations ??= []).push(name);
+    }
+  }
+
+  if (clones.size === 0) return steps;
+  return steps.map((s) => (s ? clones.get(s.step) ?? s : s));
+}
+
 export function collectPropertyNames(steps: (Step | null)[]): string[] {
   const names = new Set<string>();
   for (const step of steps) {
@@ -47,10 +96,11 @@ export function buildRunHistory(
   run: Run,
   responses: (Step | null)[],
 ): RunHistory {
-  const propertyNames = collectPropertyNames(responses);
+  const steps = relocateViolationsToCause(responses);
+  const propertyNames = collectPropertyNames(steps);
   const lanes: PropertyLane[] = propertyNames.map((name) => ({
     name,
-    statuses: responses.map((step) => statusForProperty(name, step)),
+    statuses: steps.map((step) => statusForProperty(name, step)),
   }));
   const firstViolationStep = run.steps.find((entry) => entry.has_violations)?.index;
   const firstExceptionStep = run.steps.find((entry) => entry.has_exceptions)?.index;
@@ -63,7 +113,7 @@ export function buildRunHistory(
   const metricsSamples: MetricsSample[] = run.steps.map((entry, position) => ({
     stepIndex: entry.index,
     timestamp: entry.timestamp,
-    metrics: responses[position]?.metrics,
+    metrics: steps[position]?.metrics,
   }));
   return {
     names: propertyNames,
@@ -73,6 +123,6 @@ export function buildRunHistory(
     exceptionStepIndices,
     violationStepIndices,
     metricsSamples,
-    steps: responses,
+    steps,
   };
 }

@@ -2,6 +2,7 @@ import { describe, it, expect } from "bun:test";
 import {
   buildRunHistory,
   collectPropertyNames,
+  relocateViolationsToCause,
   sortLanes,
   statusForProperty,
 } from "../lib/run-history";
@@ -52,7 +53,67 @@ describe("sortLanes", () => {
   });
 });
 
+// Bug class: a next/eventually violation records on the DETECTION step but is
+// caused earlier; leaving it on the detection step lights up an unrelated
+// action in the Violations tab while the timeline dot sits on the cause step.
+describe("relocateViolationsToCause", () => {
+  it("moves a deferred violation to the step its witness blames", () => {
+    const steps = [
+      step({ step: 290, residuals: { p: { op: "predicate", name: "p3" } } }),
+      step({
+        step: 291,
+        violations: ["p"],
+        witnesses: { p: { step: 290, reason: "predicate false" } },
+        residuals: { p: { op: "false" } },
+      }),
+      step({ step: 292 }),
+    ];
+    const moved = relocateViolationsToCause(steps);
+
+    expect(moved[0]?.violations).toEqual(["p"]);
+    expect(moved[0]?.witnesses?.p?.reason).toBe("predicate false");
+    expect(moved[1]?.violations).toEqual([]);
+    expect(moved[1]?.witnesses?.p).toBeUndefined();
+    // originals are cloned, never mutated
+    expect(steps[1]?.violations).toEqual(["p"]);
+    expect(steps[1]?.witnesses?.p?.step).toBe(290);
+  });
+
+  it("leaves a violation without a witness on its detection step", () => {
+    const steps = [step({ step: 5, violations: ["p"], residuals: { p: { op: "false" } } })];
+    expect(relocateViolationsToCause(steps)).toBe(steps);
+  });
+
+  it("keeps the violation put when the blamed step is absent from the trace", () => {
+    const steps = [step({ step: 9, violations: ["p"], witnesses: { p: { step: 3 } } })];
+    expect(relocateViolationsToCause(steps)[0]?.violations).toEqual(["p"]);
+  });
+});
+
 describe("buildRunHistory", () => {
+  it("anchors a deferred violation's lane cell to the cause step, not detection", () => {
+    const run = {
+      id: "run-2",
+      steps: [summary({ index: 290, has_violations: true }), summary({ index: 291 })],
+    } as unknown as Run;
+    const responses = [
+      step({ step: 290, residuals: { p: { op: "predicate" } } }),
+      step({
+        step: 291,
+        violations: ["p"],
+        witnesses: { p: { step: 290 } },
+        residuals: { p: { op: "false" } },
+      }),
+    ];
+
+    const history = buildRunHistory(run, responses);
+
+    expect(history.lanes[0].statuses).toEqual(["violated", "pending"]);
+    expect(history.steps[0]?.violations).toEqual(["p"]);
+    expect(history.steps[1]?.violations).toEqual([]);
+    expect(history.firstViolationStep).toBe(290);
+  });
+
   it("aligns lane statuses, metrics samples, and first-violation index by position", () => {
     const run = {
       id: "run-1",
