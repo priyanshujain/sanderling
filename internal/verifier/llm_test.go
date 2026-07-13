@@ -235,6 +235,24 @@ func TestCandidatesOffRouteLeafYieldsNothing(t *testing.T) {
 	}
 }
 
+func TestCandidatesSkipsCrossFadeFrames(t *testing.T) {
+	// Two route *Screen tags alive at once is a NavHost cross-fade: its layout is
+	// mid-animation (collapsed coordinate space), so the LLM must NOT act on it.
+	crossFade := `{
+      "attributes": {"bounds": "[0,0,320,640]"},
+      "children": [
+        {"attributes": {"resource-id": "LedgerScreen", "bounds": "[0,0,320,640]"}, "children": [
+          {"attributes": {"resource-id": "TxnSubmit", "text": "Add credit", "bounds": "[20,332,300,380]"}, "clickable": true, "enabled": true, "children": []}
+        ]},
+        {"attributes": {"resource-id": "AddTransactionScreen", "bounds": "[0,0,320,640]"}, "children": []}
+      ]
+    }`
+	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", crossFade)
+	if got := v.Candidates(); got != nil {
+		t.Errorf("cross-fade frame should yield no candidates, got %v", descriptions(got))
+	}
+}
+
 func TestCandidatesNilWithoutTreeOrActions(t *testing.T) {
 	withActions := newLoadedVerifier(t, "globalThis.actions = {kind:'builtin', verb:'taps'};")
 	if got := withActions.Candidates(); got != nil {
