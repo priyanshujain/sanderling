@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -335,6 +336,43 @@ func TestLLMSourceSkipsOnOutOfRangeChoice(t *testing.T) {
 	}
 	if source.lastSource != "" {
 		t.Errorf("lastSource = %q, want empty after a skipped step", source.lastSource)
+	}
+}
+
+func TestLLMSourceAcceptsEchoWithWeightSuffix(t *testing.T) {
+	// Real models copy the whole numbered line, including its trailing "(w34)"
+	// weight annotation. That must still count as a match, not a strict skip.
+	fake := newFakeOpenRouter(t)
+	source, verifierInstance := newLLMSource(t, fake)
+	pushLLMSnapshot(t, verifierInstance)
+	candidates := verifierInstance.Candidates()
+
+	tap := candidateByKind(t, candidates, verifier.ActionKindTap)
+	fake.choice = tap.Index
+	fake.chosenAction = tap.Description + "  (w" + strconv.Itoa(tap.Weight) + ")"
+	action, err := source.NextAction(context.Background())
+	if err != nil {
+		t.Fatalf("NextAction: %v", err)
+	}
+	if action.Kind != verifier.ActionKindTap {
+		t.Errorf("action = %+v, want Tap; the weight-suffixed echo was wrongly rejected", action)
+	}
+	if source.lastSource != "llm" {
+		t.Error("weight-suffixed echo should be accepted, not strict-skipped")
+	}
+}
+
+func TestStripWeightSuffix(t *testing.T) {
+	cases := map[string]string{
+		`Tap "+ Add account"  (w34)`: `Tap "+ Add account"`,
+		`Tap "Sign in"`:              `Tap "Sign in"`,
+		`Scroll down (w7)`:           `Scroll down`,
+		`  Tap "x" (w1)  `:           `Tap "x"`,
+	}
+	for in, want := range cases {
+		if got := stripWeightSuffix(in); got != want {
+			t.Errorf("stripWeightSuffix(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
