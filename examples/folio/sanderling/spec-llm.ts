@@ -17,4 +17,13 @@ import { llm } from "@sanderling/spec";
 
 export { properties, setup } from "./spec";
 
-export const actionsRoot = llm({ model: "openai/gpt-5.4-nano" });
+// instructions only describe WHAT the app is — its purpose and features. They
+// say nothing about HOW to test it: no bug, no technique, no "try to break it"
+// (the base prompt already carries the bug-finding goal). The model figures out
+// how to test entirely on its own. If we encoded the answer here, a "pass"
+// would prove nothing and the feature would be worse than useless.
+export const actionsRoot = llm({
+  model: "gpt-5.4-nano",
+  instructions:
+    "Folio is a personal-finance ledger app. After signing in, the home screen lists accounts, each with a balance. You can create accounts, open an account to see its ledger, and add transactions; each transaction has an amount and changes that account's balance and the overall total.",
+});
