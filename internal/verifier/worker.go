@@ -28,6 +28,11 @@ type Verifier struct {
 	// the shared picker (pick.ts) over the shared Pcg.
 	nextActionFn goja.Callable
 
+	// setupActionFn is the bundle-installed __sanderlingSetupAction__, which
+	// walks ONLY the setup generator. The LLM action generator runs it for setup
+	// precedence (e.g. login) without triggering the seeded action root.
+	setupActionFn goja.Callable
+
 	// sampleInputFn is the bundle-installed __sanderlingSampleInput__, which
 	// draws one value from the shared INPUT_CORPUS. The LLM action backend uses
 	// it to fill InputText values, reusing the exact corpus draw rather than
@@ -156,6 +161,11 @@ func (v *Verifier) Load(source string) error {
 	if fn := v.runtime.GlobalObject().Get("__sanderlingNextAction__"); fn != nil {
 		if callable, ok := goja.AssertFunction(fn); ok {
 			v.nextActionFn = callable
+		}
+	}
+	if fn := v.runtime.GlobalObject().Get("__sanderlingSetupAction__"); fn != nil {
+		if callable, ok := goja.AssertFunction(fn); ok {
+			v.setupActionFn = callable
 		}
 	}
 
@@ -585,6 +595,28 @@ func (v *Verifier) NextAction() (Action, error) {
 	value, err := v.nextActionFn(goja.Undefined())
 	if err != nil {
 		return Action{}, fmt.Errorf("next action: %w", err)
+	}
+	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
+		return Action{}, ErrNoAction
+	}
+	raw, err := json.Marshal(value.Export())
+	if err != nil {
+		return Action{}, fmt.Errorf("marshal action: %w", err)
+	}
+	return DecodeAction(raw)
+}
+
+// SetupAction walks ONLY the setup generator (globalThis.setup), returning its
+// action or ErrNoAction. The LLM action generator runs this for setup
+// precedence (e.g. login) without triggering the seeded action root, which it
+// replaces entirely. Mirrors NextAction's decode.
+func (v *Verifier) SetupAction() (Action, error) {
+	if v.setupActionFn == nil {
+		return Action{}, ErrNoAction
+	}
+	value, err := v.setupActionFn(goja.Undefined())
+	if err != nil {
+		return Action{}, fmt.Errorf("setup action: %w", err)
 	}
 	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
 		return Action{}, ErrNoAction

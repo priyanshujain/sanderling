@@ -139,6 +139,16 @@ export function installRuntime(
     () => INPUT_CORPUS[rng.intN(INPUT_CORPUS.length)] ?? "",
   );
   defineLockedGlobal("__sanderlingExtractors__", () => evaluateExtractors());
+  // __sanderlingSetupAction__ walks ONLY the setup generator once, for the LLM
+  // action generator (Go), which drives selection itself and must not run the
+  // seeded action root — but still wants setup's precondition steps (e.g. login)
+  // to run first. Returns null when setup is unset or yields nothing.
+  defineLockedGlobal("__sanderlingSetupAction__", () => {
+    resolveRoot();
+    const setup = resolveSetup();
+    if (!setup) return null;
+    return serializeAction(walk(setup, rng, host));
+  });
   defineLockedGlobal("__sanderlingNextAction__", () => {
     // resolveRoot runs first: on web it also resets the per-tick candidate
     // cache, which setup's walk below must see fresh.
