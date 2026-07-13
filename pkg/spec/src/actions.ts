@@ -38,9 +38,11 @@ export function actions(generator: () => Action[]): GeneratorNode {
 // random candidate, Go drives an OpenAI-compatible model that chooses which
 // candidate to act on from the screenshot + the candidate list. The returned
 // marker is inert on the JS picker (pick.ts walks it to null); Go reads its
-// config.model off globalThis.actions. API key comes from OPENROUTER_API_KEY
+// config off globalThis.actions. API key comes from OPENROUTER_API_KEY
 // (OpenRouter) or OPENAI_API_KEY (OpenAI); OpenRouter wins when both are set.
-export function llm(config: { model: string }): GeneratorNode {
+// Optional `instructions` are appended to the model's prompt as generic
+// bug-hunting guidance for this spec; the model still only ranks candidates.
+export function llm(config: { model: string; instructions?: string }): GeneratorNode {
   return { kind: "llm", config };
 }
 

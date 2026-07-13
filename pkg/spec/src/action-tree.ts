@@ -63,7 +63,7 @@ export type GeneratorNode =
   | { kind: "weighted"; branches: ReadonlyArray<readonly [number, GeneratorNode]> }
   | { kind: "actions"; generate: () => ActionDescriptor[] }
   | { kind: "builtin"; verb: BuiltinVerb }
-  | { kind: "llm"; config: { model: string } };
+  | { kind: "llm"; config: { model: string; instructions?: string } };
 
 // Candidate is one host-enumerated target for a builtin verb. The host
 // resolves geometry (and a native selector) so no element handle crosses into
