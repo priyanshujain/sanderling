@@ -100,6 +100,25 @@ func TestCandidatesTypingExposesInputType(t *testing.T) {
 	}
 }
 
+func TestCandidatesLabelsEditableFieldByHintNotTypedValue(t *testing.T) {
+	// A field already showing "99" must still be labeled by its purpose (the
+	// hint), not by its transient content, so the description stays stable.
+	tree := `{
+      "attributes": {"bounds": "[0,0,400,800]"},
+      "children": [
+        {"attributes": {"resource-id": "Amt", "class": "EditText", "hintText": "Amount", "text": "99", "bounds": "[0,0,400,100]"}, "enabled": true, "children": []}
+      ]
+    }`
+	v := enumVerifier(t, "{kind:'builtin', verb:'typing'}", tree)
+	candidates := v.Candidates()
+	if hasCandidate(candidates, `Type into "99" (number)`) || hasCandidate(candidates, `Type into "99"`) {
+		t.Errorf("editable field labeled by its typed value: %v", descriptions(candidates))
+	}
+	if !hasCandidate(candidates, `Type into "Amount" (number)`) {
+		t.Errorf("want the field labeled by its hint, got %v", descriptions(candidates))
+	}
+}
+
 func TestCandidatesFoldsGesturesIntoDirectionalScrolls(t *testing.T) {
 	v := enumVerifier(t,
 		"{kind:'weighted', branches:[[1,{kind:'builtin',verb:'scrolls'}],[1,{kind:'builtin',verb:'swipes'}]]}",

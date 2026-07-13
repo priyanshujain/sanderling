@@ -581,6 +581,13 @@ func buildNodeIndex(tree *hierarchy.Tree) map[*hierarchy.Element]*hierarchy.Node
 // case that fixes empty-text Compose buttons whose word lives on a child), then
 // its class as a last resort.
 func visibleLabel(element *hierarchy.Element, nodeIndex map[*hierarchy.Element]*hierarchy.Node) string {
+	// An editable field's own text is the transient typed value ("1"); its hint
+	// names its purpose ("Amount") and stays stable, so prefer the hint there.
+	if element.Editable {
+		if hint := element.Attributes["hintText"]; hint != "" {
+			return truncateLabel(hint)
+		}
+	}
 	if element.Text != "" {
 		return truncateLabel(element.Text)
 	}
