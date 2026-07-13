@@ -88,7 +88,7 @@ func TestAllCandidatesNilTree(t *testing.T) {
 }
 
 func TestLLMConfigDetectsMarker(t *testing.T) {
-	v := newLoadedVerifier(t, `globalThis.actions = { kind: "llm", config: { model: "vendor/model" } };`)
+	v := newLoadedVerifier(t, `globalThis.generator = { kind: "llm", config: { model: "vendor/model" } };`)
 	config, ok := v.LLMConfig()
 	if !ok {
 		t.Fatal("LLMConfig not detected for llm marker")
@@ -102,7 +102,7 @@ func TestLLMConfigDetectsMarker(t *testing.T) {
 }
 
 func TestLLMConfigReadsInstructions(t *testing.T) {
-	v := newLoadedVerifier(t, `globalThis.actions = { kind: "llm", config: { model: "m", instructions: "find bugs" } };`)
+	v := newLoadedVerifier(t, `globalThis.generator = { kind: "llm", config: { model: "m", instructions: "find bugs" } };`)
 	config, ok := v.LLMConfig()
 	if !ok {
 		t.Fatal("LLMConfig not detected")
@@ -115,7 +115,7 @@ func TestLLMConfigReadsInstructions(t *testing.T) {
 func TestLLMConfigAbsentForSeededSpec(t *testing.T) {
 	v := newLoadedVerifier(t, `globalThis.actions = { kind: "builtin", verb: "taps" };`)
 	if _, ok := v.LLMConfig(); ok {
-		t.Error("LLMConfig should be false for a non-llm actions root")
+		t.Error("LLMConfig should be false when no generator is declared")
 	}
 }
 

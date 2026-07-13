@@ -8,8 +8,10 @@ import (
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
-// LLMConfig is the spec-declared configuration for the LLM action backend,
-// read off globalThis.actions when the spec assigned `actions = llm({...})`.
+// LLMConfig is the spec-declared configuration for the LLM action generator,
+// read off globalThis.generator when the spec assigned `generator = llm({...})`.
+// It is orthogonal to globalThis.actions (the weighted tree the LLM picks from);
+// only the picker differs.
 type LLMConfig struct {
 	Model string
 	// Instructions is optional spec-level guidance appended to the prompt to
@@ -17,15 +19,15 @@ type LLMConfig struct {
 	Instructions string
 }
 
-// LLMConfig reports the LLM action backend config when the spec selected it
-// (globalThis.actions.kind === "llm"). The second return is false for every
+// LLMConfig reports the LLM action-generator config when the spec declared one
+// (globalThis.generator.kind === "llm"). The second return is false for every
 // other spec, so the runner falls back to the seeded picker.
 func (v *Verifier) LLMConfig() (LLMConfig, bool) {
-	actions := v.runtime.GlobalObject().Get("actions")
-	if actions == nil || goja.IsUndefined(actions) || goja.IsNull(actions) {
+	generator := v.runtime.GlobalObject().Get("generator")
+	if generator == nil || goja.IsUndefined(generator) || goja.IsNull(generator) {
 		return LLMConfig{}, false
 	}
-	object := actions.ToObject(v.runtime)
+	object := generator.ToObject(v.runtime)
 	if object == nil {
 		return LLMConfig{}, false
 	}

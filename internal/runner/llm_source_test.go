@@ -31,7 +31,7 @@ var llmInputCorpus = []string{
 const llmFixtureSpec = `
 import { llm, always } from "@sanderling/spec";
 globalThis.properties = { ok: always(() => true) };
-globalThis.actions = llm({ model: "test/model" });
+globalThis.generator = llm({ model: "test/model" });
 `
 
 const llmTreeJSON = `{
