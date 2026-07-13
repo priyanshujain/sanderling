@@ -30,6 +30,7 @@ type testOptions struct {
 	seed           int64
 	output         string
 	clearData      bool
+	generator      string
 }
 
 const topUsage = `sanderling is a property-based UI fuzzer for mobile apps.
@@ -62,6 +63,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.Int64Var(&options.seed, "seed", 0, "RNG seed (0 = random)")
 	flagSet.StringVar(&options.output, "output", "./runs", "output directory for traces")
 	flagSet.BoolVar(&options.clearData, "clear-data", true, "clear app data before launching so each run starts from a fresh install; pass --clear-data=false to resume prior state")
+	flagSet.StringVar(&options.generator, "generator", "seeded", "action generator: seeded (weighted random) or llm (model picks from the same candidate set; requires generator = llm() in the spec)")
 	if err := flagSet.Parse(args); err != nil {
 		return testOptions{}, err
 	}
@@ -75,6 +77,11 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	case "android", "ios", "web":
 	default:
 		return testOptions{}, fmt.Errorf("unsupported platform: %q (android, ios, web)", options.platform)
+	}
+	switch options.generator {
+	case "seeded", "llm":
+	default:
+		return testOptions{}, fmt.Errorf("unsupported generator: %q (seeded, llm)", options.generator)
 	}
 	return options, nil
 }
