@@ -113,12 +113,13 @@ export default function RunDetail() {
     return <div className="status-block">loading run...</div>;
   }
 
-  const violationsBefore = currentStep?.violations ?? [];
-  const violationsAfter = nextStep?.violations ?? violationsBefore;
+  // A violation belongs to the action that caused it (relocateViolationsToCause
+  // already anchored it to that step), so show this step's own violations in
+  // both panels rather than bleeding the next step's record into "after".
+  const stepViolations = currentStep?.violations ?? [];
+  const stepWitnesses = currentStep?.witnesses;
   const residualsBefore = currentStep?.residuals;
   const residualsAfter = nextStep?.residuals ?? residualsBefore;
-  const witnessesBefore = currentStep?.witnesses;
-  const witnessesAfter = nextStep?.witnesses ?? witnessesBefore;
   const exceptionsForStep = currentStep?.exceptions;
   const beforeSpace = deviceSpaceOf(currentStep?.hierarchy);
   const afterSpace = deviceSpaceOf(nextStep?.hierarchy ?? currentStep?.hierarchy);
@@ -157,9 +158,9 @@ export default function RunDetail() {
       content: (
         <ViolationsPanel
           propertyNames={history?.names ?? []}
-          violations={violationsBefore}
+          violations={stepViolations}
           residuals={residualsBefore}
-          witnesses={witnessesBefore}
+          witnesses={stepWitnesses}
           onJumpToFirstViolation={jumpToFirstViolation}
           hasFirstViolation={history?.firstViolationStep !== undefined}
           onJumpToStep={goTo}
@@ -170,17 +171,17 @@ export default function RunDetail() {
       id: "violations",
       label: "Violations",
       badge:
-        violationsBefore.length > 0 ? (
+        stepViolations.length > 0 ? (
           <span className="tabs-badge" data-kind="violation">
-            {violationsBefore.length}
+            {stepViolations.length}
           </span>
         ) : undefined,
       content: (
         <ViolationsPanel
           propertyNames={history?.names ?? []}
-          violations={violationsBefore}
+          violations={stepViolations}
           residuals={residualsBefore}
-          witnesses={witnessesBefore}
+          witnesses={stepWitnesses}
           onJumpToFirstViolation={jumpToFirstViolation}
           hasFirstViolation={history?.firstViolationStep !== undefined}
           onJumpToStep={goTo}
@@ -224,9 +225,9 @@ export default function RunDetail() {
       content: (
         <ViolationsPanel
           propertyNames={history?.names ?? []}
-          violations={violationsAfter}
+          violations={stepViolations}
           residuals={residualsAfter}
-          witnesses={witnessesAfter}
+          witnesses={stepWitnesses}
           onJumpToFirstViolation={jumpToFirstViolation}
           hasFirstViolation={history?.firstViolationStep !== undefined}
           onJumpToStep={goTo}
@@ -237,17 +238,17 @@ export default function RunDetail() {
       id: "violations",
       label: "Violations",
       badge:
-        violationsAfter.length > 0 ? (
+        stepViolations.length > 0 ? (
           <span className="tabs-badge" data-kind="violation">
-            {violationsAfter.length}
+            {stepViolations.length}
           </span>
         ) : undefined,
       content: (
         <ViolationsPanel
           propertyNames={history?.names ?? []}
-          violations={violationsAfter}
+          violations={stepViolations}
           residuals={residualsAfter}
-          witnesses={witnessesAfter}
+          witnesses={stepWitnesses}
           onJumpToFirstViolation={jumpToFirstViolation}
           hasFirstViolation={history?.firstViolationStep !== undefined}
           onJumpToStep={goTo}
