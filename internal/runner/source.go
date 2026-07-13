@@ -83,11 +83,12 @@ func pickSources(options Options) (ActionSource, ExtractorSource, error) {
 			logger = slog.Default()
 		}
 		action := &llmSource{
-			verifier: options.Verifier,
-			client:   client,
-			model:    config.Model,
-			logger:   logger,
-			history:  newActionHistory(llmHistorySize),
+			verifier:     options.Verifier,
+			client:       client,
+			model:        config.Model,
+			instructions: config.Instructions,
+			logger:       logger,
+			history:      newActionHistory(llmHistorySize),
 		}
 		return action, gojaSource{verifier: options.Verifier}, nil
 	}

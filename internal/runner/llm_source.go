@@ -52,8 +52,11 @@ type llmSource struct {
 	verifier *verifier.Verifier
 	client   *llmclient.Client
 	model    string
-	logger   *slog.Logger
-	history  *actionHistory
+	// instructions is optional spec-level guidance appended to the system prompt
+	// to steer the model's bug-hunting (empty when unset).
+	instructions string
+	logger       *slog.Logger
+	history      *actionHistory
 
 	// lastSource/lastReasoning describe the most recent NextAction so the runner
 	// can stamp the trace. lastSource is "llm" only when the LLM (not setup)
@@ -159,11 +162,21 @@ func (s *llmSource) buildRequest(candidates []verifier.ActionCandidate) llmclien
 	return llmclient.Request{
 		Model: s.model,
 		Messages: []llmclient.Message{
-			{Role: "system", Content: []llmclient.ContentPart{llmclient.TextPart(llmSystemPrompt)}},
+			{Role: "system", Content: []llmclient.ContentPart{llmclient.TextPart(s.systemPrompt())}},
 			{Role: "user", Content: userParts},
 		},
 		ResponseFormat: rankedResponseFormat(),
 	}
+}
+
+// systemPrompt is the base framing plus any spec-level instructions, appended as
+// extra guidance so a spec can steer the model's bug-hunting without losing the
+// candidate-kind semantics the base prompt establishes.
+func (s *llmSource) systemPrompt() string {
+	if strings.TrimSpace(s.instructions) == "" {
+		return llmSystemPrompt
+	}
+	return llmSystemPrompt + "\n\n" + s.instructions
 }
 
 // userPrompt renders the numbered candidate list and the recent-action memory.

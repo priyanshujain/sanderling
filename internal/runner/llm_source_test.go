@@ -141,6 +141,19 @@ func TestParseRanked(t *testing.T) {
 	}
 }
 
+func TestSystemPromptAppendsInstructions(t *testing.T) {
+	if got := (&llmSource{}).systemPrompt(); got != llmSystemPrompt {
+		t.Error("empty instructions should yield the base prompt unchanged")
+	}
+	withInstr := (&llmSource{instructions: "hunt for double submits"}).systemPrompt()
+	if !strings.Contains(withInstr, llmSystemPrompt) {
+		t.Error("system prompt must retain the base framing")
+	}
+	if !strings.Contains(withInstr, "hunt for double submits") {
+		t.Error("system prompt must include the spec instructions")
+	}
+}
+
 // fakeOpenRouter is a configurable in-process OpenRouter server. Set ranked /
 // reasoning before each call; it echoes them as a json_schema content body.
 type fakeOpenRouter struct {
