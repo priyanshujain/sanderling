@@ -11,6 +11,7 @@ import (
 	"image/color"
 	"image/png"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/priyanshujain/sanderling/internal/llmclient"
@@ -33,7 +34,7 @@ const (
 // screenshot, picks ONE number, and echoes that action so a mismatch can be
 // caught. The app-specific description (spec instructions) is appended.
 const llmSystemPrompt = "You are exercising a UI to find bugs. Each turn you get a screenshot and a numbered list of concrete actions, each with a weight hinting how much the test author wants it exercised (higher = more). " +
-	"Pick the ONE action most likely to make progress or expose a defect, and feel free to repeat an action when repetition is what would trip a bug. " +
+	"Pick the ONE action most likely to make progress or expose a defect. Bugs often hide in repeated or rapid actions, so once a screen works, deliberately stress it — for example submitting the same form twice in a row to check it is not applied more than once — rather than only advancing. " +
 	"Respond with your reasoning, the chosen number, and chosen_action copied verbatim from that line. For a typing action, also provide the text to enter."
 
 // llmSource selects each step's action with an OpenAI-compatible vision model
@@ -137,7 +138,9 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, bool) {
 	candidate := candidates[output.Choice-1]
 	// Strict skip: the echoed action must match the numbered entry, so a model
 	// that reasoned about one target but named a number for another cannot act.
-	if strings.TrimSpace(output.ChosenAction) != candidate.Description {
+	// Models copy the whole rendered line including its trailing "(w34)" weight
+	// annotation, so strip that before comparing to the (weight-free) description.
+	if stripWeightSuffix(output.ChosenAction) != candidate.Description {
 		s.logger.Warn("llm chosen_action mismatch; skipping",
 			"choice", output.Choice, "echoed", output.ChosenAction, "candidate", candidate.Description)
 		return llmSelection{}, false
@@ -264,6 +267,17 @@ type choiceOutput struct {
 	Choice       int    `json:"choice"`
 	ChosenAction string `json:"chosen_action"`
 	Text         string `json:"text"`
+}
+
+// weightSuffix matches the trailing "  (w34)" annotation appended to each
+// numbered line, which models copy verbatim into chosen_action.
+var weightSuffix = regexp.MustCompile(`\s*\(w\d+\)$`)
+
+// stripWeightSuffix trims surrounding whitespace and a trailing weight
+// annotation from the model's echoed action so it can be compared to the
+// weight-free candidate description.
+func stripWeightSuffix(echo string) string {
+	return strings.TrimSpace(weightSuffix.ReplaceAllString(strings.TrimSpace(echo), ""))
 }
 
 // parseChoice decodes the model's JSON content into the structured choice.
