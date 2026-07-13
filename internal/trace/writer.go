@@ -87,14 +87,13 @@ type Action struct {
 	// the model's short rationale, shown by the replay UI to explain the pick.
 	Source       string `json:"source,omitempty"`
 	LLMReasoning string `json:"llm_reasoning,omitempty"`
-	// LLMRanked is the model's full ranked candidate-index list; LLMChosenRank
-	// is the 1-based position in it that produced this action (1 = the model's
-	// top pick; >1 means earlier picks were invalid and skipped). Together they
-	// let the replay UI reconcile the reasoning with the executed action: the
-	// reasoning describes the model's top pick, so a ChosenRank > 1 is why the
-	// prose can name a different target than the one acted on.
-	LLMRanked     []int `json:"llm_ranked,omitempty"`
-	LLMChosenRank int   `json:"llm_chosen_rank,omitempty"`
+	// LLMChoice is the 1-based number the model picked from the candidate list;
+	// LLMChosenAction is the action description it echoed for that number. The
+	// runner strict-skips when the echo disagrees with the numbered entry, so on
+	// a recorded action the two always agree — the replay UI shows them to
+	// confirm the reasoning matched the executed action.
+	LLMChoice       int    `json:"llm_choice,omitempty"`
+	LLMChosenAction string `json:"llm_chosen_action,omitempty"`
 }
 
 type BoundsRecord struct {
