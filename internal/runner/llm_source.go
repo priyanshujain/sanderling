@@ -23,25 +23,18 @@ const (
 	// while keeping the UI legible.
 	llmMaxImageEdge = 1024
 	// llmHistorySize is how many recent actions (and the screen each led to) the
-	// prompt carries to discourage loops.
+	// prompt carries as context.
 	llmHistorySize = 5
-	// llmMaxRanked caps the ranked-index list the model returns.
-	llmMaxRanked = 5
-	// swipeMinMagnitude is the floor for an LLM-chosen swipe distance, matching
-	// the seeded swipe builder's minimum.
-	swipeMinMagnitude = 200
 )
 
-// llmSystemPrompt frames the selection task. The model only ranks the numbered
-// candidates the system already enumerated; it never invents actions. The kind
-// semantics matter: every visible element doubles as a Swipe origin, so a
-// control whose only candidate is Swipe is NOT pressable — without the
-// explanation models pick `Swipe "Submit"` intending to press Submit and loop
-// forever on a disabled button.
-const llmSystemPrompt = "You are exploring this app to surface bugs. Choose the most useful next action from the numbered candidates. " +
-	"Candidate kinds: Tap/DoubleTap/LongPress press a control; InputText types into a field; Scroll and Swipe only pan the view — they never press the element they are labeled with. " +
-	"A button that has no Tap candidate is disabled; satisfy its preconditions first (usually InputText into a field) instead of swiping it. " +
-	"Avoid repeating recent actions; prefer progress into new screens. Return only your ranked choices."
+// llmSystemPrompt frames the selection task: a short, generic bug-hunting
+// instruction. Each candidate is already a concrete, correctly-labeled action
+// with a weight hinting the spec's testing priority; the model reads the
+// screenshot, picks ONE number, and echoes that action so a mismatch can be
+// caught. The app-specific description (spec instructions) is appended.
+const llmSystemPrompt = "You are exercising a UI to find bugs. Each turn you get a screenshot and a numbered list of concrete actions, each with a weight hinting how much the test author wants it exercised (higher = more). " +
+	"Pick the ONE action most likely to make progress or expose a defect, and feel free to repeat an action when repetition is what would trip a bug. " +
+	"Respond with your reasoning, the chosen number, and chosen_action copied verbatim from that line. For a typing action, also provide the text to enter."
 
 // llmSource selects each step's action with an OpenAI-compatible vision model
 // instead of the seeded random pick. It replaces ONLY the pick: the candidate list, the input
@@ -60,21 +53,21 @@ type llmSource struct {
 
 	// lastSource/lastReasoning describe the most recent NextAction so the runner
 	// can stamp the trace. lastSource is "llm" only when the LLM (not setup)
-	// chose the action; lastReasoning is the model's rationale. lastRanked is
-	// the model's full ranked list and lastChosenRank the 1-based position in it
-	// that won (1 = top pick), so the trace can reconcile reasoning with action.
-	lastSource     string
-	lastReasoning  string
-	lastRanked     []int
-	lastChosenRank int
+	// chose the action; lastReasoning is the model's rationale. lastChoice is the
+	// 1-based number it picked and lastChosenAction the description it echoed, so
+	// the trace shows what the model believed it was doing.
+	lastSource       string
+	lastReasoning    string
+	lastChoice       int
+	lastChosenAction string
 }
 
 // llmSelection is the outcome of one LLM selection call.
 type llmSelection struct {
-	action     verifier.Action
-	reasoning  string
-	ranked     []int
-	chosenRank int // 1-based position in ranked that produced action
+	action       verifier.Action
+	reasoning    string
+	choice       int
+	chosenAction string
 }
 
 // NextAction returns the step's action. Setup precedence is preserved by
@@ -83,11 +76,13 @@ type llmSelection struct {
 func (s *llmSource) NextAction(ctx context.Context) (verifier.Action, error) {
 	s.lastSource = ""
 	s.lastReasoning = ""
-	s.lastRanked = nil
-	s.lastChosenRank = 0
+	s.lastChoice = 0
+	s.lastChosenAction = ""
 	s.history.completeLast(s.verifier.CurrentScreen())
 
-	action, err := s.verifier.NextAction()
+	// Setup precedence only: the LLM replaces the seeded action root, so we run
+	// setup (e.g. login) first but never the weighted picker.
+	action, err := s.verifier.SetupAction()
 	if err == nil {
 		s.history.add(describeAction(action))
 		return action, nil
@@ -98,23 +93,23 @@ func (s *llmSource) NextAction(ctx context.Context) (verifier.Action, error) {
 
 	selection, ok := s.selectViaLLM(ctx)
 	if !ok {
-		// Any failure (HTTP error, unusable output, no valid index) skips the
-		// step; the next step re-observes and tries again. No backend mixing.
+		// Any failure (HTTP error, unusable output, invalid choice, echo
+		// mismatch) skips the step; the next step re-observes and tries again.
 		return verifier.Action{}, verifier.ErrNoAction
 	}
 	s.lastSource = "llm"
 	s.lastReasoning = selection.reasoning
-	s.lastRanked = selection.ranked
-	s.lastChosenRank = selection.chosenRank
+	s.lastChoice = selection.choice
+	s.lastChosenAction = selection.chosenAction
 	s.history.add(describeAction(selection.action))
 	return selection.action, nil
 }
 
-// selectViaLLM runs one multimodal call and maps the first valid ranked index
-// to an action. It returns ok=false on any error/empty/invalid output, logging
-// the cause; the caller turns that into a skipped step.
+// selectViaLLM runs one multimodal call and maps the chosen number to an action.
+// It returns ok=false on any error/empty/invalid output, logging the cause; the
+// caller turns that into a skipped step.
 func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, bool) {
-	candidates := s.verifier.AllCandidates()
+	candidates := s.verifier.Candidates()
 	if len(candidates) == 0 {
 		return llmSelection{}, false
 	}
@@ -129,24 +124,56 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, bool) {
 		return llmSelection{}, false
 	}
 
-	ranked, reasoning, err := parseRanked(response.Choices[0].Message.Content)
+	output, err := parseChoice(response.Choices[0].Message.Content)
 	if err != nil {
 		s.logger.Warn("llm output unusable", "err", err)
 		return llmSelection{}, false
 	}
-	for position, index := range ranked {
-		if index < 0 || index >= len(candidates) {
-			continue
-		}
-		action, err := actionFromCandidate(candidates[index], s.verifier.SampleInput)
-		if err != nil {
-			s.logger.Warn("building action from candidate failed", "index", index, "err", err)
-			continue
-		}
-		return llmSelection{action: action, reasoning: reasoning, ranked: ranked, chosenRank: position + 1}, true
+	// choice is 1-based into the numbered list.
+	if output.Choice < 1 || output.Choice > len(candidates) {
+		s.logger.Warn("llm choice out of range", "choice", output.Choice, "candidates", len(candidates))
+		return llmSelection{}, false
 	}
-	s.logger.Warn("llm returned no valid candidate index", "ranked", ranked, "candidates", len(candidates))
-	return llmSelection{}, false
+	candidate := candidates[output.Choice-1]
+	// Strict skip: the echoed action must match the numbered entry, so a model
+	// that reasoned about one target but named a number for another cannot act.
+	if strings.TrimSpace(output.ChosenAction) != candidate.Description {
+		s.logger.Warn("llm chosen_action mismatch; skipping",
+			"choice", output.Choice, "echoed", output.ChosenAction, "candidate", candidate.Description)
+		return llmSelection{}, false
+	}
+	action, err := s.actionForCandidate(candidate, output.Text)
+	if err != nil {
+		s.logger.Warn("building action from candidate failed", "choice", output.Choice, "err", err)
+		return llmSelection{}, false
+	}
+	return llmSelection{
+		action:       action,
+		reasoning:    output.Reasoning,
+		choice:       output.Choice,
+		chosenAction: candidate.Description,
+	}, true
+}
+
+// actionForCandidate turns a chosen candidate into the executable action. The
+// candidate already carries a ready action; only builtin typing needs the
+// model's value spliced in (authored InputText keeps its sampled value, and any
+// other kind runs verbatim).
+func (s *llmSource) actionForCandidate(candidate verifier.ActionCandidate, text string) (verifier.Action, error) {
+	action := candidate.Action
+	if candidate.Kind == verifier.ActionKindInputText && candidate.LLMText {
+		if strings.TrimSpace(text) == "" {
+			// The model omitted a value; fall back to the shared corpus sampler
+			// so typing still exercises an edge-case string.
+			sampled, err := s.verifier.SampleInput()
+			if err != nil {
+				return verifier.Action{}, err
+			}
+			text = sampled
+		}
+		action.Text = text
+	}
+	return action, nil
 }
 
 // buildRequest assembles the one-shot multimodal request: a system frame, the
@@ -165,7 +192,7 @@ func (s *llmSource) buildRequest(candidates []verifier.ActionCandidate) llmclien
 			{Role: "system", Content: []llmclient.ContentPart{llmclient.TextPart(s.systemPrompt())}},
 			{Role: "user", Content: userParts},
 		},
-		ResponseFormat: rankedResponseFormat(),
+		ResponseFormat: choiceResponseFormat(len(candidates)),
 	}
 }
 
@@ -179,12 +206,17 @@ func (s *llmSource) systemPrompt() string {
 	return llmSystemPrompt + "\n\n" + s.instructions
 }
 
-// userPrompt renders the numbered candidate list and the recent-action memory.
+// userPrompt renders the numbered candidate list (with weights) and the
+// recent-action memory.
 func (s *llmSource) userPrompt(candidates []verifier.ActionCandidate) string {
 	var builder strings.Builder
-	builder.WriteString("Candidate actions on the current screen:\n")
+	builder.WriteString("Actions available on the current screen:\n")
 	for _, candidate := range candidates {
-		fmt.Fprintf(&builder, "#%d %s %q\n", candidate.Index, candidate.Kind, candidate.Label)
+		fmt.Fprintf(&builder, "%d. %s", candidate.Index, candidate.Description)
+		if candidate.Weighted {
+			fmt.Fprintf(&builder, "  (w%d)", candidate.Weight)
+		}
+		builder.WriteByte('\n')
 	}
 	if recent := s.history.recent(); len(recent) > 0 {
 		builder.WriteString("\nYour recent actions (oldest first) and the screen each led to:\n")
@@ -196,88 +228,58 @@ func (s *llmSource) userPrompt(candidates []verifier.ActionCandidate) string {
 			fmt.Fprintf(&builder, "- %s -> %s\n", entry.action, screen)
 		}
 	}
-	builder.WriteString("\nReturn your ranked candidate indices, most useful first.")
+	builder.WriteString("\nPick one action by its number.")
 	return builder.String()
 }
 
-// rankedResponseFormat is the strict structured-output schema: a short
-// reasoning string and a ranked list of candidate indices.
-func rankedResponseFormat() *llmclient.ResponseFormat {
+// choiceResponseFormat is the strict structured-output schema. Field order is
+// pinned via raw JSON with reasoning FIRST, so the model reasons before it
+// commits to a number (a materially better ordering than answer-first). text is
+// required by strict mode but empty for non-typing actions.
+func choiceResponseFormat(candidateCount int) *llmclient.ResponseFormat {
+	schema := fmt.Sprintf(`{
+  "type": "object",
+  "properties": {
+    "reasoning": {"type": "string", "description": "One short sentence on what you are trying to do and why this action."},
+    "choice": {"type": "integer", "minimum": 1, "maximum": %d, "description": "The number of the chosen action."},
+    "chosen_action": {"type": "string", "description": "The chosen action's text, copied verbatim from its numbered line."},
+    "text": {"type": "string", "description": "For a typing action, the text to enter; otherwise an empty string."}
+  },
+  "required": ["reasoning", "choice", "chosen_action", "text"],
+  "additionalProperties": false
+}`, candidateCount)
 	return &llmclient.ResponseFormat{
 		Type: "json_schema",
 		JSONSchema: llmclient.JSONSchema{
-			Name:   "ranked_actions",
+			Name:   "action_choice",
 			Strict: true,
-			Schema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"reasoning": map[string]any{
-						"type":        "string",
-						"description": "One short sentence on why the top choice is most useful.",
-					},
-					"ranked": map[string]any{
-						"type":     "array",
-						"items":    map[string]any{"type": "integer"},
-						"minItems": 1,
-						"maxItems": llmMaxRanked,
-					},
-				},
-				"required":             []string{"reasoning", "ranked"},
-				"additionalProperties": false,
-			},
+			Schema: json.RawMessage(schema),
 		},
 	}
 }
 
-// rankedOutput is the model's structured response.
-type rankedOutput struct {
-	Reasoning string `json:"reasoning"`
-	Ranked    []int  `json:"ranked"`
+// choiceOutput is the model's structured response, reasoning first.
+type choiceOutput struct {
+	Reasoning    string `json:"reasoning"`
+	Choice       int    `json:"choice"`
+	ChosenAction string `json:"chosen_action"`
+	Text         string `json:"text"`
 }
 
-// parseRanked decodes the model's JSON content into ranked indices + reasoning.
-func parseRanked(content string) ([]int, string, error) {
+// parseChoice decodes the model's JSON content into the structured choice.
+func parseChoice(content string) (choiceOutput, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return nil, "", errors.New("empty content")
+		return choiceOutput{}, errors.New("empty content")
 	}
-	var out rankedOutput
+	var out choiceOutput
 	if err := json.Unmarshal([]byte(content), &out); err != nil {
-		return nil, "", err
+		return choiceOutput{}, err
 	}
-	if len(out.Ranked) == 0 {
-		return nil, "", errors.New("no ranked indices")
+	if out.Choice == 0 {
+		return choiceOutput{}, errors.New("no choice")
 	}
-	return out.Ranked, out.Reasoning, nil
-}
-
-// actionFromCandidate maps a chosen candidate to a concrete action, reusing the
-// corpus sampler for InputText text and the seeded gesture geometry for
-// swipe/scroll. sampleInput is verifier.SampleInput, injected for testability.
-func actionFromCandidate(candidate verifier.ActionCandidate, sampleInput func() (string, error)) (verifier.Action, error) {
-	action := verifier.Action{Kind: candidate.Kind, On: candidate.Selector, X: candidate.X, Y: candidate.Y}
-	switch candidate.Kind {
-	case verifier.ActionKindInputText:
-		text, err := sampleInput()
-		if err != nil {
-			return verifier.Action{}, err
-		}
-		action.Text = text
-	case verifier.ActionKindScroll:
-		action.Direction = "down"
-		// Leave endpoints zero so the runner derives the gesture from the target
-		// bounds (scrollEndpoints), exactly as for an authored Scroll.
-		action.X, action.Y = 0, 0
-	case verifier.ActionKindSwipe:
-		// A vertical drag upward from the center reveals lower content, sized off
-		// the element height like the seeded swipe builder.
-		magnitude := max(swipeMinMagnitude, candidate.Height*4/10)
-		action.FromX, action.FromY = candidate.X, candidate.Y
-		action.ToX = candidate.X
-		action.ToY = max(0, candidate.Y-magnitude)
-		action.X, action.Y = 0, 0
-	}
-	return action, nil
+	return out, nil
 }
 
 // describeAction renders a short action summary for the recent-action memory.
@@ -357,8 +359,8 @@ func stampActionSource(traceAction *trace.Action, source ActionSource) {
 	}
 	traceAction.Source = llm.lastSource
 	traceAction.LLMReasoning = llm.lastReasoning
-	traceAction.LLMRanked = llm.lastRanked
-	traceAction.LLMChosenRank = llm.lastChosenRank
+	traceAction.LLMChoice = llm.lastChoice
+	traceAction.LLMChosenAction = llm.lastChosenAction
 }
 
 // screenshotDataURL downscales the PNG and encodes it as a data URL for the
