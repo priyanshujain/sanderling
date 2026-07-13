@@ -107,11 +107,14 @@ type ResponseFormat struct {
 	JSONSchema JSONSchema `json:"json_schema"`
 }
 
-// JSONSchema is the strict structured-output schema.
+// JSONSchema is the strict structured-output schema. Schema is raw JSON so the
+// caller controls property ORDER: OpenAI emits fields in schema order, and a
+// reasoning-first schema must not be re-sorted alphabetically (as a Go map
+// would be).
 type JSONSchema struct {
-	Name   string         `json:"name"`
-	Strict bool           `json:"strict"`
-	Schema map[string]any `json:"schema"`
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 // Response is the slice of a chat-completions response we read.

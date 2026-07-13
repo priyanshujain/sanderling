@@ -49,7 +49,7 @@ func TestChatCompletionRequestShapeAndParse(t *testing.T) {
 			JSONSchema: JSONSchema{
 				Name:   "ranked_actions",
 				Strict: true,
-				Schema: map[string]any{"type": "object"},
+				Schema: json.RawMessage(`{"type":"object"}`),
 			},
 		},
 	})
