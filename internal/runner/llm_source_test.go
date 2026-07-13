@@ -230,6 +230,39 @@ func candidateIndex(candidates []verifier.ActionCandidate, kind verifier.ActionK
 	return -1
 }
 
+func TestPickSourcesSelectsLLMWhenRequested(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	_, verifierInstance := newLLMSource(t, fake)
+	action, _, err := pickSources(Options{
+		Verifier:  verifierInstance,
+		Generator: "llm",
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("pickSources: %v", err)
+	}
+	if _, ok := action.(*llmSource); !ok {
+		t.Errorf("action source = %T, want *llmSource for --generator llm", action)
+	}
+}
+
+func TestPickSourcesSeededByDefault(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	_, verifierInstance := newLLMSource(t, fake)
+	action, _, err := pickSources(Options{
+		Verifier:  verifierInstance,
+		Generator: "seeded",
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("pickSources: %v", err)
+	}
+	// Even with a generator = llm() config present, the seeded flag wins.
+	if _, ok := action.(gojaSource); !ok {
+		t.Errorf("action source = %T, want gojaSource for --generator seeded", action)
+	}
+}
+
 func TestLLMSourceDrivesExecutedActions(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)

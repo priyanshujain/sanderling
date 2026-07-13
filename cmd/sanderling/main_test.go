@@ -93,6 +93,41 @@ func TestParseTestArgs_AVDIsOptional(t *testing.T) {
 	}
 }
 
+func TestParseTestArgs_GeneratorDefaultsToSeeded(t *testing.T) {
+	options, err := parseTestArgs([]string{"--spec", "s.ts", "--bundle-id", "com.example"}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.generator != "seeded" {
+		t.Fatalf("generator default: got %q, want seeded", options.generator)
+	}
+}
+
+func TestParseTestArgs_AcceptsLLMGenerator(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--generator", "llm",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.generator != "llm" {
+		t.Fatalf("generator: got %q, want llm", options.generator)
+	}
+}
+
+func TestParseTestArgs_RejectsUnknownGenerator(t *testing.T) {
+	_, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--generator", "oracle",
+	}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unsupported generator") {
+		t.Fatalf("expected unsupported-generator error, got %v", err)
+	}
+}
+
 func TestParseTestArgs_RejectsUnknownPlatform(t *testing.T) {
 	_, err := parseTestArgs([]string{
 		"--spec", "s.ts",
