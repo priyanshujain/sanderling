@@ -29,8 +29,9 @@ var llmInputCorpus = []string{
 }
 
 const llmFixtureSpec = `
-import { llm, always } from "@sanderling/spec";
+import { llm, always, taps, typing, weighted } from "@sanderling/spec";
 globalThis.properties = { ok: always(() => true) };
+globalThis.actions = weighted([1, taps], [1, typing]);
 globalThis.generator = llm({ model: "test/model" });
 `
 
@@ -42,101 +43,89 @@ const llmTreeJSON = `{
   ]
 }`
 
-func TestActionFromCandidateMapping(t *testing.T) {
-	sampler := func() (string, error) { return "typed-value", nil }
-	cases := []struct {
-		name   string
-		input  verifier.ActionCandidate
-		assert func(t *testing.T, action verifier.Action)
-	}{
-		{
-			name:  "tap keeps coordinates and selector",
-			input: verifier.ActionCandidate{Kind: verifier.ActionKindTap, X: 10, Y: 20, Selector: "id:Submit"},
-			assert: func(t *testing.T, action verifier.Action) {
-				if action.Kind != verifier.ActionKindTap || action.X != 10 || action.Y != 20 || action.On != "id:Submit" {
-					t.Errorf("tap = %+v", action)
-				}
-			},
-		},
-		{
-			name:  "typing fills text from the sampler",
-			input: verifier.ActionCandidate{Kind: verifier.ActionKindInputText, X: 5, Y: 6, Selector: "id:Name"},
-			assert: func(t *testing.T, action verifier.Action) {
-				if action.Kind != verifier.ActionKindInputText || action.Text != "typed-value" || action.On != "id:Name" {
-					t.Errorf("inputText = %+v", action)
-				}
-			},
-		},
-		{
-			name:  "scroll defaults down with derived endpoints",
-			input: verifier.ActionCandidate{Kind: verifier.ActionKindScroll, X: 50, Y: 50, Selector: "id:List"},
-			assert: func(t *testing.T, action verifier.Action) {
-				if action.Direction != "down" {
-					t.Errorf("scroll direction = %q, want down", action.Direction)
-				}
-				if action.X != 0 || action.Y != 0 || action.FromX != 0 || action.ToY != 0 {
-					t.Errorf("scroll endpoints should be left zero for runner derivation, got %+v", action)
-				}
-			},
-		},
-		{
-			name:  "swipe builds a vertical gesture sized off height",
-			input: verifier.ActionCandidate{Kind: verifier.ActionKindSwipe, X: 100, Y: 1000, Height: 1000},
-			assert: func(t *testing.T, action verifier.Action) {
-				if action.FromX != 100 || action.FromY != 1000 || action.ToX != 100 {
-					t.Errorf("swipe origin = %+v", action)
-				}
-				if action.ToY != 1000-400 {
-					t.Errorf("swipe ToY = %d, want 600", action.ToY)
-				}
-			},
-		},
-		{
-			name:  "swipe magnitude floors at the minimum",
-			input: verifier.ActionCandidate{Kind: verifier.ActionKindSwipe, X: 10, Y: 500, Height: 100},
-			assert: func(t *testing.T, action verifier.Action) {
-				// 100*4/10 = 40 < 200, so the floor applies.
-				if action.ToY != 500-swipeMinMagnitude {
-					t.Errorf("swipe ToY = %d, want %d", action.ToY, 500-swipeMinMagnitude)
-				}
-			},
-		},
+func TestActionForCandidatePassesNonTypingThrough(t *testing.T) {
+	source := &llmSource{}
+	candidate := verifier.ActionCandidate{
+		Kind:   verifier.ActionKindTap,
+		Action: verifier.Action{Kind: verifier.ActionKindTap, On: "id:Submit", X: 10, Y: 20},
 	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			action, err := actionFromCandidate(testCase.input, sampler)
-			if err != nil {
-				t.Fatalf("actionFromCandidate: %v", err)
-			}
-			testCase.assert(t, action)
-		})
-	}
-}
-
-func TestActionFromCandidateSamplerError(t *testing.T) {
-	failing := func() (string, error) { return "", errors.New("no sampler") }
-	_, err := actionFromCandidate(verifier.ActionCandidate{Kind: verifier.ActionKindInputText}, failing)
-	if err == nil {
-		t.Fatal("expected sampler error to propagate")
-	}
-}
-
-func TestParseRanked(t *testing.T) {
-	ranked, reasoning, err := parseRanked(`{"reasoning":"go home","ranked":[3,1,0]}`)
+	action, err := source.actionForCandidate(candidate, "ignored")
 	if err != nil {
-		t.Fatalf("parseRanked: %v", err)
+		t.Fatalf("actionForCandidate: %v", err)
 	}
-	if reasoning != "go home" || !slices.Equal(ranked, []int{3, 1, 0}) {
-		t.Errorf("parseRanked = %v %q", ranked, reasoning)
+	if action.Kind != verifier.ActionKindTap || action.On != "id:Submit" || action.X != 10 || action.Y != 20 {
+		t.Errorf("tap = %+v, want the candidate action verbatim", action)
+	}
+	if action.Text != "" {
+		t.Errorf("non-typing action must not carry text, got %q", action.Text)
+	}
+}
+
+func TestActionForCandidateUsesModelText(t *testing.T) {
+	source := &llmSource{}
+	candidate := verifier.ActionCandidate{
+		Kind:    verifier.ActionKindInputText,
+		LLMText: true,
+		Action:  verifier.Action{Kind: verifier.ActionKindInputText, On: "id:Name"},
+	}
+	action, err := source.actionForCandidate(candidate, "Priya")
+	if err != nil {
+		t.Fatalf("actionForCandidate: %v", err)
+	}
+	if action.Text != "Priya" {
+		t.Errorf("text = %q, want the model-supplied value", action.Text)
+	}
+}
+
+func TestActionForCandidateAuthoredTypingKeepsSampledValue(t *testing.T) {
+	source := &llmSource{}
+	candidate := verifier.ActionCandidate{
+		Kind:    verifier.ActionKindInputText,
+		LLMText: false, // authored InputText: replay the spec's sampled value
+		Action:  verifier.Action{Kind: verifier.ActionKindInputText, On: "id:Amount", Text: "42"},
+	}
+	action, err := source.actionForCandidate(candidate, "ignored")
+	if err != nil {
+		t.Fatalf("actionForCandidate: %v", err)
+	}
+	if action.Text != "42" {
+		t.Errorf("text = %q, want the authored value 42", action.Text)
+	}
+}
+
+func TestActionForCandidateFallsBackToSampler(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	source, _ := newLLMSource(t, fake)
+	candidate := verifier.ActionCandidate{
+		Kind:    verifier.ActionKindInputText,
+		LLMText: true,
+		Action:  verifier.Action{Kind: verifier.ActionKindInputText, On: "id:Name"},
+	}
+	action, err := source.actionForCandidate(candidate, "   ")
+	if err != nil {
+		t.Fatalf("actionForCandidate: %v", err)
+	}
+	if !slices.Contains(llmInputCorpus, action.Text) {
+		t.Errorf("empty model text should fall back to the corpus, got %q", action.Text)
+	}
+}
+
+func TestParseChoice(t *testing.T) {
+	out, err := parseChoice(`{"reasoning":"go home","choice":3,"chosen_action":"Tap \"Home\"","text":""}`)
+	if err != nil {
+		t.Fatalf("parseChoice: %v", err)
+	}
+	if out.Reasoning != "go home" || out.Choice != 3 || out.ChosenAction != `Tap "Home"` {
+		t.Errorf("parseChoice = %+v", out)
 	}
 
-	if _, _, err := parseRanked(""); err == nil {
+	if _, err := parseChoice(""); err == nil {
 		t.Error("expected error for empty content")
 	}
-	if _, _, err := parseRanked(`{"reasoning":"x","ranked":[]}`); err == nil {
-		t.Error("expected error for empty ranked list")
+	if _, err := parseChoice(`{"reasoning":"x","choice":0,"chosen_action":"","text":""}`); err == nil {
+		t.Error("expected error for a zero choice")
 	}
-	if _, _, err := parseRanked(`not json`); err == nil {
+	if _, err := parseChoice(`not json`); err == nil {
 		t.Error("expected error for malformed JSON")
 	}
 }
@@ -157,10 +146,12 @@ func TestSystemPromptAppendsInstructions(t *testing.T) {
 // fakeOpenRouter is a configurable in-process OpenRouter server. Set ranked /
 // reasoning before each call; it echoes them as a json_schema content body.
 type fakeOpenRouter struct {
-	server      *httptest.Server
-	ranked      []int
-	reasoning   string
-	lastRequest map[string]any
+	server       *httptest.Server
+	choice       int
+	chosenAction string
+	text         string
+	reasoning    string
+	lastRequest  map[string]any
 }
 
 func newFakeOpenRouter(t *testing.T) *fakeOpenRouter {
@@ -169,7 +160,12 @@ func newFakeOpenRouter(t *testing.T) *fakeOpenRouter {
 	fake.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &fake.lastRequest)
-		content, _ := json.Marshal(map[string]any{"reasoning": fake.reasoning, "ranked": fake.ranked})
+		content, _ := json.Marshal(map[string]any{
+			"reasoning":     fake.reasoning,
+			"choice":        fake.choice,
+			"chosen_action": fake.chosenAction,
+			"text":          fake.text,
+		})
 		response, _ := json.Marshal(llmclient.Response{
 			Choices: []llmclient.Choice{{Message: llmclient.ResponseMessage{Content: string(content)}}},
 		})
@@ -221,13 +217,15 @@ func pushLLMSnapshot(t *testing.T, v *verifier.Verifier) {
 	}
 }
 
-func candidateIndex(candidates []verifier.ActionCandidate, kind verifier.ActionKind) int {
+func candidateByKind(t *testing.T, candidates []verifier.ActionCandidate, kind verifier.ActionKind) verifier.ActionCandidate {
+	t.Helper()
 	for _, candidate := range candidates {
 		if candidate.Kind == kind {
-			return candidate.Index
+			return candidate
 		}
 	}
-	return -1
+	t.Fatalf("no candidate of kind %q in %v", kind, candidates)
+	return verifier.ActionCandidate{}
 }
 
 func TestPickSourcesSelectsLLMWhenRequested(t *testing.T) {
@@ -267,11 +265,15 @@ func TestLLMSourceDrivesExecutedActions(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
-	candidates := verifierInstance.AllCandidates()
+	candidates := verifierInstance.Candidates()
 
-	// Step 1: the model ranks the Tap on Submit first.
-	fake.ranked = []int{candidateIndex(candidates, verifier.ActionKindTap)}
+	// Step 1: the model picks the Tap on Submit by its number, echoing its
+	// description.
+	tap := candidateByKind(t, candidates, verifier.ActionKindTap)
+	fake.choice = tap.Index
+	fake.chosenAction = tap.Description
 	fake.reasoning = "tap submit"
+	fake.text = ""
 	action, err := source.NextAction(context.Background())
 	if err != nil {
 		t.Fatalf("NextAction: %v", err)
@@ -291,11 +293,13 @@ func TestLLMSourceDrivesExecutedActions(t *testing.T) {
 		t.Error("request carried no screenshot image part")
 	}
 
-	// Step 2: the model ranks the InputText on Name. Its text must come from the
-	// shared corpus sampler, not the model.
+	// Step 2: the model picks the typing candidate and supplies the value.
 	pushLLMSnapshot(t, verifierInstance)
-	fake.ranked = []int{candidateIndex(candidates, verifier.ActionKindInputText)}
+	typing := candidateByKind(t, candidates, verifier.ActionKindInputText)
+	fake.choice = typing.Index
+	fake.chosenAction = typing.Description
 	fake.reasoning = "type a name"
+	fake.text = "Priya"
 	action, err = source.NextAction(context.Background())
 	if err != nil {
 		t.Fatalf("NextAction: %v", err)
@@ -303,60 +307,54 @@ func TestLLMSourceDrivesExecutedActions(t *testing.T) {
 	if action.Kind != verifier.ActionKindInputText || action.On != "id:Name" {
 		t.Errorf("step 2 action = %+v, want InputText on id:Name", action)
 	}
-	if !slices.Contains(llmInputCorpus, action.Text) {
-		t.Errorf("InputText text %q was not drawn from the corpus", action.Text)
+	if action.Text != "Priya" {
+		t.Errorf("InputText text = %q, want the model-supplied Priya", action.Text)
 	}
 
-	// The trace records source=llm and the reasoning.
+	// The trace records source=llm, the reasoning, the choice, and the echo.
 	traceAction := traceActionFor(action, nil)
 	stampActionSource(traceAction, source)
 	if traceAction.Source != "llm" || traceAction.LLMReasoning != "type a name" {
 		t.Errorf("trace action = %+v, want source=llm reasoning=type a name", traceAction)
 	}
+	if traceAction.LLMChoice != typing.Index || traceAction.LLMChosenAction != typing.Description {
+		t.Errorf("trace choice = %d/%q, want %d/%q", traceAction.LLMChoice, traceAction.LLMChosenAction, typing.Index, typing.Description)
+	}
 }
 
-func TestLLMSourceSkipsOnInvalidIndex(t *testing.T) {
+func TestLLMSourceSkipsOnOutOfRangeChoice(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
 
-	fake.ranked = []int{9999}
+	fake.choice = 9999
+	fake.chosenAction = "whatever"
 	_, err := source.NextAction(context.Background())
 	if !errors.Is(err, verifier.ErrNoAction) {
-		t.Fatalf("NextAction err = %v, want ErrNoAction for an out-of-range index", err)
+		t.Fatalf("NextAction err = %v, want ErrNoAction for an out-of-range choice", err)
 	}
 	if source.lastSource != "" {
 		t.Errorf("lastSource = %q, want empty after a skipped step", source.lastSource)
 	}
 }
 
-func TestLLMSourceFirstValidIndexWins(t *testing.T) {
+func TestLLMSourceStrictSkipsOnEchoMismatch(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
-	candidates := verifierInstance.AllCandidates()
+	candidates := verifierInstance.Candidates()
 
-	tapIndex := candidateIndex(candidates, verifier.ActionKindTap)
-	// First index is invalid; the second is the valid Tap candidate.
-	fake.ranked = []int{-1, tapIndex}
-	action, err := source.NextAction(context.Background())
-	if err != nil {
-		t.Fatalf("NextAction: %v", err)
+	// A valid number, but the echoed action disagrees with that numbered entry:
+	// the model reasoned about one control and picked another's number.
+	tap := candidateByKind(t, candidates, verifier.ActionKindTap)
+	fake.choice = tap.Index
+	fake.chosenAction = "Tap \"Something Else\""
+	_, err := source.NextAction(context.Background())
+	if !errors.Is(err, verifier.ErrNoAction) {
+		t.Fatalf("NextAction err = %v, want ErrNoAction on chosen_action mismatch", err)
 	}
-	if action.Kind != verifier.ActionKindTap {
-		t.Errorf("action = %+v, want Tap from the first valid index", action)
-	}
-
-	// The trace records the full ranked list and the 1-based rank that won, so
-	// the reasoning (which describes the top pick) can be reconciled with the
-	// executed action when an earlier pick was skipped.
-	traceAction := traceActionFor(action, nil)
-	stampActionSource(traceAction, source)
-	if !slices.Equal(traceAction.LLMRanked, []int{-1, tapIndex}) {
-		t.Errorf("trace ranked = %v, want [-1 %d]", traceAction.LLMRanked, tapIndex)
-	}
-	if traceAction.LLMChosenRank != 2 {
-		t.Errorf("trace chosen rank = %d, want 2 (the second pick won)", traceAction.LLMChosenRank)
+	if source.lastSource != "" {
+		t.Errorf("lastSource = %q, want empty after a strict skip", source.lastSource)
 	}
 }
 
@@ -369,7 +367,7 @@ func TestLLMSourceSkipsOnHTTPError(t *testing.T) {
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
 
-	fake.ranked = []int{0}
+	fake.choice = 1
 	_, err := source.NextAction(context.Background())
 	if !errors.Is(err, verifier.ErrNoAction) {
 		t.Fatalf("NextAction err = %v, want ErrNoAction on HTTP failure", err)
