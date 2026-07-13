@@ -6,6 +6,7 @@ import {
   extract,
   from,
   integers,
+  llm,
   next,
   weighted,
   whenRoute,
@@ -187,3 +188,15 @@ export const actionsRoot = weighted(
   [5, doubleTaps],
   [25, defaultActions],
 );
+
+// The LLM generator is orthogonal to actionsRoot: with `--generator llm` a model
+// picks from the SAME weighted candidate set above, reading the screenshot and a
+// numbered, weight-annotated list; the default `--generator seeded` ignores it.
+// instructions describe only WHAT the app is, never HOW to test it — the model
+// figures out how to surface bugs on its own. With a plain OpenAI key, drop the
+// vendor prefix from the model id.
+export const generator = llm({
+  model: "gpt-5.4-nano",
+  instructions:
+    "Folio is a personal-finance ledger app. After signing in, the home screen lists accounts, each with a balance. You can create accounts, open an account to see its ledger, and add transactions; each transaction has an amount and changes that account's balance and the overall total.",
+});

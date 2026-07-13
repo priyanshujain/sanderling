@@ -78,24 +78,26 @@ DURATION=5m
 
 Traces land in `./sanderling/runs/<timestamp>/`.
 
-## Run with the LLM action backend
+## Run with the LLM action generator
 
-`sanderling/spec-llm.ts` reuses the same properties and login setup but swaps the
-seeded fuzzer for `llm({ model })`: a vision model chooses which of the
-already-enumerated candidates to act on each step, from the screenshot.
+The same `sanderling/spec.ts` runs under either generator: `--generator seeded`
+(the default weighted fuzzer) or `--generator llm`, where a vision model picks
+from the SAME weighted candidate set — reading the screenshot plus a numbered,
+weight-annotated list of concrete actions — and returns one number. The spec's
+`generator = llm({ model, instructions })` export configures it.
 
 ```sh
 export OPENROUTER_API_KEY=sk-or-...   # or OPENAI_API_KEY=sk-... for OpenAI direct
-sanderling test --spec sanderling/spec-llm.ts --bundle-id app.folio --duration 2m
+just test-llm                         # or: sanderling test --generator llm --spec sanderling/spec.ts --bundle-id app.folio
 ```
 
 OpenRouter wins when both keys are set. With a plain OpenAI key, drop the vendor
-prefix from the model id in `spec-llm.ts` (`gpt-5.4-nano`, not
+prefix from the model id in `spec.ts` (`gpt-5.4-nano`, not
 `openai/gpt-5.4-nano`). The model must support image input **and** strict
 `json_schema` structured outputs. Each step is one multimodal call, so keep the
-duration / step budget modest. The trace records the model's reasoning and
-`source: "llm"` on each chosen action, so the replay UI shows why each pick was
-made.
+duration / step budget modest. The trace records the model's reasoning, the
+chosen number, and `source: "llm"` on each action, so the replay UI shows why
+each pick was made.
 
 ## Run a sanderling test (iOS)
 
