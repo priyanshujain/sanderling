@@ -110,6 +110,7 @@ func Bundle(options Options) (Result, error) {
 func registrationEntry(specAbs string) string {
 	return fmt.Sprintf(`import * as __spec from %q;
 if (__spec.actionsRoot !== undefined) globalThis.actions = __spec.actionsRoot;
+if (__spec.generator !== undefined) globalThis.generator = __spec.generator;
 if (__spec.properties !== undefined) globalThis.properties = __spec.properties;
 if (__spec.setup !== undefined) globalThis.setup = __spec.setup;
 `, specAbs)
