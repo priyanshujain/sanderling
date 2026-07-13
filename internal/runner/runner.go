@@ -36,6 +36,10 @@ type Options struct {
 	Verifier    *verifier.Verifier
 	TraceWriter *trace.Writer
 	Logger      *slog.Logger
+	// Generator selects the action picker: "llm" drives selection with the
+	// spec's generator = llm({...}) config; anything else (the default) uses the
+	// seeded weighted picker. Both draw from the same actionsRoot candidate set.
+	Generator string
 }
 
 type Summary struct {

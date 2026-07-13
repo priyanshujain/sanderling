@@ -63,34 +63,39 @@ func (s webSource) ExtractorOverrides(ctx context.Context) (map[int]json.RawMess
 }
 
 // pickSources selects the runtime's action and extractor sources ONCE at setup
-// from the driver's capabilities and the spec, so the step loop never
-// type-asserts. When the spec selected the LLM action backend (actions =
-// llm({...})) it constructs the chat-completions client and returns an
-// llmSource for selection while extractor overrides still come from the goja
-// path.
+// from the driver's capabilities, the --generator flag, and the spec, so the
+// step loop never type-asserts. With --generator llm and a spec-declared
+// generator = llm({...}) it constructs the chat-completions client and returns
+// an llmSource for selection while extractor overrides still come from the goja
+// path. Otherwise the seeded goja picker drives.
 func pickSources(options Options) (ActionSource, ExtractorSource, error) {
 	if web, ok := options.Driver.(driver.WebDriver); ok {
 		source := webSource{web: web}
 		return source, source, nil
 	}
-	if config, ok := options.Verifier.LLMConfig(); ok {
-		client, err := llmclient.New()
-		if err != nil {
-			return nil, nil, fmt.Errorf("llm action backend: %w", err)
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if options.Generator == "llm" {
+		config, ok := options.Verifier.LLMConfig()
+		if !ok {
+			logger.Warn("--generator llm requested but spec declares no generator = llm(); using the seeded picker")
+		} else {
+			client, err := llmclient.New()
+			if err != nil {
+				return nil, nil, fmt.Errorf("llm action generator: %w", err)
+			}
+			action := &llmSource{
+				verifier:     options.Verifier,
+				client:       client,
+				model:        config.Model,
+				instructions: config.Instructions,
+				logger:       logger,
+				history:      newActionHistory(llmHistorySize),
+			}
+			return action, gojaSource{verifier: options.Verifier}, nil
 		}
-		logger := options.Logger
-		if logger == nil {
-			logger = slog.Default()
-		}
-		action := &llmSource{
-			verifier:     options.Verifier,
-			client:       client,
-			model:        config.Model,
-			instructions: config.Instructions,
-			logger:       logger,
-			history:      newActionHistory(llmHistorySize),
-		}
-		return action, gojaSource{verifier: options.Verifier}, nil
 	}
 	source := gojaSource{verifier: options.Verifier}
 	return source, source, nil
