@@ -128,51 +128,6 @@ type ActionCandidate struct {
 	// prob is the internal accumulated selection probability, summed across
 	// dedup, then rounded into Weight. Not exposed in the prompt directly.
 	prob float64
-
-	// The following are retained by the legacy AllCandidates enumeration.
-	Verb          string
-	X, Y          int
-	Width, Height int
-	Selector      string
-}
-
-// llmVerbs lists the verbs AllCandidates enumerates, in the order they are
-// emitted per element. Mirrors verbAccepts; no new filtering logic.
-var llmVerbs = []string{"taps", "doubleTaps", "longPresses", "typing", "scrolls", "swipes"}
-
-// AllCandidates flattens the per-verb candidate enumeration into one indexed
-// list the LLM backend chooses from. It reuses scopedElements/verbAccepts/
-// selectorForElement exactly as the seeded picker does, walking the tree once
-// and emitting an entry for every (in-scope element, applicable verb) pair.
-func (v *Verifier) AllCandidates() []ActionCandidate {
-	if v.lastTree == nil {
-		return nil
-	}
-	scope := v.scopedElements()
-	var result []ActionCandidate
-	for _, element := range v.lastTree.Elements {
-		if !scope[element] {
-			continue
-		}
-		for _, verb := range llmVerbs {
-			if !verbAccepts(verb, element) {
-				continue
-			}
-			x, y := element.Bounds.Center()
-			result = append(result, ActionCandidate{
-				Index:    len(result),
-				Verb:     verb,
-				Kind:     verbActionKind(verb),
-				Label:    candidateLabel(element),
-				X:        x,
-				Y:        y,
-				Width:    element.Bounds.Width(),
-				Height:   element.Bounds.Height(),
-				Selector: selectorForElement(v.lastTree, element),
-			})
-		}
-	}
-	return result
 }
 
 // verbActionKind maps a picker verb to the action kind it dispatches.
@@ -192,21 +147,6 @@ func verbActionKind(verb string) ActionKind {
 		return ActionKindSwipe
 	default:
 		return ""
-	}
-}
-
-// candidateLabel builds a short target description, preferring the most
-// human-meaningful field available.
-func candidateLabel(element *hierarchy.Element) string {
-	switch {
-	case element.Text != "":
-		return element.Text
-	case element.Description != "":
-		return element.Description
-	case element.ResourceID != "":
-		return element.ResourceID
-	default:
-		return element.Class
 	}
 }
 
