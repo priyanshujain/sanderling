@@ -21,7 +21,6 @@ import app.folio.ui.BackHandler
 import app.folio.ui.component.AppButton
 import app.folio.ui.component.BackButton
 import app.folio.ui.component.ButtonStyle
-import app.folio.ui.component.Card
 import app.folio.ui.component.EmptyState
 import app.folio.ui.component.ErrorText
 import app.folio.ui.component.FieldLabel
@@ -87,15 +86,12 @@ fun AddTransactionScreen(state: AddTransactionUiState, onEvent: (AddTransactionE
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Card {
-                Text("CURRENT BALANCE", style = Type.label, color = t.textMuted)
-                Text(
-                    formatCents(state.balanceCents),
-                    style = Type.balance,
-                    color = t.text,
-                    modifier = Modifier.testTag("TxnCurrentBalance"),
-                )
-            }
+            Text(
+                "Balance: ${formatCents(state.balanceCents)}",
+                style = Type.body,
+                color = t.textMuted,
+                modifier = Modifier.testTag("TxnCurrentBalance"),
+            )
             Segmented(
                 selected = if (state.type == TxnType.credit) 0 else 1,
                 labels = listOf("Credit", "Debit"),
