@@ -68,6 +68,14 @@ fun AddTransactionScreen(state: AddTransactionUiState, onEvent: (AddTransactionE
             Header(
                 title = "Add transaction",
                 subtitle = account.name,
+                detail = {
+                    Text(
+                        "Balance: ${formatCents(state.balanceCents)}",
+                        style = Type.caption,
+                        color = LocalTokens.current.textMuted,
+                        modifier = Modifier.testTag("TxnCurrentBalance"),
+                    )
+                },
                 left = { BackButton { onEvent(AddTransactionEvent.Back) } },
             )
         },
@@ -81,17 +89,10 @@ fun AddTransactionScreen(state: AddTransactionUiState, onEvent: (AddTransactionE
             )
         },
     ) {
-        val t = LocalTokens.current
         Column(
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(
-                "Balance: ${formatCents(state.balanceCents)}",
-                style = Type.body,
-                color = t.textMuted,
-                modifier = Modifier.testTag("TxnCurrentBalance"),
-            )
             Segmented(
                 selected = if (state.type == TxnType.credit) 0 else 1,
                 labels = listOf("Credit", "Debit"),
