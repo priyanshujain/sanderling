@@ -20,6 +20,14 @@
   - Simple PR title, few-line description. Never write a wall of text — nobody reads it.
   - Everything lowercase in PR titles, descriptions, and comments.
 
+### PR Description Rules
+
+  - Plain text only. No markdown, no headings, no bullets, no bold, no code blocks, no emoji.
+  - A few lines, that's it. Don't write an essay.
+  - Super casual, like you're telling a teammate over chat. Lowercase is fine.
+  - Don't polish it. A few typos and loose grammar are fine and preferred over something that reads like a template.
+  - Keep the facts right even though the tone is casual. Casual is about the voice, not about being vague or wrong.
+
 ## Git Commit Rules
 
   - Commit after every small, atomic change. Each commit should touch 1-3 files max.
