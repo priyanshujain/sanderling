@@ -878,7 +878,7 @@ retryLoop:
 			tree, err = hierarchy.Parse(hierarchyJSON)
 			pngBytes = image.PNG
 		}
-		if err != nil || !isTransitionalHierarchy(tree) {
+		if err != nil || !tree.Transitional() {
 			break
 		}
 		// A tree unchanged since the previous attempt is a settled state
@@ -907,27 +907,6 @@ retryLoop:
 		}
 	}
 	return tree, pngBytes, transitional, err
-}
-
-// isTransitionalHierarchy returns true when the tree carries more than one
-// resource-id ending in "Screen" - the marker of a Compose NavHost mid
-// cross-fade where both source and destination route composables are alive.
-// Mirrors the sidecar's stabilitySnapshot heuristic so runner-side rejection
-// stays consistent with the settle poll.
-func isTransitionalHierarchy(tree *hierarchy.Tree) bool {
-	if tree == nil {
-		return false
-	}
-	screens := 0
-	for _, element := range tree.Elements {
-		if strings.HasSuffix(element.ResourceID, "Screen") {
-			screens++
-			if screens > 1 {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {

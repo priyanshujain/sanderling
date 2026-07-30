@@ -272,6 +272,25 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	return element
 }
 
+// Transitional reports more than one resource id ending in "Screen": the marker
+// of a Compose NavHost mid cross-fade, where the source and destination route
+// composables are both alive in a collapsed, mid-animation layout.
+func (t *Tree) Transitional() bool {
+	if t == nil {
+		return false
+	}
+	screens := 0
+	for _, element := range t.Elements {
+		if strings.HasSuffix(element.ResourceID, "Screen") {
+			screens++
+			if screens > 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Find returns the first element matching the selector, or nil.
 func (t *Tree) Find(selector string) *Element {
 	node := t.FindNode(selector)

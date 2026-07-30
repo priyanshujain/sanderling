@@ -130,22 +130,6 @@ type ActionCandidate struct {
 	prob float64
 }
 
-// transitionalTree reports a NavHost cross-fade: more than one route *Screen
-// alive at once. Mirrors runner.isTransitionalHierarchy so the LLM rejects the
-// same frames the verifier's transitional handling does.
-func transitionalTree(tree *hierarchy.Tree) bool {
-	screens := 0
-	for _, element := range tree.Elements {
-		if strings.HasSuffix(element.ResourceID, "Screen") {
-			screens++
-			if screens > 1 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // verbActionKind maps a picker verb to the action kind it dispatches.
 func verbActionKind(verb string) ActionKind {
 	switch verb {
@@ -188,12 +172,10 @@ func (v *Verifier) Candidates() []ActionCandidate {
 	if v.lastTree == nil {
 		return nil
 	}
-	// A cross-fade frame carries more than one route *Screen at once (a NavHost
-	// mid-transition); its layout is mid-animation, often in a collapsed
+	// A cross-fade frame's layout is mid-animation, often in a collapsed
 	// coordinate space, so acting on it taps garbage (e.g. the soft keyboard).
-	// Skip it so the LLM re-observes a settled frame next step. Mirrors the
-	// runner's isTransitionalHierarchy.
-	if transitionalTree(v.lastTree) {
+	// Skip it so the LLM re-observes a settled frame next step.
+	if v.lastTree.Transitional() {
 		return nil
 	}
 	root := v.runtime.GlobalObject().Get("actions")

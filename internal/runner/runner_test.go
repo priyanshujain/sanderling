@@ -1118,34 +1118,6 @@ func TestRunner_OneScreenshotPerStep(t *testing.T) {
 	}
 }
 
-// TestIsTransitionalHierarchy_DetectsMultipleScreens covers the runner-side
-// guard that re-fetches when the hierarchy still carries two route-level
-// *Screen ids - the NavHost cross-fade signature.
-func TestIsTransitionalHierarchy_DetectsMultipleScreens(t *testing.T) {
-	multi, err := hierarchy.Parse(`{"attributes":{"resource-id":"root"},"children":[
-	  {"attributes":{"resource-id":"AddAccountScreen"},"children":[]},
-	  {"attributes":{"resource-id":"HomeScreen"},"children":[]}
-	]}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !isTransitionalHierarchy(multi) {
-		t.Error("expected multi-screen tree to be flagged as transitional")
-	}
-
-	single, err := hierarchy.Parse(`{"attributes":{"resource-id":"HomeScreen"},"children":[]}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if isTransitionalHierarchy(single) {
-		t.Error("single-screen tree must not be flagged as transitional")
-	}
-
-	if isTransitionalHierarchy(nil) {
-		t.Error("nil tree must not be flagged as transitional")
-	}
-}
-
 // TestRunner_StableTransitionalTreeIsVerified feeds a driver whose hierarchy
 // constantly carries two route-level *Screen ids but never changes between
 // retry attempts. Such a tree is a settled state that merely matches the
