@@ -1006,3 +1006,32 @@ func TestParseBoundsRejectsBadInput(t *testing.T) {
 		}
 	}
 }
+
+// Bug class: a NavHost cross-fade carries two route-level *Screen ids at once;
+// both the runner's re-fetch guard and the LLM's candidate enumeration depend on
+// spotting it, and neither must flag a settled single-screen tree.
+func TestTreeTransitional(t *testing.T) {
+	multi, err := Parse(`{"attributes":{"resource-id":"root"},"children":[
+	  {"attributes":{"resource-id":"AddAccountScreen"},"children":[]},
+	  {"attributes":{"resource-id":"HomeScreen"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !multi.Transitional() {
+		t.Error("expected multi-screen tree to be flagged as transitional")
+	}
+
+	single, err := Parse(`{"attributes":{"resource-id":"HomeScreen"},"children":[]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if single.Transitional() {
+		t.Error("single-screen tree must not be flagged as transitional")
+	}
+
+	var nilTree *Tree
+	if nilTree.Transitional() {
+		t.Error("nil tree must not be flagged as transitional")
+	}
+}

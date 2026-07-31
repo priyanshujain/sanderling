@@ -176,6 +176,30 @@ test: install
       --seed "{{seed}}" \
       --output "{{output}}"
 
+# Run 'sanderling test' with the LLM action generator instead of the seeded
+# fuzzer. Needs OPENROUTER_API_KEY (or OPENAI_API_KEY) in the environment; the
+# model is configured by generator = llm({...}) in spec.ts.
+test-llm: install
+    #!/usr/bin/env bash
+    set -euo pipefail
+    avd_flag=()
+    if [[ -n "{{avd}}" ]]; then
+      avd_flag=(--avd "{{avd}}")
+    fi
+    if [[ -n "{{android_device}}" ]]; then
+      avd_flag+=(--device "{{android_device}}")
+    fi
+    apk="{{justfile_directory()}}/app/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
+    "{{sanderling}}" test \
+      --spec "{{justfile_directory()}}/sanderling/spec.ts" \
+      --bundle-id app.folio \
+      --generator llm \
+      "${avd_flag[@]}" \
+      --android-app-path "$apk" \
+      --duration "{{duration}}" \
+      --seed "{{seed}}" \
+      --output "{{output}}"
+
 # Serve the wasmJs web app from a webpack dev server with COOP/COEP headers.
 web:
     #!/usr/bin/env bash

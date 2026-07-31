@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -15,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.folio.core.data.TxnType
 import app.folio.di.LocalAppGraph
+import app.folio.util.formatCents
 import app.folio.ui.BackHandler
 import app.folio.ui.component.AppButton
 import app.folio.ui.component.BackButton
@@ -26,6 +28,7 @@ import app.folio.ui.component.Header
 import app.folio.ui.component.Screen
 import app.folio.ui.component.Segmented
 import app.folio.ui.component.TextInput
+import app.folio.ui.theme.LocalTokens
 import app.folio.ui.theme.Type
 
 @Composable
@@ -65,6 +68,14 @@ fun AddTransactionScreen(state: AddTransactionUiState, onEvent: (AddTransactionE
             Header(
                 title = "Add transaction",
                 subtitle = account.name,
+                detail = {
+                    Text(
+                        "Balance: ${formatCents(state.balanceCents)}",
+                        style = Type.caption,
+                        color = LocalTokens.current.textMuted,
+                        modifier = Modifier.testTag("TxnCurrentBalance"),
+                    )
+                },
                 left = { BackButton { onEvent(AddTransactionEvent.Back) } },
             )
         },

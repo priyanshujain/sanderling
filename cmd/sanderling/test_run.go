@@ -21,5 +21,6 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		Seed:           options.seed,
 		Output:         options.output,
 		ClearData:      options.clearData,
+		Generator:      options.generator,
 	}, stdout)
 }

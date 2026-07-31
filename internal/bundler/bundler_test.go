@@ -156,6 +156,7 @@ func TestBundle_RegistersNamedExportsOnGlobalThis(t *testing.T) {
 	spec := `
 		export const properties = "PROPS_MARKER";
 		export const actionsRoot = "ACTIONS_MARKER";
+		export const generator = "GENERATOR_MARKER";
 		export const setup = "SETUP_MARKER";
 	`
 	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
@@ -166,13 +167,16 @@ func TestBundle_RegistersNamedExportsOnGlobalThis(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(result.JavaScript)
-	for _, marker := range []string{"PROPS_MARKER", "ACTIONS_MARKER", "SETUP_MARKER"} {
+	for _, marker := range []string{"PROPS_MARKER", "ACTIONS_MARKER", "GENERATOR_MARKER", "SETUP_MARKER"} {
 		if !strings.Contains(body, marker) {
 			t.Errorf("named export %q not registered in bundle:\n%s", marker, body)
 		}
 	}
 	if !strings.Contains(body, "globalThis.actions") {
 		t.Errorf("trailer should assign globalThis.actions:\n%s", body)
+	}
+	if !strings.Contains(body, "globalThis.generator") {
+		t.Errorf("trailer should assign globalThis.generator:\n%s", body)
 	}
 }
 

@@ -8,14 +8,15 @@ Lookup reference for everything importable from `@sanderling/spec`. For a worked
 
 ## Module structure
 
-A spec is a TypeScript module evaluated by the Go runner each step. It exports `properties` and `actionsRoot`, plus an optional `setup`:
+A spec is a TypeScript module evaluated by the Go runner each step. It exports `properties` and `actionsRoot`, plus an optional `setup` and `generator`:
 
 ```ts
 import { ... } from "@sanderling/spec";
 
 export const properties = { ... };
 export const actionsRoot = weighted(...);
-export const setup = login;   // optional
+export const setup = login;        // optional
+export const generator = llm(...); // optional, see below
 ```
 
 `setup` is an `ActionGenerator` the runner consults before `actionsRoot` each step. While it returns actions, they run; when it returns an empty list, the runner falls through to `actionsRoot`. Use it for preconditions like login and onboarding. If the app later regresses across the precondition (a logout mid-run), `setup` re-engages on its own.
@@ -265,6 +266,23 @@ const amounts = integers().between(1, 500);
 InputText({ into: nameField, text: names.generate() })
 InputText({ into: amountField, text: String(amounts.generate()) })
 ```
+
+## LLM generator
+
+By default the run's PRNG picks each action. `--generator llm` swaps out the picker for a vision model and nothing else: same spec, same `actionsRoot`, same weights, same actions. Add the export and pick a model.
+
+```ts
+export const generator = llm({
+  model: "gpt-5.4-nano",
+  instructions: "Folio is a personal-finance ledger app. The home screen lists accounts with balances; you can open an account and add transactions.",
+});
+```
+
+Set `OPENROUTER_API_KEY` or `OPENAI_API_KEY` (OpenRouter wins if both are set). With a plain OpenAI key, drop the vendor prefix from the model id. The model needs image input and strict `json_schema` structured output.
+
+Each step it gets a screenshot plus a numbered list of the concrete actions your tree yields right now, each tagged with its weight, and picks one number. `instructions` are appended to the prompt: say what the app is, not how to test it — the model works that part out. Everything else is unchanged. Setup actions still run first, typing still falls back to the edge-case corpus when the model supplies no text, and the trace records the reasoning, the chosen number, and `source: "llm"` so the replay UI can show why each pick happened.
+
+It is one model call per step, so keep `--duration` modest.
 
 ## Defaults
 

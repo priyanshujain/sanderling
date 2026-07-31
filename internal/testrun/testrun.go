@@ -34,6 +34,8 @@ type Options struct {
 	Seed           int64
 	Output         string
 	ClearData      bool
+	// Generator selects the action picker: "llm" or the default seeded picker.
+	Generator string
 
 	// iosUDID, iosIsSimulator, and iosCoreDeviceID are filled by Execute after
 	// resolving the iOS target, then read by buildDriver to choose the simulator
@@ -166,6 +168,7 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		Verifier:    verifierInstance,
 		TraceWriter: traceWriter,
 		Logger:      newProgressLogger(stdout),
+		Generator:   options.Generator,
 	})
 
 	terminateCtx, terminateCancel := context.WithTimeout(context.Background(), 5*time.Second)

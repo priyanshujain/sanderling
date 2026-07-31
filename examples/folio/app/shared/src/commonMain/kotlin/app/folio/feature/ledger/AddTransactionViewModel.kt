@@ -7,6 +7,7 @@ import app.folio.core.data.Repository
 import app.folio.core.data.TxnType
 import app.folio.navigation.Navigator
 import app.folio.navigation.Route
+import app.folio.util.balanceOf
 import app.folio.util.parseCents
 import dev.zacsweers.metro.Assisted
 import dev.zacsweers.metro.AssistedFactory
@@ -24,6 +25,7 @@ private val AMOUNT_REGEX = Regex("""^\d*(\.\d{0,2})?$""")
 
 data class AddTransactionUiState(
     val account: Account? = null,
+    val balanceCents: Long = 0,
     val type: TxnType = TxnType.credit,
     val amount: String = "",
     val note: String = "",
@@ -50,8 +52,13 @@ class AddTransactionViewModel(
     val state: StateFlow<AddTransactionUiState> = combine(
         form,
         repository.accounts.map { accounts -> accounts.firstOrNull { it.id == accountId } },
-    ) { f, account -> f.copy(account = account) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, AddTransactionUiState())
+        repository.transactions,
+    ) { f, account, transactions ->
+        f.copy(
+            account = account,
+            balanceCents = balanceOf(transactions.filter { it.accountId == accountId }),
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, AddTransactionUiState())
 
     fun onEvent(event: AddTransactionEvent) {
         when (event) {

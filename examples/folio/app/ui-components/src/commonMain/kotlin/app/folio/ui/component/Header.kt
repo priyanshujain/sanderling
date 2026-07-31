@@ -19,6 +19,7 @@ import app.folio.ui.theme.Type
 fun Header(
     title: String,
     subtitle: String? = null,
+    detail: @Composable (() -> Unit)? = null,
     left: @Composable (() -> Unit)? = null,
     right: @Composable (() -> Unit)? = null,
 ) {
@@ -42,6 +43,7 @@ fun Header(
             if (subtitle != null) {
                 Text(subtitle, style = Type.caption, color = t.textMuted)
             }
+            if (detail != null) detail()
         }
         if (right != null) right()
     }

@@ -82,6 +82,18 @@ type Action struct {
 	Selector       string        `json:"selector,omitempty"`
 	ResolvedBounds *BoundsRecord `json:"resolved_bounds,omitempty"`
 	TapPoint       *PointRecord  `json:"tap_point,omitempty"`
+	// Source names the backend that chose this action: "llm" when the LLM
+	// action backend selected it, empty for the seeded picker. LLMReasoning is
+	// the model's short rationale, shown by the replay UI to explain the pick.
+	Source       string `json:"source,omitempty"`
+	LLMReasoning string `json:"llm_reasoning,omitempty"`
+	// LLMChoice is the 1-based number the model picked from the candidate list;
+	// LLMChosenAction is the action description it echoed for that number. The
+	// runner strict-skips when the echo disagrees with the numbered entry, so on
+	// a recorded action the two always agree — the replay UI shows them to
+	// confirm the reasoning matched the executed action.
+	LLMChoice       int    `json:"llm_choice,omitempty"`
+	LLMChosenAction string `json:"llm_chosen_action,omitempty"`
 }
 
 type BoundsRecord struct {

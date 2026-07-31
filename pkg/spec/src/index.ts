@@ -42,6 +42,7 @@ export {
   actions,
   doubleTaps,
   from,
+  llm,
   longPresses,
   pressKeys,
   scrolls,

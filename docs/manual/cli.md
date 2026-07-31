@@ -23,6 +23,7 @@ Run a spec against an app for a fixed duration.
 | `--ios-app-path` | optional (ios) | Path to the `.app` bundle for clear-state reinstall (simulator via `simctl`, device via `devicectl`). |
 | `--duration` | `5m` | Total test duration (`30s`, `5m`, `2h`, `1d`). |
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
+| `--generator` | `seeded` | Who picks each action: `seeded` (the run's PRNG) or `llm` (a vision model). See [the LLM generator](../spec-language/#llm-generator). |
 | `--output` | `./runs` | Output directory for traces. |
 | `--clear-data` | `true` | Clear app data before launching so the run starts from a fresh install. Pass `--clear-data=false` to resume prior state. |
 

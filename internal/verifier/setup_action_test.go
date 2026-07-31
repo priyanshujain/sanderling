@@ -1,0 +1,95 @@
+package verifier
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/priyanshujain/sanderling/internal/bundler"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
+)
+
+// bundleInlineSpec bundles an inline spec through the real @sanderling/spec API
+// and goja runtime entry, so the bundle installs __sanderlingSetupAction__ the
+// way the CLI does.
+func bundleInlineSpec(t *testing.T, source string) string {
+	t.Helper()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.ts")
+	if err := os.WriteFile(specPath, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	abs := func(rel string) string {
+		path, err := filepath.Abs(rel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	bundle, err := bundler.Bundle(bundler.Options{
+		EntryFile:   specPath,
+		RuntimeFile: abs("../../pkg/spec/src/goja-runtime.ts"),
+		Aliases: map[string]string{
+			"@sanderling/spec":                     abs("../../pkg/spec/src/index.ts"),
+			"@sanderling/spec/defaults":            abs("../../pkg/spec/src/defaults/index.ts"),
+			"@sanderling/spec/defaults/properties": abs("../../pkg/spec/src/defaults/properties.ts"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("bundle: %v", err)
+	}
+	return string(bundle.JavaScript)
+}
+
+func loadBundled(t *testing.T, source, treeJSON string) *Verifier {
+	t.Helper()
+	v, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Load(bundleInlineSpec(t, source)); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.PushSnapshot(SnapshotInput{Tree: tree}); err != nil {
+		t.Fatalf("push snapshot: %v", err)
+	}
+	return v
+}
+
+func TestSetupActionWalksSetupOnly(t *testing.T) {
+	spec := `
+import { Tap, actions, taps } from "@sanderling/spec";
+export const setup = actions(() => [Tap({ on: "id:SignIn" })]);
+export const actionsRoot = taps;
+`
+	v := loadBundled(t, spec, enumTreeJSON)
+	action, err := v.SetupAction()
+	if err != nil {
+		t.Fatalf("SetupAction: %v", err)
+	}
+	if action.Kind != ActionKindTap || action.On != "id:SignIn" {
+		t.Errorf("SetupAction = %+v, want Tap on id:SignIn from setup", action)
+	}
+}
+
+func TestSetupActionIgnoresActionsRoot(t *testing.T) {
+	// No setup, but a live actionsRoot that NextAction would happily draw from.
+	spec := `
+import { taps } from "@sanderling/spec";
+export const actionsRoot = taps;
+`
+	v := loadBundled(t, spec, enumTreeJSON)
+	if _, err := v.SetupAction(); !errors.Is(err, ErrNoAction) {
+		t.Fatalf("SetupAction err = %v, want ErrNoAction when no setup is declared", err)
+	}
+	// Sanity: the seeded root would have produced an action, proving SetupAction
+	// deliberately skips it.
+	if _, err := v.NextAction(); err != nil {
+		t.Fatalf("NextAction should draw from actionsRoot: %v", err)
+	}
+}

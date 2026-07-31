@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
+	"github.com/priyanshujain/sanderling/internal/llmclient"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
@@ -61,12 +63,40 @@ func (s webSource) ExtractorOverrides(ctx context.Context) (map[int]json.RawMess
 }
 
 // pickSources selects the runtime's action and extractor sources ONCE at setup
-// from the driver's capabilities, so the step loop never type-asserts.
-func pickSources(options Options) (ActionSource, ExtractorSource) {
+// from the driver's capabilities, the --generator flag, and the spec, so the
+// step loop never type-asserts. With --generator llm and a spec-declared
+// generator = llm({...}) it constructs the chat-completions client and returns
+// an llmSource for selection while extractor overrides still come from the goja
+// path. Otherwise the seeded goja picker drives.
+func pickSources(options Options) (ActionSource, ExtractorSource, error) {
 	if web, ok := options.Driver.(driver.WebDriver); ok {
 		source := webSource{web: web}
-		return source, source
+		return source, source, nil
+	}
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if options.Generator == "llm" {
+		config, ok := options.Verifier.LLMConfig()
+		if !ok {
+			logger.Warn("--generator llm requested but spec declares no generator = llm(); using the seeded picker")
+		} else {
+			client, err := llmclient.New()
+			if err != nil {
+				return nil, nil, fmt.Errorf("llm action generator: %w", err)
+			}
+			action := &llmSource{
+				verifier:     options.Verifier,
+				client:       client,
+				model:        config.Model,
+				instructions: config.Instructions,
+				logger:       logger,
+				history:      newActionHistory(llmHistorySize),
+			}
+			return action, gojaSource{verifier: options.Verifier}, nil
+		}
 	}
 	source := gojaSource{verifier: options.Verifier}
-	return source, source
+	return source, source, nil
 }

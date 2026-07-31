@@ -78,6 +78,7 @@ examples/folio-web/.vite/
 # coding agent files
 .claude/
 .claude/*
+.playwright-mcp/
 
 # Personal research notes
 /research/

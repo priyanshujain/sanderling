@@ -86,6 +86,12 @@ export function walk(
     }
     case "builtin":
       return walkBuiltin(node.verb, rng, host);
+    case "llm":
+      // The LLM backend is driven by Go (it reads config.model off
+      // globalThis.actions and selects via OpenRouter). On the JS picker the
+      // marker is inert, so the goja NextAction reports no action and the Go
+      // llmSource takes over.
+      return null;
   }
 }
 

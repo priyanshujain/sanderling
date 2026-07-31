@@ -36,6 +36,10 @@ type Options struct {
 	Verifier    *verifier.Verifier
 	TraceWriter *trace.Writer
 	Logger      *slog.Logger
+	// Generator selects the action picker: "llm" drives selection with the
+	// spec's generator = llm({...}) config; anything else (the default) uses the
+	// seeded weighted picker. Both draw from the same actionsRoot candidate set.
+	Generator string
 }
 
 type Summary struct {
@@ -74,7 +78,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	// Pick the action and extractor sources once from the driver's
 	// capabilities so the step loop runs one uniform path with no per-step
 	// driver type assertion.
-	actionSource, extractorSource := pickSources(options)
+	actionSource, extractorSource, err := pickSources(options)
+	if err != nil {
+		return Summary{}, err
+	}
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -105,6 +112,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var tree *hierarchy.Tree
 		var hierarchyErr error
 		var transitional bool
+		var screenshotPNG []byte
 		var metrics *trace.Metrics
 		var logs []verifier.LogEntry
 
@@ -118,7 +126,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// screenshot describe the same frame, then re-fetches the pair
 		// while the tree still looks transitional.
 		g.Go(func() error {
-			tree, transitional, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
+			tree, screenshotPNG, transitional, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
 			return nil
 		})
 		g.Go(func() error {
@@ -183,12 +191,13 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		skippedVerification := false
 		if !transitional {
 			if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
-				Tree:       tree,
-				LastAction: lastAction,
-				StepTime:   stepStart,
-				StepIndex:  stepIndex,
-				RunStart:   summary.StartTime,
-				Logs:       logs,
+				Tree:          tree,
+				ScreenshotPNG: screenshotPNG,
+				LastAction:    lastAction,
+				StepTime:      stepStart,
+				StepIndex:     stepIndex,
+				RunStart:      summary.StartTime,
+				Logs:          logs,
 			}); err != nil {
 				return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 			}
@@ -215,6 +224,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var traceAction *trace.Action
 		if nextErr == nil {
 			traceAction = traceActionFor(nextAction, tree)
+			stampActionSource(traceAction, actionSource)
 		} else if !errors.Is(nextErr, verifier.ErrNoAction) {
 			return summary, fmt.Errorf("step %d next action: %w", stepIndex, nextErr)
 		}
@@ -855,7 +865,7 @@ const (
 // on a still-transitional tree. Callers use it to skip the verifier for
 // that step so the previous/current extractor advance does not absorb
 // transient state.
-func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (tree *hierarchy.Tree, transitional bool, err error) {
+func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (tree *hierarchy.Tree, png []byte, transitional bool, err error) {
 	var pngBytes []byte
 	var previousJSON string
 retryLoop:
@@ -868,7 +878,7 @@ retryLoop:
 			tree, err = hierarchy.Parse(hierarchyJSON)
 			pngBytes = image.PNG
 		}
-		if err != nil || !isTransitionalHierarchy(tree) {
+		if err != nil || !tree.Transitional() {
 			break
 		}
 		// A tree unchanged since the previous attempt is a settled state
@@ -896,28 +906,7 @@ retryLoop:
 			logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
 		}
 	}
-	return tree, transitional, err
-}
-
-// isTransitionalHierarchy returns true when the tree carries more than one
-// resource-id ending in "Screen" - the marker of a Compose NavHost mid
-// cross-fade where both source and destination route composables are alive.
-// Mirrors the sidecar's stabilitySnapshot heuristic so runner-side rejection
-// stays consistent with the settle poll.
-func isTransitionalHierarchy(tree *hierarchy.Tree) bool {
-	if tree == nil {
-		return false
-	}
-	screens := 0
-	for _, element := range tree.Elements {
-		if strings.HasSuffix(element.ResourceID, "Screen") {
-			screens++
-			if screens > 1 {
-				return true
-			}
-		}
-	}
-	return false
+	return tree, pngBytes, transitional, err
 }
 
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {

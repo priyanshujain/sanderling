@@ -44,4 +44,18 @@ describe("deviceSpaceOf", () => {
     };
     expect(deviceSpaceOf(hierarchy)).toEqual({ width: 402, height: 874 });
   });
+
+  it("uses the screen extent, not a short status-bar node listed first", () => {
+    // Regression: a 320x24 status bar precedes the 320x640 screen. Picking the
+    // first positive-bounds element gave a 320/24 aspect ratio, squashing the
+    // screenshot overlay into a grey horizontal band.
+    const hierarchy: Hierarchy = {
+      elements: [
+        { bounds: { left: 0, top: 0, right: 320, bottom: 24 } },
+        { bounds: { left: 0, top: 0, right: 320, bottom: 640 } },
+        { bounds: { left: 20, top: 271, right: 286, bottom: 319 } },
+      ],
+    };
+    expect(deviceSpaceOf(hierarchy)).toEqual({ width: 320, height: 640 });
+  });
 });
