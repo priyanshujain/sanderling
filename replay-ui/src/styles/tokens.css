@@ -8,7 +8,7 @@
   --text-muted: #6b6b6b;
   --accent-violation: #d32f2f;
   --accent-positive: #2e7d32;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 :root[data-theme="dark"],
