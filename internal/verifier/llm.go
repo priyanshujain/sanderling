@@ -145,6 +145,12 @@ type ActionCandidate struct {
 // enough to render on one numbered line.
 const maxLabelRunes = 40
 
+// gestureDurationMillis is how long a drag takes when the descriptor did not say.
+// It mirrors DEFAULT_SWIPE_DURATION in runtime-entry.ts, which is what the
+// seeded policy's action carries by the time it reaches the runner: the two
+// policies must hand the driver the same gesture, not two speeds of it.
+const gestureDurationMillis = 250
+
 // The label sources a candidate's target can be named by. This is the
 // observation channel the model reads, and nothing else: the seeded picker
 // selects by index and never asks for a label, so the two seeded cells of a
@@ -297,8 +303,8 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext
 	kind := ActionKind(kindValue.String())
 	switch kind {
 	case ActionKindTap, ActionKindDoubleTap, ActionKindLongPress:
-		target := v.resolveTarget(object.Get("on"), labels)
-		if target.disabled {
+		target, ok := v.resolveTarget(object.Get("on"), labels)
+		if !ok || target.disabled {
 			return ActionCandidate{}, false
 		}
 		return ActionCandidate{
@@ -307,8 +313,8 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext
 			Action: Action{Kind: kind, On: target.selector, X: target.x, Y: target.y},
 		}, true
 	case ActionKindInputText:
-		target := v.resolveTarget(object.Get("into"), labels)
-		if target.disabled {
+		target, ok := v.resolveTarget(object.Get("into"), labels)
+		if !ok || target.disabled {
 			return ActionCandidate{}, false
 		}
 		text := stringField(object, "text")
@@ -319,26 +325,41 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext
 			Action:    Action{Kind: kind, On: target.selector, X: target.x, Y: target.y, Text: text},
 		}, true
 	case ActionKindScroll:
-		target := v.resolveTarget(object.Get("in"), labels)
+		container, _ := v.resolveTarget(object.Get("in"), labels)
 		direction := stringField(object, "direction")
 		if direction == "" {
 			direction = "down"
 		}
-		return ActionCandidate{
-			Kind:      kind,
-			Direction: direction,
-			Action:    Action{Kind: kind, On: target.selector, Direction: direction},
-		}, true
+		action := Action{
+			Kind:           kind,
+			On:             container.selector,
+			Direction:      direction,
+			DurationMillis: gestureDurationMillis,
+		}
+		// Endpoints only when the descriptor computed the whole gesture (the
+		// builtin generator does). Anchoring an authored scroll on the
+		// container's own point instead would hand the runner a drag from a
+		// point to itself, which it executes as written.
+		from, hasFrom := v.resolveTarget(object.Get("from"), labels)
+		to, hasTo := v.resolveTarget(object.Get("to"), labels)
+		if hasFrom && hasTo {
+			action.FromX, action.FromY = from.x, from.y
+			action.ToX, action.ToY = to.x, to.y
+		}
+		return ActionCandidate{Kind: kind, Direction: direction, Action: action}, true
 	case ActionKindSwipe:
-		from := v.resolveTarget(object.Get("from"), labels)
-		to := v.resolveTarget(object.Get("to"), labels)
+		from, hasFrom := v.resolveTarget(object.Get("from"), labels)
+		to, hasTo := v.resolveTarget(object.Get("to"), labels)
+		if !hasFrom || !hasTo {
+			return ActionCandidate{}, false
+		}
 		return ActionCandidate{
 			Kind: kind,
 			Action: Action{
 				Kind:  kind,
 				FromX: from.x, FromY: from.y,
 				ToX: to.x, ToY: to.y,
-				DurationMillis: intField(object, "durationMillis"),
+				DurationMillis: intFieldOr(object, "durationMillis", gestureDurationMillis),
 			},
 		}, true
 	case ActionKindPressKey:
@@ -347,7 +368,10 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext
 			Action: Action{Kind: kind, Key: stringField(object, "key")},
 		}, true
 	case ActionKindWait:
-		return ActionCandidate{Kind: kind, Action: Action{Kind: kind}}, true
+		return ActionCandidate{
+			Kind:   kind,
+			Action: Action{Kind: kind, DurationMillis: intField(object, "durationMillis")},
+		}, true
 	default:
 		return ActionCandidate{}, false
 	}
@@ -366,26 +390,36 @@ type resolvedTarget struct {
 // resolveTarget reads an authored action's target. Ax element handles carry
 // x/y/__sanderlingSelector plus their own text and id; a bare selector string
 // resolves against the current tree; a point carries geometry only.
-func (v *Verifier) resolveTarget(value goja.Value, labels labelContext) resolvedTarget {
+//
+// The second return is false when the value names no target the seeded policy
+// could act on either: runtime-entry.ts pointOf accepts a non-empty selector
+// string or an object with numeric coordinates, and drops the whole action
+// otherwise. Lowering one of those to (0, 0) instead would offer the model an
+// action the seeded policy never takes, aimed at the screen corner.
+func (v *Verifier) resolveTarget(value goja.Value, labels labelContext) (resolvedTarget, bool) {
 	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
-		return resolvedTarget{}
+		return resolvedTarget{}, false
 	}
 	if selector, ok := value.Export().(string); ok {
-		return v.targetFromSelector(selector, labels)
+		if selector == "" {
+			return resolvedTarget{}, false
+		}
+		return v.targetFromSelector(selector, labels), true
 	}
 	object := value.ToObject(v.runtime)
 	if object == nil {
-		return resolvedTarget{}
+		return resolvedTarget{}, false
+	}
+	x, hasX := numberField(object, "x")
+	y, hasY := numberField(object, "y")
+	if !hasX || !hasY {
+		return resolvedTarget{}, false
 	}
 	selector := stringField(object, tagSelector)
 	if selector == "" {
 		selector = stringField(object, "selector")
 	}
-	target := resolvedTarget{
-		x:        int(object.Get("x").ToInteger()),
-		y:        int(object.Get("y").ToInteger()),
-		selector: selector,
-	}
+	target := resolvedTarget{x: x, y: y, selector: selector}
 	if element := v.findBySelector(selector); element != nil {
 		target.label = labels.label(element)
 		target.inputType = inputTypeHint(element)
@@ -394,7 +428,7 @@ func (v *Verifier) resolveTarget(value goja.Value, labels labelContext) resolved
 	if target.label == "" {
 		target.label = truncateLabel(stringField(object, labels.handleField()))
 	}
-	return target
+	return target, true
 }
 
 // targetFromSelector resolves a bare selector-string target against the tree.
@@ -745,4 +779,34 @@ func intField(object *goja.Object, key string) int {
 		return 0
 	}
 	return int(value.ToInteger())
+}
+
+// intFieldOr reads a numeric property, falling back when the descriptor left it
+// out. It mirrors the serializer's `??`, so an explicit zero is kept.
+func intFieldOr(object *goja.Object, key string, fallback int) int {
+	value := object.Get(key)
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return fallback
+	}
+	return int(value.ToInteger())
+}
+
+// numberField reads a property that must actually BE a number, which is what
+// tells a target carrying no coordinates apart from one anchored at (0, 0).
+func numberField(object *goja.Object, key string) (int, bool) {
+	value := object.Get(key)
+	if value == nil {
+		return 0, false
+	}
+	switch number := value.Export().(type) {
+	case int64:
+		return int(number), true
+	case float64:
+		if math.IsNaN(number) {
+			return 0, false
+		}
+		return int(number), true
+	default:
+		return 0, false
+	}
 }

@@ -450,6 +450,111 @@ func TestCandidatesSurfaceAuthoredUntargetedActions(t *testing.T) {
 	}
 }
 
+// TestCandidatesAuthoredWaitKeepsItsDuration: a Wait that loses its duration is
+// a wait of zero, which the runner cannot dispatch at all, so the model would be
+// idling on paper while the seeded arm really waits.
+func TestCandidatesAuthoredWaitKeepsItsDuration(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [{kind:'Wait', durationMillis: 500}]}`
+	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates(LabelSourceVisibleText)
+	candidate, ok := findCandidate(candidates, "Wait")
+	if !ok {
+		t.Fatalf("authored wait missing: %v", descriptions(candidates))
+	}
+	if candidate.Action.DurationMillis != 500 {
+		t.Errorf("wait duration = %d, want the authored 500", candidate.Action.DurationMillis)
+	}
+}
+
+// TestCandidatesAuthoredScrollNamesItsContainer: the container is the whole
+// point of an authored scroll. Dropped, the runner re-derives the gesture from
+// the screen and the scroll lands on whatever else is scrollable.
+func TestCandidatesAuthoredScrollNamesItsContainer(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [{kind:'Scroll', direction:'down', in:'id:List'}]}`
+	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates(LabelSourceVisibleText)
+	candidate, ok := findCandidate(candidates, "Scroll down")
+	if !ok {
+		t.Fatalf("authored scroll missing: %v", descriptions(candidates))
+	}
+	if candidate.Action.On != "id:List" {
+		t.Errorf("scroll container = %q, want id:List", candidate.Action.On)
+	}
+	if candidate.Action.DurationMillis != gestureDurationMillis {
+		t.Errorf("scroll duration = %d, want %d", candidate.Action.DurationMillis, gestureDurationMillis)
+	}
+}
+
+// TestCandidatesAuthoredScrollKeepsPrecomputedEndpoints: a descriptor that
+// already carries the gesture is executed as written rather than re-derived.
+func TestCandidatesAuthoredScrollKeepsPrecomputedEndpoints(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [
+      {kind:'Scroll', direction:'down', in:'id:List', from:{x:540,y:1400}, to:{x:540,y:920}}
+    ]}`
+	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates(LabelSourceVisibleText)
+	candidate, ok := findCandidate(candidates, "Scroll down")
+	if !ok {
+		t.Fatalf("authored scroll missing: %v", descriptions(candidates))
+	}
+	action := candidate.Action
+	got := [4]int{action.FromX, action.FromY, action.ToX, action.ToY}
+	if got != [4]int{540, 1400, 540, 920} {
+		t.Errorf("scroll endpoints = %v, want the descriptor's (540,1400)->(540,920)", got)
+	}
+}
+
+// TestCandidatesAuthoredSwipeDefaultsItsDuration keeps the gesture default in
+// one place: the serializer the seeded arm goes through fills an omitted
+// duration, and a candidate that left it at zero would depend on the runner
+// happening to pick the same fallback.
+func TestCandidatesAuthoredSwipeDefaultsItsDuration(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [
+      {kind:'Swipe', from:{x:10,y:600}, to:{x:10,y:100}},
+      {kind:'Swipe', from:{x:20,y:600}, to:{x:20,y:100}, durationMillis: 400}
+    ]}`
+	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates(LabelSourceVisibleText)
+	omitted, ok := findCandidate(candidates, "Swipe from (10,600) to (10,100)")
+	if !ok {
+		t.Fatalf("authored swipe missing: %v", descriptions(candidates))
+	}
+	if omitted.Action.DurationMillis != gestureDurationMillis {
+		t.Errorf("omitted duration = %d, want %d", omitted.Action.DurationMillis, gestureDurationMillis)
+	}
+	authored, ok := findCandidate(candidates, "Swipe from (20,600) to (20,100)")
+	if !ok {
+		t.Fatalf("authored swipe missing: %v", descriptions(candidates))
+	}
+	if authored.Action.DurationMillis != 400 {
+		t.Errorf("authored duration = %d, want 400", authored.Action.DurationMillis)
+	}
+}
+
+// TestCandidatesDropTargetsThatResolveToNothing: the seeded picker drops an
+// action whose target resolves to neither coordinates nor a selector. Offering
+// it to the model instead would put a tap on the screen origin within reach,
+// which on Android is the corner that pulls the notification shade down.
+func TestCandidatesDropTargetsThatResolveToNothing(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [
+      {kind:'Tap', on: null},
+      {kind:'Tap', on: {}},
+      {kind:'InputText', into: {}, text:'x'},
+      {kind:'Swipe', from:{x:1,y:2}, to:{}}
+    ]}`
+	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates(LabelSourceVisibleText)
+	if len(candidates) != 0 {
+		t.Errorf("targetless actions reached the model: %v", descriptions(candidates))
+	}
+}
+
+// TestCandidatesKeepATargetOnTheScreenOrigin is the other side of that rule: a
+// point at (0,0) IS a target the seeded picker executes, so the drop must key on
+// a target with no coordinates rather than on coordinates that are zero.
+func TestCandidatesKeepATargetOnTheScreenOrigin(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [{kind:'Tap', on: {x: 0, y: 0}}]}`
+	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates(LabelSourceVisibleText)
+	if len(candidates) != 1 {
+		t.Fatalf("want the origin tap kept, got %v", descriptions(candidates))
+	}
+}
+
 func TestCandidatesOffRouteLeafYieldsNothing(t *testing.T) {
 	v := enumVerifier(t, "{kind:'actions', generate: () => []}", enumTreeJSON)
 	if got := v.Candidates(LabelSourceVisibleText); len(got) != 0 {
