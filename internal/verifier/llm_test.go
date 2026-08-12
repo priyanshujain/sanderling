@@ -41,6 +41,18 @@ const labelChannelTreeJSON = `{
   ]
 }`
 
+// sharedLabelTreeJSON is a list where two rows read exactly the same to a user
+// ("Delete") while the app tells them apart by identifier. It is the shape a
+// list of removable items has in any real app.
+const sharedLabelTreeJSON = `{
+  "attributes": {"bounds": "[0,0,1080,2400]"},
+  "children": [
+    {"attributes": {"resource-id": "delete_alpha", "text": "Delete", "bounds": "[0,100,1080,200]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "delete_beta", "text": "Delete", "bounds": "[0,200,1080,300]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "checkout", "text": "Checkout", "bounds": "[0,400,1080,500]"}, "clickable": true, "enabled": true, "children": []}
+  ]
+}`
+
 // enumVerifier loads a spec whose actions root is the given plain-object graph
 // and stages the given tree, so Candidates walks a controlled action tree. The
 // spec is bundled with the goja runtime entry because the model arm reads the
@@ -125,12 +137,12 @@ func TestCandidatesIdentifierChannelFallsBackToClassThenBareControl(t *testing.T
 	}
 }
 
-// TestCandidatesIdentifierChannelMergesControlsItCannotTellApart pins the cost
-// of the channel rather than a defect in it: dedup keys on the rendered line, so
-// two identifier-less controls of one class arrive as ONE numbered entry and the
-// model can only reach the first. The list the identifier arm picks from is
-// therefore shorter than the text arm's on the same screen.
-func TestCandidatesIdentifierChannelMergesControlsItCannotTellApart(t *testing.T) {
+// TestCandidatesIdentifierChannelKeepsControlsItCannotNameApartReachable is the
+// cost of the channel, bounded: two identifier-less controls of one class read
+// the same in the numbered list, but they stay TWO entries, each carrying its
+// own action, so the model can act on either by number. A channel that renames
+// controls must never shrink the action space.
+func TestCandidatesIdentifierChannelKeepsControlsItCannotNameApartReachable(t *testing.T) {
 	text := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
 		Candidates(LabelSourceVisibleText)
 	identifier := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
@@ -139,12 +151,41 @@ func TestCandidatesIdentifierChannelMergesControlsItCannotTellApart(t *testing.T
 	if count(text, `Tap "Remember me"`) != 1 || count(text, `Tap "Stay signed in"`) != 1 {
 		t.Fatalf("the text channel should address both checkboxes, got %v", descriptions(text))
 	}
-	if got := count(identifier, `Tap "android.widget.CheckBox"`); got != 1 {
-		t.Errorf("the two checkboxes should merge into one line, got %d: %v", got, descriptions(identifier))
+	checkboxes := candidatesMatching(identifier, `Tap "android.widget.CheckBox"`)
+	if len(checkboxes) != 2 {
+		t.Fatalf("the two checkboxes should be two entries, got %d: %v",
+			len(checkboxes), descriptions(identifier))
 	}
-	if len(identifier) >= len(text) {
-		t.Errorf("identifier list (%d) should be shorter than the text list (%d): %v vs %v",
+	if checkboxes[0].Action == checkboxes[1].Action {
+		t.Errorf("both entries execute the same action: %+v", checkboxes[0].Action)
+	}
+	if len(identifier) != len(text) {
+		t.Errorf("identifier list (%d) and text list (%d) must offer the same actions: %v vs %v",
 			len(identifier), len(text), descriptions(identifier), descriptions(text))
+	}
+}
+
+// TestCandidatesReachBothControlsSharingOneVisibleLabel is the reachability
+// floor: two rows a user reads as the same word are two different controls, so
+// both get a number and the second number taps the second row. Dedup that keyed
+// on the rendered line dropped the second one, putting it out of reach of any
+// prompt or policy.
+func TestCandidatesReachBothControlsSharingOneVisibleLabel(t *testing.T) {
+	candidates := enumVerifier(t, "{kind:'builtin', verb:'taps'}", sharedLabelTreeJSON).
+		Candidates(LabelSourceVisibleText)
+
+	deletes := candidatesMatching(candidates, `Tap "Delete"`)
+	if len(deletes) != 2 {
+		t.Fatalf("want both Delete rows reachable, got %d: %v", len(deletes), descriptions(candidates))
+	}
+	if got := deletes[0].Action.On; got != "id:delete_alpha" {
+		t.Errorf("first entry targets %q, want id:delete_alpha", got)
+	}
+	if got := deletes[1].Action.On; got != "id:delete_beta" {
+		t.Errorf("second entry targets %q, want id:delete_beta", got)
+	}
+	if deletes[0].Index == deletes[1].Index {
+		t.Errorf("both entries share number %d, so the model cannot address them apart", deletes[0].Index)
 	}
 }
 
@@ -175,25 +216,56 @@ func TestCandidatesTypingLabelFollowsTheLabelSource(t *testing.T) {
 	}
 }
 
-// TestLabelSourceChangesOnlyTheDescription is the claim the factorial rests on:
-// the channel renames the target and does nothing else, so a difference in
-// defect yield cannot come from the two arms executing different actions.
+// TestLabelSourceChangesOnlyTheDescription is the claim the labelling factorial
+// rests on: the channel renames every target and does nothing else. Both arms
+// enumerate the same candidates, in the same order, at the same weights,
+// carrying the same executable actions; the description and the label are the
+// only things that move. Anything else and the two cells would be picking from
+// different action spaces, so a difference in defect yield could not be
+// attributed to how the controls were named.
 func TestLabelSourceChangesOnlyTheDescription(t *testing.T) {
-	text := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
-		Candidates(LabelSourceVisibleText)
-	identifier := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
-		Candidates(LabelSourceResourceID)
-
-	readable, ok := findCandidate(text, `Tap "Add credit"`)
-	if !ok {
-		t.Fatalf("missing the text-labelled tap: %v", descriptions(text))
+	const everyLabelledVerb = `{kind:'weighted', branches:[
+      [1,{kind:'builtin',verb:'taps'}],
+      [1,{kind:'builtin',verb:'typing'}],
+      [1,{kind:'builtin',verb:'swipes'}]
+    ]}`
+	fixtures := []struct {
+		name string
+		tree string
+	}{
+		{"identifiers collide", labelChannelTreeJSON},
+		{"visible text collides", sharedLabelTreeJSON},
 	}
-	named, ok := findCandidate(identifier, `Tap "add_credit_button"`)
-	if !ok {
-		t.Fatalf("missing the identifier-labelled tap: %v", descriptions(identifier))
+	withoutNames := func(candidate ActionCandidate) ActionCandidate {
+		candidate.Description = ""
+		candidate.Label = ""
+		return candidate
 	}
-	if readable.Action != named.Action {
-		t.Errorf("same control, different action:\n text=%+v\n   id=%+v", readable.Action, named.Action)
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			text := enumVerifier(t, everyLabelledVerb, fixture.tree).Candidates(LabelSourceVisibleText)
+			identifier := enumVerifier(t, everyLabelledVerb, fixture.tree).Candidates(LabelSourceResourceID)
+			if len(text) == 0 {
+				t.Fatal("fixture yielded no candidates")
+			}
+			if len(text) != len(identifier) {
+				t.Fatalf("different action spaces: %d text candidates vs %d identifier ones:\n%v\n%v",
+					len(text), len(identifier), descriptions(text), descriptions(identifier))
+			}
+			renamed := false
+			for i := range text {
+				if withoutNames(text[i]) != withoutNames(identifier[i]) {
+					t.Errorf("candidate %d differs beyond its name:\n text=%+v\n   id=%+v",
+						i+1, text[i], identifier[i])
+				}
+				if text[i].Description != identifier[i].Description {
+					renamed = true
+				}
+			}
+			if !renamed {
+				t.Error("no candidate was renamed, so this fixture does not exercise the channel")
+			}
+		})
 	}
 }
 
@@ -427,6 +499,16 @@ func descriptions(candidates []ActionCandidate) []string {
 		out[i] = candidate.Description
 	}
 	return out
+}
+
+func candidatesMatching(candidates []ActionCandidate, description string) []ActionCandidate {
+	var matched []ActionCandidate
+	for _, candidate := range candidates {
+		if candidate.Description == description {
+			matched = append(matched, candidate)
+		}
+	}
+	return matched
 }
 
 func count(candidates []ActionCandidate, description string) int {

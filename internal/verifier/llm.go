@@ -113,7 +113,9 @@ type ActionCandidate struct {
 	// Kind is the resulting action kind.
 	Kind ActionKind
 	// Description is the rendered action shown to the model and echoed back as
-	// chosen_action, e.g. `Tap "Add credit"`. Dedup keys on it, so it is unique.
+	// chosen_action, e.g. `Tap "Add credit"`. Two entries may render the same
+	// when the screen holds two controls a user reads alike; Index is what tells
+	// them apart, and it is what the model picks by.
 	Description string
 	// Label is the target label the selected LabelSource named (empty for
 	// gestures).
@@ -162,7 +164,8 @@ const (
 // SAME tree the seeded picker draws: weighted branches recurse (accumulating the
 // selection probability), authored actions()/whenRoute leaves are called once
 // for their concrete actions, and builtin verbs come straight from the picker's
-// own enumeration. Identical descriptions dedup, summing weight.
+// own enumeration. Candidates that would execute the same action dedup, summing
+// weight; two controls that merely read alike stay two entries.
 //
 // labelSource selects the channel each target is named by. An unrecognized
 // value (including the zero value) names targets by visible text; the CLI
@@ -491,20 +494,33 @@ func (v *Verifier) enumerateBuiltin(verb string) ([]builtinCandidate, error) {
 	return entries, nil
 }
 
-// finalizeCandidates renders each candidate's description, dedups identical
-// descriptions (summing weight), numbers the survivors 1..N, and rounds the
-// accumulated probability into a percentage Weight.
+// candidateIdentity is what a candidate would DO. Two candidates sharing it are
+// the same action reached through two paths of the action tree, so folding them
+// into one numbered entry loses nothing; two that differ are different actions
+// however alike they read, so folding them would put one of them out of reach.
+// llmText is part of it because it decides where the typed text comes from: the
+// model writes it for a builtin typing candidate, while an authored one replays
+// the value already sitting in Action.Text.
+type candidateIdentity struct {
+	action  Action
+	llmText bool
+}
+
+// finalizeCandidates renders each candidate's description, dedups by what the
+// candidate executes (summing weight), numbers the survivors 1..N, and rounds
+// the accumulated probability into a percentage Weight.
 func finalizeCandidates(raw []ActionCandidate) []ActionCandidate {
-	seen := make(map[string]int, len(raw))
+	seen := make(map[candidateIdentity]int, len(raw))
 	result := make([]ActionCandidate, 0, len(raw))
 	for _, candidate := range raw {
 		candidate.Description = describeCandidate(candidate)
-		if index, ok := seen[candidate.Description]; ok {
+		identity := candidateIdentity{action: candidate.Action, llmText: candidate.LLMText}
+		if index, ok := seen[identity]; ok {
 			result[index].prob += candidate.prob
 			result[index].Weighted = result[index].Weighted || candidate.Weighted
 			continue
 		}
-		seen[candidate.Description] = len(result)
+		seen[identity] = len(result)
 		result = append(result, candidate)
 	}
 	for i := range result {
@@ -517,8 +533,11 @@ func finalizeCandidates(raw []ActionCandidate) []ActionCandidate {
 }
 
 // describeCandidate renders the plain, echo-friendly description shown in the
-// numbered list. It is the dedup key, so it must be stable and unique per
-// distinct action.
+// numbered list. It is display only: dedup keys on the action, so two entries
+// may read alike without merging and Index is what separates them. Do not add an
+// ordinal or a coordinate to pull those apart: this string IS the observation
+// channel a labelling experiment varies, so a disambiguator here would name a
+// target through a channel the label source deliberately withholds.
 func describeCandidate(candidate ActionCandidate) string {
 	switch candidate.Kind {
 	case ActionKindTap:
@@ -538,10 +557,11 @@ func describeCandidate(candidate ActionCandidate) string {
 	case ActionKindScroll:
 		return "Scroll " + candidate.Direction
 	case ActionKindSwipe:
-		// A swipe carries endpoints and no selector, so the coordinates are what
-		// keep two swipes distinct. The label is prepended when the origin
-		// element has one, because "swipe that row" is the interaction a model
-		// reaches for and a bare pair of points does not say which row.
+		// A swipe is a drag across the screen, so where it runs is the whole of
+		// what it does and a reader needs the endpoints to picture it. The label
+		// is prepended when the origin element has one, because "swipe that row"
+		// is the interaction a model reaches for and a bare pair of points does
+		// not say which row.
 		where := fmt.Sprintf("from (%d,%d) to (%d,%d)",
 			candidate.Action.FromX, candidate.Action.FromY,
 			candidate.Action.ToX, candidate.Action.ToY)
