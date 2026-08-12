@@ -381,7 +381,11 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
 	defer cancel()
 	script := `
 (function() {
-  const route = window.location.hash.replace(/^#/, '').split('?')[0] || '/';
+  // Hash first (a HashRouter names the screen there), then the pathname, which
+  // is where a path-routed SPA keeps it. Reporting '/' for every step of a
+  // BrowserRouter app made every screen look like the same screen.
+  const route = window.location.hash.replace(/^#/, '').split('?')[0] ||
+    window.location.pathname || '/';
   // clickable and editable are resolved through the SAME selector sets
   // pkg/spec/src/web-runtime.ts uses, so the goja host (which reads this dump)
   // and the V8 host (which reads the DOM directly) cannot mean different things

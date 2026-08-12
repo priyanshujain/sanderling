@@ -544,3 +544,49 @@ func TestInputText_ReplacesTextInsideAShadowRoot(t *testing.T) {
 		t.Errorf("field holds %q after EraseText, want empty", shown)
 	}
 }
+
+// TestHierarchy_ScreenFallsBackToThePathname pins the route the goja host reads
+// off the dump. Reading location.hash alone reported "/" on every step of a
+// path-routed SPA (react-router's BrowserRouter, which the replay UI itself
+// uses), so every screen looked like the same screen and no route-scoped
+// property or action could tell them apart.
+func TestHierarchy_ScreenFallsBackToThePathname(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<body><div id="app">app</div></body>`))
+	}))
+	defer server.Close()
+
+	for _, testCase := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{"path-routed", "/runs/20260101-120000/steps/7", "/runs/20260101-120000/steps/7"},
+		{"hash wins when present", "/runs/1#/detail", "/detail"},
+		{"root", "/", "/"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			d := New()
+			defer d.Terminate(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := d.Launch(ctx, server.URL+testCase.path, false, nil); err != nil {
+				t.Fatalf("Launch: %v", err)
+			}
+			dump, err := d.Hierarchy(ctx)
+			if err != nil {
+				t.Fatalf("Hierarchy: %v", err)
+			}
+			var root struct {
+				Attributes map[string]string `json:"attributes"`
+			}
+			if err := json.Unmarshal([]byte(dump), &root); err != nil {
+				t.Fatalf("unmarshal hierarchy: %v", err)
+			}
+			if got := root.Attributes["sanderling-screen"]; got != testCase.want {
+				t.Errorf("sanderling-screen: got %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
