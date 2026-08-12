@@ -21,13 +21,13 @@ interface Ax {
   findAll(selector: unknown): Handle[];
 }
 
-function selectorMatches(selector: string): string[] {
+function selectorMatches(selector: unknown): string[] {
   const ax = buildAx() as Ax;
   return ax.findAll(selector).map((element) => element.id ?? "");
 }
 
 type SelectorGlobal = {
-  __sanderlingSelectorMatches__: (selector: string) => string[];
+  __sanderlingSelectorMatches__: (selector: unknown) => string[];
 };
 
 (globalThis as unknown as SelectorGlobal).__sanderlingSelectorMatches__ = selectorMatches;

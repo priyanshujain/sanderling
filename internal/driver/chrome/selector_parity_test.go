@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,17 +55,50 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 	// want is stated here rather than derived, so a matcher that stops matching
 	// on both sides at once cannot pass this by agreeing on nothing.
 	cases := []struct {
+		name     string
 		selector string
+		object   hierarchy.Selector
 		want     []string
 	}{
-		{"idPrefix:customer_row_", []string{"customer_row_a1", "customer_row_b2"}},
-		{"idPrefix:customer_", []string{"customer_list", "customer_row_a1", "customer_row_b2"}},
-		{"idPrefix:invoice_row_", nil},
-		{"id:summary_card", []string{"summary_card"}},
-		{"descPrefix:customer_row_", []string{"customer_row_a1", "customer_row_b2"}},
+		{
+			name:     "idPrefix",
+			selector: "idPrefix:customer_row_",
+			object:   objectSelector("idPrefix", "customer_row_"),
+			want:     []string{"customer_row_a1", "customer_row_b2"},
+		},
+		{
+			name:     "idPrefix spanning the container",
+			selector: "idPrefix:customer_",
+			object:   objectSelector("idPrefix", "customer_"),
+			want:     []string{"customer_list", "customer_row_a1", "customer_row_b2"},
+		},
+		{
+			name:     "idPrefix matching nothing",
+			selector: "idPrefix:invoice_row_",
+			object:   objectSelector("idPrefix", "invoice_row_"),
+			want:     nil,
+		},
+		{
+			name:     "id",
+			selector: "id:summary_card",
+			object:   objectSelector("id", "summary_card"),
+			want:     []string{"summary_card"},
+		},
+		{
+			name:     "descPrefix",
+			selector: "descPrefix:customer_row_",
+			object:   objectSelector("descPrefix", "customer_row_"),
+			want:     []string{"customer_row_a1", "customer_row_b2"},
+		},
+		{
+			name:     "desc",
+			selector: "desc:customer_row_a1",
+			object:   objectSelector("desc", "customer_row_a1"),
+			want:     []string{"customer_row_a1"},
+		},
 	}
 	for _, testCase := range cases {
-		t.Run(testCase.selector, func(t *testing.T) {
+		t.Run(testCase.name, func(t *testing.T) {
 			native := selectorIDsFromDump(tree, testCase.selector)
 			web := selectorIDsFromWebRuntime(ctx, t, d, testCase.selector)
 			if !slices.Equal(native, testCase.want) {
@@ -73,8 +107,57 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			if !slices.Equal(web, testCase.want) {
 				t.Errorf("the web runtime matched %v, want %v", web, testCase.want)
 			}
+
+			// The object form has to mean the same thing as the string form on
+			// both sides. It is the form the typed API pushes authors toward and
+			// the one that used to fall through to a raw attribute lookup.
+			nativeObject := selectorIDsFromDumpObject(tree, testCase.object)
+			webObject := selectorIDsFromWebRuntime(ctx, t, d, objectSelectorJSON(testCase.object))
+			if !slices.Equal(nativeObject, testCase.want) {
+				t.Errorf("hierarchy object form matched %v, want %v", nativeObject, testCase.want)
+			}
+			if !slices.Equal(webObject, testCase.want) {
+				t.Errorf("the web runtime object form matched %v, want %v", webObject, testCase.want)
+			}
 		})
 	}
+}
+
+func objectSelector(key, value string) hierarchy.Selector {
+	return hierarchy.Selector{Filters: []hierarchy.AttrFilter{{Attr: key, Value: value}}}
+}
+
+func objectSelectorJSON(sel hierarchy.Selector) string {
+	fields := map[string]string{}
+	for _, filter := range sel.Filters {
+		fields[filter.Attr] = filter.Value
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+func selectorIDsFromDumpObject(tree *hierarchy.Tree, sel hierarchy.Selector) []string {
+	var ids []string
+	for _, node := range tree.Root.FindAllBySelector(sel) {
+		ids = append(ids, node.Element.ResourceID)
+	}
+	return ids
+}
+
+// jsArgument passes an object selector through as the JS object literal it
+// already is, and quotes anything else as a string selector.
+func jsArgument(selector string) string {
+	if strings.HasPrefix(selector, "{") {
+		return selector
+	}
+	quoted, err := json.Marshal(selector)
+	if err != nil {
+		return `""`
+	}
+	return string(quoted)
 }
 
 func selectorIDsFromDump(tree *hierarchy.Tree, selector string) []string {
@@ -107,12 +190,8 @@ func selectorIDsFromWebRuntime(
 	selector string,
 ) []string {
 	t.Helper()
-	request, err := json.Marshal(selector)
-	if err != nil {
-		t.Fatalf("encode selector: %v", err)
-	}
 	var encoded string
-	script := `JSON.stringify(window.__sanderlingSelectorMatches__(` + string(request) + `))`
+	script := `JSON.stringify(window.__sanderlingSelectorMatches__(` + jsArgument(selector) + `))`
 	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &encoded)); err != nil {
 		t.Fatalf("read web runtime matches for %q: %v", selector, err)
 	}
