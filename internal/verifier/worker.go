@@ -392,6 +392,12 @@ func (v *Verifier) ChangedExtractors() map[string]ExtractorChange {
 // call this unconditionally. The override must run *after* PushSnapshot
 // (which advanced `previous`) and *before* EvaluateProperties.
 //
+// The JSON snapshot `curr` is replaced alongside the value, so the diffs in
+// ChangedExtractors and the witness recorded by captureWitness describe the
+// state the verdict was computed from. Recording the goja value while a
+// predicate read the V8 one makes a witness explain a violation with a state
+// that never reached the property.
+//
 // Out-of-range indices are tolerated (skipped) rather than fatal: V8 and goja
 // register extractors from the same spec bundle so counts should always
 // match, but a stale or partial override map should not block valid overrides
@@ -411,6 +417,7 @@ func (v *Verifier) OverrideExtractorValues(overrides map[int]json.RawMessage) (s
 			return skipped, fmt.Errorf("extractor override %d: %w", index, conversionErr)
 		}
 		v.extractors[index].currentValue = value
+		v.extractors[index].curr = encodeExtractorValue(value)
 	}
 	return skipped, nil
 }

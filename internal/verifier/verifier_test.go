@@ -1276,6 +1276,46 @@ func TestOverrideExtractorValues_PropagatesNestedObjectFields(t *testing.T) {
 	}
 }
 
+// TestOverrideExtractorValues_RecordedStateMatchesEvaluatedState pins the
+// reported state to the state predicates read. The web path evaluates
+// extractor bodies in V8 and injects the results here, so a diff or a witness
+// built from the goja value would describe a state no property ever saw.
+func TestOverrideExtractorValues_RecordedStateMatchesEvaluatedState(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, helloSpec)
+
+	if err := verifier.PushSnapshot(SnapshotInput{
+		Snapshots: Snapshots{"ledger.balance": json.RawMessage(`100`)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifier.OverrideExtractorValues(map[int]json.RawMessage{
+		1: json.RawMessage(`-7`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	verifier.EvaluateProperties()
+
+	balance := verifier.runtime.GlobalObject().Get("balance").ToObject(verifier.runtime)
+	evaluated := balance.Get("current").String()
+	change, ok := verifier.ChangedExtractors()["extractor_1"]
+	if !ok {
+		t.Fatal("ChangedExtractors reported no change for the overridden extractor")
+	}
+	if string(change.Curr) != evaluated {
+		t.Errorf("ChangedExtractors curr = %s, want %s (the value predicates read)",
+			change.Curr, evaluated)
+	}
+	witness := verifier.Witness("balanceNonNegative")
+	if witness == nil {
+		t.Fatal("balanceNonNegative did not violate on the overridden value")
+	}
+	if got := string(witness.Extractors["extractor_1"]); got != evaluated {
+		t.Errorf("witness extractor = %s, want %s (the value predicates read)",
+			got, evaluated)
+	}
+}
+
 // TestUnsupportedVerbs_CollectedDedupedInOrder drives the real host binding the
 // shared picker invokes (__sanderlingHost__.reportUnsupported) and asserts the
 // verifier collects each verb once, in first-seen order, for the run report.
