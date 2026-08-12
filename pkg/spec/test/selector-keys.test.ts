@@ -5,10 +5,14 @@ import { test } from "node:test";
 
 import { __testing__ } from "../src/web-runtime.ts";
 
-const { SELECTOR_KEYS } = __testing__;
+const { SELECTOR_KEYS, unknownSelectorKeyMessage } = __testing__;
 
 const goldenPath = fileURLToPath(new URL("./fixtures/selector-keys.json", import.meta.url));
-const golden: string[] = JSON.parse(readFileSync(goldenPath, "utf8"));
+const golden: {
+  keys: string[];
+  unknownKeyExample: string[];
+  unknownKeyMessage: string;
+} = JSON.parse(readFileSync(goldenPath, "utf8"));
 
 // Both runtimes reject an object-selector key they do not know, so the two key
 // lists have to be one list. Were they to drift, a spec would be accepted by
@@ -17,5 +21,11 @@ const golden: string[] = JSON.parse(readFileSync(goldenPath, "utf8"));
 // internal/hierarchy/selector_keys_test.go asserts the SAME file from the
 // native side.
 test("the web key list is the cross-runtime list", () => {
-  assert.deepEqual([...SELECTOR_KEYS], golden);
+  assert.deepEqual([...SELECTOR_KEYS], golden.keys);
+});
+
+// An author who hits this on Android and again on web must read one sentence,
+// not two dialects of it.
+test("the web diagnostic is the cross-runtime text", () => {
+  assert.equal(unknownSelectorKeyMessage(golden.unknownKeyExample), golden.unknownKeyMessage);
 });

@@ -694,6 +694,7 @@ export const __testing__ = {
   selectorFromString,
   selectorFromObject,
   SELECTOR_KEYS,
+  unknownSelectorKeyMessage,
   xpathStringLiteral,
 };
 
