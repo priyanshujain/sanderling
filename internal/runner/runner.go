@@ -31,6 +31,11 @@ type Options struct {
 	// positive value stops the loop once that many steps have run.
 	MaxSteps int
 
+	// StopOnViolation ends the step loop as soon as a step records a
+	// violation, so a run that exists to find one bug stops at the evidence
+	// instead of spending the rest of its budget past it.
+	StopOnViolation bool
+
 	BundleID    string
 	Driver      driver.DeviceDriver
 	Verifier    *verifier.Verifier
@@ -296,6 +301,12 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		summary.Steps = stepIndex
 		if len(violations) > 0 {
 			summary.Violations = append(summary.Violations, violationRecords(violations, witnesses, stepIndex)...)
+			// The step is already written, so the trace ends on the state that
+			// produced the violation. Finalize below still runs, so pending
+			// liveness obligations are reported alongside it.
+			if options.StopOnViolation {
+				break
+			}
 		}
 		// Wait actions are themselves a settling: skip the idle poll. Actions
 		// that mutate the UI fall through to WaitForIdle so the next step's
