@@ -958,6 +958,12 @@ internal fun findBoundsInTree(
         } ==
             true
 
+        "idPrefix" -> attrs["resource-id"]?.let { id ->
+            val local = id.indexOf(":id/")
+            id.startsWith(value) ||
+                (local >= 0 && id.substring(local + 4).startsWith(value))
+        } == true
+
         "text" -> attrs["text"] == value
 
         "desc" -> attrs["content-desc"] == value

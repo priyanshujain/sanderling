@@ -111,6 +111,25 @@ class DeviceOutputParserTest {
         assertEquals(listOf(5, 6, 7, 8), findBoundsBySelector(tree, "descPrefix:AccountCard")?.toList())
     }
 
+    @Test fun findBoundsBySelectorMatchesIdPrefixWithoutThePackage() {
+        val tree = node(
+            "resource-id" to "root",
+            children = listOf(
+                node(
+                    "resource-id" to "com.example:id/customer_row_abc",
+                    "bounds" to "[1,2,3,4]",
+                ),
+                node("resource-id" to "supplier_row_x", "bounds" to "[5,6,7,8]"),
+            ),
+        )
+        val prefix = findBoundsBySelector(tree, "idPrefix:customer_row_")
+        assertEquals(listOf(1, 2, 3, 4), prefix?.toList())
+        val qualified =
+            findBoundsBySelector(tree, "idPrefix:com.example:id/customer_row")
+        assertEquals(listOf(1, 2, 3, 4), qualified?.toList())
+        assertNull(findBoundsBySelector(tree, "idPrefix:invoice_row_"))
+    }
+
     @Test fun findBoundsBySelectorReturnsNullForBadSelectorOrNoMatch() {
         val tree = node("resource-id" to "com.example:id/x", "bounds" to "[0,0,1,1]")
         assertNull(findBoundsBySelector(tree, "id"))
