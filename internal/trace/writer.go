@@ -126,6 +126,24 @@ type Meta struct {
 	StartedAt         time.Time  `json:"started_at"`
 	EndedAt           *time.Time `json:"ended_at,omitempty"`
 	SanderlingVersion string     `json:"sanderling_version"`
+
+	// Arm labels the experiment cell this run belongs to, set from --arm. A
+	// directory of runs cannot be attributed to a cell after the fact without
+	// it, which makes any factorial computed from such a directory unanalysable.
+	Arm string `json:"arm,omitempty"`
+	// Generator, Model and Instructions record which picker ran and how it was
+	// configured. Two runs that differ in any of these are different arms.
+	Generator    string `json:"generator,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Instructions string `json:"instructions,omitempty"`
+	// MaxSteps and DurationMillis are the budget the run was given, which has
+	// to be identical across arms for a comparison to mean anything.
+	MaxSteps       int   `json:"max_steps,omitempty"`
+	DurationMillis int64 `json:"duration_millis,omitempty"`
+	// Host is the machine that produced the run. Campaigns are split across
+	// several hosts, so a per-host effect has to be detectable rather than
+	// invisible.
+	Host string `json:"host,omitempty"`
 }
 
 type Writer struct {
