@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
@@ -91,17 +93,8 @@ func New() *Driver {
 
 func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _ map[string]string) error {
 	if clearState {
-		if err := chromedp.Run(d.tabCtx, network.ClearBrowserCookies()); err != nil {
-			return fmt.Errorf("clear cookies: %w", err)
-		}
-		if err := chromedp.Run(d.tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-			_, exp, err := runtime.Evaluate(`localStorage.clear(); sessionStorage.clear();`).Do(ctx)
-			if exp != nil {
-				return fmt.Errorf("clear storage: %s", exp.Text)
-			}
+		if err := d.clearState(bundleID); err != nil {
 			return err
-		})); err != nil {
-			return fmt.Errorf("clear storage: %w", err)
 		}
 	}
 	if err := chromedp.Run(d.tabCtx, chromedp.Navigate(bundleID)); err != nil {
@@ -123,6 +116,66 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _
 		_ = chromedp.Run(d.tabCtx, chromedp.EmulateViewport(dims[0], dims[1]))
 	}
 	return nil
+}
+
+// clearState wipes the target's stored data before the application loads.
+// Script cannot do it: the tab still sits on about:blank, whose opaque origin
+// denies storage access, so `localStorage.clear()` throws SecurityError and
+// every web run dies at launch. The Storage domain clears by origin instead,
+// which needs no navigation. sessionStorage is per-tab and outside that
+// domain's reach; it only survives when a relaunch reuses a tab already on
+// the target origin, which is the one case where script can reach it.
+func (d *Driver) clearState(bundleID string) error {
+	if err := chromedp.Run(d.tabCtx, network.ClearBrowserCookies()); err != nil {
+		return fmt.Errorf("clear cookies: %w", err)
+	}
+	origin := securityOrigin(bundleID)
+	if origin == "" {
+		return nil
+	}
+	clearForOrigin := storage.ClearDataForOrigin(origin, string(storage.TypeAll))
+	if err := chromedp.Run(d.tabCtx, clearForOrigin); err != nil {
+		return fmt.Errorf("clear storage for %s: %w", origin, err)
+	}
+	script := fmt.Sprintf(
+		`location.origin === %q && (sessionStorage.clear(), true)`, origin)
+	return chromedp.Run(d.tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		_, exception, err := runtime.Evaluate(script).Do(ctx)
+		if err != nil {
+			return fmt.Errorf("clear session storage: %w", err)
+		}
+		if exception != nil {
+			return fmt.Errorf("clear session storage: %s", exceptionMessage(exception))
+		}
+		return nil
+	}))
+}
+
+// securityOrigin returns the scheme://host[:port] the Storage domain keys data
+// by, or "" for a target that has no such origin (data:, file:, about:blank),
+// where there is no per-origin storage to clear.
+func securityOrigin(bundleID string) string {
+	parsed, err := url.Parse(bundleID)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
+
+// exceptionMessage renders a page exception for an error string. The
+// description carries the actual message ("SecurityError: Failed to read the
+// 'localStorage' property..."); Text alone is the useless "Uncaught".
+func exceptionMessage(exception *runtime.ExceptionDetails) string {
+	if exception == nil {
+		return ""
+	}
+	if exception.Exception != nil && exception.Exception.Description != "" {
+		return exception.Exception.Description
+	}
+	return exception.Text
 }
 
 func (d *Driver) Terminate(_ context.Context) error {
@@ -483,7 +536,7 @@ func (d *Driver) InstallBundle(ctx context.Context, source []byte) error {
 				return fmt.Errorf("evaluate bundle: %w", err)
 			}
 			if exception != nil {
-				return fmt.Errorf("bundle threw: %s", exception.Text)
+				return fmt.Errorf("bundle threw: %s", exceptionMessage(exception))
 			}
 			return nil
 		}),
