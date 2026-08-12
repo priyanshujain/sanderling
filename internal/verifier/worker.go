@@ -45,6 +45,13 @@ type Verifier struct {
 	// over the picker's action space rather than one of its own.
 	enumerateBuiltinFn goja.Callable
 
+	// setEnumeratingCandidatesFn is the bundle-installed
+	// __sanderlingSetEnumeratingCandidates__, which brackets the model policy's
+	// authored-leaf calls. Those run outside the picker's rng scope, where a
+	// sampler would quietly hand back its first item, so the bundle refuses to
+	// sample while it is set.
+	setEnumeratingCandidatesFn goja.Callable
+
 	evaluators map[string]*ltl.Evaluator
 
 	priorVerdicts map[string]ltl.Verdict
@@ -189,6 +196,12 @@ func (v *Verifier) Load(source string) error {
 	if fn := v.runtime.GlobalObject().Get("__sanderlingEnumerateBuiltin__"); fn != nil {
 		if callable, ok := goja.AssertFunction(fn); ok {
 			v.enumerateBuiltinFn = callable
+		}
+	}
+
+	if fn := v.runtime.GlobalObject().Get("__sanderlingSetEnumeratingCandidates__"); fn != nil {
+		if callable, ok := goja.AssertFunction(fn); ok {
+			v.setEnumeratingCandidatesFn = callable
 		}
 	}
 

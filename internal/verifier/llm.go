@@ -176,38 +176,59 @@ const (
 // labelSource selects the channel each target is named by. An unrecognized
 // value (including the zero value) names targets by visible text; the CLI
 // rejects an unknown mode before a run starts, so only a test reaches that.
-func (v *Verifier) Candidates(labelSource string) []ActionCandidate {
+//
+// The error is the spec refusing to be run by this policy at all: an authored
+// leaf that samples one of several items reaches the seeded picker's rng but
+// never this walk, so the model would be offered a fixed first item forever. It
+// names the leaf and it is fatal, because degrading to that fixed item silently
+// is what makes a policy comparison meaningless.
+func (v *Verifier) Candidates(labelSource string) ([]ActionCandidate, error) {
 	if v.lastTree == nil {
-		return nil
+		return nil, nil
 	}
 	root := v.runtime.GlobalObject().Get("actions")
 	if root == nil || goja.IsUndefined(root) || goja.IsNull(root) {
-		return nil
+		return nil, nil
 	}
 	labels := labelContext{nodeIndex: buildNodeIndex(v.lastTree), source: labelSource}
 	var raw []ActionCandidate
-	v.collectNode(root, 1.0, false, labels, &raw)
-	return finalizeCandidates(raw)
+	v.setEnumeratingCandidates(true)
+	defer v.setEnumeratingCandidates(false)
+	if err := v.collectNode(root, 1.0, false, labels, &raw); err != nil {
+		return nil, err
+	}
+	return finalizeCandidates(raw), nil
+}
+
+// setEnumeratingCandidates tells the spec bundle that the authored leaves are
+// being called by this policy rather than by the picker. A spec loaded without
+// the runtime entry (a raw-JS unit fixture) has no such callable, and no
+// sampler to refuse either.
+func (v *Verifier) setEnumeratingCandidates(enumerating bool) {
+	if v.setEnumeratingCandidatesFn == nil {
+		return
+	}
+	_, _ = v.setEnumeratingCandidatesFn(goja.Undefined(), v.runtime.ToValue(enumerating))
 }
 
 // collectNode dispatches one GeneratorNode of the action tree. prob is the
 // accumulated probability the seeded picker reaches this node; weighted records
 // whether any weighted node lies on the path (so weights are shown only when the
 // spec actually declared them).
-func (v *Verifier) collectNode(node goja.Value, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) {
+func (v *Verifier) collectNode(node goja.Value, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) error {
 	object := node.ToObject(v.runtime)
 	if object == nil {
-		return
+		return nil
 	}
 	kind := object.Get("kind")
 	if kind == nil || goja.IsUndefined(kind) {
-		return
+		return nil
 	}
 	switch kind.String() {
 	case "weighted":
-		v.collectWeighted(object, prob, labels, out)
+		return v.collectWeighted(object, prob, labels, out)
 	case "actions":
-		v.collectActions(object, prob, weighted, labels, out)
+		return v.collectActions(object, prob, weighted, labels, out)
 	case "builtin":
 		verb := object.Get("verb")
 		if verb != nil && !goja.IsUndefined(verb) {
@@ -216,19 +237,20 @@ func (v *Verifier) collectNode(node goja.Value, prob float64, weighted bool, lab
 	case "llm":
 		// The llm marker is the generator, not part of the candidate tree.
 	}
+	return nil
 }
 
 // collectWeighted recurses each branch, splitting the incoming probability by
 // the branch weight over the sibling total (matching the seeded picker's single
 // weighted draw).
-func (v *Verifier) collectWeighted(object *goja.Object, prob float64, labels labelContext, out *[]ActionCandidate) {
+func (v *Verifier) collectWeighted(object *goja.Object, prob float64, labels labelContext, out *[]ActionCandidate) error {
 	branches := object.Get("branches")
 	if branches == nil {
-		return
+		return nil
 	}
 	array := branches.ToObject(v.runtime)
 	if array == nil {
-		return
+		return nil
 	}
 	length := int(array.Get("length").ToInteger())
 	weights := make([]float64, length)
@@ -249,32 +271,47 @@ func (v *Verifier) collectWeighted(object *goja.Object, prob float64, labels lab
 		total += weight
 	}
 	if total <= 0 {
-		return
+		return nil
 	}
 	for i := range length {
 		if children[i] == nil {
 			continue
 		}
-		v.collectNode(children[i], prob*weights[i]/total, true, labels, out)
+		// The branch number is the author's own path to a refused leaf, which
+		// its closure source alone does not give when the leaf is a whenRoute
+		// (whose closure belongs to the library, not the spec).
+		if err := v.collectNode(children[i], prob*weights[i]/total, true, labels, out); err != nil {
+			return fmt.Errorf("branch %d: %w", i+1, err)
+		}
 	}
+	return nil
 }
 
 // collectActions calls an authored leaf's generator once (safe: it reads state
 // and, off-route, returns []), turning each concrete descriptor into a
 // candidate. It runs OUTSIDE the picker's rng scope, so from(...).generate()
 // draws nothing and no seed advances.
-func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) {
-	generate, ok := goja.AssertFunction(object.Get("generate"))
+//
+// A generator that throws for its own reasons still contributes nothing and
+// nothing more: this walk calls EVERY leaf every step, including leaves the
+// seeded picker would have walked once in a hundred steps, so promoting those
+// throws would kill runs the seeded arm survives.
+func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) error {
+	generatorValue := object.Get("generate")
+	generate, ok := goja.AssertFunction(generatorValue)
 	if !ok {
-		return
+		return nil
 	}
 	result, err := generate(goja.Undefined())
 	if err != nil {
-		return
+		if refusal, refused := v.samplerRefusal(err); refused {
+			return fmt.Errorf("authored action %s %s", authoredLeafIdentity(generatorValue), refusal)
+		}
+		return nil
 	}
 	array := result.ToObject(v.runtime)
 	if array == nil {
-		return
+		return nil
 	}
 	length := int(array.Get("length").ToInteger())
 	for i := range length {
@@ -286,11 +323,54 @@ func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bo
 		candidate.Weighted = weighted
 		*out = append(*out, candidate)
 	}
+	return nil
+}
+
+// samplerRefusalName is the error name pkg/spec/src/sampler-rng.ts stamps on the
+// refusal it throws, which is what tells that refusal apart from a spec's own
+// runtime errors.
+const samplerRefusalName = "SanderlingSamplerRefusal"
+
+// samplerRefusal reports the refusal message when the authored leaf declined to
+// sample for this policy.
+func (v *Verifier) samplerRefusal(err error) (string, bool) {
+	var exception *goja.Exception
+	if !errors.As(err, &exception) {
+		return "", false
+	}
+	value := exception.Value()
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return "", false
+	}
+	thrown := value.ToObject(v.runtime)
+	if thrown == nil || stringField(thrown, "name") != samplerRefusalName {
+		return "", false
+	}
+	return stringField(thrown, "message"), true
+}
+
+// maxLeafSourceRunes caps the generator excerpt that names a leaf in an error.
+const maxLeafSourceRunes = 160
+
+// authoredLeafIdentity renders the leaf's generator source on one line. An
+// authored leaf is an anonymous closure among identical-looking tree nodes, so
+// its source is the handle an author can search the spec for.
+func authoredLeafIdentity(generator goja.Value) string {
+	source := []rune(strings.Join(strings.Fields(generator.String()), " "))
+	if len(source) > maxLeafSourceRunes {
+		return strconv.Quote(string(source[:maxLeafSourceRunes]) + "...")
+	}
+	return strconv.Quote(string(source))
 }
 
 // candidateFromDescriptor lowers one authored ActionDescriptor (as a goja
 // object) into a ready-to-run candidate, resolving the target's coordinates,
-// selector, and label. Actions on a disabled control are dropped.
+// selector, and label.
+//
+// A disabled target is offered like any other. The seeded picker executes
+// whatever the leaf authored, disabled or not, and attempting a disabled
+// control is where boundary defects live: a control the app forgot to re-enable
+// reads as disabled, and a policy that cannot attempt it cannot find that.
 func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext) (ActionCandidate, bool) {
 	object := value.ToObject(v.runtime)
 	if object == nil {
@@ -304,7 +384,7 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext
 	switch kind {
 	case ActionKindTap, ActionKindDoubleTap, ActionKindLongPress:
 		target, ok := v.resolveTarget(object.Get("on"), labels)
-		if !ok || target.disabled {
+		if !ok {
 			return ActionCandidate{}, false
 		}
 		return ActionCandidate{
@@ -314,7 +394,7 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext
 		}, true
 	case ActionKindInputText:
 		target, ok := v.resolveTarget(object.Get("into"), labels)
-		if !ok || target.disabled {
+		if !ok {
 			return ActionCandidate{}, false
 		}
 		text := stringField(object, "text")
@@ -384,7 +464,6 @@ type resolvedTarget struct {
 	selector  string
 	label     string
 	inputType string
-	disabled  bool
 }
 
 // resolveTarget reads an authored action's target. Ax element handles carry
@@ -423,7 +502,6 @@ func (v *Verifier) resolveTarget(value goja.Value, labels labelContext) (resolve
 	if element := v.findBySelector(selector); element != nil {
 		target.label = labels.label(element)
 		target.inputType = inputTypeHint(element)
-		target.disabled = !element.Enabled && hasEnabled(element)
 	}
 	if target.label == "" {
 		target.label = truncateLabel(stringField(object, labels.handleField()))
@@ -441,7 +519,6 @@ func (v *Verifier) targetFromSelector(selector string, labels labelContext) reso
 	target.x, target.y = element.Bounds.Center()
 	target.label = labels.label(element)
 	target.inputType = inputTypeHint(element)
-	target.disabled = !element.Enabled && hasEnabled(element)
 	return target
 }
 
@@ -752,13 +829,6 @@ func inputTypeHint(element *hierarchy.Element) string {
 	default:
 		return ""
 	}
-}
-
-// hasEnabled reports whether the source tree carried an explicit enabled flag
-// for the element, so a missing flag is not mistaken for "disabled".
-func hasEnabled(element *hierarchy.Element) bool {
-	_, ok := element.Attributes["enabled"]
-	return ok
 }
 
 // stringField reads a string property off a goja object, returning "" when

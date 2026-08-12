@@ -62,7 +62,7 @@ func TestModelCandidateDescriptionsAreUniqueAndNamed(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			verifier := loadVerbSpec(t, verb)
 			seen := map[string]bool{}
-			for _, candidate := range verifier.Candidates(LabelSourceVisibleText) {
+			for _, candidate := range mustCandidates(t, verifier, LabelSourceVisibleText) {
 				if candidate.Description == "" {
 					t.Fatalf("%s produced a candidate with no description: %+v", verb, candidate.Action)
 				}
@@ -81,14 +81,14 @@ func TestModelCandidateDescriptionsAreUniqueAndNamed(t *testing.T) {
 // dropped, so the model could never navigate back or let the app settle.
 func TestModelIsOfferedTheUntargetedVerbs(t *testing.T) {
 	verifier := loadVerbSpec(t, "pressKeys")
-	if !hasCandidate(verifier.Candidates(LabelSourceVisibleText), "Press back") {
+	if !hasCandidate(mustCandidates(t, verifier, LabelSourceVisibleText), "Press back") {
 		t.Errorf("pressKeys missing from the model's candidates: %v",
-			descriptions(verifier.Candidates(LabelSourceVisibleText)))
+			descriptions(mustCandidates(t, verifier, LabelSourceVisibleText)))
 	}
 	verifier = loadVerbSpec(t, "waitOnce")
-	if !hasCandidate(verifier.Candidates(LabelSourceVisibleText), "Wait") {
+	if !hasCandidate(mustCandidates(t, verifier, LabelSourceVisibleText), "Wait") {
 		t.Errorf("waitOnce missing from the model's candidates: %v",
-			descriptions(verifier.Candidates(LabelSourceVisibleText)))
+			descriptions(mustCandidates(t, verifier, LabelSourceVisibleText)))
 	}
 }
 
@@ -124,7 +124,7 @@ func seededDrawStream(t *testing.T, verb, labelSource string) []string {
 	stream := make([]string, 0, seededDrawBudget)
 	for range seededDrawBudget {
 		if labelSource != "" {
-			verifier.Candidates(labelSource)
+			mustCandidates(t, verifier, labelSource)
 		}
 		action, err := verifier.NextAction()
 		if errors.Is(err, ErrNoAction) {
@@ -175,7 +175,7 @@ func modelOfferedActions(t *testing.T, verb string) map[string]Action {
 	t.Helper()
 	verifier := loadVerbSpec(t, verb)
 	offered := map[string]Action{}
-	for _, candidate := range verifier.Candidates(LabelSourceVisibleText) {
+	for _, candidate := range mustCandidates(t, verifier, LabelSourceVisibleText) {
 		offered[actionIdentity(candidate.Action)] = candidate.Action
 	}
 	return offered
@@ -205,4 +205,54 @@ func sign(value int) int {
 	default:
 		return 0
 	}
+}
+
+// samplerParitySpec authors one leaf that taps a target drawn from three: the
+// pattern the model policy refuses and the seeded picker exists to draw.
+const samplerParitySpec = `
+import { actions, from, Tap } from "@sanderling/spec";
+const targets = from(["id:Save", "id:Cancel", "id:Amount"]);
+globalThis.actions = actions(() => [Tap({ on: targets.generate() })]);
+`
+
+// TestSeededSamplingSurvivesTheModelPolicysRefusal keeps the refusal on the one
+// policy it belongs to. Sampling inside the picker's rng scope is correct, so
+// the seeded stream must be identical whether or not the model policy tried and
+// failed to enumerate the same leaf first, and it must still reach every item.
+func TestSeededSamplingSurvivesTheModelPolicysRefusal(t *testing.T) {
+	alone := seededSamplerStream(t, false)
+	afterRefusal := seededSamplerStream(t, true)
+	if !slices.Equal(alone, afterRefusal) {
+		t.Error("a refused enumeration moved the seeded draw stream")
+	}
+	drawn := map[string]bool{}
+	for _, action := range alone {
+		drawn[action] = true
+	}
+	if len(drawn) != 3 {
+		t.Errorf("seeded picker reached %d of the 3 sampled targets: %v", len(drawn), slices.Sorted(maps.Keys(drawn)))
+	}
+}
+
+// seededSamplerStream drives the seeded picker over the draw budget, optionally
+// letting the model policy refuse the same spec before every draw.
+func seededSamplerStream(t *testing.T, enumerateFirst bool) []string {
+	t.Helper()
+	verifier := newVerifier(t, WithSeed(0x5eed))
+	loadActionSpec(t, verifier, samplerParitySpec)
+	pushTree(t, verifier, policyTreeJSON)
+	stream := make([]string, 0, seededDrawBudget)
+	for range seededDrawBudget {
+		if enumerateFirst {
+			if _, err := verifier.Candidates(LabelSourceVisibleText); err == nil {
+				t.Fatal("the model policy must refuse a spec that samples")
+			}
+		}
+		action, err := verifier.NextAction()
+		if err != nil {
+			t.Fatalf("seeded picker declined the sampled tap: %v", err)
+		}
+		stream = append(stream, fmt.Sprintf("%+v", action))
+	}
+	return stream
 }
