@@ -23,5 +23,6 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		Output:         options.output,
 		ClearData:      options.clearData,
 		Generator:      options.generator,
+		Arm:            options.arm,
 	}, stdout)
 }

@@ -35,6 +35,9 @@ type Options struct {
 	Seed           int64
 	Output         string
 	ClearData      bool
+	// Arm labels the experiment cell this run belongs to and is recorded in
+	// meta.json so a directory of runs can be attributed to a cell.
+	Arm string
 	// Generator selects the action picker: "llm" or the default seeded picker.
 	Generator string
 
@@ -48,6 +51,32 @@ type Options struct {
 }
 
 // Execute runs the full test pipeline: bundle, launch app, verify properties.
+// buildRunMeta assembles the run's meta.json. Model and Instructions are
+// recorded only when the LLM picker is the one that will actually run, so a
+// spec that declares generator = llm() but is run under the seeded picker does
+// not label its trace with a model it never called.
+func buildRunMeta(options Options, bundleSHA256 string, seed int64, host string, llmConfig verifier.LLMConfig, hasLLMConfig bool) trace.Meta {
+	meta := trace.Meta{
+		Seed:              seed,
+		SpecPath:          options.Spec,
+		BundleSHA256:      bundleSHA256,
+		Platform:          options.Platform,
+		BundleID:          options.BundleID,
+		StartedAt:         time.Now().UTC(),
+		SanderlingVersion: "0.0.1",
+		Arm:               options.Arm,
+		Generator:         options.Generator,
+		MaxSteps:          options.MaxSteps,
+		DurationMillis:    options.Duration.Milliseconds(),
+		Host:              host,
+	}
+	if options.Generator == "llm" && hasLLMConfig {
+		meta.Model = llmConfig.Model
+		meta.Instructions = llmConfig.Instructions
+	}
+	return meta
+}
+
 func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	switch options.Platform {
 	case "android":
@@ -141,15 +170,9 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		return fmt.Errorf("trace writer: %w", err)
 	}
 	defer traceWriter.Close()
-	meta := trace.Meta{
-		Seed:              seed,
-		SpecPath:          options.Spec,
-		BundleSHA256:      bundle.SHA256,
-		Platform:          options.Platform,
-		BundleID:          options.BundleID,
-		StartedAt:         time.Now().UTC(),
-		SanderlingVersion: "0.0.1",
-	}
+	hostname, _ := os.Hostname()
+	llmConfig, hasLLMConfig := verifierInstance.LLMConfig()
+	meta := buildRunMeta(options, bundle.SHA256, seed, hostname, llmConfig, hasLLMConfig)
 	if err := traceWriter.WriteMeta(meta); err != nil {
 		return fmt.Errorf("trace meta: %w", err)
 	}

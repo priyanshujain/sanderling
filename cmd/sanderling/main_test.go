@@ -297,3 +297,17 @@ func TestParseTestArgs_RejectsNegativeMaxSteps(t *testing.T) {
 		t.Fatal("expected an error for a negative --max-steps")
 	}
 }
+
+func TestParseTestArgs_ArmLabel(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--arm", "seeded-identifier",
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.arm != "seeded-identifier" {
+		t.Errorf("arm: got %q, want seeded-identifier", options.arm)
+	}
+}

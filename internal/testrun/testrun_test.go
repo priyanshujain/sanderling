@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
 func TestResolveSeed_UsesConfiguredWhenNonZero(t *testing.T) {
@@ -179,5 +182,52 @@ func TestResolveSpecAPIPath_ReturnsEmptyWhenMissing(t *testing.T) {
 	got := resolveSpecAPIPath(specPath)
 	if got != "" {
 		t.Fatalf("got %q, want empty (no sanderling source tree reachable)", got)
+	}
+}
+
+func TestBuildRunMeta_RecordsArmMembership(t *testing.T) {
+	options := Options{
+		Spec:      "spec.ts",
+		BundleID:  "com.example",
+		Platform:  "android",
+		Duration:  3 * time.Minute,
+		MaxSteps:  300,
+		Arm:       "llm-visible-text",
+		Generator: "llm",
+	}
+	meta := buildRunMeta(options, "deadbeef", 7, "farm-01",
+		verifier.LLMConfig{Model: "claude-sonnet-5", Instructions: "exercise the outbox"}, true)
+
+	if meta.Arm != "llm-visible-text" || meta.Generator != "llm" {
+		t.Errorf("arm membership: got arm=%q generator=%q", meta.Arm, meta.Generator)
+	}
+	if meta.Model != "claude-sonnet-5" || meta.Instructions != "exercise the outbox" {
+		t.Errorf("llm config: got model=%q instructions=%q", meta.Model, meta.Instructions)
+	}
+	if meta.MaxSteps != 300 || meta.DurationMillis != 180000 {
+		t.Errorf("budget: got maxSteps=%d durationMillis=%d", meta.MaxSteps, meta.DurationMillis)
+	}
+	if meta.Host != "farm-01" || meta.Seed != 7 {
+		t.Errorf("host and seed: got host=%q seed=%d", meta.Host, meta.Seed)
+	}
+}
+
+func TestBuildRunMeta_OmitsModelWhenSeededPickerRuns(t *testing.T) {
+	options := Options{Platform: "android", Generator: "seeded", Duration: time.Minute}
+	meta := buildRunMeta(options, "deadbeef", 1, "farm-01",
+		verifier.LLMConfig{Model: "claude-sonnet-5", Instructions: "hunt bugs"}, true)
+
+	if meta.Model != "" || meta.Instructions != "" {
+		t.Errorf("a seeded run must not be labelled with a model it never called: model=%q instructions=%q",
+			meta.Model, meta.Instructions)
+	}
+}
+
+func TestBuildRunMeta_OmitsModelWhenSpecDeclaresNoLLMGenerator(t *testing.T) {
+	options := Options{Platform: "android", Generator: "llm", Duration: time.Minute}
+	meta := buildRunMeta(options, "deadbeef", 1, "farm-01", verifier.LLMConfig{}, false)
+
+	if meta.Model != "" {
+		t.Errorf("model recorded without a spec-declared llm generator: %q", meta.Model)
 	}
 }

@@ -28,6 +28,7 @@ type testOptions struct {
 	androidAppPath string
 	duration       time.Duration
 	maxSteps       int
+	arm            string
 	seed           int64
 	output         string
 	clearData      bool
@@ -65,6 +66,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.Int64Var(&options.seed, "seed", 0, "RNG seed (0 = random)")
 	flagSet.StringVar(&options.output, "output", "./runs", "output directory for traces")
 	flagSet.BoolVar(&options.clearData, "clear-data", true, "clear app data before launching so each run starts from a fresh install; pass --clear-data=false to resume prior state")
+	flagSet.StringVar(&options.arm, "arm", "", "experiment cell label, recorded in meta.json so a directory of runs can be attributed to a cell")
 	flagSet.StringVar(&options.generator, "generator", "seeded", "action generator: seeded (weighted random) or llm (model picks from the same candidate set; requires generator = llm() in the spec)")
 	if err := flagSet.Parse(args); err != nil {
 		return testOptions{}, err
