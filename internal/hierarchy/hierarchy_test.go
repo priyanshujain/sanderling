@@ -1,6 +1,9 @@
 package hierarchy
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // sampleDump is a sidecar TreeNode JSON equivalent of the old XML fixture.
 const sampleDump = `{
@@ -1122,5 +1125,63 @@ func TestTreeTransitional(t *testing.T) {
 	var nilTree *Tree
 	if nilTree.Transitional() {
 		t.Error("nil tree must not be flagged as transitional")
+	}
+}
+
+// A key means the same thing whichever form the author writes it in. The object
+// form used to fall through to the raw attribute map, which carries neither
+// "id" nor "desc" on any platform.
+func TestObjectSelectorIDMatchesTheSameElementsAsTheStringForm(t *testing.T) {
+	tree, _ := Parse(sampleDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "id", Value: "row"}}}
+	object := tree.Root.FindAllBySelector(sel)
+	if len(object) != len(tree.FindAll("id:row")) {
+		t.Fatalf("object form matched %d, string form %d", len(object), len(tree.FindAll("id:row")))
+	}
+	if len(object) != 2 {
+		t.Fatalf("want 2 rows, got %d", len(object))
+	}
+}
+
+func TestObjectSelectorDescMatchesTheSameElementsAsTheStringForm(t *testing.T) {
+	tree, _ := Parse(sampleDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "desc", Value: "row"}}}
+	if len(tree.Root.FindAllBySelector(sel)) != len(tree.FindAll("desc:row")) {
+		t.Fatal("object and string form disagree on desc")
+	}
+}
+
+func TestUnknownSelectorKeyIsReported(t *testing.T) {
+	tree, _ := Parse(sampleDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "descripton", Value: "row"}}}
+	unknown := tree.UnknownSelectorKeys(sel)
+	if len(unknown) != 1 || unknown[0] != "descripton" {
+		t.Fatalf("got %v, want [descripton]", unknown)
+	}
+	message := UnknownSelectorKeyMessage(unknown)
+	if !strings.Contains(message, `"descripton"`) || !strings.Contains(message, "resource-id") {
+		t.Fatalf("message names neither the key nor the accepted list: %s", message)
+	}
+}
+
+func TestAcceptedSelectorKeyAbsentFromTheScreenIsNotUnknown(t *testing.T) {
+	tree, _ := Parse(sampleDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "title", Value: "Settings"}}}
+	if unknown := tree.UnknownSelectorKeys(sel); len(unknown) != 0 {
+		t.Fatalf("a platform-specific key must stay silent, got %v", unknown)
+	}
+}
+
+// Raw driver attributes stay reachable: a key some element carries can match,
+// whether or not this package enumerates it.
+func TestRawDriverAttributeIsNotUnknown(t *testing.T) {
+	input := `{
+	  "attributes": {"resource-id": "root", "important-for-accessibility": "true"},
+	  "children": []
+	}`
+	tree, _ := Parse(input)
+	sel := Selector{Filters: []AttrFilter{{Attr: "important-for-accessibility", Value: "true"}}}
+	if unknown := tree.UnknownSelectorKeys(sel); len(unknown) != 0 {
+		t.Fatalf("got %v, want none", unknown)
 	}
 }
