@@ -53,6 +53,18 @@ func TestBrowserCounterInvariantHolds(t *testing.T) {
 	}
 }
 
+// TestBrowserShadowDOMIsReachable drives a page whose entire UI (canvas, the
+// button over it, and the counter) lives inside a shadow root, the shape
+// Compose for Web produces. Both the enumeration and the selector lookup have
+// to cross the boundary for the counter to move at all, so the property firing
+// is the end-to-end evidence.
+func TestBrowserShadowDOMIsReachable(t *testing.T) {
+	violations := runFixture(t, "shadow")
+	if !slices.Contains(violations, "counterNeverMoves") {
+		t.Fatalf("nothing inside the shadow root was ever tapped; violations=%v", violations)
+	}
+}
+
 // runFixture serves the named testdata case over an in-process file server,
 // drives it through headless Chrome with a fixed seed and a bounded step count,
 // and returns every property name that was ever reported violated.
