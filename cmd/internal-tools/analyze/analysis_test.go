@@ -10,6 +10,7 @@ func violatingRun(seed int64, steps, origin int, properties ...string) classifie
 	return classifiedRun{
 		Seed:               seed,
 		Steps:              steps,
+		Actions:            steps,
 		DurationMillis:     60_000,
 		OriginStep:         origin,
 		Violated:           true,
@@ -18,7 +19,7 @@ func violatingRun(seed int64, steps, origin int, properties ...string) classifie
 }
 
 func cleanRun(seed int64, steps int) classifiedRun {
-	return classifiedRun{Seed: seed, Steps: steps, DurationMillis: 60_000}
+	return classifiedRun{Seed: seed, Steps: steps, Actions: steps, DurationMillis: 60_000}
 }
 
 func TestSummarize_ArmWhereNoRunViolated(t *testing.T) {
@@ -73,6 +74,54 @@ func TestSummarize_ArmWhereEveryRunViolated(t *testing.T) {
 	}
 	if math.Abs(*summary.DefectsPerHour-80) > 1e-9 {
 		t.Errorf("defects per hour %v, want 80", *summary.DefectsPerHour)
+	}
+}
+
+// A step that chose no action, and a step whose action was never dispatched,
+// left the app untouched. Counting them would inflate the denominator of every
+// per-action rate, and the inflation differs by arm so it does not cancel.
+func TestSummarize_CountsDispatchedActionsNotSteps(t *testing.T) {
+	summary := summarize(arm{
+		Name:   "declines",
+		Budget: 40,
+		Runs: []classifiedRun{
+			{Seed: 1, Steps: 40, Actions: 10, DurationMillis: 3_600_000,
+				Violated: true, OriginStep: 12, ViolatedProperties: []string{"cartTotal"}},
+			{Seed: 2, Steps: 40, Actions: 6, DurationMillis: 3_600_000},
+		},
+	})
+	if summary.TotalSteps != 80 {
+		t.Errorf("total steps %d, want 80", summary.TotalSteps)
+	}
+	if summary.TotalActions != 16 {
+		t.Errorf("total actions %d, want 16 dispatched of 80 steps", summary.TotalActions)
+	}
+	if summary.DefectsPerThousandActions == nil {
+		t.Fatal("no defects per thousand actions")
+	}
+	expected := 1000.0 / 16.0
+	if math.Abs(*summary.DefectsPerThousandActions-expected) > 1e-9 {
+		t.Errorf("defects per thousand actions %v, want %v", *summary.DefectsPerThousandActions, expected)
+	}
+}
+
+func TestSummarize_ArmThatDispatchedNothingHasNoPerActionRate(t *testing.T) {
+	summary := summarize(arm{
+		Name:   "inert",
+		Budget: 20,
+		Runs: []classifiedRun{
+			{Seed: 1, Steps: 20, Actions: 0, DurationMillis: 3_600_000,
+				Violated: true, OriginStep: 3, ViolatedProperties: []string{"cartTotal"}},
+		},
+	})
+	if summary.TotalActions != 0 || summary.TotalSteps != 20 {
+		t.Errorf("steps %d actions %d, want 20 and 0", summary.TotalSteps, summary.TotalActions)
+	}
+	if summary.DefectsPerThousandActions != nil {
+		t.Errorf("defects per thousand actions %v, want none with nothing dispatched", *summary.DefectsPerThousandActions)
+	}
+	if summary.DefectsPerHour == nil || *summary.DefectsPerHour != 1 {
+		t.Errorf("defects per hour %v, want 1: the run still consumed an hour", summary.DefectsPerHour)
 	}
 }
 

@@ -32,11 +32,13 @@ func writeReport(result analysis, out io.Writer) {
 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "a detection is one distinct property violated in one run; run hours sum the per-run wall clock")
-	writeTable(out, []string{"arm", "actions", "run hours", "detections", "defects/1k actions", "defects/hour", "distinct defects", "found in one run"},
+	fmt.Fprintln(out, "actions count the steps that dispatched one; the rest chose nothing or had the choice thrown away")
+	writeTable(out, []string{"arm", "steps", "actions", "run hours", "detections", "defects/1k actions", "defects/hour", "distinct defects", "found in one run"},
 		func(add func(...string)) {
 			for _, summary := range result.Arms {
 				add(
 					summary.Arm,
+					strconv.Itoa(summary.TotalSteps),
 					strconv.Itoa(summary.TotalActions),
 					fmt.Sprintf("%.2f", summary.TotalRunHours),
 					strconv.Itoa(summary.Detections),

@@ -37,38 +37,40 @@ func seededArmRecords() []map[string]any {
 	// Ten runs: two violate early, one violates late, six run the budget clean,
 	// one times out and is missing data rather than a censored observation.
 	return []map[string]any{
-		{"seed": 1, "exit_code": 0, "steps": 60, "duration_millis": 300000, "first_violation_origin_step": nil},
-		{"seed": 2, "exit_code": 0, "steps": 18, "duration_millis": 120000,
+		{"seed": 1, "exit_code": 0, "steps": 60, "actions": 58, "duration_millis": 300000, "first_violation_origin_step": nil},
+		{"seed": 2, "exit_code": 0, "steps": 18, "actions": 16, "duration_millis": 120000,
 			"first_violation_origin_step": 14, "violated_properties": []string{"cartTotalMatches"}},
-		{"seed": 3, "exit_code": 0, "steps": 60, "duration_millis": 300000, "first_violation_origin_step": nil},
-		{"seed": 4, "exit_code": 0, "steps": 60, "duration_millis": 300000, "first_violation_origin_step": nil},
-		{"seed": 5, "exit_code": 0, "steps": 44, "duration_millis": 240000,
+		{"seed": 3, "exit_code": 0, "steps": 60, "actions": 58, "duration_millis": 300000, "first_violation_origin_step": nil},
+		{"seed": 4, "exit_code": 0, "steps": 60, "actions": 58, "duration_millis": 300000, "first_violation_origin_step": nil},
+		{"seed": 5, "exit_code": 0, "steps": 44, "actions": 42, "duration_millis": 240000,
 			"first_violation_origin_step": 41, "violated_properties": []string{"cartTotalMatches", "backLeavesApp"}},
-		{"seed": 6, "exit_code": 0, "steps": 60, "duration_millis": 300000, "first_violation_origin_step": nil},
-		{"seed": 7, "exit_code": -1, "timed_out": true, "duration_millis": 900000},
-		{"seed": 8, "exit_code": 0, "steps": 60, "duration_millis": 300000, "first_violation_origin_step": nil},
-		{"seed": 9, "exit_code": 0, "steps": 60, "duration_millis": 300000, "first_violation_origin_step": nil},
-		{"seed": 10, "exit_code": 0, "steps": 21, "duration_millis": 130000,
+		{"seed": 6, "exit_code": 0, "steps": 60, "actions": 58, "duration_millis": 300000, "first_violation_origin_step": nil},
+		{"seed": 7, "exit_code": -1, "timed_out": true, "actions": 0, "duration_millis": 900000},
+		{"seed": 8, "exit_code": 0, "steps": 60, "actions": 58, "duration_millis": 300000, "first_violation_origin_step": nil},
+		{"seed": 9, "exit_code": 0, "steps": 60, "actions": 58, "duration_millis": 300000, "first_violation_origin_step": nil},
+		{"seed": 10, "exit_code": 0, "steps": 21, "actions": 19, "duration_millis": 130000,
 			"first_violation_origin_step": 19, "violated_properties": []string{"cartTotalMatches"}},
 	}
 }
 
 func llmArmRecords() []map[string]any {
-	// Eight runs: six violate, one clean, one failed to launch.
+	// Eight runs: six violate, one clean, one failed to launch. This arm
+	// dispatches an action on about half its steps, which is the asymmetry the
+	// per-action denominator has to survive.
 	return []map[string]any{
-		{"seed": 1, "exit_code": 0, "steps": 7, "duration_millis": 400000,
+		{"seed": 1, "exit_code": 0, "steps": 7, "actions": 3, "duration_millis": 400000,
 			"first_violation_origin_step": 5, "violated_properties": []string{"cartTotalMatches"}},
-		{"seed": 2, "exit_code": 0, "steps": 9, "duration_millis": 420000,
+		{"seed": 2, "exit_code": 0, "steps": 9, "actions": 5, "duration_millis": 420000,
 			"first_violation_origin_step": 8, "violated_properties": []string{"backLeavesApp"}},
-		{"seed": 3, "exit_code": 0, "steps": 60, "duration_millis": 1800000, "first_violation_origin_step": nil},
-		{"seed": 4, "exit_code": 0, "steps": 5, "duration_millis": 380000,
+		{"seed": 3, "exit_code": 0, "steps": 60, "actions": 30, "duration_millis": 1800000, "first_violation_origin_step": nil},
+		{"seed": 4, "exit_code": 0, "steps": 5, "actions": 2, "duration_millis": 380000,
 			"first_violation_origin_step": 3, "violated_properties": []string{"cartTotalMatches"}},
-		{"seed": 5, "exit_code": 0, "steps": 13, "duration_millis": 500000,
+		{"seed": 5, "exit_code": 0, "steps": 13, "actions": 7, "duration_millis": 500000,
 			"first_violation_origin_step": 11, "violated_properties": []string{"cartTotalMatches", "priceNeverNegative"}},
-		{"seed": 6, "exit_code": -1, "launch_error": "fork/exec sanderling: no such file or directory"},
-		{"seed": 7, "exit_code": 0, "steps": 6, "duration_millis": 390000,
+		{"seed": 6, "exit_code": -1, "actions": 0, "launch_error": "fork/exec sanderling: no such file or directory"},
+		{"seed": 7, "exit_code": 0, "steps": 6, "actions": 3, "duration_millis": 390000,
 			"first_violation_origin_step": 6, "violated_properties": []string{"cartTotalMatches"}},
-		{"seed": 8, "exit_code": 0, "steps": 16, "duration_millis": 520000,
+		{"seed": 8, "exit_code": 0, "steps": 16, "actions": 8, "duration_millis": 520000,
 			"first_violation_origin_step": 15, "violated_properties": []string{"backLeavesApp"}},
 	}
 }
@@ -134,8 +136,8 @@ func TestRun_EndToEndOverFixtureCampaignDirectories(t *testing.T) {
 	if seeded.DistinctDefects != 2 || seeded.SingletonDefects != 1 {
 		t.Errorf("seeded defects %d singletons %d, want 2 and 1", seeded.DistinctDefects, seeded.SingletonDefects)
 	}
-	if seeded.TotalActions != 443 {
-		t.Errorf("seeded actions %d, want 443", seeded.TotalActions)
+	if seeded.TotalSteps != 443 || seeded.TotalActions != 425 {
+		t.Errorf("seeded steps %d actions %d, want 443 and 425", seeded.TotalSteps, seeded.TotalActions)
 	}
 
 	llm := byName["llm"]
@@ -147,6 +149,18 @@ func TestRun_EndToEndOverFixtureCampaignDirectories(t *testing.T) {
 	}
 	if llm.MedianStepsToFirstViolation == nil || *llm.MedianStepsToFirstViolation != 8 {
 		t.Errorf("llm median %v, want 8", llm.MedianStepsToFirstViolation)
+	}
+	// The arm dispatches an action on half its steps, so counting steps would
+	// halve its yield per thousand actions and flatter it against seeded.
+	if llm.TotalSteps != 116 || llm.TotalActions != 58 {
+		t.Errorf("llm steps %d actions %d, want 116 and 58", llm.TotalSteps, llm.TotalActions)
+	}
+	if llm.Detections != 7 {
+		t.Fatalf("llm detections %d, want 7", llm.Detections)
+	}
+	expected := 7000.0 / 58.0
+	if math.Abs(*llm.DefectsPerThousandActions-expected) > 1e-9 {
+		t.Errorf("llm defects per thousand actions %v, want %v", *llm.DefectsPerThousandActions, expected)
 	}
 
 	if result.LogRank == nil {
@@ -181,13 +195,13 @@ func TestRun_ReportsBothArmsWhenOneHasNothingUsable(t *testing.T) {
 	good := filepath.Join(root, "good")
 	broken := filepath.Join(root, "broken")
 	buildFixtureCampaign(t, good, "good", 30, []map[string]any{
-		{"seed": 1, "exit_code": 0, "steps": 30},
-		{"seed": 2, "exit_code": 0, "steps": 9, "duration_millis": 1000,
+		{"seed": 1, "exit_code": 0, "steps": 30, "actions": 28},
+		{"seed": 2, "exit_code": 0, "steps": 9, "actions": 9, "duration_millis": 1000,
 			"first_violation_origin_step": 9, "violated_properties": []string{"cartTotalMatches"}},
 	})
 	buildFixtureCampaign(t, broken, "broken", 30, []map[string]any{
-		{"seed": 1, "exit_code": 3},
-		{"seed": 2, "timed_out": true, "exit_code": -1},
+		{"seed": 1, "exit_code": 3, "actions": 0},
+		{"seed": 2, "timed_out": true, "exit_code": -1, "actions": 0},
 	})
 
 	var stdout bytes.Buffer
@@ -210,7 +224,7 @@ func TestRun_JsonToStdout(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "only")
 	buildFixtureCampaign(t, directory, "only", 20, []map[string]any{
-		{"seed": 1, "exit_code": 0, "steps": 20},
+		{"seed": 1, "exit_code": 0, "steps": 20, "actions": 17},
 	})
 	var stdout bytes.Buffer
 	if err := run([]string{"--json", "-", "--campaign", directory}, &stdout, io.Discard); err != nil {
@@ -232,7 +246,7 @@ func TestRun_JsonToStdout(t *testing.T) {
 func TestRun_RejectsTheSameDirectoryTwice(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "one")
-	buildFixtureCampaign(t, directory, "one", 20, []map[string]any{{"seed": 1, "exit_code": 0, "steps": 20}})
+	buildFixtureCampaign(t, directory, "one", 20, []map[string]any{{"seed": 1, "exit_code": 0, "steps": 20, "actions": 20}})
 	err := run([]string{directory, directory}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "twice") {
 		t.Fatalf("error %v, want a refusal to double count", err)

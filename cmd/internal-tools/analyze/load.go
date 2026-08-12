@@ -39,6 +39,11 @@ type runRecord struct {
 	Steps                    int      `json:"steps"`
 	FirstViolationOriginStep *int     `json:"first_violation_origin_step"`
 	ViolatedProperties       []string `json:"violated_properties"`
+	// Actions is the count of steps that dispatched an action, and it is a
+	// pointer so that a runs.jsonl written before the campaign tool counted
+	// them is refused rather than read as an arm that acted zero times. The
+	// campaign tool always emits the field, so its absence dates the file.
+	Actions *int `json:"actions"`
 }
 
 // Exclusion reasons. A run that failed or timed out is missing data, not a
@@ -55,6 +60,7 @@ const (
 type classifiedRun struct {
 	Seed               int64
 	Steps              int
+	Actions            int
 	DurationMillis     int64
 	OriginStep         int
 	Violated           bool
@@ -110,6 +116,12 @@ func loadCampaign(directory string) (manifest, []runRecord, error) {
 		if err := json.Unmarshal([]byte(raw), &record); err != nil {
 			return manifest{}, nil, fmt.Errorf("%s line %d in %s: %w", recordsFileName, lineNumber, directory, err)
 		}
+		if record.Actions == nil {
+			return manifest{}, nil, fmt.Errorf("%s line %d in %s has no actions count: it was written before "+
+				"dispatched actions were counted, and reading the missing count as zero would report every "+
+				"per-action rate wrongly; re-run the campaign to produce it",
+				recordsFileName, lineNumber, directory)
+		}
 		records = append(records, record)
 	}
 	if err := scanner.Err(); err != nil {
@@ -126,6 +138,9 @@ func classify(record runRecord, budget int) classifiedRun {
 		Steps:              record.Steps,
 		DurationMillis:     record.DurationMillis,
 		ViolatedProperties: slices.Clone(record.ViolatedProperties),
+	}
+	if record.Actions != nil {
+		item.Actions = *record.Actions
 	}
 	switch {
 	case record.LaunchError != "":

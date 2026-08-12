@@ -23,6 +23,7 @@ type armSummary struct {
 	MedianStepsToFirstViolation *float64        `json:"median_steps_to_first_violation"`
 	SurvivalCurve               []survivalPoint `json:"survival_curve,omitempty"`
 	ViolationRate               *float64        `json:"violation_rate"`
+	TotalSteps                  int             `json:"total_steps"`
 	TotalActions                int             `json:"total_actions"`
 	TotalRunHours               float64         `json:"total_run_hours"`
 	Detections                  int             `json:"detections"`
@@ -144,7 +145,11 @@ func summarize(current arm) armSummary {
 			continue
 		}
 		summary.Usable++
-		summary.TotalActions += item.Steps
+		summary.TotalSteps += item.Steps
+		// Steps and actions differ by the steps that chose no action and the
+		// steps whose action was never dispatched. Only dispatched actions
+		// exercised the app, so only they belong in a per-action rate.
+		summary.TotalActions += item.Actions
 		summary.TotalRunHours += float64(item.DurationMillis) / float64(time.Hour/time.Millisecond)
 		if item.ClampedToBudget {
 			summary.EventsHeldAtBudget++

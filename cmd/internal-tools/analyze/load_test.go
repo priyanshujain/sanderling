@@ -94,18 +94,26 @@ func writeCampaign(t *testing.T, directory string, declared map[string]any, reco
 	}
 }
 
+func TestClassify_CarriesTheDispatchedActionCount(t *testing.T) {
+	actions := 7
+	item := classify(runRecord{Seed: 4, Steps: 30, Actions: &actions}, 50)
+	if item.Steps != 30 || item.Actions != 7 {
+		t.Errorf("run %+v, want 30 steps and 7 actions", item)
+	}
+}
+
 func TestGroupArms_PoolsDirectoriesSharingAnArmAndReportsMissingSeeds(t *testing.T) {
 	root := t.TempDir()
 	writeCampaign(t, filepath.Join(root, "north"), map[string]any{
 		"arm": "seeded", "max_steps": 40, "seeds": []int{1, 2, 3},
 	}, []map[string]any{
-		{"seed": 1, "exit_code": 0, "steps": 40},
-		{"seed": 2, "exit_code": 0, "steps": 9, "first_violation_origin_step": 9},
+		{"seed": 1, "exit_code": 0, "steps": 40, "actions": 33},
+		{"seed": 2, "exit_code": 0, "steps": 9, "actions": 8, "first_violation_origin_step": 9},
 	})
 	writeCampaign(t, filepath.Join(root, "south"), map[string]any{
 		"arm": "seeded", "max_steps": 40, "seeds": []int{4},
 	}, []map[string]any{
-		{"seed": 4, "exit_code": 0, "steps": 40},
+		{"seed": 4, "exit_code": 0, "steps": 40, "actions": 40},
 	})
 
 	arms, err := groupArms([]string{filepath.Join(root, "north"), filepath.Join(root, "south")})
@@ -129,9 +137,9 @@ func TestGroupArms_PoolsDirectoriesSharingAnArmAndReportsMissingSeeds(t *testing
 func TestGroupArms_RejectsDisagreeingStepBudgets(t *testing.T) {
 	root := t.TempDir()
 	writeCampaign(t, filepath.Join(root, "a"), map[string]any{"arm": "seeded", "max_steps": 40, "seeds": []int{1}},
-		[]map[string]any{{"seed": 1, "exit_code": 0, "steps": 40}})
+		[]map[string]any{{"seed": 1, "exit_code": 0, "steps": 40, "actions": 40}})
 	writeCampaign(t, filepath.Join(root, "b"), map[string]any{"arm": "seeded", "max_steps": 80, "seeds": []int{2}},
-		[]map[string]any{{"seed": 2, "exit_code": 0, "steps": 80}})
+		[]map[string]any{{"seed": 2, "exit_code": 0, "steps": 80, "actions": 80}})
 
 	_, err := groupArms([]string{filepath.Join(root, "a"), filepath.Join(root, "b")})
 	if err == nil || !strings.Contains(err.Error(), "different budgets") {
@@ -153,11 +161,44 @@ func TestGroupArms_ReportsBadRecordLines(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "a")
 	writeCampaign(t, directory, map[string]any{"arm": "seeded", "max_steps": 40, "seeds": []int{1}}, nil)
-	if err := os.WriteFile(filepath.Join(directory, recordsFileName), []byte("{\"seed\":1}\nnot json\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, recordsFileName),
+		[]byte("{\"seed\":1,\"actions\":0}\nnot json\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := groupArms([]string{directory})
 	if err == nil || !strings.Contains(err.Error(), "line 2") {
 		t.Fatalf("error %v, want the offending line number", err)
+	}
+}
+
+// A runs.jsonl written before the campaign counted dispatched actions has no
+// such field. Reading the absence as zero would divide by zero, so the whole
+// campaign is refused instead.
+func TestGroupArms_RefusesRecordsWithoutADispatchedActionCount(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "old-format")
+	writeCampaign(t, directory, map[string]any{"arm": "seeded", "max_steps": 40, "seeds": []int{1, 2}},
+		[]map[string]any{
+			{"seed": 1, "exit_code": 0, "steps": 40, "actions": 40},
+			{"seed": 2, "exit_code": 0, "steps": 40},
+		})
+	_, err := groupArms([]string{directory})
+	if err == nil {
+		t.Fatal("a runs.jsonl without an action count was accepted")
+	}
+	for _, fragment := range []string{"line 2", "actions", directory} {
+		if !strings.Contains(err.Error(), fragment) {
+			t.Errorf("error %q is missing %q", err, fragment)
+		}
+	}
+}
+
+func TestGroupArms_RefusesAnExcludedRecordWithoutAnActionCount(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "old-format")
+	writeCampaign(t, directory, map[string]any{"arm": "seeded", "max_steps": 40, "seeds": []int{1}},
+		[]map[string]any{{"seed": 1, "exit_code": 3}})
+	if _, err := groupArms([]string{directory}); err == nil {
+		t.Fatal("an old-format record was accepted because the run was excluded anyway")
 	}
 }
