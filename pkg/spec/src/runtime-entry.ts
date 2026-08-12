@@ -10,6 +10,7 @@
 import { Pcg } from "./pcg.ts";
 import { builtinCandidates, nextAction, walk } from "./pick.ts";
 import { INPUT_CORPUS } from "./corpus.ts";
+import { setEnumeratingCandidates } from "./sampler-rng.ts";
 import type { ActionDescriptor, BuiltinVerb, GeneratorNode, Host } from "./action-tree.ts";
 import type { Point } from "./types.ts";
 
@@ -156,6 +157,10 @@ export function installRuntime(
       targetIndex: candidate.targetIndex,
     })),
   );
+  // The model policy calls the authored leaves itself, from Go, outside the
+  // picker's rng scope. It brackets those calls with this so a multi-item
+  // sampler refuses rather than handing back its first item forever.
+  defineLockedGlobal("__sanderlingSetEnumeratingCandidates__", setEnumeratingCandidates);
   defineLockedGlobal("__sanderlingExtractors__", () => evaluateExtractors());
   // __sanderlingSetupAction__ walks ONLY the setup generator once, for the LLM
   // action generator (Go), which drives selection itself and must not run the

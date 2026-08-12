@@ -30,6 +30,7 @@ import {
   whenRoute,
 } from "../src/index.ts";
 import { setSamplerRng } from "../src/actions.ts";
+import { SAMPLER_REFUSAL_NAME, setEnumeratingCandidates } from "../src/sampler-rng.ts";
 import { Pcg } from "../src/pcg.ts";
 import type { GeneratorNode } from "../src/action-tree.ts";
 import type {
@@ -330,6 +331,27 @@ test("from draws intN(len) from the active picker rng", () => {
 test("from falls back to the first item outside a picker walk", () => {
   setSamplerRng(null);
   assert.equal(from(["a", "b", "c"]).generate(), "a");
+});
+
+test("from refuses a multi-item draw while the model policy enumerates", () => {
+  setEnumeratingCandidates(true);
+  try {
+    assert.throws(() => from(["a", "b", "c"]).generate(), {
+      name: SAMPLER_REFUSAL_NAME,
+      message: /draws 1 of 3 sampled items/,
+    });
+  } finally {
+    setEnumeratingCandidates(false);
+  }
+});
+
+test("from keeps serving a single item while the model policy enumerates", () => {
+  setEnumeratingCandidates(true);
+  try {
+    assert.equal(from(["only"]).generate(), "only");
+  } finally {
+    setEnumeratingCandidates(false);
+  }
 });
 
 function elementWithChildren(cells: Record<string, string>): AccessibilityElement {
