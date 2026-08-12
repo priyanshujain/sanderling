@@ -2,8 +2,10 @@ package verifier
 
 import (
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/bundler"
@@ -91,5 +93,33 @@ export const actionsRoot = taps;
 	// deliberately skips it.
 	if _, err := v.NextAction(); err != nil {
 		t.Fatalf("NextAction should draw from actionsRoot: %v", err)
+	}
+}
+
+// TestSetupGeneratorDrawsUnderTheModelPolicy: setup walks through the picker
+// with its rng under both policies, so a generator there is not the divergence
+// the enumeration refuses and must keep drawing. Enumerating before every setup
+// step is what a model-driven run does, and the refusal must not leak out of it.
+func TestSetupGeneratorDrawsUnderTheModelPolicy(t *testing.T) {
+	spec := `
+import { InputText, actions, integers, taps } from "@sanderling/spec";
+const setupValues = integers().between(1, 500);
+export const setup = actions(() => [InputText({ into: "id:Amount", text: String(setupValues.generate()) })]);
+export const actionsRoot = taps;
+`
+	v := loadBundled(t, spec, policyTreeJSON)
+	typed := map[string]bool{}
+	for range 16 {
+		if _, err := v.Candidates(LabelSourceVisibleText); err != nil {
+			t.Fatalf("Candidates: %v", err)
+		}
+		action, err := v.SetupAction()
+		if err != nil {
+			t.Fatalf("SetupAction: %v", err)
+		}
+		typed[action.Text] = true
+	}
+	if len(typed) < 2 {
+		t.Errorf("setup typed %v on every step; the picker's rng did not reach it", slices.Sorted(maps.Keys(typed)))
 	}
 }

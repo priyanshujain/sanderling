@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -220,8 +221,8 @@ globalThis.actions = actions(() => [Tap({ on: targets.generate() })]);
 // the seeded stream must be identical whether or not the model policy tried and
 // failed to enumerate the same leaf first, and it must still reach every item.
 func TestSeededSamplingSurvivesTheModelPolicysRefusal(t *testing.T) {
-	alone := seededSamplerStream(t, false)
-	afterRefusal := seededSamplerStream(t, true)
+	alone := seededSamplerStream(t, samplerParitySpec, false)
+	afterRefusal := seededSamplerStream(t, samplerParitySpec, true)
 	if !slices.Equal(alone, afterRefusal) {
 		t.Error("a refused enumeration moved the seeded draw stream")
 	}
@@ -236,10 +237,10 @@ func TestSeededSamplingSurvivesTheModelPolicysRefusal(t *testing.T) {
 
 // seededSamplerStream drives the seeded picker over the draw budget, optionally
 // letting the model policy refuse the same spec before every draw.
-func seededSamplerStream(t *testing.T, enumerateFirst bool) []string {
+func seededSamplerStream(t *testing.T, specSource string, enumerateFirst bool) []string {
 	t.Helper()
 	verifier := newVerifier(t, WithSeed(0x5eed))
-	loadActionSpec(t, verifier, samplerParitySpec)
+	loadActionSpec(t, verifier, specSource)
 	pushTree(t, verifier, policyTreeJSON)
 	stream := make([]string, 0, seededDrawBudget)
 	for range seededDrawBudget {
@@ -255,4 +256,76 @@ func seededSamplerStream(t *testing.T, enumerateFirst bool) []string {
 		stream = append(stream, fmt.Sprintf("%+v", action))
 	}
 	return stream
+}
+
+// valueGeneratorSpec authors one leaf that types a drawn value, which is the
+// same divergence from() has: the draw reaches the seeded picker's rng and never
+// this enumeration, so the model would be handed one fixed value forever.
+func valueGeneratorSpec(generator string) string {
+	return fmt.Sprintf(`
+import { actions, InputText, integers, strings, emails, edgeCaseText } from "@sanderling/spec";
+const authoredValues = %s;
+globalThis.actions = actions(() => [InputText({ into: "id:Amount", text: String(authoredValues.generate()) })]);
+`, generator)
+}
+
+// TestModelPolicyRefusesAnAuthoredValueGenerator covers every generator in
+// values.ts whose span is wider than one value.
+func TestModelPolicyRefusesAnAuthoredValueGenerator(t *testing.T) {
+	for _, generator := range []struct{ name, expression string }{
+		{"integers", "integers().between(1, 500)"},
+		{"strings", "strings().length(3, 6).alpha()"},
+		{"emails", `emails().domain("folio.app")`},
+		{"edgeCaseText", "edgeCaseText()"},
+	} {
+		t.Run(generator.name, func(t *testing.T) {
+			verifier := newVerifier(t, WithSeed(0x5eed))
+			loadActionSpec(t, verifier, valueGeneratorSpec(generator.expression))
+			pushTree(t, verifier, policyTreeJSON)
+
+			_, err := verifier.Candidates(LabelSourceVisibleText)
+			if err == nil {
+				t.Fatalf("%s was enumerated for the model policy, which cannot draw it", generator.name)
+			}
+			if !strings.Contains(err.Error(), "authoredValues.generate()") {
+				t.Errorf("error does not name the offending leaf: %v", err)
+			}
+			if !strings.Contains(err.Error(), generator.name+"()") {
+				t.Errorf("error does not name %s(): %v", generator.name, err)
+			}
+		})
+	}
+}
+
+// TestModelPolicyAcceptsASingleValuedGenerator is the boundary: a generator that
+// spans one value hands both policies the same value, so refusing it would stop
+// runs that have nothing wrong with them.
+func TestModelPolicyAcceptsASingleValuedGenerator(t *testing.T) {
+	verifier := newVerifier(t, WithSeed(0x5eed))
+	loadActionSpec(t, verifier, valueGeneratorSpec("integers().between(7, 7)"))
+	pushTree(t, verifier, policyTreeJSON)
+
+	candidates := mustCandidates(t, verifier, LabelSourceVisibleText)
+	if len(candidates) != 1 || candidates[0].Action.Text != "7" {
+		t.Fatalf("model was offered %+v, want the one authored InputText typing 7", candidates)
+	}
+}
+
+// TestSeededValueDrawsSurviveTheModelPolicysRefusal is the values.ts half of the
+// guard above: the seeded arm keeps its whole range, and its draw stream does not
+// move because the model policy refused the same spec first.
+func TestSeededValueDrawsSurviveTheModelPolicysRefusal(t *testing.T) {
+	spec := valueGeneratorSpec("integers().between(1, 500)")
+	alone := seededSamplerStream(t, spec, false)
+	afterRefusal := seededSamplerStream(t, spec, true)
+	if !slices.Equal(alone, afterRefusal) {
+		t.Error("a refused enumeration moved the seeded draw stream")
+	}
+	drawn := map[string]bool{}
+	for _, action := range alone {
+		drawn[action] = true
+	}
+	if len(drawn) < 100 {
+		t.Errorf("seeded picker typed %d distinct values over %d draws", len(drawn), seededDrawBudget)
+	}
 }
