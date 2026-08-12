@@ -119,7 +119,21 @@ type JSONSchema struct {
 
 // Response is the slice of a chat-completions response we read.
 type Response struct {
+	// Model is the model the provider actually served. A router can satisfy one
+	// requested id with a differently-priced variant, so cost accounting reads
+	// this rather than the requested id.
+	Model   string   `json:"model"`
 	Choices []Choice `json:"choices"`
+	Usage   Usage    `json:"usage"`
+}
+
+// Usage is the provider's token accounting for one call, present on every
+// non-streaming OpenAI-compatible chat completion. Zero values mean the
+// provider omitted the object.
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 // Choice is one completion choice.
