@@ -60,30 +60,41 @@ type factRow struct {
 	facts elementFacts
 }
 
+// parityPages are the pages both producers are compared on. Each one must
+// exercise every fact both ways on its own (requireBothPolarities), so adding a
+// page never weakens the comparison. fact-parity-shadow.html is shaped like a
+// Compose for Web app: the whole UI lives inside a shadow root, which both
+// producers have to descend into or they enumerate one node for an entire app.
+var parityPages = []string{"fact-parity.html", "fact-parity-shadow.html"}
+
 func TestHierarchy_DerivesTheSameFactsAsTheWebRuntime(t *testing.T) {
 	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
 	defer server.Close()
 
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/fact-parity.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	for _, page := range parityPages {
+		t.Run(page, func(t *testing.T) {
+			d := New()
+			defer d.Terminate(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if err := d.Launch(ctx, server.URL+"/"+page, false, nil); err != nil {
+				t.Fatalf("Launch: %v", err)
+			}
 
-	dump, err := d.Hierarchy(ctx)
-	if err != nil {
-		t.Fatalf("Hierarchy: %v", err)
-	}
-	fromDump := factsFromHierarchyDump(t, dump)
-	fromWebRuntime := factsFromWebRuntime(ctx, t, d)
+			dump, err := d.Hierarchy(ctx)
+			if err != nil {
+				t.Fatalf("Hierarchy: %v", err)
+			}
+			fromDump := factsFromHierarchyDump(t, dump)
+			fromWebRuntime := factsFromWebRuntime(ctx, t, d)
 
-	requireEveryElementNamed(t, "the hierarchy dump", fromDump)
-	requireEveryElementNamed(t, "the web runtime", fromWebRuntime)
-	requireBothPolarities(t, fromWebRuntime)
-	compareEnumeratedElements(t, fromDump, fromWebRuntime)
-	compareDerivedFacts(t, fromDump, fromWebRuntime)
+			requireEveryElementNamed(t, "the hierarchy dump", fromDump)
+			requireEveryElementNamed(t, "the web runtime", fromWebRuntime)
+			requireBothPolarities(t, fromWebRuntime)
+			compareEnumeratedElements(t, fromDump, fromWebRuntime)
+			compareDerivedFacts(t, fromDump, fromWebRuntime)
+		})
+	}
 }
 
 // factsFromHierarchyDump reads the dump the way the goja host does: parse it,
