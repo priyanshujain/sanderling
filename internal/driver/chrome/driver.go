@@ -256,17 +256,34 @@ func (d *Driver) InputText(callerCtx context.Context, text string) error {
 	defer cancel()
 	return chromedp.Run(runCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			// Select any existing content so InsertText replaces rather than appends.
-			if err := chromedp.Evaluate(`
-				(function() {
-					const el = document.activeElement;
-					if (el && typeof el.select === 'function') el.select();
-				})()`, nil).Do(ctx); err != nil {
+			if err := selectFocusedText(ctx); err != nil {
 				return err
 			}
 			return input.InsertText(text).Do(ctx)
 		}),
 	)
+}
+
+// selectAllScript selects everything in the focused field so the InsertText
+// that follows replaces rather than appends.
+//
+// document.activeElement stops at a shadow boundary: it names the HOST, not the
+// focused node inside. Compose for Web focuses a hidden <input> inside the
+// shadow root it mounts, so the host answer has no select() and the selection
+// never happened - every InputText appended to the last one, and a fuzzer that
+// types into the same field twice built up garbage it could never clear.
+// Descending activeElement through each shadow root finds the real field.
+const selectAllScript = `
+	(function() {
+		let el = document.activeElement;
+		while (el && el.shadowRoot && el.shadowRoot.activeElement) {
+			el = el.shadowRoot.activeElement;
+		}
+		if (el && typeof el.select === 'function') el.select();
+	})()`
+
+func selectFocusedText(ctx context.Context) error {
+	return chromedp.Evaluate(selectAllScript, nil).Do(ctx)
 }
 
 // ReplacesTextOnInput reports that InputText replaces existing content via
@@ -282,11 +299,7 @@ func (d *Driver) EraseText(callerCtx context.Context, _ int) error {
 	defer cancel()
 	return chromedp.Run(runCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			if err := chromedp.Evaluate(`
-				(function() {
-					const el = document.activeElement;
-					if (el && typeof el.select === 'function') el.select();
-				})()`, nil).Do(ctx); err != nil {
+			if err := selectFocusedText(ctx); err != nil {
 				return err
 			}
 			return input.InsertText("").Do(ctx)

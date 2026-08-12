@@ -474,3 +474,73 @@ func TestLaunch_KeepsBrowserAliveAfterCallerContextEnds(t *testing.T) {
 		t.Fatalf("second Launch after the first caller context ended: %v", err)
 	}
 }
+
+// TestInputText_ReplacesTextInsideAShadowRoot pins ReplacesTextOnInput's promise
+// on the shape a canvas app actually has. Compose for Web draws its text fields
+// on a canvas and routes typing through a hidden <input> INSIDE the shadow root
+// it mounts, and document.activeElement stops at a shadow boundary: it names the
+// host. The select-all therefore ran against a <div> with no select(), every
+// InputText appended to the last, and a fuzzer typing twice into one field built
+// up text it could never clear (observed on the folio wasm build as
+// "0.0000001" -> "0.0000001\t-1").
+func TestInputText_ReplacesTextInsideAShadowRoot(t *testing.T) {
+	const page = `<body><div id="app"></div><script>
+	  const root = document.getElementById("app").attachShadow({mode: "open"});
+	  root.innerHTML = ` + "`" + `
+	    <style>
+	      #surface { position: absolute; left: 0; top: 0; }
+	      #a11y { position: absolute; left: 0; top: 0; pointer-events: none; }
+	      #proxy { position: absolute; left: -9999px; }
+	    </style>
+	    <canvas id="surface" width="300" height="200"></canvas>
+	    <div id="a11y"><div id="field">-</div></div>
+	    <input id="proxy" type="text">` + "`" + `;
+	  const proxy = root.getElementById("proxy");
+	  const field = root.getElementById("field");
+	  // The canvas owns the pointer (the a11y overlay is pointer-events: none)
+	  // and hands focus to the proxy, exactly as a canvas app does.
+	  root.getElementById("surface").addEventListener("click", function () { proxy.focus(); });
+	  proxy.addEventListener("input", function () { field.textContent = proxy.value; });
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.Tap(ctx, 40, 40); err != nil {
+		t.Fatalf("Tap: %v", err)
+	}
+	if err := d.InputText(ctx, "alpha"); err != nil {
+		t.Fatalf("InputText: %v", err)
+	}
+	if err := d.InputText(ctx, "beta"); err != nil {
+		t.Fatalf("InputText: %v", err)
+	}
+
+	var shown string
+	script := `document.getElementById("app").shadowRoot.getElementById("field").textContent`
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &shown)); err != nil {
+		t.Fatalf("read field: %v", err)
+	}
+	if shown != "beta" {
+		t.Errorf("field holds %q, want %q; the second InputText appended instead of replacing", shown, "beta")
+	}
+
+	if err := d.EraseText(ctx, len("beta")); err != nil {
+		t.Fatalf("EraseText: %v", err)
+	}
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &shown)); err != nil {
+		t.Fatalf("read field: %v", err)
+	}
+	if shown != "" {
+		t.Errorf("field holds %q after EraseText, want empty", shown)
+	}
+}
