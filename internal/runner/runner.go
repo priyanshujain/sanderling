@@ -220,7 +220,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
 
-		nextAction, nextErr := actionSource.NextAction(ctx)
+		nextAction, nextErr := actionSource.NextAction(ctx, stepIndex)
 		var traceAction *trace.Action
 		if nextErr == nil {
 			traceAction = traceActionFor(nextAction, tree)
@@ -235,6 +235,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		applySkipped := false
+		actionSkipped := ""
 		if nextErr == nil && !appIsForeground(ctx, options) {
 			// The app left the foreground between observe and apply (a prior
 			// action's gesture settling late, or an async navigation). The
@@ -244,6 +245,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			logger.Warn("app not in foreground at action time; skipping (relaunch next step)",
 				"step", stepIndex, "action", nextAction.Kind)
 			applySkipped = true
+			actionSkipped = actionSkippedForeground
 			lastAction = nil
 		} else if nextErr == nil {
 			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
@@ -266,6 +268,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				logger.Warn("apply error; marking step transitional", "step", stepIndex, "err", err)
 				transitional = true
 				applySkipped = true
+				actionSkipped = actionSkippedApplyError
 				lastAction = nil
 			} else {
 				consecutiveApplyFailures = 0
@@ -287,6 +290,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			Metrics:             metrics,
 			ExtractorChanges:    extractorChanges,
 			Transitional:        transitional,
+			ActionSkipped:       actionSkipped,
 			SkippedVerification: skippedVerification,
 			Witnesses:           witnesses,
 		}
@@ -1072,6 +1076,14 @@ func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessa
 	}
 	return encoded, firstErr
 }
+
+// Reasons a chosen action was never dispatched, recorded on the step so a count
+// of executed actions is not inflated by the next_action of a step that acted on
+// nothing.
+const (
+	actionSkippedForeground = "app_left_foreground"
+	actionSkippedApplyError = "apply_error"
+)
 
 // maxConsecutiveApplyFailures bounds how many transient apply failures in a
 // row the run tolerates before aborting. One or two absorb a runner restart;

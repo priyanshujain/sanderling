@@ -45,9 +45,10 @@ globalThis.actions = actions(() => []);
 `
 
 type harness struct {
-	mock     *mockdriver.Driver
-	verifier *verifier.Verifier
-	writer   *trace.Writer
+	mock      *mockdriver.Driver
+	verifier  *verifier.Verifier
+	writer    *trace.Writer
+	directory string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -103,9 +104,10 @@ func newHarnessWithSpec(t *testing.T, spec string) *harness {
 		t.Fatal(err)
 	}
 	state := &harness{
-		mock:     mockdriver.New(),
-		verifier: verifierInstance,
-		writer:   writer,
+		mock:      mockdriver.New(),
+		verifier:  verifierInstance,
+		writer:    writer,
+		directory: directory,
 	}
 	t.Cleanup(func() { _ = writer.Close() })
 	return state
@@ -141,6 +143,29 @@ func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
 	actions := state.mock.Actions()
 	if !containsAction(actions, mockdriver.ActionTapSelector, "id:next") {
 		t.Errorf("expected TapSelector with id:next, got %v", actions)
+	}
+}
+
+// TestRunner_SeededRunRecordsNoModelCalls keeps the arms distinguishable: the
+// seeded picker consults nothing, so its run directory must carry no model-call
+// output at all rather than a file of empty records.
+func TestRunner_SeededRunRecordsNoModelCalls(t *testing.T) {
+	state := newHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 10 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(state.directory, trace.LLMCallFileName)); !os.IsNotExist(err) {
+		t.Errorf("stat %s = %v, want no model-call file for a seeded run", trace.LLMCallFileName, err)
 	}
 }
 
@@ -1437,6 +1462,17 @@ func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
 	if first.Step != 1 || !first.Transitional {
 		t.Errorf("step 1 must be transitional after transient apply error, got step=%d transitional=%v", first.Step, first.Transitional)
 	}
+	// The step still records a next_action it never dispatched, so the reason
+	// has to be on the line or an executed-action count includes it.
+	var firstSkip struct {
+		ActionSkipped string `json:"action_skipped"`
+	}
+	if err := json.Unmarshal(lines[0], &firstSkip); err != nil {
+		t.Fatalf("decode first trace line: %v", err)
+	}
+	if firstSkip.ActionSkipped != actionSkippedApplyError {
+		t.Errorf("step 1 action_skipped = %q, want %q", firstSkip.ActionSkipped, actionSkippedApplyError)
+	}
 	if len(first.Violations) != 0 {
 		t.Errorf("transient apply step must have no violations, got %v", first.Violations)
 	}
@@ -1974,5 +2010,22 @@ func TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime(t *testing.T) {
 	}
 	if containsAction(state.mock.Actions(), mockdriver.ActionTapSelector, "id:next") {
 		t.Error("apply-time guard failed: a tap fired while a system overlay held focus")
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var skipped bool
+	for _, line := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var step struct {
+			ActionSkipped string `json:"action_skipped"`
+		}
+		if err := json.Unmarshal(line, &step); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		skipped = skipped || step.ActionSkipped == actionSkippedForeground
+	}
+	if !skipped {
+		t.Errorf("no step recorded action_skipped=%q, so the undispatched action looks executed", actionSkippedForeground)
 	}
 }
