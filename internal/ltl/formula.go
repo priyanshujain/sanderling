@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,9 +14,9 @@ type Formula interface {
 	describe() string
 }
 
-// PredicateLabel lets a ThunkFormula expose the identity of the closure it
-// wraps. ThunkFormula satisfies it through its Name field; an empty name
-// serializes without a name.
+// PredicateLabel lets a ThunkFormula expose the caller's label for the closure
+// it wraps. ThunkFormula satisfies it through the name passed to ThunkNamed;
+// an unnamed thunk serializes without a name.
 type PredicateLabel interface {
 	PredicateName() string
 }
@@ -50,17 +51,26 @@ type PureFormula struct {
 	Value bool
 }
 
-// ThunkFormula wraps an opaque predicate closure. Func returns the predicate's
-// boolean result and a non-nil error when the predicate threw; a thrown
-// predicate is a witnessed violation distinct from a plain false. Name carries
-// the predicate's identity so two distinct predicates produce distinct
-// describe() keys and are never merged during obligation collapse.
+// ThunkFormula wraps an opaque predicate closure. The closure returns the
+// predicate's boolean result and a non-nil error when the predicate threw; a
+// thrown predicate is a witnessed violation distinct from a plain false.
+//
+// Every thunk carries an identity assigned at construction, and the identity
+// is part of its describe() key. Two thunks are therefore equal keys only when
+// they are copies of the same constructed value, which is what lets obligation
+// collapse merge residuals without ever merging distinct predicates. The
+// fields are unexported so a thunk cannot be built without one.
 type ThunkFormula struct {
-	Func func() (bool, error)
-	Name string
+	predicate func() (bool, error)
+	name      string
+	identity  uint64
 }
 
-func (t ThunkFormula) PredicateName() string { return t.Name }
+func (t ThunkFormula) PredicateName() string { return t.name }
+
+// thunkIdentities hands out the per-thunk identity. It only has to separate
+// thunks within one process, so a counter is enough.
+var thunkIdentities atomic.Uint64
 
 // NowFormula marks its inner formula for evaluation at the current step only.
 // Primarily used so that now(...).implies(...) parses unambiguously.
@@ -113,10 +123,16 @@ func Always(inner Formula) Formula { return AlwaysFormula{Inner: inner} }
 
 func Pure(value bool) Formula { return PureFormula{Value: value} }
 
-func Thunk(function func() (bool, error)) Formula { return ThunkFormula{Func: function} }
+func Thunk(function func() (bool, error)) Formula {
+	return ThunkFormula{predicate: function, identity: thunkIdentities.Add(1)}
+}
 
 func ThunkNamed(name string, function func() (bool, error)) Formula {
-	return ThunkFormula{Func: function, Name: name}
+	return ThunkFormula{
+		predicate: function,
+		name:      name,
+		identity:  thunkIdentities.Add(1),
+	}
 }
 
 func Now(inner Formula) Formula { return NowFormula{Inner: inner} }
@@ -172,10 +188,7 @@ func (a AlwaysFormula) describe() string {
 }
 func (p PureFormula) describe() string { return fmt.Sprintf("Pure(%t)", p.Value) }
 func (t ThunkFormula) describe() string {
-	if t.Name != "" {
-		return "Thunk(" + t.Name + ")"
-	}
-	return "Thunk(...)"
+	return fmt.Sprintf("Thunk(%s#%d)", t.name, t.identity)
 }
 func (n NowFormula) describe() string  { return "Now(" + n.Inner.describe() + ")" }
 func (n NextFormula) describe() string { return "Next(" + n.Inner.describe() + ")" }

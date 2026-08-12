@@ -121,8 +121,11 @@ func (e *Evaluator) ObserveAtStep(now time.Time, step int) Verdict {
 
 // collapse removes structurally-identical obligations, keeping the first
 // occurrence in order so the surviving entry carries the earliest origin step.
-// Distinct predicates never merge because ThunkFormula's name participates in
-// its describe() key, so deduping cannot hide a violation.
+// Equal describe() keys mean the same operators over the same predicates with
+// the same remaining bounds, so the merged obligations reduce identically on
+// every future and dropping one cannot hide a violation. Distinct predicates
+// never merge because every thunk's construction-time identity is part of its
+// key, whether or not the caller named it.
 func collapse(obligations []obligation) []obligation {
 	if len(obligations) < 2 {
 		return obligations
@@ -334,7 +337,7 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		return violatedWith(concrete, "pure false")
 
 	case ThunkFormula:
-		result, err := concrete.Func()
+		result, err := concrete.predicate()
 		if err != nil {
 			return violatedByError(concrete, err.Error())
 		}
