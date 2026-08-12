@@ -336,6 +336,12 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		}
 		return violatedWith(concrete, "pure false")
 
+	case ErrorFormula:
+		// A thrown predicate substituted into a residual at the trace
+		// boundary. Reducing it re-reports the same failure rather than
+		// crashing the run.
+		return violatedByError(concrete, concrete.Message)
+
 	case ThunkFormula:
 		result, err := concrete.predicate()
 		if err != nil {

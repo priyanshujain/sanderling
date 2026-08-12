@@ -262,3 +262,23 @@ func TestCollapse_UnnamedPredicatesDoNotMerge(t *testing.T) {
 		t.Errorf("origin = %d, want 2", witness.Step)
 	}
 }
+
+// TestReduce_ErrorFormulaViolates: the verifier substitutes an ErrorFormula for
+// the residual of a property whose predicate threw, and that residual is fed
+// back into the evaluator on the next step. Reducing one used to panic.
+func TestReduce_ErrorFormulaViolates(t *testing.T) {
+	evaluator := NewEvaluator(Always(ErrorFormula{Message: "boom"}))
+	if got := evaluator.Observe(); got != VerdictViolated {
+		t.Fatalf("got %v, want violated", got)
+	}
+	witness := evaluator.Violation()
+	if witness == nil {
+		t.Fatal("Violation = nil, want non-nil")
+	}
+	if witness.Reason != "boom" {
+		t.Errorf("Reason = %q, want %q", witness.Reason, "boom")
+	}
+	if !witness.IsError {
+		t.Error("IsError = false, want true")
+	}
+}
