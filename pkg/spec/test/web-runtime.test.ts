@@ -357,11 +357,49 @@ test("selectorFromObject composes idPrefix with a second key", () => {
   });
 });
 
-test("selectorFromObject falls back to a literal attribute for unknown keys", () => {
-  assert.deepEqual(selectorFromObject({ "data-foo": "bar" }), {
-    css: `[data-foo="bar"]`,
+// A key nothing can carry yields no match, which reads exactly like a screen
+// with no such element: the generator declines to act, the runner waits out the
+// step, and the run ends clean having explored nothing.
+test("selectorFromObject rejects a key no element can carry", () => {
+  assert.throws(
+    () => selectorFromObject({ descripton: "Supplier" }),
+    (error: Error) =>
+      error.message.includes('"descripton"') && error.message.includes("accepted keys"),
+  );
+});
+
+// Raw attributes the key list does not enumerate stay reachable when the page
+// actually carries them.
+test("selectorFromObject accepts a raw attribute the page carries", () => {
+  withDocumentCarrying(["data-foo"], () => {
+    assert.deepEqual(selectorFromObject({ "data-foo": "bar" }), {
+      css: `[data-foo="bar"]`,
+    });
   });
 });
+
+// The string form's kind space stays open on both sides: "<attr>:<value>" is
+// the documented way to reach a raw driver attribute, and internal/hierarchy
+// resolves an unknown kind to an empty result rather than an error.
+test("selectorFromString accepts a kind the object form would reject", () => {
+  assert.deepEqual(selectorFromString("descripton:Supplier"), {
+    css: `[descripton="Supplier"]`,
+  });
+});
+
+function withDocumentCarrying(attributes: string[], run: () => void): void {
+  const global = globalThis as Record<string, unknown>;
+  const original = global.document;
+  global.document = {
+    querySelector: (selector: string) =>
+      attributes.some((name) => selector === `[${name}]`) ? {} : null,
+  };
+  try {
+    run();
+  } finally {
+    global.document = original;
+  }
+}
 
 test("selectorFromObject text-only selector becomes an XPath", () => {
   assert.deepEqual(selectorFromObject({ text: "Go" }), {

@@ -94,6 +94,7 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   // The native rule also accepts the local name after Android's "<package>:id/".
   // The DOM has no such prefix, so a plain starts-with is the same rule here.
   idPrefix: (v) => `[id^="${cssEscape(v)}"]`,
+  desc: (v) => `[aria-label="${cssEscape(v)}"]`,
   descPrefix: (v) => `[aria-label^="${cssEscape(v)}"]`,
   // The native table aliases testTag onto resource-id, which the host DOM walk
   // fills from el.id, so the native path already accepts a testTag emitted as
@@ -135,26 +136,113 @@ function tagSelector(value: string): string {
   return value;
 }
 
+// SELECTOR_KEYS is every key an object selector may use, held identical to the
+// native list in internal/hierarchy: test/selector-keys.test.ts and
+// internal/hierarchy/selector_keys_test.go each assert their own side against
+// test/fixtures/selector-keys.json, so a spec cannot be accepted by one runtime
+// and rejected by the other. Keys that mean nothing to a DOM (scrollable,
+// package, elementType) stay accepted and simply match nothing here, the way an
+// iOS-only key matches nothing on Android.
+const SELECTOR_KEYS: readonly string[] = [
+  "accessibilityIdentifier",
+  "accessibilityLabel",
+  "accessibilityText",
+  "aria-label",
+  "ariaLabel",
+  "bounds",
+  "checked",
+  "class",
+  "className",
+  "clickable",
+  "content-desc",
+  "contentDescription",
+  "data-testid",
+  "desc",
+  "descPrefix",
+  "editable",
+  "elementType",
+  "enabled",
+  "focused",
+  "hintText",
+  "id",
+  "idPrefix",
+  "identifier",
+  "label",
+  "package",
+  "placeholder",
+  "placeholderValue",
+  "resource-id",
+  "scrollable",
+  "selected",
+  "tag",
+  "testID",
+  "testTag",
+  "text",
+  "title",
+  "value",
+];
+
+const SELECTOR_KEY_SET = new Set(SELECTOR_KEYS);
+
+const ATTRIBUTE_NAME = /^[a-zA-Z][a-zA-Z0-9_.:-]*$/;
+
+// domCarriesAttribute is the escape hatch for attributes this list does not
+// enumerate: a key some element actually has is a key that can match. A key
+// that is not even a legal attribute name can carry no value and would inject
+// into the surrounding selector, so it is rejected rather than probed.
+function domCarriesAttribute(key: string): boolean {
+  if (!ATTRIBUTE_NAME.test(key)) return false;
+  try {
+    return document.querySelector(`[${key}]`) !== null;
+  } catch {
+    return false;
+  }
+}
+
+// unknownSelectorKeyMessage is character for character what
+// hierarchy.UnknownSelectorKeyMessage produces, so one mistake reads the same
+// whichever runtime the spec ran on.
+function unknownSelectorKeyMessage(keys: string[]): string {
+  const named = keys.map((key) => JSON.stringify(key)).join(", ");
+  return (
+    `selector key ${named} cannot match: no element carries that attribute, ` +
+    `and it is not one of the accepted keys: ${SELECTOR_KEYS.join(", ")}`
+  );
+}
+
+function cssPart(key: string, value: string): string {
+  const builder = KNOWN_KEY_TO_CSS[key];
+  if (builder) return builder(value);
+  return `[${key}="${cssEscape(value)}"]`;
+}
+
+// A selector key that can never match yields an empty result, which reads
+// exactly like a screen with no such element: the generator declines to act,
+// the runner waits out the step, and the run ends clean having explored
+// nothing. Throwing is what makes the mistake visible.
 function selectorFromObject(selector: Record<string, string | boolean | undefined>): {
   css?: string;
   xpath?: string;
 } {
   const parts: string[] = [];
   let textValue: string | undefined;
+  const unknown: string[] = [];
   for (const key of Object.keys(selector)) {
     const raw = selector[key];
     if (raw === undefined) continue;
     const value = typeof raw === "boolean" ? String(raw) : raw;
+    if (!SELECTOR_KEY_SET.has(key) && !domCarriesAttribute(key)) {
+      if (!unknown.includes(key)) unknown.push(key);
+      continue;
+    }
     if (key === "text") {
       textValue = value;
       continue;
     }
-    const builder = KNOWN_KEY_TO_CSS[key];
-    if (builder) {
-      parts.push(builder(value));
-    } else {
-      parts.push(`[${key}="${cssEscape(value)}"]`);
-    }
+    parts.push(cssPart(key, value));
+  }
+  if (unknown.length > 0) {
+    throw new Error(unknownSelectorKeyMessage(unknown));
   }
   if (textValue !== undefined && parts.length === 0) {
     return {
@@ -184,7 +272,11 @@ function selectorFromString(selector: string): { css?: string; xpath?: string } 
   if (kind === "text") {
     return { xpath: `//*[normalize-space(text())=${xpathStringLiteral(value)}]` };
   }
-  return selectorFromObject({ [kind]: value });
+  // The string form's kind space stays open: "<attr>:<value>" is the documented
+  // way to reach a raw driver attribute, and internal/hierarchy resolves an
+  // unknown kind to an empty result rather than an error. Only the object form
+  // validates, on both sides.
+  return { css: cssPart(kind, value) };
 }
 
 function queryElement(
@@ -601,6 +693,7 @@ export const __testing__ = {
   evaluateExtractors,
   selectorFromString,
   selectorFromObject,
+  SELECTOR_KEYS,
   xpathStringLiteral,
 };
 
