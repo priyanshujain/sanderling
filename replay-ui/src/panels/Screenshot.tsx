@@ -9,6 +9,12 @@ export interface ScreenshotProps {
   deviceHeight?: number;
 }
 
+// stepOfSource reads the step out of the screenshot URL the panel is rendering,
+// so a spec can compare what this panel shows against what the toolbar claims.
+function stepOfSource(src: string): string | undefined {
+  return /step-0*(\d+)\.png/.exec(src)?.[1];
+}
+
 const DEFAULT_WIDTH = 1080;
 const DEFAULT_HEIGHT = 1920;
 
@@ -58,6 +64,8 @@ export default function Screenshot({ src, action, deviceWidth, deviceHeight }: S
     >
       <img
         className="screenshot-image"
+        data-testid="screenshot"
+        data-step={stepOfSource(src)}
         src={src}
         alt="device screenshot"
         onLoad={(event) => {

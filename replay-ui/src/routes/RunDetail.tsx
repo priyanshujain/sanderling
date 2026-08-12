@@ -267,7 +267,11 @@ export default function RunDetail() {
           <span>
             <strong title={run.spec_path}>{basename(run.spec_path)}</strong> seed={run.seed}
           </span>
-          <span>
+          <span
+            data-testid="step-indicator"
+            data-step={stepIndex}
+            data-step-count={stepCount ?? 0}
+          >
             step {stepIndex} / {stepCount ?? 0}
           </span>
         </div>

@@ -170,6 +170,8 @@ export default function ActionList({
               }
             }}
             className="action-list-item"
+            data-testid="step-row"
+            data-step={step.index}
             role="option"
             tabIndex={isActive ? 0 : -1}
             aria-selected={isActive}
