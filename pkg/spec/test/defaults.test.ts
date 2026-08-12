@@ -15,10 +15,14 @@ import type {
 function installRuntime(initialState: State): void {
   const state = { current: initialState };
   const runtime: SanderlingRuntime = {
-    extract: <T>(getter: (s: State) => T): Extracted<T> => ({
-      current: getter(state.current),
-      previous: undefined,
-    }),
+    extract: <T>(getter: (s: State) => T): Extracted<T> => {
+      const handle: Extracted<T> = {
+        current: getter(state.current),
+        previous: undefined,
+        named: () => handle,
+      };
+      return handle;
+    },
     always: () => ({ __sanderlingFormula: true } as Formula),
     now: () => ({ __sanderlingFormula: true } as Formula),
     next: () => ({ __sanderlingFormula: true } as Formula),

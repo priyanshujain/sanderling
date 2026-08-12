@@ -112,7 +112,12 @@ function installFakeRuntime(): RecordedRuntime {
     extract: <T>(getter: (state: State) => T, name?: string): Extracted<T> => {
       calls.extracts.push(getter as (state: State) => unknown);
       calls.extractNames.push(name);
-      return { current: undefined as unknown as T, previous: undefined };
+      const handle: Extracted<T> = {
+        current: undefined as unknown as T,
+        previous: undefined,
+        named: () => handle,
+      };
+      return handle;
     },
     always: (predicateOrFormula: (() => boolean) | Formula): Formula => {
       calls.alwaysArgs.push(predicateOrFormula);

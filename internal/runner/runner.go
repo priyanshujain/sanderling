@@ -1006,7 +1006,9 @@ func violationRecords(properties []string, witnesses map[string]trace.Witness, d
 
 // collectWitnesses gathers the violation witness for each newly-violated
 // property, logs its cause, and returns them keyed by property name for the
-// trace. Properties without a captured witness are skipped.
+// trace. Properties without a captured witness are skipped. stepIndex is the
+// trace line the witness lands on, and stands in as the detection step for a
+// verifier that observed no labeled step (a run-end finalize).
 func collectWitnesses(verifierInstance *verifier.Verifier, properties []string, logger *slog.Logger, stepIndex int) map[string]trace.Witness {
 	if len(properties) == 0 {
 		return nil
@@ -1017,14 +1019,19 @@ func collectWitnesses(verifierInstance *verifier.Verifier, properties []string, 
 		if witness == nil {
 			continue
 		}
+		detectedStep := witness.DetectedStep
+		if detectedStep == 0 {
+			detectedStep = stepIndex
+		}
 		logger.Warn("property violated",
-			"step", witness.Step, "detected_step", stepIndex,
+			"step", witness.Step, "detected_step", detectedStep,
 			"property", name, "reason", witness.Reason, "error", witness.IsError)
 		witnesses[name] = trace.Witness{
-			Reason:     witness.Reason,
-			IsError:    witness.IsError,
-			Step:       witness.Step,
-			Extractors: witness.Extractors,
+			Reason:       witness.Reason,
+			IsError:      witness.IsError,
+			Step:         witness.Step,
+			DetectedStep: detectedStep,
+			Extractors:   witness.Extractors,
 		}
 	}
 	if len(witnesses) == 0 {

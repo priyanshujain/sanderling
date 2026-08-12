@@ -39,22 +39,30 @@ type Verifier struct {
 	// reimplementing the corpus on the Go side.
 	sampleInputFn goja.Callable
 
+	// enumerateBuiltinFn is the bundle-installed __sanderlingEnumerateBuiltin__,
+	// which lists every action a builtin verb can yield right now. It is the same
+	// enumeration the seeded picker draws from, so the LLM action backend selects
+	// over the picker's action space rather than one of its own.
+	enumerateBuiltinFn goja.Callable
+
 	evaluators map[string]*ltl.Evaluator
 
 	priorVerdicts map[string]ltl.Verdict
 	newlyViolated []string
 	witnesses     map[string]Witness
 
-	lastTree       *hierarchy.Tree
-	lastScreenshot []byte
-	scopeCache     map[*hierarchy.Element]bool
-	scopeCacheTree *hierarchy.Tree
-	lastAction     *Action
-	lastLogs       []LogEntry
-	lastExceptions []Exception
-	stepTime       time.Time
-	stepIndex      int
-	runStart       time.Time
+	lastTree        *hierarchy.Tree
+	lastScreenshot  []byte
+	scopeCache      map[*hierarchy.Element]bool
+	scopeCacheTree  *hierarchy.Tree
+	targetCache     []targetElement
+	targetCacheTree *hierarchy.Tree
+	lastAction      *Action
+	lastLogs        []LogEntry
+	lastExceptions  []Exception
+	stepTime        time.Time
+	stepIndex       int
+	runStart        time.Time
 
 	appPackage string
 	platform   string
@@ -178,18 +186,30 @@ func (v *Verifier) Load(source string) error {
 		}
 	}
 
+	if fn := v.runtime.GlobalObject().Get("__sanderlingEnumerateBuiltin__"); fn != nil {
+		if callable, ok := goja.AssertFunction(fn); ok {
+			v.enumerateBuiltinFn = callable
+		}
+	}
+
 	return nil
 }
 
 // buildFormula walks the formula-spec registry and produces a Go ltl.Formula
-// tree rooted at the given spec index. Specs built at the top level are
-// always wrapped in Always unless the top-level spec is already an Always.
+// tree rooted at the given spec index.
+//
+// A top-level spec that is not already a temporal obligation is wrapped in
+// Always, which is what an author writing a bare predicate or a combinator
+// means. An always is left alone, and so is an eventually: wrapping
+// `eventually(p).within(5, "minutes")` would turn one reachability goal into
+// "within five minutes of every step", a different and far stronger property.
 func (v *Verifier) buildFormula(rootIndex int) (ltl.Formula, error) {
 	inner, err := v.buildFormulaNode(rootIndex)
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := inner.(ltl.AlwaysFormula); ok {
+	switch inner.(type) {
+	case ltl.AlwaysFormula, ltl.EventuallyFormula:
 		return inner, nil
 	}
 	return ltl.Always(inner), nil
@@ -386,6 +406,12 @@ func (v *Verifier) ChangedExtractors() map[string]ExtractorChange {
 // call this unconditionally. The override must run *after* PushSnapshot
 // (which advanced `previous`) and *before* EvaluateProperties.
 //
+// The JSON snapshot `curr` is replaced alongside the value, so the diffs in
+// ChangedExtractors and the witness recorded by captureWitness describe the
+// state the verdict was computed from. Recording the goja value while a
+// predicate read the V8 one makes a witness explain a violation with a state
+// that never reached the property.
+//
 // Out-of-range indices are tolerated (skipped) rather than fatal: V8 and goja
 // register extractors from the same spec bundle so counts should always
 // match, but a stale or partial override map should not block valid overrides
@@ -405,6 +431,7 @@ func (v *Verifier) OverrideExtractorValues(overrides map[int]json.RawMessage) (s
 			return skipped, fmt.Errorf("extractor override %d: %w", index, conversionErr)
 		}
 		v.extractors[index].currentValue = value
+		v.extractors[index].curr = encodeExtractorValue(value)
 	}
 	return skipped, nil
 }
@@ -420,7 +447,7 @@ type SnapshotInput struct {
 	// callers may leave it nil.
 	ScreenshotPNG []byte
 	LastAction    *Action
-	StepTime   time.Time
+	StepTime      time.Time
 	// StepIndex is the runner's step number for this snapshot. Evaluators label
 	// observations with it so violation witnesses carry runner step numbers even
 	// when transitional steps were skipped. Zero means unlabeled; evaluators
@@ -470,21 +497,27 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 }
 
 // Witness is the verifier-level record of a property violation: the LTL reason
-// (a predicate's thrown-error text, "predicate false", or a liveness failure),
-// the step it fired at, and a snapshot of every extractor's current value at
-// that step. The snapshot lets a reader see the state that produced the
-// violation without replaying the run.
+// (a predicate's thrown-error text, "predicate false", or a liveness failure)
+// and the two step indices a deferred obligation spans.
+//
+// Step is the origin: the step whose observation armed the obligation that
+// failed. DetectedStep is the observation whose reduction produced the
+// violation, which for a next or an eventually is later. Extractors is that
+// observation's state, so it belongs to DetectedStep and not to Step; the two
+// were previously conflated under one index.
 type Witness struct {
-	Property   string
-	Reason     string
-	Step       int
-	IsError    bool
-	Extractors map[string]json.RawMessage
+	Property     string
+	Reason       string
+	Step         int
+	DetectedStep int
+	IsError      bool
+	Extractors   map[string]json.RawMessage
 }
 
 // captureWitness records the witness for a property that just transitioned to
 // violated, snapshotting the current extractor values so the cause is visible
-// after the run.
+// after the run. The snapshot is the state of the observation being reduced,
+// which the witness records as its detection step.
 func (v *Verifier) captureWitness(name string) {
 	evaluator, ok := v.evaluators[name]
 	if !ok {
@@ -495,11 +528,12 @@ func (v *Verifier) captureWitness(name string) {
 		return
 	}
 	v.witnesses[name] = Witness{
-		Property:   name,
-		Reason:     violation.Reason,
-		Step:       violation.Step,
-		IsError:    violation.IsError,
-		Extractors: v.extractorSnapshot(),
+		Property:     name,
+		Reason:       violation.Reason,
+		Step:         violation.Step,
+		DetectedStep: v.stepIndex,
+		IsError:      violation.IsError,
+		Extractors:   v.extractorSnapshot(),
 	}
 }
 
@@ -730,66 +764,65 @@ func selectorForElement(tree *hierarchy.Tree, element *hierarchy.Element) string
 	return ""
 }
 
-// candidatesForVerb enumerates the host-side targets a builtin verb may draw
-// from, in v.lastTree.Elements ORDER (the order is part of the picker's parity
-// contract). The filters are LIFTED from the old Go picker:
+// targets enumerates every element this host can offer, in v.lastTree.Elements
+// ORDER (the order is part of the picker's parity contract). It is the native
+// half of the single candidate producer: the picker reads it through
+// __sanderlingHost__.queryTargets, applies the SHARED per-verb eligibility rule
+// (pkg/spec/src/targets.ts), and expands what survives into concrete actions for
+// both policies. Which verb may act on which element is decided there, once, so
+// this host and the web host cannot mean different things by the same verb.
 //
-//	taps/doubleTaps/longPresses: clickable + enabled + positive bounds
-//	typing:                      editable + enabled + positive bounds
-//	scrolls:                     scrollable attribute + positive bounds
-//	swipes:                      any in-scope element with positive bounds
+// This host's job is the facts: clickable/enabled/editable come off the
+// accessibility node, scrollable off its attribute, and the geometry off its
+// bounds. Every target carries the resolving selector so the runner can re-route
+// by id/text. Out-of-scope nodes (the soft keyboard, system UI, the launcher)
+// are dropped by scopedElements.
 //
-// Every candidate carries the resolving selector so the runner can re-route by
-// id/text. Out-of-scope nodes (the soft keyboard, system UI, the launcher) are
-// dropped by scopedElements.
-func (v *Verifier) candidatesForVerb(verb string) []candidate {
-	if v.lastTree == nil {
+// A cross-fade frame yields nothing at all. Its layout is mid-animation, often
+// in a collapsed coordinate space, so acting on it lands on garbage; skipping it
+// here rather than in one policy means both policies re-observe a settled frame
+// instead of one of them acting on the animation.
+func (v *Verifier) targets() []targetElement {
+	if v.lastTree == nil || v.lastTree.Transitional() {
 		return nil
 	}
+	if v.targetCacheTree == v.lastTree {
+		return v.targetCache
+	}
 	scope := v.scopedElements()
-	var result []candidate
+	result := make([]targetElement, 0, len(v.lastTree.Elements))
 	for _, element := range v.lastTree.Elements {
 		if !scope[element] {
 			continue
 		}
-		if !verbAccepts(verb, element) {
-			continue
-		}
 		x, y := element.Bounds.Center()
-		result = append(result, candidate{
-			x:        x,
-			y:        y,
-			width:    element.Bounds.Width(),
-			height:   element.Bounds.Height(),
-			selector: selectorForElement(v.lastTree, element),
+		result = append(result, targetElement{
+			element:    element,
+			x:          x,
+			y:          y,
+			width:      element.Bounds.Width(),
+			height:     element.Bounds.Height(),
+			selector:   selectorForElement(v.lastTree, element),
+			clickable:  element.Clickable,
+			enabled:    element.Enabled,
+			editable:   element.Editable,
+			scrollable: element.Attributes["scrollable"] == "true",
 		})
 	}
+	v.targetCache = result
+	v.targetCacheTree = v.lastTree
 	return result
 }
 
-type candidate struct {
+// targetElement is one host-enumerated element with the facts the shared
+// eligibility rule reads. The host reports facts; it does not filter by verb.
+type targetElement struct {
+	element       *hierarchy.Element
 	x, y          int
 	width, height int
 	selector      string
-}
-
-// verbAccepts applies the per-verb element filter.
-func verbAccepts(verb string, element *hierarchy.Element) bool {
-	positiveBounds := element.Bounds.Width() > 0 && element.Bounds.Height() > 0
-	switch verb {
-	case "taps", "doubleTaps", "longPresses":
-		return element.Clickable && element.Enabled && positiveBounds
-	case "typing":
-		return element.Editable && element.Enabled && positiveBounds
-	case "scrolls":
-		return element.Attributes["scrollable"] == "true" && positiveBounds
-	case "swipes":
-		// Any visible element is a valid swipe origin, but it must have real
-		// bounds: a zero-bounds node centers at (0,0), and a downward swipe from
-		// the top-left corner is the system gesture that pulls down the
-		// notification shade, dragging the fuzzer out of the app.
-		return positiveBounds
-	default:
-		return false
-	}
+	clickable     bool
+	enabled       bool
+	editable      bool
+	scrollable    bool
 }

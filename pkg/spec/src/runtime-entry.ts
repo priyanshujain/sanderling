@@ -8,9 +8,9 @@
 // identical action stream by construction.
 
 import { Pcg } from "./pcg.ts";
-import { nextAction, walk } from "./pick.ts";
+import { builtinCandidates, nextAction, walk } from "./pick.ts";
 import { INPUT_CORPUS } from "./corpus.ts";
-import type { ActionDescriptor, GeneratorNode, Host } from "./action-tree.ts";
+import type { ActionDescriptor, BuiltinVerb, GeneratorNode, Host } from "./action-tree.ts";
 import type { Point } from "./types.ts";
 
 // SerializedAction is the flat, camelCase wire shape JS emits and Go decodes
@@ -137,6 +137,16 @@ export function installRuntime(
   defineLockedGlobal(
     "__sanderlingSampleInput__",
     () => INPUT_CORPUS[rng.intN(INPUT_CORPUS.length)] ?? "",
+  );
+  // The model policy (Go) selects from the SAME enumeration the seeded picker
+  // draws from, reached through here rather than reimplemented on the Go side.
+  // Each entry is serialized with the wire contract Go already decodes, so the
+  // two policies also agree on the action a chosen candidate executes.
+  defineLockedGlobal("__sanderlingEnumerateBuiltin__", (verb: BuiltinVerb) =>
+    builtinCandidates(verb, host).map((candidate) => ({
+      action: serializeAction(candidate.action),
+      targetIndex: candidate.targetIndex,
+    })),
   );
   defineLockedGlobal("__sanderlingExtractors__", () => evaluateExtractors());
   // __sanderlingSetupAction__ walks ONLY the setup generator once, for the LLM

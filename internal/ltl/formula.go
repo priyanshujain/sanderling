@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,9 +14,9 @@ type Formula interface {
 	describe() string
 }
 
-// PredicateLabel lets a ThunkFormula expose the identity of the closure it
-// wraps. ThunkFormula satisfies it through its Name field; an empty name
-// serializes without a name.
+// PredicateLabel lets a ThunkFormula expose the caller's label for the closure
+// it wraps. ThunkFormula satisfies it through the name passed to ThunkNamed;
+// an unnamed thunk serializes without a name.
 type PredicateLabel interface {
 	PredicateName() string
 }
@@ -50,17 +51,26 @@ type PureFormula struct {
 	Value bool
 }
 
-// ThunkFormula wraps an opaque predicate closure. Func returns the predicate's
-// boolean result and a non-nil error when the predicate threw; a thrown
-// predicate is a witnessed violation distinct from a plain false. Name carries
-// the predicate's identity so two distinct predicates produce distinct
-// describe() keys and are never merged during obligation collapse.
+// ThunkFormula wraps an opaque predicate closure. The closure returns the
+// predicate's boolean result and a non-nil error when the predicate threw; a
+// thrown predicate is a witnessed violation distinct from a plain false.
+//
+// Every thunk carries an identity assigned at construction, and the identity
+// is part of its describe() key. Two thunks are therefore equal keys only when
+// they are copies of the same constructed value, which is what lets obligation
+// collapse merge residuals without ever merging distinct predicates. The
+// fields are unexported so a thunk cannot be built without one.
 type ThunkFormula struct {
-	Func func() (bool, error)
-	Name string
+	predicate func() (bool, error)
+	name      string
+	identity  uint64
 }
 
-func (t ThunkFormula) PredicateName() string { return t.Name }
+func (t ThunkFormula) PredicateName() string { return t.name }
+
+// thunkIdentities hands out the per-thunk identity. It only has to separate
+// thunks within one process, so a counter is enough.
+var thunkIdentities atomic.Uint64
 
 // NowFormula marks its inner formula for evaluation at the current step only.
 // Primarily used so that now(...).implies(...) parses unambiguously.
@@ -113,10 +123,16 @@ func Always(inner Formula) Formula { return AlwaysFormula{Inner: inner} }
 
 func Pure(value bool) Formula { return PureFormula{Value: value} }
 
-func Thunk(function func() (bool, error)) Formula { return ThunkFormula{Func: function} }
+func Thunk(function func() (bool, error)) Formula {
+	return ThunkFormula{predicate: function, identity: thunkIdentities.Add(1)}
+}
 
 func ThunkNamed(name string, function func() (bool, error)) Formula {
-	return ThunkFormula{Func: function, Name: name}
+	return ThunkFormula{
+		predicate: function,
+		name:      name,
+		identity:  thunkIdentities.Add(1),
+	}
 }
 
 func Now(inner Formula) Formula { return NowFormula{Inner: inner} }
@@ -172,10 +188,7 @@ func (a AlwaysFormula) describe() string {
 }
 func (p PureFormula) describe() string { return fmt.Sprintf("Pure(%t)", p.Value) }
 func (t ThunkFormula) describe() string {
-	if t.Name != "" {
-		return "Thunk(" + t.Name + ")"
-	}
-	return "Thunk(...)"
+	return fmt.Sprintf("Thunk(%s#%d)", t.name, t.identity)
 }
 func (n NowFormula) describe() string  { return "Now(" + n.Inner.describe() + ")" }
 func (n NextFormula) describe() string { return "Next(" + n.Inner.describe() + ")" }
@@ -206,10 +219,43 @@ func (n NotFormula) describe() string { return "Not(" + n.Inner.describe() + ")"
 func Describe(formula Formula) string { return formula.describe() }
 
 // withinNode mirrors the optional `within` clause attached to bounded
-// Eventually nodes in the JSON AST.
+// Always/Eventually nodes in the JSON AST.
 type withinNode struct {
 	Amount int64  `json:"amount"`
 	Unit   string `json:"unit"`
+	// Deadline is the absolute instant the window closes, in unix
+	// milliseconds, present once the evaluator resolved a relative duration
+	// against an observation. Two obligations spawned at different steps from
+	// the same duration differ only here, so without it they serialize
+	// identically and the trace erases the distinction the evaluator makes.
+	Deadline int64 `json:"deadline,omitempty"`
+}
+
+// withinFor renders the bound clause of a bounded Always or Eventually. The
+// authored window (steps or duration) stays in amount/unit so readers keep
+// seeing what the spec asked for; the resolved deadline rides alongside.
+func withinFor(
+	hasStepBound bool,
+	stepBound int,
+	duration time.Duration,
+	hasDeadline bool,
+	deadline time.Time,
+) *withinNode {
+	var node *withinNode
+	switch {
+	case hasStepBound:
+		node = &withinNode{Amount: int64(stepBound), Unit: "steps"}
+	case duration > 0:
+		node = &withinNode{Amount: duration.Milliseconds(), Unit: "milliseconds"}
+	case hasDeadline:
+		return &withinNode{Amount: deadline.UnixMilli(), Unit: "deadline"}
+	default:
+		return nil
+	}
+	if hasDeadline {
+		node.Deadline = deadline.UnixMilli()
+	}
+	return node
 }
 
 func (a AlwaysFormula) MarshalJSON() ([]byte, error) {
@@ -218,14 +264,9 @@ func (a AlwaysFormula) MarshalJSON() ([]byte, error) {
 		Arg    Formula     `json:"arg"`
 		Within *withinNode `json:"within,omitempty"`
 	}{Op: "always", Arg: a.Inner}
-	switch {
-	case a.HasStepBound:
-		payload.Within = &withinNode{Amount: int64(a.StepBound), Unit: "steps"}
-	case a.Duration > 0:
-		payload.Within = &withinNode{Amount: a.Duration.Milliseconds(), Unit: "milliseconds"}
-	case a.HasDeadline:
-		payload.Within = &withinNode{Amount: a.Deadline.UnixMilli(), Unit: "deadline"}
-	}
+	payload.Within = withinFor(
+		a.HasStepBound, a.StepBound, a.Duration, a.HasDeadline, a.Deadline,
+	)
 	return json.Marshal(payload)
 }
 
@@ -256,14 +297,9 @@ func (e EventuallyFormula) MarshalJSON() ([]byte, error) {
 		Arg    Formula     `json:"arg"`
 		Within *withinNode `json:"within,omitempty"`
 	}{Op: "eventually", Arg: e.Inner}
-	switch {
-	case e.HasStepBound:
-		payload.Within = &withinNode{Amount: int64(e.StepBound), Unit: "steps"}
-	case e.Duration > 0:
-		payload.Within = &withinNode{Amount: e.Duration.Milliseconds(), Unit: "milliseconds"}
-	case e.HasDeadline:
-		payload.Within = &withinNode{Amount: e.Deadline.UnixMilli(), Unit: "deadline"}
-	}
+	payload.Within = withinFor(
+		e.HasStepBound, e.StepBound, e.Duration, e.HasDeadline, e.Deadline,
+	)
 	return json.Marshal(payload)
 }
 

@@ -1,0 +1,48 @@
+{
+  "taps": [
+    "save"
+  ],
+  "doubleTaps": [
+    "save"
+  ],
+  "longPresses": [
+    "save"
+  ],
+  "typing": [
+    "amount"
+  ],
+  "scrolls": [
+    "root",
+    "root",
+    "list",
+    "list"
+  ],
+  "swipes": [
+    "root",
+    "root",
+    "root",
+    "root",
+    "save",
+    "save",
+    "save",
+    "save",
+    "cancel",
+    "cancel",
+    "cancel",
+    "cancel",
+    "amount",
+    "amount",
+    "amount",
+    "amount",
+    "list",
+    "list",
+    "list",
+    "list",
+    "row",
+    "row",
+    "row",
+    "row"
+  ],
+  "pressKeys": [],
+  "waitOnce": []
+}

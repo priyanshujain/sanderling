@@ -65,9 +65,9 @@ export type GeneratorNode =
   | { kind: "builtin"; verb: BuiltinVerb }
   | { kind: "llm"; config: { model: string; instructions?: string } };
 
-// Candidate is one host-enumerated target for a builtin verb. The host
-// resolves geometry (and a native selector) so no element handle crosses into
-// the picker. width/height let swipe/scroll size a gesture off the element.
+// Candidate is the resolved geometry of one target. The host resolves it (and a
+// native selector) so no element handle crosses into the picker. width/height
+// let swipe/scroll size a gesture off the element.
 export interface Candidate {
   x: number;
   y: number;
@@ -76,15 +76,27 @@ export interface Candidate {
   height?: number;
 }
 
+// TargetElement is one host-enumerated element, offered to EVERY verb, carrying
+// the facts per-verb eligibility is decided from. The host reports the facts; it
+// does not apply them. targets.ts acceptsTarget owns that decision for both
+// hosts, so a verb cannot mean one thing on native and another on web.
+export interface TargetElement extends Candidate {
+  clickable: boolean;
+  enabled: boolean;
+  editable: boolean;
+  scrollable: boolean;
+}
+
 // Host is the platform backing the picker draws against. In this foundation
 // workflow only the interface is defined and exercised against a stub; the
 // goja and DOM implementations land in the rewire workflow.
 export interface Host {
   platform(): "android" | "ios" | "web";
-  // queryCandidates returns the host-enumerated targets for a verb, in a
-  // deterministic order. The picker indexes into this list with the PCG, so
-  // the order is part of the parity contract.
-  queryCandidates(verb: BuiltinVerb): Candidate[];
+  // queryTargets returns every element the host can offer, in a deterministic
+  // order, with no per-verb filtering: the picker applies acceptsTarget. The
+  // picker indexes into this list with the PCG, so the order is part of the
+  // parity contract.
+  queryTargets(): TargetElement[];
   // reportUnsupported is invoked at most once per verb@platform (see verbs.ts)
   // when a verb has no support on this platform.
   reportUnsupported(verb: BuiltinVerb): void;

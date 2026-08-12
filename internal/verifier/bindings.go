@@ -91,7 +91,7 @@ func (v *Verifier) installRuntimeBindings() error {
 
 // installHost exposes globalThis.__sanderlingHost__ for the goja runtime entry.
 // The shared picker (pick.ts) draws against it: platform() drives the verb
-// matrix and press-key pool; seedHi/seedLo construct its Pcg; queryCandidates
+// matrix and press-key pool; seedHi/seedLo construct its Pcg; queryTargets
 // enumerates targets over the hierarchy tree; reportUnsupported records the
 // verb for the run report.
 func (v *Verifier) installHost() error {
@@ -111,7 +111,7 @@ func (v *Verifier) installHost() error {
 	}); err != nil {
 		return err
 	}
-	if err := host.Set("queryCandidates", v.bindQueryCandidates); err != nil {
+	if err := host.Set("queryTargets", v.bindQueryTargets); err != nil {
 		return err
 	}
 	if err := host.Set("reportUnsupported", func(call goja.FunctionCall) goja.Value {
@@ -133,20 +133,25 @@ func (v *Verifier) recordUnsupported(verb string) {
 	v.unsupported = append(v.unsupported, verb)
 }
 
-// bindQueryCandidates returns the host-enumerated targets for a verb as an
-// array of {x, y, selector, width, height}, in tree order.
-func (v *Verifier) bindQueryCandidates(call goja.FunctionCall) goja.Value {
-	verb := call.Argument(0).String()
-	candidates := v.candidatesForVerb(verb)
+// bindQueryTargets returns every host-enumerated target as an array of
+// {x, y, selector, width, height, clickable, enabled, editable, scrollable}, in
+// tree order. It takes no verb: the shared rule in targets.ts decides which of
+// these a verb may act on.
+func (v *Verifier) bindQueryTargets(goja.FunctionCall) goja.Value {
+	targets := v.targets()
 	array := v.runtime.NewArray()
-	for index, candidate := range candidates {
+	for index, target := range targets {
 		item := v.runtime.NewObject()
-		_ = item.Set("x", candidate.x)
-		_ = item.Set("y", candidate.y)
-		_ = item.Set("width", candidate.width)
-		_ = item.Set("height", candidate.height)
-		if candidate.selector != "" {
-			_ = item.Set("selector", candidate.selector)
+		_ = item.Set("x", target.x)
+		_ = item.Set("y", target.y)
+		_ = item.Set("width", target.width)
+		_ = item.Set("height", target.height)
+		_ = item.Set("clickable", target.clickable)
+		_ = item.Set("enabled", target.enabled)
+		_ = item.Set("editable", target.editable)
+		_ = item.Set("scrollable", target.scrollable)
+		if target.selector != "" {
+			_ = item.Set("selector", target.selector)
 		}
 		_ = array.Set(fmt.Sprintf("%d", index), item)
 	}

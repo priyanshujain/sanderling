@@ -152,7 +152,7 @@ func TestViolationLatchIsMonotonic(t *testing.T) {
 // holds/violated at run end, making sanderling lie about pass/fail.
 func TestFinalize_KleeneConnectives(t *testing.T) {
 	pure := func(v bool) Formula { return PureFormula{Value: v} }
-	pendingThunk := ThunkFormula{Name: "t", Func: func() (bool, error) { return true, nil }}
+	pendingThunk := ThunkNamed("t", func() (bool, error) { return true, nil })
 	eventuallyViolated := EventuallyFormula{Inner: PureFormula{Value: false}}
 	nextPending := NextFormula{Inner: PureFormula{Value: true}}
 	alwaysHolds := AlwaysFormula{Inner: PureFormula{Value: true}}
@@ -222,5 +222,63 @@ func TestCollapse_NamedThunkLeakBoundsPendingSet(t *testing.T) {
 	}
 	if len(evaluator.pending) > 2 {
 		t.Errorf("pending set leaked to %d obligations", len(evaluator.pending))
+	}
+}
+
+// TestCollapse_UnnamedPredicatesDoNotMerge is the lost-violation counterexample
+// from the attribution analysis, run with unnamed thunks. Every unnamed thunk
+// used to print "Thunk(...)", so the four Eventually residuals below shared one
+// collapse key and the obligation spawned at step 2 was dropped: the run
+// reported holds while a genuine violation was outstanding.
+//
+//	root = And(Or(F a, c), Or(F b, d)), d = not c
+//	a never true, b true from step 6, c true except at steps 2 and 4
+//
+// At steps 1, 3 and 5 the left disjunct discharges via c and the right spawns
+// F b; at steps 2 and 4 the right discharges via d and the left spawns F a.
+// F a can never discharge, so the run violates with origin 2.
+func TestCollapse_UnnamedPredicatesDoNotMerge(t *testing.T) {
+	step := 0
+	a := Thunk(func() (bool, error) { return false, nil })
+	b := Thunk(func() (bool, error) { return step >= 6, nil })
+	c := Thunk(func() (bool, error) { return step != 2 && step != 4, nil })
+	d := Thunk(func() (bool, error) { return step == 2 || step == 4, nil })
+
+	evaluator := NewEvaluator(And(Or(Eventually(a), c), Or(Eventually(b), d)))
+	for index := 1; index <= 10; index++ {
+		step = index
+		if got := evaluator.ObserveAtStep(time.Unix(int64(index), 0), index); got == VerdictViolated {
+			t.Fatalf("step %d violated early", index)
+		}
+	}
+	if got := evaluator.Finalize(); got != VerdictViolated {
+		t.Fatalf("Finalize = %v, want violated (F a can never discharge)", got)
+	}
+	witness := evaluator.Violation()
+	if witness == nil {
+		t.Fatal("Violation = nil, want non-nil")
+	}
+	if witness.Step != 2 {
+		t.Errorf("origin = %d, want 2", witness.Step)
+	}
+}
+
+// TestReduce_ErrorFormulaViolates: the verifier substitutes an ErrorFormula for
+// the residual of a property whose predicate threw, and that residual is fed
+// back into the evaluator on the next step. Reducing one used to panic.
+func TestReduce_ErrorFormulaViolates(t *testing.T) {
+	evaluator := NewEvaluator(Always(ErrorFormula{Message: "boom"}))
+	if got := evaluator.Observe(); got != VerdictViolated {
+		t.Fatalf("got %v, want violated", got)
+	}
+	witness := evaluator.Violation()
+	if witness == nil {
+		t.Fatal("Violation = nil, want non-nil")
+	}
+	if witness.Reason != "boom" {
+		t.Errorf("Reason = %q, want %q", witness.Reason, "boom")
+	}
+	if !witness.IsError {
+		t.Error("IsError = false, want true")
 	}
 }

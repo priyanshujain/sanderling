@@ -48,22 +48,25 @@ func TestCrossRuntimeParity(t *testing.T) {
 }
 
 // installStubHost replaces the verifier's hierarchy-backed __sanderlingHost__
-// with one returning a FIXED candidate list for every verb, keeping the seed the
-// verifier was constructed with. It must run BEFORE Load, because the bundled
-// goja runtime entry captures the host when the spec evaluates.
+// with one returning a FIXED target list, keeping the seed the verifier was
+// constructed with. Every fact is set so the shared eligibility rule admits all
+// three targets for every verb, leaving the draw order as the only variable. It
+// must run BEFORE Load, because the bundled goja runtime entry captures the host
+// when the spec evaluates.
 func installStubHost(t *testing.T, verifier *Verifier) {
 	t.Helper()
 	const stub = `
-		const candidates = [
-			{ x: 50, y: 60, selector: "id:alpha", width: 100, height: 40 },
-			{ x: 150, y: 160, selector: "id:beta", width: 120, height: 48 },
-			{ x: 250, y: 260, selector: "id:gamma", width: 80, height: 32 },
+		const facts = { clickable: true, enabled: true, editable: true, scrollable: true };
+		const targets = [
+			{ x: 50, y: 60, selector: "id:alpha", width: 100, height: 40, ...facts },
+			{ x: 150, y: 160, selector: "id:beta", width: 120, height: 48, ...facts },
+			{ x: 250, y: 260, selector: "id:gamma", width: 80, height: 32, ...facts },
 		];
 		const seedHi = globalThis.__sanderlingHost__.seedHi;
 		const seedLo = globalThis.__sanderlingHost__.seedLo;
 		globalThis.__sanderlingHost__ = {
 			platform: () => "android",
-			queryCandidates: () => candidates,
+			queryTargets: () => targets,
 			reportUnsupported: () => {},
 			seedHi,
 			seedLo,

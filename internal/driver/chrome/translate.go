@@ -42,7 +42,13 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 		return `[aria-label="` + cssEscape(value) + `"]`, false, nil
 	case "descPrefix":
 		return `[aria-label^="` + cssEscape(value) + `"]`, false, nil
-	case "testTag", "testID", "testid", "data-testid":
+	case "testTag":
+		// Mirrors the in-page table and the native resource-id alias: a
+		// testTag reaches the DOM as data-testid or as an id, depending on
+		// the toolkit. `:is()` keeps this one compound selector.
+		escaped := cssEscape(value)
+		return `:is([data-testid="` + escaped + `"], [id="` + escaped + `"])`, false, nil
+	case "testID", "testid", "data-testid":
 		return `[data-testid="` + cssEscape(value) + `"]`, false, nil
 	case "placeholder", "placeholderValue", "hintText":
 		return `[placeholder="` + cssEscape(value) + `"]`, false, nil

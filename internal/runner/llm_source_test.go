@@ -62,6 +62,20 @@ func TestActionForCandidatePassesNonTypingThrough(t *testing.T) {
 	}
 }
 
+func TestDescribeActionNamesGesturesByOrigin(t *testing.T) {
+	builtin := verifier.Action{
+		Kind: verifier.ActionKindScroll, Direction: "down",
+		FromX: 200, FromY: 500, ToX: 200, ToY: 340,
+	}
+	if got := describeAction(builtin); got != "Scroll down (200,500)" {
+		t.Errorf("builtin gesture described as %q, want the drag origin", got)
+	}
+	authored := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "up", On: "id:List"}
+	if got := describeAction(authored); got != "Scroll up id:List" {
+		t.Errorf("authored scroll described as %q, want its selector", got)
+	}
+}
+
 func TestActionForCandidateUsesModelText(t *testing.T) {
 	source := &llmSource{}
 	candidate := verifier.ActionCandidate{

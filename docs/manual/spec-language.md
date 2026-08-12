@@ -171,6 +171,8 @@ Extractors are evaluated before properties and action generators. Use `.previous
 | `now(f)` | `f` evaluated at the current step (for use inside `always`/`next` bodies) |
 | `next(f)` | `f` evaluated at the step immediately after the current one |
 
+A property that is an `eventually` at the top level is one goal for the whole run: it is armed at the first step and discharged for good the first time it holds. Written inside `always(...)` the same formula is armed again at every step, which asks for the window to be met from every step in the run.
+
 **Formula combinators** - available on every `Formula`:
 
 | Method | Meaning |
@@ -207,10 +209,18 @@ On web, `"back"` maps to Backspace and `"home"` is not supported. All other keys
 | `doubleTaps` | Random double tap on a clickable element |
 | `longPresses` | Random long press on a clickable element |
 | `typing` | Types a value from the edge-case corpus into a random editable field |
-| `scrolls` | Random scroll gesture |
-| `swipes` | Random swipe gesture |
+| `scrolls` | Scrolls a random scrollable container up or down |
+| `swipes` | Random up, down, left, or right swipe from any visible element |
 | `waitOnce` | Idles one step |
 | `pressKeys` | Presses a random supported key |
+
+`scrolls` anchors on a scrollable container and moves its content up or down. It never
+scrolls sideways, because every scrollable container on screen gets a candidate and a
+sideways pair doubles that list for little return; write `Scroll({ in, direction })` when
+you need one.
+`swipes` is a free drag of 200 to 600 px from any element with real bounds, in any of the
+four directions. The sideways ones are what reach swipe-to-dismiss and swipe-to-delete on
+a list row.
 
 ### `actions(generator)`
 
@@ -280,7 +290,7 @@ export const generator = llm({
 
 Set `OPENROUTER_API_KEY` or `OPENAI_API_KEY` (OpenRouter wins if both are set). With a plain OpenAI key, drop the vendor prefix from the model id. The model needs image input and strict `json_schema` structured output.
 
-Each step it gets a screenshot plus a numbered list of the concrete actions your tree yields right now, each tagged with its weight, and picks one number. `instructions` are appended to the prompt: say what the app is, not how to test it — the model works that part out. Everything else is unchanged. Setup actions still run first, typing still falls back to the edge-case corpus when the model supplies no text, and the trace records the reasoning, the chosen number, and `source: "llm"` so the replay UI can show why each pick happened.
+Each step it gets a screenshot plus a numbered list of the concrete actions your tree yields right now, each tagged with its weight, and picks one number. That list is the seeded picker's own candidate enumeration, so both modes explore the same action space and only the choice differs. `instructions` are appended to the prompt: say what the app is, not how to test it; the model works that part out. Everything else is unchanged. Setup actions still run first, typing still falls back to the edge-case corpus when the model supplies no text, and the trace records the reasoning, the chosen number, and `source: "llm"` so the replay UI can show why each pick happened.
 
 It is one model call per step, so keep `--duration` modest.
 

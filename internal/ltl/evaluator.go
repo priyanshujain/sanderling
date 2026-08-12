@@ -37,6 +37,10 @@ type Evaluator struct {
 	violated  bool
 	steps     int
 	violation *Violation
+	// oneShot marks a root that is armed once at the first observation rather
+	// than re-asserted at every one; armed records that it has been.
+	oneShot bool
+	armed   bool
 }
 
 // obligation pairs a residual formula with the step that spawned it, so a
@@ -62,7 +66,8 @@ type Violation struct {
 }
 
 func NewEvaluator(formula Formula) *Evaluator {
-	return &Evaluator{root: nnf(formula)}
+	normalized := nnf(formula)
+	return &Evaluator{root: normalized, oneShot: isOneShotRoot(normalized)}
 }
 
 // Observe evaluates the formula against the current state and returns the
@@ -89,8 +94,11 @@ func (e *Evaluator) ObserveAtStep(now time.Time, step int) Verdict {
 	}
 	e.steps = step
 
-	fresh := obligation{formula: rootObligation(e.root), origin: step}
-	obligations := append(e.pending, fresh)
+	obligations := make([]obligation, 0, len(e.pending)+1)
+	obligations = append(obligations, e.pending...)
+	if formula, ok := e.instantiateRoot(); ok {
+		obligations = append(obligations, obligation{formula: formula, origin: step})
+	}
 	e.pending = e.pending[:0]
 
 	for _, entry := range obligations {
@@ -121,8 +129,11 @@ func (e *Evaluator) ObserveAtStep(now time.Time, step int) Verdict {
 
 // collapse removes structurally-identical obligations, keeping the first
 // occurrence in order so the surviving entry carries the earliest origin step.
-// Distinct predicates never merge because ThunkFormula's name participates in
-// its describe() key, so deduping cannot hide a violation.
+// Equal describe() keys mean the same operators over the same predicates with
+// the same remaining bounds, so the merged obligations reduce identically on
+// every future and dropping one cannot hide a violation. Distinct predicates
+// never merge because every thunk's construction-time identity is part of its
+// key, whether or not the caller named it.
 func collapse(obligations []obligation) []obligation {
 	if len(obligations) < 2 {
 		return obligations
@@ -264,10 +275,48 @@ func (e *Evaluator) Residual() Formula {
 	return combined
 }
 
-// rootObligation returns the formula to instantiate at each step. An outer
-// Always is stripped so its inner is re-evaluated every step; any other root
-// formula is itself re-instantiated each step (matching the v0.1 semantics
-// where a bare Thunk is re-observed on every call).
+// instantiateRoot returns the obligation to register for this observation, and
+// whether there is one at all. A one-shot root is armed only at the first
+// observation; a recurring root is re-asserted at every one.
+func (e *Evaluator) instantiateRoot() (Formula, bool) {
+	if !e.oneShot {
+		return rootObligation(e.root), true
+	}
+	if e.armed {
+		return nil, false
+	}
+	e.armed = true
+	return e.root, true
+}
+
+// isOneShotRoot reports whether a root formula is a single obligation for the
+// whole run rather than one instance per observation.
+//
+// A root that carries its own horizon is one-shot: an eventually is a
+// reachability goal ("this happens at some point"), and a bounded always is a
+// single window. Re-instantiating either at every step would monitor a
+// different property -- G F<=n(p) instead of F<=n(p), and G(p) instead of
+// G<=n(p), the latter because a re-instantiated window restarts and never
+// closes -- and would leave one live obligation per step behind.
+//
+// Every other root keeps the implicit-always reading: an unbounded always
+// re-instantiates its inner (which is what gives each instance its own origin
+// step), and a bare predicate or connective is re-asserted each observation.
+func isOneShotRoot(root Formula) bool {
+	switch concrete := root.(type) {
+	case EventuallyFormula:
+		return true
+	case AlwaysFormula:
+		return concrete.HasStepBound || concrete.HasDeadline || concrete.Duration > 0
+	default:
+		return false
+	}
+}
+
+// rootObligation returns the formula a recurring root instantiates at each
+// step. An outer Always is stripped so its inner is re-evaluated every step;
+// any other root formula is itself re-instantiated each step (matching the
+// v0.1 semantics where a bare Thunk is re-observed on every call).
 func rootObligation(root Formula) Formula {
 	if always, ok := root.(AlwaysFormula); ok {
 		return always.Inner
@@ -333,8 +382,14 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		}
 		return violatedWith(concrete, "pure false")
 
+	case ErrorFormula:
+		// A thrown predicate substituted into a residual at the trace
+		// boundary. Reducing it re-reports the same failure rather than
+		// crashing the run.
+		return violatedByError(concrete, concrete.Message)
+
 	case ThunkFormula:
-		result, err := concrete.Func()
+		result, err := concrete.predicate()
 		if err != nil {
 			return violatedByError(concrete, err.Error())
 		}
@@ -363,6 +418,9 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		if innerResult.status == statusHolds {
 			return holds()
 		}
+		// The window is measured in observations at which the inner could have
+		// discharged, so an inner that is merely pending has not discharged and
+		// the window closing on it is a violation.
 		if concrete.HasStepBound && concrete.StepBound <= 1 {
 			return violatedFrom(innerResult, concrete, "eventually bound exhausted")
 		}
@@ -372,6 +430,14 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		next := concrete
 		if concrete.HasStepBound {
 			next.StepBound = concrete.StepBound - 1
+		}
+		// F(inner) unrolls to inner or X F(inner). A pending inner is a
+		// deferred way of satisfying the promise, so it is kept as a disjunct
+		// rather than dropped; dropping it is what made an inner that only
+		// resolves on a later step unsatisfiable, and it is the mirror of the
+		// conjunct Always keeps below.
+		if innerResult.status == statusPending {
+			return pending(OrFormula{Left: innerResult.formula, Right: next})
 		}
 		return pending(next)
 
@@ -444,25 +510,20 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		if innerResult.status == statusViolated {
 			return violatedFrom(innerResult, concrete, "always inner violated")
 		}
-		// A bounded Always is the dual of a bounded Eventually: once the window
-		// closes without a breach it is vacuously satisfied. A pending inner at
-		// the closing step is a deferred obligation (a strong next, or an inner
-		// liveness that has not discharged); it must be carried so a later step
-		// or Finalize resolves it, never dropped to holds.
+		// A bounded Always must reduce exactly as its dual does, so that
+		// G<=n(f) and not F<=n(not f) agree on every trace. The dual of "the
+		// window closed on an inner that never definitely held, so violate" is
+		// "the window closed on an inner that was never definitely breached, so
+		// hold". A pending inner has not been breached inside the window, so it
+		// discharges vacuously here exactly as its negation violates on the
+		// Eventually side.
 		if concrete.HasStepBound && concrete.StepBound <= 1 {
-			if innerResult.status == statusHolds {
-				return holds()
-			}
-			return pending(innerResult.formula)
+			return holds()
 		}
 		if concrete.HasDeadline && !now.Before(concrete.Deadline) {
-			if innerResult.status == statusHolds {
-				return holds()
-			}
-			return pending(innerResult.formula)
+			return holds()
 		}
 		next := concrete
-		next.Inner = concrete.Inner
 		if concrete.HasStepBound {
 			next.StepBound = concrete.StepBound - 1
 		}

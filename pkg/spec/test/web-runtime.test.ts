@@ -83,78 +83,60 @@ test("installRuntime defined the host-invoked globals", () => {
   assert.equal(typeof g.__sanderling__, "object");
 });
 
-// A button and a text input, each with a deterministic bounding box, exercise
-// the per-verb selector routing without a full DOM.
-function fakeElement(tag: string, rect: { x: number; y: number; w: number; h: number }) {
-  return {
-    tagName: tag.toUpperCase(),
-    disabled: false,
-    isContentEditable: false,
-    type: tag === "input" ? "text" : "",
-    scrollHeight: 0,
-    clientHeight: 0,
-    scrollWidth: 0,
-    clientWidth: 0,
-    getBoundingClientRect: () => ({
-      left: rect.x,
-      top: rect.y,
-      width: rect.w,
-      height: rect.h,
-      right: rect.x + rect.w,
-      bottom: rect.y + rect.h,
-    }),
-  };
-}
+const { fakeElement, withFakeDocument } = await import("./web-dom-harness.ts");
 
-function withFakeDocument(map: Record<string, unknown[]>, run: () => void) {
-  const g = globalThis as Record<string, unknown>;
-  const original = g.document;
-  g.document = {
-    querySelectorAll: (selector: string) => map[selector] ?? [],
-    scrollingElement: null,
-    documentElement: null,
-  };
-  try {
-    run();
-  } finally {
-    g.document = original;
-  }
-}
-
-test("queryCandidates routes taps to the tappable selector set", () => {
-  const button = fakeElement("button", { x: 10, y: 20, w: 40, h: 8 });
-  withFakeDocument(
-    { 'a, button, input, select, textarea, [role="button"], [onclick]': [button] },
-    () => {
-      __testing__.resetCandidateCache();
-      const candidates = host.queryCandidates("taps");
-      assert.equal(candidates.length, 1);
-      assert.deepEqual({ x: candidates[0]!.x, y: candidates[0]!.y }, { x: 30, y: 24 });
-    },
-  );
-});
-
-test("queryCandidates routes typing to editable inputs only", () => {
-  const input = fakeElement("input", { x: 0, y: 0, w: 100, h: 20 });
-  withFakeDocument({ "input, textarea, [contenteditable]": [input] }, () => {
-    __testing__.resetCandidateCache();
-    const candidates = host.queryCandidates("typing");
-    assert.equal(candidates.length, 1);
-    assert.deepEqual({ x: candidates[0]!.x, y: candidates[0]!.y }, { x: 50, y: 10 });
+// The host reports facts and never routes verbs: which of these a verb may act
+// on is decided by the shared rule in src/targets.ts, exercised across both
+// engines by host-parity.test.ts.
+test("queryTargets reports the tappable selector set as clickable", () => {
+  const button = fakeElement({ tag: "button", x: 10, y: 20, width: 40, height: 8, clickable: true });
+  const plain = fakeElement({ tag: "div", x: 0, y: 0, width: 100, height: 100 });
+  withFakeDocument([button, plain], () => {
+    const targets = host.queryTargets();
+    assert.equal(targets.length, 2);
+    assert.equal(targets[0]!.clickable, true);
+    assert.deepEqual({ x: targets[0]!.x, y: targets[0]!.y }, { x: 30, y: 24 });
+    assert.equal(targets[1]!.clickable, false);
   });
 });
 
-test("queryCandidates caches within a tick until reset", () => {
-  const first = fakeElement("button", { x: 0, y: 0, w: 10, h: 10 });
-  withFakeDocument(
-    { 'a, button, input, select, textarea, [role="button"], [onclick]': [first] },
-    () => {
-      __testing__.resetCandidateCache();
-      const a = host.queryCandidates("taps");
-      const b = host.queryCandidates("taps");
-      assert.equal(a, b);
-    },
-  );
+test("queryTargets reports only real text inputs as editable", () => {
+  const input = fakeElement({ tag: "input", x: 0, y: 0, width: 100, height: 20, editable: true });
+  const checkbox = fakeElement({ tag: "input", x: 0, y: 40, width: 20, height: 20, editable: true });
+  checkbox.type = "checkbox";
+  withFakeDocument([input, checkbox], () => {
+    const targets = host.queryTargets();
+    assert.equal(targets[0]!.editable, true);
+    assert.deepEqual({ x: targets[0]!.x, y: targets[0]!.y }, { x: 50, y: 10 });
+    assert.equal(targets[1]!.editable, false);
+  });
+});
+
+// A disabled control used to be dropped from every verb's candidates, because
+// the web host folded `disabled` into its visibility check. It is a fact of its
+// own now, so `taps` still skips it while `swipes` can still start on it, which
+// is what the native host has always done.
+test("queryTargets reports a disabled control rather than dropping it", () => {
+  const disabled = fakeElement({
+    tag: "button", x: 0, y: 0, width: 40, height: 20, clickable: true, disabled: true,
+  });
+  withFakeDocument([disabled], () => {
+    const targets = host.queryTargets();
+    assert.equal(targets.length, 1);
+    assert.equal(targets[0]!.clickable, true);
+    assert.equal(targets[0]!.enabled, false);
+  });
+});
+
+test("queryTargets caches within a tick until reset", () => {
+  const button = fakeElement({ tag: "button", x: 0, y: 0, width: 10, height: 10, clickable: true });
+  withFakeDocument([button], () => {
+    const first = host.queryTargets();
+    const second = host.queryTargets();
+    assert.equal(first, second);
+    __testing__.resetTargetCache();
+    assert.notEqual(host.queryTargets(), first);
+  });
 });
 
 // evaluateExtractors builds State, which references document and window.
@@ -325,6 +307,23 @@ test("selectorFromObject escapes attribute values to prevent injection", () => {
 test("selectorFromObject maps known keys to their canonical attribute", () => {
   assert.deepEqual(selectorFromObject({ testID: "submit" }), {
     css: `[data-testid="submit"]`,
+  });
+});
+
+// Compose Multiplatform emits its testTag into `id`, which the native table
+// already accepts via the resource-id alias. The web table must not be the one
+// place that rejects it.
+test("selectorFromObject resolves testTag through data-testid or id", () => {
+  assert.deepEqual(selectorFromObject({ testTag: "LoginSubmit" }), {
+    css: `:is([data-testid="LoginSubmit"], [id="LoginSubmit"])`,
+  });
+});
+
+// Multi-key selectors concatenate their parts into one compound, so the
+// two-attribute testTag match has to stay a single compound piece.
+test("selectorFromObject composes testTag with a second key", () => {
+  assert.deepEqual(selectorFromObject({ testTag: "Row", "aria-label": "first" }), {
+    css: `:is([data-testid="Row"], [id="Row"])[aria-label="first"]`,
   });
 });
 

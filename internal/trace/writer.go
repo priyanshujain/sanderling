@@ -40,17 +40,19 @@ type Step struct {
 	Witnesses map[string]Witness `json:"witnesses,omitempty"`
 }
 
-// Witness is the trace-side record of a property violation: why it fired and a
-// snapshot of every extractor's value at the violating step.
+// Witness is the trace-side record of a property violation: why it fired, the
+// two steps a deferred obligation spans, and the extractor values behind it.
 type Witness struct {
 	Reason  string `json:"reason,omitempty"`
 	IsError bool   `json:"is_error,omitempty"`
 	// Step is the step the failed obligation originated at: the step that
-	// caused the violation. For a deferred obligation (a next, an eventually)
-	// this is earlier than the step whose record carries the witness, which is
-	// where the failure was detected.
-	Step       int                        `json:"step,omitempty"`
-	Extractors map[string]json.RawMessage `json:"extractors,omitempty"`
+	// armed it. For a deferred obligation (a next, an eventually) this is
+	// earlier than the step at which the failure was detected.
+	Step int `json:"step,omitempty"`
+	// DetectedStep is the observation whose evaluation produced the violation.
+	// Extractors is that step's state, not Step's.
+	DetectedStep int                        `json:"detected_step,omitempty"`
+	Extractors   map[string]json.RawMessage `json:"extractors,omitempty"`
 }
 
 // ExtractorChange records the prev/curr JSON values of an extractor whose

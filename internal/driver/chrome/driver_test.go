@@ -6,9 +6,83 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/chromedp/chromedp"
 )
+
+// TestLaunch_ClearStateWipesStorageForTheTargetOrigin covers the CLI's default
+// path (--clear-data). The tab sits on about:blank when Launch runs, an opaque
+// origin that denies storage access, so clearing by script there throws
+// SecurityError and kills every web run before the app loads.
+func TestLaunch_ClearStateWipesStorageForTheTargetOrigin(t *testing.T) {
+	const page = `<body><script>
+	  const visits = Number(localStorage.getItem("visits") ?? "0") + 1;
+	  localStorage.setItem("visits", String(visits));
+	  sessionStorage.setItem("tab", "dirty");
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if err := d.Launch(ctx, server.URL, true, nil); err != nil {
+		t.Fatalf("Launch with clearState on a fresh tab: %v", err)
+	}
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	var visits string
+	if err := chromedp.Run(d.tabCtx,
+		chromedp.Evaluate(`localStorage.getItem("visits")`, &visits)); err != nil {
+		t.Fatalf("read localStorage: %v", err)
+	}
+	if visits != "2" {
+		t.Fatalf("visits = %q, want 2 (two loads, storage kept)", visits)
+	}
+
+	if err := d.Launch(ctx, server.URL, true, nil); err != nil {
+		t.Fatalf("Launch with clearState on the target origin: %v", err)
+	}
+	if err := chromedp.Run(d.tabCtx,
+		chromedp.Evaluate(`localStorage.getItem("visits")`, &visits)); err != nil {
+		t.Fatalf("read localStorage: %v", err)
+	}
+	if visits != "1" {
+		t.Errorf("visits = %q, want 1 (storage cleared before the app loaded)", visits)
+	}
+}
+
+// TestLaunch_WebGLContextIsAvailable pins the SwiftShader fallback. Headless
+// Chrome runs with --disable-gpu, and without --enable-unsafe-swiftshader it
+// refuses the software WebGL backend: getContext returns null, so a
+// canvas-rendered app paints nothing and every screenshot is identical black.
+func TestLaunch_WebGLContextIsAvailable(t *testing.T) {
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, "data:text/html,<body></body>", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	var hasContext bool
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(
+		`!!document.createElement("canvas").getContext("webgl2")`, &hasContext)); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if !hasContext {
+		t.Error("webgl2 context is null; a canvas-rendered app would render nothing")
+	}
+}
 
 // TestActionMethods_HonorCallerCancellation confirms the DeviceDriver action
 // methods route through runCtx so a cancelled caller context aborts the CDP

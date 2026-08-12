@@ -1,6 +1,6 @@
 // Goja-side runtime entry for the native verifier (internal/verifier).
 //
-// Go installs globalThis.__sanderlingHost__ (platform/seed/queryCandidates/
+// Go installs globalThis.__sanderlingHost__ (platform/seed/queryTargets/
 // reportUnsupported, implemented over the hierarchy tree in bindings.go) before
 // the spec evaluates. This module bundles AFTER the spec, reads that host, and
 // wires the shared picker via installRuntime so the goja verifier and the V8 web

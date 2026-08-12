@@ -70,14 +70,32 @@ func TestImplies_TemporalAntecedent_FalseAntecedentHolds(t *testing.T) {
 	}
 }
 
-// A bounded Always whose inner is a still-pending deferred Next obligation must
-// carry that obligation past the window, not drop it to holds. The pre-fix
-// window-close branch returned holds() unconditionally and lost the violation.
-func TestBoundedAlways_PendingInnerCarried(t *testing.T) {
-	inner := AlwaysFormula{Inner: Next(Thunk(thunkSeq(false))), StepBound: 1, HasStepBound: true}
+// A bounded Always whose inner is definitely false inside the window violates.
+// The pre-fix window-close branch returned holds() unconditionally and lost
+// this; the breach check runs before the window check and must stay there.
+func TestBoundedAlways_ViolatedInnerInsideWindow(t *testing.T) {
+	inner := AlwaysFormula{Inner: Thunk(thunkSeq(false)), StepBound: 1, HasStepBound: true}
 	formula := Always(inner)
 	if verdict, _ := runAndFinalize(formula, 3); verdict != VerdictViolated {
-		t.Fatalf("Always(boundedAlways(Next(false),1)): got %v, want violated", verdict)
+		t.Fatalf("Always(boundedAlways(false,1)): got %v, want violated", verdict)
+	}
+}
+
+// A bounded Always whose inner is still a deferred Next obligation when the
+// window closes discharges vacuously: nothing was breached inside the window.
+// This is the exact dual of the bounded Eventually violating when its inner has
+// not held by the time the window closes
+// (TestEventuallyWithinSteps_NextInnerHitsBoundFirstStep), and the pair is what
+// makes nnf's G/F dualisation semantics preserving. It costs the deferred check
+// the window closed on: G<=n and F<=n both range over the observations at which
+// their inner can definitely resolve, never past them.
+func TestBoundedAlways_PendingInnerDischargesAtWindowClose(t *testing.T) {
+	inner := AlwaysFormula{Inner: Next(Thunk(thunkSeq(false))), StepBound: 1, HasStepBound: true}
+	if verdict, _ := runAndFinalize(Always(inner), 3); verdict != VerdictHolds {
+		t.Fatalf("Always(boundedAlways(Next(false),1)): got %v, want holds", verdict)
+	}
+	if verdict, _ := runAndFinalize(Always(nnf(Not(inner))), 3); verdict != VerdictViolated {
+		t.Fatalf("its negation: got %v, want violated", verdict)
 	}
 }
 

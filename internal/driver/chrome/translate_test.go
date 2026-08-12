@@ -21,7 +21,7 @@ func TestTranslateStringSelector_KnownKeys(t *testing.T) {
 		{"accessibilityLabel:logout", `[aria-label="logout"]`, false},
 		{"aria-label:Sign in", `[aria-label="Sign in"]`, false},
 		{"descPrefix:account:", `[aria-label^="account:"]`, false},
-		{"testTag:submit", `[data-testid="submit"]`, false},
+		{"testTag:submit", `:is([data-testid="submit"], [id="submit"])`, false},
 		{"testID:submit", `[data-testid="submit"]`, false},
 		{"placeholder:Email", `[placeholder="Email"]`, false},
 	}

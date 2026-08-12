@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -130,52 +131,19 @@ type ActionCandidate struct {
 	prob float64
 }
 
-// verbActionKind maps a picker verb to the action kind it dispatches.
-func verbActionKind(verb string) ActionKind {
-	switch verb {
-	case "taps":
-		return ActionKindTap
-	case "doubleTaps":
-		return ActionKindDoubleTap
-	case "longPresses":
-		return ActionKindLongPress
-	case "typing":
-		return ActionKindInputText
-	case "scrolls":
-		return ActionKindScroll
-	case "swipes":
-		return ActionKindSwipe
-	default:
-		return ""
-	}
-}
-
 // maxLabelRunes caps a visible-text label so joined descendant text stays short
 // enough to render on one numbered line.
 const maxLabelRunes = 40
-
-// gestureDirections are the directional scrolls emitted per scrollable
-// container. Vertical only: most mobile lists scroll up/down, and keeping the
-// set tiny is the whole point of folding per-element swipes away.
-var gestureDirections = []string{"down", "up"}
 
 // Candidates enumerates every action the spec's weighted actionsRoot yields at
 // the current step, each tagged with a plainly-worded description and its
 // effective weight, for the LLM generator to pick one number from. It walks the
 // SAME tree the seeded picker draws: weighted branches recurse (accumulating the
 // selection probability), authored actions()/whenRoute leaves are called once
-// for their concrete actions, and builtin verbs enumerate per applicable
-// element. Disabled controls are dropped, per-element gestures fold into a few
-// directional scrolls over scrollable containers, and identical descriptions
-// dedup (summing weight).
+// for their concrete actions, and builtin verbs come straight from the picker's
+// own enumeration. Identical descriptions dedup, summing weight.
 func (v *Verifier) Candidates() []ActionCandidate {
 	if v.lastTree == nil {
-		return nil
-	}
-	// A cross-fade frame's layout is mid-animation, often in a collapsed
-	// coordinate space, so acting on it taps garbage (e.g. the soft keyboard).
-	// Skip it so the LLM re-observes a settled frame next step.
-	if v.lastTree.Transitional() {
 		return nil
 	}
 	root := v.runtime.GlobalObject().Get("actions")
@@ -333,6 +301,18 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hier
 			Direction: direction,
 			Action:    Action{Kind: kind, On: target.selector, Direction: direction},
 		}, true
+	case ActionKindSwipe:
+		from := v.resolveTarget(object.Get("from"), nodeIndex)
+		to := v.resolveTarget(object.Get("to"), nodeIndex)
+		return ActionCandidate{
+			Kind: kind,
+			Action: Action{
+				Kind:  kind,
+				FromX: from.x, FromY: from.y,
+				ToX: to.x, ToY: to.y,
+				DurationMillis: intField(object, "durationMillis"),
+			},
+		}, true
 	case ActionKindPressKey:
 		return ActionCandidate{
 			Kind:   kind,
@@ -410,103 +390,80 @@ func (v *Verifier) findBySelector(selector string) *hierarchy.Element {
 	return v.lastTree.Find(selector)
 }
 
-// collectBuiltin enumerates a builtin verb over the current tree: tap-family and
-// typing emit one candidate per applicable element; scrolls/swipes fold into
-// directional gestures over scrollable containers.
+// collectBuiltin turns the picker's own enumeration of a builtin verb into
+// candidates. The list comes from the bundle's __sanderlingEnumerateBuiltin__
+// (pick.ts builtinCandidates), which is what the seeded policy draws from, so
+// the two policies select over one action space and cannot drift apart. Each
+// entry's action arrives on the wire contract DecodeAction already reads, so a
+// chosen candidate executes the action the seeded draw would have executed.
 func (v *Verifier) collectBuiltin(verb string, prob float64, weighted bool, nodeIndex map[*hierarchy.Element]*hierarchy.Node, out *[]ActionCandidate) {
-	switch verb {
-	case "taps", "doubleTaps", "longPresses":
-		kind := verbActionKind(verb)
-		for _, element := range v.elementsForVerb(verb) {
-			x, y := element.Bounds.Center()
-			*out = append(*out, ActionCandidate{
-				Kind:     kind,
-				Label:    visibleLabel(element, nodeIndex),
-				Action:   Action{Kind: kind, On: selectorForElement(v.lastTree, element), X: x, Y: y},
-				prob:     prob,
-				Weighted: weighted,
-			})
+	entries, err := v.enumerateBuiltin(verb)
+	if err != nil {
+		return
+	}
+	targets := v.targets()
+	for _, entry := range entries {
+		candidate := ActionCandidate{
+			Kind:      entry.action.Kind,
+			Direction: entry.action.Direction,
+			// Builtin typing enumerates the field, not the value: the seeded
+			// policy draws its text from the corpus and the model writes its own.
+			LLMText:  entry.action.Kind == ActionKindInputText,
+			Action:   entry.action,
+			prob:     prob,
+			Weighted: weighted,
 		}
-	case "typing":
-		for _, element := range v.elementsForVerb(verb) {
-			x, y := element.Bounds.Center()
-			*out = append(*out, ActionCandidate{
-				Kind:      ActionKindInputText,
-				Label:     visibleLabel(element, nodeIndex),
-				InputType: inputTypeHint(element),
-				LLMText:   true,
-				Action:    Action{Kind: ActionKindInputText, On: selectorForElement(v.lastTree, element), X: x, Y: y},
-				prob:      prob,
-				Weighted:  weighted,
-			})
+		if entry.targetIndex >= 0 && entry.targetIndex < len(targets) {
+			element := targets[entry.targetIndex].element
+			candidate.Label = visibleLabel(element, nodeIndex)
+			candidate.InputType = inputTypeHint(element)
 		}
-	case "scrolls", "swipes":
-		v.collectGestures(prob, weighted, out)
+		*out = append(*out, candidate)
 	}
 }
 
-// collectGestures emits directional scrolls scoped to each scrollable container,
-// never per element and never element-labeled. Folding both scrolls and swipes
-// here is what removes the flood of mislabeled `Swipe "X"` gestures.
-func (v *Verifier) collectGestures(prob float64, weighted bool, out *[]ActionCandidate) {
-	scope := v.scopedElements()
-	for _, element := range v.lastTree.Elements {
-		if !scope[element] {
-			continue
-		}
-		if element.Attributes["scrollable"] != "true" {
-			continue
-		}
-		if element.Bounds.Width() <= 0 || element.Bounds.Height() <= 0 {
-			continue
-		}
-		selector := selectorForElement(v.lastTree, element)
-		for _, direction := range gestureDirections {
-			action := Action{Kind: ActionKindScroll, On: selector, Direction: direction}
-			if selector == "" {
-				action.FromX, action.FromY, action.ToX, action.ToY = scrollGeometry(element.Bounds, direction)
-			}
-			*out = append(*out, ActionCandidate{
-				Kind:      ActionKindScroll,
-				Direction: direction,
-				Action:    action,
-				prob:      prob,
-				Weighted:  weighted,
-			})
-		}
-	}
+// builtinCandidate is one entry of the shared builtin enumeration: the concrete
+// action, plus the index of the host candidate it targets (-1 when the verb has
+// no target, as for a key press or a wait).
+type builtinCandidate struct {
+	action      Action
+	targetIndex int
 }
 
-// scrollGeometry lowers a directional scroll to swipe endpoints over the given
-// container bounds, matching the runner's own derivation, used only when the
-// container has no resolving selector.
-func scrollGeometry(bounds hierarchy.Bounds, direction string) (fromX, fromY, toX, toY int) {
-	cx, cy := bounds.Center()
-	fromX, fromY, toX, toY = cx, cy, cx, cy
-	switch direction {
-	case "down":
-		toY = cy - 4*bounds.Height()/10
-	case "up":
-		toY = cy + 4*bounds.Height()/10
-	case "left":
-		toX = cx + 4*bounds.Width()/10
-	case "right":
-		toX = cx - 4*bounds.Width()/10
+// enumerateBuiltin invokes the bundle's shared enumeration for one verb. A spec
+// loaded without the runtime entry (a raw-JS unit fixture) has no enumerator, so
+// the verb contributes nothing rather than falling back to a second enumeration.
+func (v *Verifier) enumerateBuiltin(verb string) ([]builtinCandidate, error) {
+	if v.enumerateBuiltinFn == nil {
+		return nil, errors.New("verifier: builtin enumeration not available")
 	}
-	return fromX, fromY, max(0, toX), max(0, toY)
-}
-
-// elementsForVerb returns the in-scope elements a builtin verb applies to, in
-// tree order (the seeded picker's enumeration order), reusing verbAccepts.
-func (v *Verifier) elementsForVerb(verb string) []*hierarchy.Element {
-	scope := v.scopedElements()
-	var elements []*hierarchy.Element
-	for _, element := range v.lastTree.Elements {
-		if scope[element] && verbAccepts(verb, element) {
-			elements = append(elements, element)
+	value, err := v.enumerateBuiltinFn(goja.Undefined(), v.runtime.ToValue(verb))
+	if err != nil {
+		return nil, fmt.Errorf("enumerate %s: %w", verb, err)
+	}
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return nil, nil
+	}
+	raw, err := json.Marshal(value.Export())
+	if err != nil {
+		return nil, fmt.Errorf("marshal %s enumeration: %w", verb, err)
+	}
+	var wire []struct {
+		Action      json.RawMessage `json:"action"`
+		TargetIndex int             `json:"targetIndex"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, fmt.Errorf("decode %s enumeration: %w", verb, err)
+	}
+	entries := make([]builtinCandidate, 0, len(wire))
+	for _, item := range wire {
+		action, err := DecodeAction(item.Action)
+		if err != nil {
+			continue
 		}
+		entries = append(entries, builtinCandidate{action: action, targetIndex: item.TargetIndex})
 	}
-	return elements
+	return entries, nil
 }
 
 // finalizeCandidates renders each candidate's description, dedups identical
@@ -555,6 +512,18 @@ func describeCandidate(candidate ActionCandidate) string {
 		return fmt.Sprintf("Type %q into %q", candidate.Action.Text, candidate.Label)
 	case ActionKindScroll:
 		return "Scroll " + candidate.Direction
+	case ActionKindSwipe:
+		// A swipe carries endpoints and no selector, so the coordinates are what
+		// keep two swipes distinct. The label is prepended when the origin
+		// element has one, because "swipe that row" is the interaction a model
+		// reaches for and a bare pair of points does not say which row.
+		where := fmt.Sprintf("from (%d,%d) to (%d,%d)",
+			candidate.Action.FromX, candidate.Action.FromY,
+			candidate.Action.ToX, candidate.Action.ToY)
+		if candidate.Label == "" {
+			return "Swipe " + where
+		}
+		return fmt.Sprintf("Swipe %q %s", candidate.Label, where)
 	case ActionKindPressKey:
 		return "Press " + candidate.Action.Key
 	case ActionKindWait:
@@ -681,4 +650,14 @@ func stringField(object *goja.Object, key string) string {
 		return ""
 	}
 	return value.String()
+}
+
+// intField reads a numeric property off a goja object, returning 0 when absent,
+// null, or undefined.
+func intField(object *goja.Object, key string) int {
+	value := object.Get(key)
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return 0
+	}
+	return int(value.ToInteger())
 }

@@ -29,7 +29,7 @@ WEB_DIST := replay-ui/dist
 
 GOLINES := $(shell $(GO) env GOPATH)/bin/golines
 
-.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-companion test-kotlin test-spec-api web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
+.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-companion test-kotlin test-spec-api spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
 
 bootstrap:
 	$(GO) mod download
@@ -101,7 +101,7 @@ fmt-ts:
 fmt-swift:
 	xcrun swift-format format -i -r companion/Sources
 
-test: test-go test-spec-api web-typecheck web-test
+test: test-go spec-typecheck test-spec-api web-typecheck web-test
 
 test-go:
 	$(GO) test $(GO_PACKAGES)
@@ -125,6 +125,9 @@ test-kotlin:
 
 test-spec-api:
 	cd pkg/spec && npm test --silent
+
+spec-typecheck:
+	cd pkg/spec && npm run check --silent
 
 docs: $(DOCS_OUT) build/site/_assets
 	@echo "built $(words $(DOCS_OUT)) pages to build/site"
