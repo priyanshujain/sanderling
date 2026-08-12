@@ -38,6 +38,10 @@ type Options struct {
 	// Arm labels the experiment cell this run belongs to and is recorded in
 	// meta.json so a directory of runs can be attributed to a cell.
 	Arm string
+	// ExitOnViolation stops the run at the first violation and reports the
+	// recorded violations as a ViolationsError, so a caller (CI) can tell
+	// "the run found the bug" from "the run finished clean".
+	ExitOnViolation bool
 	// Generator selects the action picker: "llm" or the default seeded picker.
 	Generator string
 
@@ -189,15 +193,16 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "running for %s (seed=%d)\n", options.Duration, seed)
 	}
 	summary, err := runner.Run(ctx, runner.Options{
-		Duration:    options.Duration,
-		MaxSteps:    options.MaxSteps,
-		IdleTimeout: 1 * time.Second,
-		BundleID:    options.BundleID,
-		Driver:      activeDriver,
-		Verifier:    verifierInstance,
-		TraceWriter: traceWriter,
-		Logger:      newProgressLogger(stdout),
-		Generator:   options.Generator,
+		Duration:        options.Duration,
+		MaxSteps:        options.MaxSteps,
+		IdleTimeout:     1 * time.Second,
+		BundleID:        options.BundleID,
+		Driver:          activeDriver,
+		Verifier:        verifierInstance,
+		TraceWriter:     traceWriter,
+		Logger:          newProgressLogger(stdout),
+		Generator:       options.Generator,
+		StopOnViolation: options.ExitOnViolation,
 	})
 
 	terminateCtx, terminateCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -210,7 +215,30 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 
 	fmt.Fprintf(stdout, "\nelapsed: %s\n", summary.EndTime.Sub(summary.StartTime).Round(time.Millisecond))
 	runner.RenderSummary(stdout, summary, options.Platform)
+	return runOutcome(options, summary)
+}
+
+// runOutcome turns a finished run into the pipeline's result. Without
+// --exit-on-violation a run that found violations is still a successful run
+// (the summary reports them), which is the behaviour every existing caller
+// depends on.
+func runOutcome(options Options, summary runner.Summary) error {
+	if options.ExitOnViolation && len(summary.Violations) > 0 {
+		return ViolationsError{Count: len(summary.Violations)}
+	}
 	return nil
+}
+
+// ViolationsError reports a run that recorded violations under
+// --exit-on-violation. It is deliberately distinct from every other error the
+// pipeline returns: those mean the harness broke, this one means the run did
+// its job and found something.
+type ViolationsError struct {
+	Count int
+}
+
+func (e ViolationsError) Error() string {
+	return fmt.Sprintf("%d violation record(s)", e.Count)
 }
 
 // bundleInputs holds the pre-driver assembly: alias map, seed, esbuild defines,
