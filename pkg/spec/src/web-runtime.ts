@@ -589,6 +589,7 @@ installRuntime(
 // so these are stripped from production output; they only exist for unit tests.
 export const __testing__ = {
   host,
+  buildAx,
   seedBigInt,
   collectTargets,
   targetElements,
