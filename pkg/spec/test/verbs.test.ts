@@ -19,7 +19,7 @@ function countingHost(platform: "android" | "ios" | "web"): Host & { calls: Buil
   return {
     calls,
     platform: () => platform,
-    queryCandidates: () => [],
+    queryTargets: () => [],
     reportUnsupported: (verb) => {
       calls.push(verb);
     },

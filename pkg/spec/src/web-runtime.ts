@@ -4,7 +4,7 @@
 //
 // This file is the WEB Host. It installs globalThis.__sanderling__ (extract +
 // LTL formula binds) before the spec evaluates, implements the Host interface
-// (platform/seed/queryCandidates/reportUnsupported) over the live DOM, and then
+// (platform/seed/queryTargets/reportUnsupported) over the live DOM, and then
 // delegates ALL action generation to the shared picker via installRuntime
 // (runtime-entry.ts -> pick.ts). The goja verifier runs the SAME picker over the
 // SAME Pcg, so a given seed yields an identical action stream by construction.
@@ -13,11 +13,11 @@
 // window.__sanderlingNextAction__() over CDP each tick. LTL predicates are
 // stubbed: properties run host-side in goja, which loads its own bundle.
 //
-// Element references never cross V8/host. queryCandidates resolves each element
-// to a {x, y} Point via getBoundingClientRect before the picker sees it.
+// Element references never cross V8/host. queryTargets resolves each element to
+// a {x, y} Point via getBoundingClientRect before the picker sees it.
 
 import { installRuntime } from "./runtime-entry.ts";
-import type { BuiltinVerb, Candidate, Host } from "./action-tree.ts";
+import type { BuiltinVerb, Candidate, Host, TargetElement } from "./action-tree.ts";
 
 interface Handle {
   readonly current: unknown;
@@ -467,21 +467,18 @@ function sanitizeAt(value: unknown, depth: number, seen: WeakSet<object>): unkno
   return out;
 }
 
-// Per-verb DOM selector sets. The tappable set backs taps/doubleTaps/longPresses
-// (every tappable element is also a valid long-press target); the editable set
-// backs typing; swipes/scrolls target the scrollable element.
+// The DOM half of the fact mapping. Which verb may act on which target is NOT
+// decided here: queryTargets reports facts and targets.ts acceptsTarget applies
+// them, the same rule the native host's targets run through. These selectors are
+// only how the DOM answers "is this clickable" / "is this editable", the two
+// facts with no direct DOM equivalent of the accessibility attributes native
+// platforms expose.
 const TAPPABLE_SELECTOR = 'a, button, input, select, textarea, [role="button"], [onclick]';
 const EDITABLE_SELECTOR = "input, textarea, [contenteditable]";
 
 const NON_TEXT_INPUT_TYPES = [
   "button", "submit", "checkbox", "radio", "range", "color", "file", "image", "reset",
 ];
-
-function isVisible(element: HTMLElement): boolean {
-  if ((element as HTMLButtonElement).disabled) return false;
-  const rect = element.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0;
-}
 
 function isEditableElement(element: HTMLElement): boolean {
   if (element.isContentEditable) return true;
@@ -494,6 +491,14 @@ function isEditableElement(element: HTMLElement): boolean {
   return false;
 }
 
+// isScrollable mirrors the native `scrollable` accessibility attribute: the
+// container can actually scroll, i.e. its content overflows its box. The
+// document scrolling root is not special-cased in: when the page does not
+// overflow there is no scroll to perform, and native would offer none either.
+function isScrollable(element: HTMLElement): boolean {
+  return element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth;
+}
+
 function pointOf(element: Element): Candidate {
   const rect = element.getBoundingClientRect();
   return {
@@ -504,41 +509,33 @@ function pointOf(element: Element): Candidate {
   };
 }
 
-function tappableCandidates(): Candidate[] {
-  return Array.from(document.querySelectorAll<HTMLElement>(TAPPABLE_SELECTOR))
-    .filter(isVisible)
-    .map(pointOf);
+// collectTargets walks the document ONCE and reports every element with the facts
+// the shared eligibility rule reads. The tappable/editable membership sets are
+// resolved by selector first so the DOM's answer to "clickable" and "editable"
+// stays expressed in CSS, as it always was.
+function collectTargets(): TargetElement[] {
+  const clickable = new Set<Element>(Array.from(document.querySelectorAll(TAPPABLE_SELECTOR)));
+  const editable = new Set<Element>(
+    Array.from(document.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR)).filter(
+      isEditableElement,
+    ),
+  );
+  return Array.from(document.querySelectorAll<HTMLElement>("*")).map((element) => ({
+    ...pointOf(element),
+    clickable: clickable.has(element),
+    enabled: !(element as HTMLButtonElement).disabled,
+    editable: editable.has(element),
+    scrollable: isScrollable(element),
+  }));
 }
 
-function editableCandidates(): Candidate[] {
-  return Array.from(document.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR))
-    .filter((element) => isEditableElement(element) && isVisible(element))
-    .map(pointOf);
-}
-
-// Scrollable candidates back swipe/scroll: elements that overflow their box,
-// plus the scrolling root so a page-level scroll always has a target.
-function scrollableCandidates(): Candidate[] {
-  const root = document.scrollingElement ?? document.documentElement;
-  const candidates: Candidate[] = root ? [pointOf(root)] : [];
-  for (const element of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
-    if (element === root) continue;
-    if (element.scrollHeight <= element.clientHeight && element.scrollWidth <= element.clientWidth) {
-      continue;
-    }
-    if (!isVisible(element)) continue;
-    candidates.push(pointOf(element));
-  }
-  return candidates;
-}
-
-// Per-tick candidate cache: the picker's 16-attempt retry re-queries the same
-// verb, so we avoid re-walking the DOM and re-flushing layout within one tick.
+// Per-tick target cache: the picker's 16-attempt retry re-queries every tick, so
+// we avoid re-walking the DOM and re-flushing layout within one tick.
 // installRuntime resets it before each __sanderlingNextAction__ invocation.
-const candidateCache = new Map<BuiltinVerb, Candidate[]>();
+let cachedTargets: TargetElement[] | null = null;
 
-function resetCandidateCache(): void {
-  candidateCache.clear();
+function resetTargetCache(): void {
+  cachedTargets = null;
 }
 
 const host: Host = {
@@ -546,28 +543,9 @@ const host: Host = {
   seedHi: () => SEED_HI,
   // lo = 0 matches the goja side's rand.NewPCG(seed, 0).
   seedLo: () => 0n,
-  queryCandidates(verb: BuiltinVerb): Candidate[] {
-    const cached = candidateCache.get(verb);
-    if (cached) return cached;
-    let candidates: Candidate[];
-    switch (verb) {
-      case "taps":
-      case "doubleTaps":
-      case "longPresses":
-        candidates = tappableCandidates();
-        break;
-      case "typing":
-        candidates = editableCandidates();
-        break;
-      case "swipes":
-      case "scrolls":
-        candidates = scrollableCandidates();
-        break;
-      default:
-        candidates = [];
-    }
-    candidateCache.set(verb, candidates);
-    return candidates;
+  queryTargets(): TargetElement[] {
+    if (!cachedTargets) cachedTargets = collectTargets();
+    return cachedTargets;
   },
   reportUnsupported(verb: BuiltinVerb): void {
     console.warn(`[sanderling] verb ${verb} is unsupported on web`);
@@ -578,11 +556,11 @@ const host: Host = {
 // this module (the web bundle imports the runtime first). Resolve the root
 // lazily so installRuntime captures it once the spec has evaluated. The root
 // resolver runs once per __sanderlingNextAction__ tick (before the retry loop),
-// so it is also where we reset the per-tick candidate cache.
+// so it is also where we reset the per-tick target cache.
 installRuntime(
   host,
   () => {
-    resetCandidateCache();
+    resetTargetCache();
     return (globalThis as { actions?: import("./action-tree.ts").GeneratorNode }).actions ?? null;
   },
   evaluateExtractors,
@@ -593,10 +571,10 @@ installRuntime(
 export const __testing__ = {
   host,
   seedBigInt,
-  tappableCandidates,
-  editableCandidates,
-  scrollableCandidates,
-  resetCandidateCache,
+  collectTargets,
+  TAPPABLE_SELECTOR,
+  EDITABLE_SELECTOR,
+  resetTargetCache,
   runtime,
   extractors,
   evaluateExtractors,

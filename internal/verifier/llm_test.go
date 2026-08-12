@@ -10,7 +10,7 @@ import (
 // enumTreeJSON exercises every labeling path: a clickable wrapper whose own text
 // is empty but whose child Text reads "Add credit" (descendant borrowing), an
 // editable field labeled by its hint, a text-labeled button, a DISABLED button,
-// and a scrollable list (the only valid gesture origin).
+// and a scrollable list (the only valid scroll origin).
 const enumTreeJSON = `{
   "attributes": {"bounds": "[0,0,1080,2400]"},
   "children": [
@@ -25,10 +25,13 @@ const enumTreeJSON = `{
 }`
 
 // enumVerifier loads a spec whose actions root is the given plain-object graph
-// and stages the given tree, so Candidates walks a controlled action tree.
+// and stages the given tree, so Candidates walks a controlled action tree. The
+// spec is bundled with the goja runtime entry because the model arm reads the
+// picker's own builtin enumeration out of that bundle.
 func enumVerifier(t *testing.T, actionsJS, treeJSON string) *Verifier {
 	t.Helper()
-	v := newLoadedVerifier(t, "globalThis.actions = "+actionsJS+";")
+	v := newVerifier(t)
+	loadActionSpec(t, v, "globalThis.actions = "+actionsJS+";")
 	tree, err := hierarchy.Parse(treeJSON)
 	if err != nil {
 		t.Fatalf("parse tree: %v", err)
@@ -119,26 +122,38 @@ func TestCandidatesLabelsEditableFieldByHintNotTypedValue(t *testing.T) {
 	}
 }
 
-func TestCandidatesFoldsGesturesIntoDirectionalScrolls(t *testing.T) {
+func TestCandidatesKeepsGestureVerbsDistinct(t *testing.T) {
 	v := enumVerifier(t,
 		"{kind:'weighted', branches:[[1,{kind:'builtin',verb:'scrolls'}],[1,{kind:'builtin',verb:'swipes'}]]}",
 		enumTreeJSON)
 	candidates := v.Candidates()
 
-	// Gestures are directional and scoped to the one scrollable container: no
-	// per-element, element-labeled Swipe entries.
-	for _, candidate := range candidates {
-		if strings.HasPrefix(candidate.Description, "Swipe") {
-			t.Errorf("gesture kept as element-labeled swipe: %q", candidate.Description)
-		}
-	}
+	// `scrolls` folds to one directional pair over the single scrollable
+	// container, which is what keeps the list short.
 	if !hasCandidate(candidates, "Scroll down") || !hasCandidate(candidates, "Scroll up") {
 		t.Errorf("want directional scrolls, got %v", descriptions(candidates))
 	}
-	// scrolls and swipes fold into the SAME directional entries: one each.
 	if got := count(candidates, "Scroll down"); got != 1 {
-		t.Errorf("Scroll down appears %d times, want 1 (folded)", got)
+		t.Errorf("Scroll down appears %d times, want 1 over the one container", got)
 	}
+	// `swipes` is a different verb, not a second name for the scroll: a
+	// free-form drag from any element, named by the control it starts on. That
+	// is what puts swipe-to-dismiss on a row within the model's reach.
+	if !hasCandidatePrefix(candidates, `Swipe "Sign in"`) {
+		t.Errorf("want a swipe naming the non-scrollable row, got %v", descriptions(candidates))
+	}
+	if hasCandidatePrefix(candidates, "Scroll \"") {
+		t.Errorf("scroll candidates must stay container-scoped: %v", descriptions(candidates))
+	}
+}
+
+func hasCandidatePrefix(candidates []ActionCandidate, prefix string) bool {
+	for _, candidate := range candidates {
+		if strings.HasPrefix(candidate.Description, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCandidatesWeightsCombineAcrossPaths(t *testing.T) {
@@ -228,6 +243,23 @@ func TestCandidatesCallsAuthoredLeafOnce(t *testing.T) {
 	}
 }
 
+func TestCandidatesSurfaceAuthoredUntargetedActions(t *testing.T) {
+	// A spec that authors a swipe, a key press, or a wait must reach the model
+	// with all three: the seeded picker executes whatever the leaf returns, so a
+	// kind the enumeration drops is an action only one policy can take.
+	actions := `{kind:'actions', generate: () => [
+      {kind:'Swipe', from:{x:10,y:600}, to:{x:10,y:100}, durationMillis: 250},
+      {kind:'PressKey', key:'back'},
+      {kind:'Wait'}
+    ]}`
+	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates()
+	for _, want := range []string{"Swipe from (10,600) to (10,100)", "Press back", "Wait"} {
+		if !hasCandidate(candidates, want) {
+			t.Errorf("authored %q missing: %v", want, descriptions(candidates))
+		}
+	}
+}
+
 func TestCandidatesOffRouteLeafYieldsNothing(t *testing.T) {
 	v := enumVerifier(t, "{kind:'actions', generate: () => []}", enumTreeJSON)
 	if got := v.Candidates(); len(got) != 0 {
@@ -248,8 +280,13 @@ func TestCandidatesSkipsCrossFadeFrames(t *testing.T) {
       ]
     }`
 	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", crossFade)
-	if got := v.Candidates(); got != nil {
+	if got := v.Candidates(); len(got) != 0 {
 		t.Errorf("cross-fade frame should yield no candidates, got %v", descriptions(got))
+	}
+	// The seeded policy is skipped by the SAME guard, in the shared producer,
+	// so neither arm acts on a mid-animation layout.
+	if got := v.targets(); len(got) != 0 {
+		t.Errorf("cross-fade frame should yield no host targets, got %d", len(got))
 	}
 }
 
@@ -345,5 +382,3 @@ func newLoadedVerifier(t *testing.T, source string) *Verifier {
 	}
 	return v
 }
-
-

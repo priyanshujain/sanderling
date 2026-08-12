@@ -105,30 +105,108 @@ func TestTyping_ExcludeOffAppPackage(t *testing.T) {
 	}
 }
 
-// TestSwipes_ExcludeOffAppPackage proves swipes anchor on app nodes only, so
-// exploration never scrolls the keyboard's emoji list instead of the app.
-func TestSwipes_ExcludeOffAppPackage(t *testing.T) {
-	verifier := newVerifier(t, WithAppPackage("com.folio"))
-	loadActionSpec(t, verifier, `
-		import { swipes } from "@sanderling/spec";
-		globalThis.actions = swipes;
-	`)
-	pushTree(t, verifier, scopedTreeJSON)
+// gestureTreeJSON gives each gesture verb a legal and an illegal anchor: an app
+// list holding a plain row, against the soft keyboard's own scrollable strip
+// holding one of its keys.
+const gestureTreeJSON = `{
+  "attributes": {"resource-id": "root", "bounds": "[0,0,100,500]", "package": "com.folio"},
+  "children": [
+    {"attributes": {"testTag": "AppList", "scrollable": "true", "bounds": "[0,0,100,300]", "package": "com.folio"}, "children": [
+      {"attributes": {"testTag": "Row", "bounds": "[0,0,100,60]", "package": "com.folio"}, "children": []}
+    ]},
+    {"attributes": {"testTag": "EmojiStrip", "scrollable": "true", "bounds": "[0,400,100,440]", "package": "com.google.android.inputmethod.latin"}, "children": [
+      {"attributes": {"testTag": "EmojiKey", "bounds": "[0,400,100,420]", "package": "com.google.android.inputmethod.latin"}, "children": []}
+    ]}
+  ]
+}`
 
-	// Both the root and SubmitButton (com.folio) are valid anchors; only the
-	// keyboard key at center (50,420) must be excluded. Draw many times so the
-	// invariant is not satisfied by a lucky seed.
-	for i := range 200 {
-		action, err := verifier.NextAction()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if action.Kind != ActionKindSwipe {
-			t.Fatalf("kind = %v, want Swipe", action.Kind)
-		}
-		if action.FromX == 50 && action.FromY == 420 {
-			t.Fatalf("draw %d anchored on the keyboard key (50,420); off-app node leaked into swipe targets", i)
-		}
+// TestGestures_ExcludeOffAppPackage proves both gesture verbs anchor on app
+// nodes only, so exploration never drags the keyboard instead of the app, and
+// pins what each verb accepts within the app and which way it drags. Scrolls
+// anchor on the scrollable list alone and stay vertical, because every
+// scrollable container earns a candidate and scrolling a list means up and down.
+// Swipes anchor on any app element, the row and the root included, and drag in
+// all four directions, which is what puts swipe-to-dismiss on a list row inside
+// the action space.
+func TestGestures_ExcludeOffAppPackage(t *testing.T) {
+	tests := []struct {
+		verb       string
+		kind       ActionKind
+		anchors    map[[2]int]bool
+		directions map[string]bool
+	}{
+		{
+			"scrolls",
+			ActionKindScroll,
+			map[[2]int]bool{{50, 150}: true},
+			map[string]bool{"down": true, "up": true},
+		},
+		{
+			"swipes",
+			ActionKindSwipe,
+			map[[2]int]bool{{50, 250}: true, {50, 150}: true, {50, 30}: true},
+			map[string]bool{"down": true, "up": true, "left": true, "right": true},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.verb, func(t *testing.T) {
+			verifier := newVerifier(t, WithAppPackage("com.folio"))
+			loadActionSpec(t, verifier, `
+				import { `+test.verb+` } from "@sanderling/spec";
+				globalThis.actions = `+test.verb+`;
+			`)
+			pushTree(t, verifier, gestureTreeJSON)
+
+			// Draw many times so neither the exclusion nor the coverage below is
+			// satisfied by a lucky seed. The keyboard strip (50,420) and its key
+			// (50,410) are the anchors that must never appear.
+			seen := map[[2]int]bool{}
+			seenDirections := map[string]bool{}
+			for i := range 400 {
+				action, err := verifier.NextAction()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if action.Kind != test.kind {
+					t.Fatalf("kind = %v, want %v", action.Kind, test.kind)
+				}
+				anchor := [2]int{action.FromX, action.FromY}
+				if !test.anchors[anchor] {
+					t.Fatalf("draw %d anchored at %v, outside %v", i, anchor, test.anchors)
+				}
+				direction := gestureDirection(action)
+				if !test.directions[direction] {
+					t.Fatalf("draw %d dragged %s, outside %v", i, direction, test.directions)
+				}
+				seen[anchor] = true
+				seenDirections[direction] = true
+			}
+			if len(seen) != len(test.anchors) {
+				t.Errorf("reached anchors %v, want all of %v", seen, test.anchors)
+			}
+			if len(seenDirections) != len(test.directions) {
+				t.Errorf("reached directions %v, want all of %v", seenDirections, test.directions)
+			}
+		})
+	}
+}
+
+// gestureDirection names which way a drawn gesture drags. A scroll carries the
+// name it was enumerated under; a swipe carries only its endpoints, so the sign
+// of the drag is what says where the finger went.
+func gestureDirection(action Action) string {
+	if action.Kind == ActionKindScroll {
+		return action.Direction
+	}
+	switch {
+	case action.ToX > action.FromX:
+		return "right"
+	case action.ToX < action.FromX:
+		return "left"
+	case action.ToY > action.FromY:
+		return "down"
+	default:
+		return "up"
 	}
 }
 

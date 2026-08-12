@@ -1,30 +1,31 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Pcg } from "../src/pcg.ts";
-import { nextAction, walk } from "../src/pick.ts";
+import { builtinCandidates, nextAction, walk } from "../src/pick.ts";
 import { INPUT_CORPUS, NATIVE_PRESS_KEYS, WEB_PRESS_KEYS } from "../src/corpus.ts";
 import { resetWarnings } from "../src/verbs.ts";
 import type {
   ActionDescriptor,
   BuiltinVerb,
-  Candidate,
   GeneratorNode,
   Host,
+  TargetElement,
 } from "../src/action-tree.ts";
+import type { Direction, Point } from "../src/types.ts";
 
 type Platform = "android" | "ios" | "web";
 
-// stubHost returns a fixed candidate list for every verb and records each
-// reportUnsupported call so warn-once semantics are observable.
+// stubHost returns a fixed target list, eligible for every verb, and records
+// each reportUnsupported call so warn-once semantics are observable.
 function stubHost(
   platform: Platform,
-  candidates: Candidate[],
+  targets: TargetElement[],
 ): Host & { unsupported: BuiltinVerb[] } {
   const unsupported: BuiltinVerb[] = [];
   return {
     unsupported,
     platform: () => platform,
-    queryCandidates: () => candidates,
+    queryTargets: () => targets,
     reportUnsupported: (verb) => {
       unsupported.push(verb);
     },
@@ -33,10 +34,12 @@ function stubHost(
   };
 }
 
-const POINTS: Candidate[] = [
-  { x: 10, y: 20, selector: "id:a", width: 100, height: 200 },
-  { x: 30, y: 40, selector: "id:b", width: 100, height: 200 },
-  { x: 50, y: 60, selector: "id:c", width: 100, height: 200 },
+const EVERY_FACT = { clickable: true, enabled: true, editable: true, scrollable: true };
+
+const POINTS: TargetElement[] = [
+  { x: 10, y: 20, selector: "id:a", width: 100, height: 200, ...EVERY_FACT },
+  { x: 30, y: 40, selector: "id:b", width: 100, height: 200, ...EVERY_FACT },
+  { x: 50, y: 60, selector: "id:c", width: 100, height: 200, ...EVERY_FACT },
 ];
 
 function builtin(verb: BuiltinVerb): GeneratorNode {
@@ -81,59 +84,132 @@ test("typing draws candidate index then corpus index, in that order", () => {
   assert.equal(action.text, INPUT_CORPUS[corpusIndex]);
 });
 
-test("swipes draw candidate, magnitude (200+intN(401)), then direction", () => {
+// scrollCandidate mirrors what the picker builds for one (container, direction)
+// pair: a drag opposite the named content motion, 40% of the container extent.
+function scrollCandidate(target: TargetElement, direction: "down" | "up") {
+  const from = { x: target.x, y: target.y };
+  const extent = Math.trunc((4 * (target.height ?? 0)) / 10);
+  const toY = direction === "down" ? from.y - extent : from.y + extent;
+  return {
+    kind: "Scroll",
+    direction,
+    in: from,
+    from,
+    to: { x: from.x, y: Math.max(0, toY) },
+  };
+}
+
+// swipeCandidate mirrors the free-form drag: a raw pixel distance, with the
+// direction naming where the finger travels.
+function swipeCandidate(
+  target: Point,
+  direction: Direction,
+  magnitude: number,
+) {
+  const from = { x: target.x, y: target.y };
+  const horizontal = direction === "left" || direction === "right";
+  const forward = direction === "down" || direction === "right";
+  const travel = forward ? magnitude : -magnitude;
+  return {
+    kind: "Swipe",
+    from,
+    to: horizontal
+      ? { x: Math.max(0, from.x + travel), y: from.y }
+      : { x: from.x, y: Math.max(0, from.y + travel) },
+    durationMillis: 250,
+  };
+}
+
+const NOMINAL_SWIPE_MAGNITUDE = 400;
+
+const SCROLL_DIRECTIONS = ["down", "up"] as const;
+const SWIPE_DIRECTIONS = ["down", "up", "left", "right"] as const;
+
+// swipeDirection recovers which way a drawn swipe travelled from its endpoints.
+function swipeDirection(from: Point, to: Point): Direction {
+  if (to.x !== from.x) return to.x > from.x ? "right" : "left";
+  return to.y > from.y ? "down" : "up";
+}
+
+test("scrolls enumerate every container up and down only", () => {
   resetWarnings();
   const host = stubHost("android", POINTS);
-  const rng = new Pcg(7n, 0n);
-  const oracle = new Pcg(7n, 0n);
-  const candidateIndex = oracle.intN(POINTS.length);
-  const magnitude = 200 + oracle.intN(401);
-  const direction = oracle.intN(4);
-
-  const from = { x: POINTS[candidateIndex]!.x, y: POINTS[candidateIndex]!.y };
-  const expectedTo = { x: from.x, y: from.y };
-  switch (direction) {
-    case 0:
-      expectedTo.y = Math.max(0, from.y - magnitude);
-      break;
-    case 1:
-      expectedTo.y = Math.max(0, from.y + magnitude);
-      break;
-    case 2:
-      expectedTo.x = Math.max(0, from.x - magnitude);
-      break;
-    case 3:
-      expectedTo.x = Math.max(0, from.x + magnitude);
-      break;
-  }
-
-  const action = walk(builtin("swipes"), rng, host) as ActionDescriptor & {
-    kind: "Swipe";
-  };
-  assert.equal(action.kind, "Swipe");
-  assert.deepEqual(action.from, from);
-  assert.deepEqual(action.to, expectedTo);
-  assert.equal(action.durationMillis, 250);
+  assert.deepEqual(
+    builtinCandidates("scrolls", host),
+    POINTS.flatMap((target, targetIndex) =>
+      SCROLL_DIRECTIONS.map((direction) => ({
+        action: scrollCandidate(target, direction),
+        targetIndex,
+      })),
+    ),
+  );
 });
 
-test("scrolls draw candidate index then direction", () => {
+test("swipes enumerate a free-form drag per target in all four directions", () => {
   resetWarnings();
   const host = stubHost("android", POINTS);
-  const rng = new Pcg(99n, 0n);
-  const oracle = new Pcg(99n, 0n);
-  const candidateIndex = oracle.intN(POINTS.length);
-  const directionIndex = oracle.intN(4);
-  const directions = ["up", "down", "left", "right"] as const;
+  // The swipe candidate is its own action shape, sized in raw pixels rather than
+  // off the target's extent, and it carries what the policy needs to redraw the
+  // distance. It is not the scroll gesture under a second name.
+  assert.deepEqual(
+    builtinCandidates("swipes", host),
+    POINTS.flatMap((target, targetIndex) =>
+      SWIPE_DIRECTIONS.map((direction) => ({
+        action: swipeCandidate(target, direction, NOMINAL_SWIPE_MAGNITUDE),
+        targetIndex,
+        swipe: { origin: { x: target.x, y: target.y }, direction },
+      })),
+    ),
+  );
+});
 
-  const action = walk(builtin("scrolls"), rng, host) as ActionDescriptor & {
-    kind: "Scroll";
-  };
-  assert.equal(action.kind, "Scroll");
-  assert.equal(action.direction, directions[directionIndex]);
-  assert.deepEqual(action.in, {
-    x: POINTS[candidateIndex]!.x,
-    y: POINTS[candidateIndex]!.y,
-  });
+test("the gesture verbs differ in target filter and in direction set", () => {
+  resetWarnings();
+  // Same host, same targets: what separates the two verbs here is the direction
+  // set alone. Scrolls stay vertical because every scrollable container gets a
+  // candidate; swipes reach sideways because swipe-to-dismiss does.
+  const host = stubHost("android", POINTS);
+  const scrolls = builtinCandidates("scrolls", host);
+  const swipes = builtinCandidates("swipes", host);
+
+  const scrollDirections = new Set(
+    scrolls.map(
+      (entry) => (entry.action as ActionDescriptor & { kind: "Scroll" }).direction,
+    ),
+  );
+  const swipeDirections = new Set(swipes.map((entry) => entry.swipe!.direction));
+
+  assert.deepEqual([...scrollDirections].sort(), ["down", "up"]);
+  assert.deepEqual([...swipeDirections].sort(), ["down", "left", "right", "up"]);
+  assert.equal(scrolls.length, POINTS.length * 2);
+  assert.equal(swipes.length, POINTS.length * 4);
+});
+
+test("scrolls draw one index over the enumerated candidates", () => {
+  resetWarnings();
+  const host = stubHost("android", POINTS);
+  const enumerated = builtinCandidates("scrolls", host);
+  const oracle = new Pcg(99n, 0n);
+  const index = oracle.intN(enumerated.length);
+
+  const action = walk(builtin("scrolls"), new Pcg(99n, 0n), host);
+  assert.deepEqual(action, enumerated[index]!.action);
+});
+
+test("swipes draw candidate index then magnitude, in that order", () => {
+  resetWarnings();
+  const host = stubHost("android", POINTS);
+  const enumerated = builtinCandidates("swipes", host);
+  const oracle = new Pcg(7n, 0n);
+  const index = oracle.intN(enumerated.length);
+  const magnitude = 200 + oracle.intN(401);
+  const picked = enumerated[index]!.swipe!;
+
+  const action = walk(builtin("swipes"), new Pcg(7n, 0n), host);
+  assert.deepEqual(
+    action,
+    swipeCandidate(picked.origin, picked.direction, magnitude),
+  );
 });
 
 test("doubleTaps and longPresses draw exactly one candidate index", () => {
@@ -174,14 +250,28 @@ test("waitOnce emits a 500ms wait and draws nothing", () => {
   assert.notEqual(before, after);
 });
 
-test("pressKeys on native draws from NATIVE_PRESS_KEYS", () => {
+test("pressKeys enumerates the platform's whole key pool", () => {
+  resetWarnings();
+  for (const [platform, keys] of [
+    ["android", NATIVE_PRESS_KEYS],
+    ["web", WEB_PRESS_KEYS],
+  ] as const) {
+    const enumerated = builtinCandidates("pressKeys", stubHost(platform, POINTS));
+    assert.deepEqual(
+      enumerated,
+      keys.map((key) => ({ action: { kind: "PressKey", key }, targetIndex: -1 })),
+    );
+  }
+});
+
+test("pressKeys on native emits the only key without drawing", () => {
   resetWarnings();
   const host = stubHost("android", POINTS);
   const rng = new Pcg(42n, 0n);
-  const oracle = new Pcg(42n, 0n);
-  const index = oracle.intN(NATIVE_PRESS_KEYS.length);
   const action = walk(builtin("pressKeys"), rng, host);
-  assert.deepEqual(action, { kind: "PressKey", key: NATIVE_PRESS_KEYS[index] });
+  assert.deepEqual(action, { kind: "PressKey", key: NATIVE_PRESS_KEYS[0] });
+  // One key is no choice, so the pool consumed no draw.
+  assert.equal(rng.float64(), new Pcg(42n, 0n).float64());
 });
 
 test("pressKeys on web draws from WEB_PRESS_KEYS", () => {
@@ -192,6 +282,97 @@ test("pressKeys on web draws from WEB_PRESS_KEYS", () => {
   const index = oracle.intN(WEB_PRESS_KEYS.length);
   const action = walk(builtin("pressKeys"), rng, host);
   assert.deepEqual(action, { kind: "PressKey", key: WEB_PRESS_KEYS[index] });
+});
+
+test("an unsupported verb enumerates nothing and reports once", () => {
+  resetWarnings();
+  // No platform in the matrix declines a verb today, so the branch is reached
+  // through a platform the matrix has never heard of.
+  const host = stubHost("desktop" as Platform, POINTS);
+  assert.deepEqual(builtinCandidates("taps", host), []);
+  assert.deepEqual(builtinCandidates("taps", host), []);
+  assert.deepEqual(host.unsupported, ["taps"]);
+});
+
+test("the seeded pick is an index into the shared enumeration", () => {
+  resetWarnings();
+  // Whatever the verb, the drawn action is one of the enumerated entries: the
+  // seeded policy adds a choice, never an action the model policy cannot see.
+  // `typing` and `swipes` are covered separately, being the two verbs whose
+  // enumeration leaves one value for the policy to fill in.
+  const host = stubHost("android", POINTS);
+  for (const verb of [
+    "taps",
+    "doubleTaps",
+    "longPresses",
+    "scrolls",
+    "pressKeys",
+    "waitOnce",
+  ] as const) {
+    const enumerated = builtinCandidates(verb, host).map((entry) =>
+      JSON.stringify(entry.action),
+    );
+    for (let seed = 1; seed <= 50; seed++) {
+      const action = walk(builtin(verb), new Pcg(BigInt(seed), 0n), host);
+      assert.ok(
+        enumerated.includes(JSON.stringify(action)),
+        `${verb} drew ${JSON.stringify(action)}, which is not an enumerated candidate`,
+      );
+    }
+  }
+});
+
+test("typing enumerates the field and the policy supplies the text", () => {
+  resetWarnings();
+  const host = stubHost("android", POINTS);
+  const enumerated = builtinCandidates("typing", host);
+  // The candidate set names fields only: an empty text is the slot the seeded
+  // corpus draw and the model's own value both fill.
+  for (const entry of enumerated) {
+    assert.equal((entry.action as ActionDescriptor & { kind: "InputText" }).text, "");
+  }
+  const oracle = new Pcg(2024n, 0n);
+  const index = oracle.intN(enumerated.length);
+  const text = INPUT_CORPUS[oracle.intN(INPUT_CORPUS.length)];
+  assert.deepEqual(walk(builtin("typing"), new Pcg(2024n, 0n), host), {
+    ...enumerated[index]!.action,
+    text,
+  });
+});
+
+test("swipes enumerate origin and direction, the policy adds distance", () => {
+  resetWarnings();
+  const host = stubHost("android", POINTS);
+  const origins = new Set(
+    builtinCandidates("swipes", host).map((entry) =>
+      JSON.stringify([entry.swipe!.origin, entry.swipe!.direction]),
+    ),
+  );
+  const drawn = new Set<Direction>();
+  for (let seed = 1; seed <= 200; seed++) {
+    const action = walk(builtin("swipes"), new Pcg(BigInt(seed), 0n), host) as
+      ActionDescriptor & { kind: "Swipe"; from: Point; to: Point };
+    assert.equal(action.kind, "Swipe");
+    const direction = swipeDirection(action.from, action.to);
+    drawn.add(direction);
+    assert.ok(
+      origins.has(JSON.stringify([action.from, direction])),
+      `swipe from ${JSON.stringify(action.from)} going ${direction} is not enumerated`,
+    );
+    // The drawn distance stays inside 200..600, clamped at the screen edge.
+    const horizontal = direction === "left" || direction === "right";
+    const distance = horizontal
+      ? Math.abs(action.to.x - action.from.x)
+      : Math.abs(action.to.y - action.from.y);
+    const clamped = horizontal ? action.to.x === 0 : action.to.y === 0;
+    assert.ok(distance <= 600, `drag of ${distance}px exceeds the drawn range`);
+    assert.ok(
+      distance >= 200 || clamped,
+      `drag of ${distance}px is under the drawn range and not clamped`,
+    );
+  }
+  // Every enumerated direction is reachable by a draw, sideways included.
+  assert.deepEqual([...drawn].sort(), ["down", "left", "right", "up"]);
 });
 
 test("empty candidate list yields null without drawing", () => {
