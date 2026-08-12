@@ -40,6 +40,11 @@ type Options struct {
 	// spec's generator = llm({...}) config; anything else (the default) uses the
 	// seeded weighted picker. Both draw from the same actionsRoot candidate set.
 	Generator string
+	// LabelSource selects how candidates are named to the model picker
+	// (verifier.LabelSourceVisibleText or verifier.LabelSourceResourceID). The
+	// seeded picker selects by index and never reads a label, so this reaches
+	// the model picker only.
+	LabelSource string
 }
 
 type Summary struct {

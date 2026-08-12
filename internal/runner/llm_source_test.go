@@ -275,6 +275,20 @@ func pushLLMSnapshot(t *testing.T, v *verifier.Verifier) {
 	pushLLMSnapshotAtStep(t, v, 0)
 }
 
+func pushSnapshotTree(t *testing.T, v *verifier.Verifier, treeJSON string) {
+	t.Helper()
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.PushSnapshot(verifier.SnapshotInput{
+		Tree:          tree,
+		ScreenshotPNG: tinyPNG(t),
+	}); err != nil {
+		t.Fatalf("PushSnapshot: %v", err)
+	}
+}
+
 func pushLLMSnapshotAtStep(t *testing.T, v *verifier.Verifier, stepIndex int) {
 	t.Helper()
 	tree, err := hierarchy.Parse(llmTreeJSON)
@@ -348,6 +362,93 @@ func TestPickSourcesSeededByDefault(t *testing.T) {
 	// Even with a generator = llm() config present, the seeded flag wins.
 	if _, ok := action.(gojaSource); !ok {
 		t.Errorf("action source = %T, want gojaSource for --generator seeded", action)
+	}
+}
+
+// TestPickSourcesGivesTheLabelSourceToTheModelPickerOnly pins the asymmetry the
+// labelling factorial depends on: the label channel reaches the model picker,
+// and the seeded picker is handed a source that has nowhere to put one.
+func TestPickSourcesGivesTheLabelSourceToTheModelPickerOnly(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	_, verifierInstance := newLLMSource(t, fake)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	action, _, err := pickSources(Options{
+		Verifier:    verifierInstance,
+		Generator:   "llm",
+		LabelSource: verifier.LabelSourceResourceID,
+		Logger:      logger,
+	})
+	if err != nil {
+		t.Fatalf("pickSources: %v", err)
+	}
+	model, ok := action.(*llmSource)
+	if !ok {
+		t.Fatalf("action source = %T, want *llmSource", action)
+	}
+	if model.labelSource != verifier.LabelSourceResourceID {
+		t.Errorf("labelSource = %q, want %q", model.labelSource, verifier.LabelSourceResourceID)
+	}
+
+	seeded, _, err := pickSources(Options{
+		Verifier:    verifierInstance,
+		Generator:   "seeded",
+		LabelSource: verifier.LabelSourceResourceID,
+		Logger:      logger,
+	})
+	if err != nil {
+		t.Fatalf("pickSources: %v", err)
+	}
+	if _, ok := seeded.(gojaSource); !ok {
+		t.Errorf("action source = %T, want gojaSource, which carries no label channel", seeded)
+	}
+}
+
+// labelSplitTreeJSON names one control two ways, so a record can say which
+// channel the model was reading.
+const labelSplitTreeJSON = `{
+  "attributes": {"bounds": "[0,0,400,800]"},
+  "children": [
+    {"attributes": {"resource-id": "add_credit_button", "text": "Add credit", "bounds": "[0,0,400,100]"}, "clickable": true, "enabled": true, "children": []}
+  ]
+}`
+
+// TestLLMSourceRecordsTheLabelsTheModelSaw closes the loop from the flag to the
+// artifact: llm-calls.jsonl carries the candidate list as rendered, so a
+// directory of runs can be checked against the cell it claims rather than
+// trusted.
+func TestLLMSourceRecordsTheLabelsTheModelSaw(t *testing.T) {
+	for _, want := range []struct{ labelSource, label string }{
+		{verifier.LabelSourceVisibleText, "Add credit"},
+		{verifier.LabelSourceResourceID, "add_credit_button"},
+	} {
+		t.Run(want.labelSource, func(t *testing.T) {
+			fake := newFakeOpenRouter(t)
+			source, verifierInstance := newLLMSource(t, fake)
+			source.labelSource = want.labelSource
+			pushSnapshotTree(t, verifierInstance, labelSplitTreeJSON)
+
+			tap := candidateByKind(t, verifierInstance.Candidates(want.labelSource), verifier.ActionKindTap)
+			fake.choice = tap.Index
+			fake.chosenAction = tap.Description
+			if _, err := source.NextAction(context.Background(), 0); err != nil {
+				t.Fatalf("NextAction: %v", err)
+			}
+
+			call := lastCall(t, source)
+			if call.Outcome != trace.LLMOutcomeSelected {
+				t.Fatalf("outcome = %q, want selected", call.Outcome)
+			}
+			if len(call.Candidates) == 0 {
+				t.Fatal("no candidates recorded")
+			}
+			if call.Candidates[0].Label != want.label {
+				t.Errorf("recorded label = %q, want %q", call.Candidates[0].Label, want.label)
+			}
+			if !strings.Contains(call.UserPrompt, want.label) {
+				t.Errorf("prompt does not carry %q:\n%s", want.label, call.UserPrompt)
+			}
+		})
 	}
 }
 
@@ -449,7 +550,7 @@ func TestLLMSourceDrivesExecutedActions(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
-	candidates := verifierInstance.Candidates()
+	candidates := verifierInstance.Candidates(verifier.LabelSourceVisibleText)
 
 	// Step 1: the model picks the Tap on Submit by its number, echoing its
 	// description.
@@ -528,7 +629,7 @@ func TestLLMSourceAcceptsEchoWithWeightSuffix(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
-	candidates := verifierInstance.Candidates()
+	candidates := verifierInstance.Candidates(verifier.LabelSourceVisibleText)
 
 	tap := candidateByKind(t, candidates, verifier.ActionKindTap)
 	fake.choice = tap.Index
@@ -563,7 +664,7 @@ func TestLLMSourceStrictSkipsOnEchoMismatch(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
-	candidates := verifierInstance.Candidates()
+	candidates := verifierInstance.Candidates(verifier.LabelSourceVisibleText)
 
 	// A valid number, but the echoed action disagrees with that numbered entry:
 	// the model reasoned about one control and picked another's number.
@@ -617,7 +718,7 @@ func TestLLMCallRecordSeparatesGuardSkipFromDecline(t *testing.T) {
 		fake := newFakeOpenRouter(t)
 		source, verifierInstance := newLLMSource(t, fake)
 		pushLLMSnapshot(t, verifierInstance)
-		tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+		tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 		fake.choice = tap.Index
 		fake.chosenAction = `Tap "Something Else"`
 		if _, err := source.NextAction(context.Background(), stepIndex); !errors.Is(err, verifier.ErrNoAction) {
@@ -638,7 +739,7 @@ func TestLLMCallRecordSeparatesGuardSkipFromDecline(t *testing.T) {
 		fake := newFakeOpenRouter(t)
 		source, verifierInstance := newLLMSource(t, fake)
 		pushLLMSnapshot(t, verifierInstance)
-		tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+		tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 		fake.choice = tap.Index
 		fake.chosenAction = tap.Description
 		if _, err := source.NextAction(context.Background(), stepIndex); err != nil {
@@ -686,7 +787,7 @@ func TestLLMCallRecordsCandidateListAsShown(t *testing.T) {
 	source, verifierInstance := newLLMSource(t, fake)
 	source.instructions = "hunt for double submits"
 	pushLLMSnapshot(t, verifierInstance)
-	tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+	tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 	fake.choice = tap.Index
 	fake.chosenAction = tap.Description
 	if _, err := source.NextAction(context.Background(), 1); err != nil {
@@ -774,7 +875,7 @@ func TestLLMCallFileRecordsUsageLatencyAndScreenshot(t *testing.T) {
 	source.recorder = writer
 
 	pushLLMSnapshotAtStep(t, verifierInstance, 4)
-	tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+	tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 	fake.choice = tap.Index
 	fake.chosenAction = tap.Description
 	if _, err := source.NextAction(context.Background(), 4); err != nil {
@@ -814,7 +915,7 @@ func TestLLMCallScreenshotNamesObservedStep(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshotAtStep(t, verifierInstance, 4)
-	tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+	tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 	fake.choice = tap.Index
 	fake.chosenAction = tap.Description
 	if _, err := source.NextAction(context.Background(), 6); err != nil {

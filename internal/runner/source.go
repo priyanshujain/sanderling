@@ -107,6 +107,7 @@ func pickSources(options Options) (ActionSource, ExtractorSource, error) {
 		client:       client,
 		model:        config.Model,
 		instructions: config.Instructions,
+		labelSource:  options.LabelSource,
 		logger:       logger,
 		history:      newActionHistory(llmHistorySize),
 	}

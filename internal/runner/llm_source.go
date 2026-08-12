@@ -50,8 +50,12 @@ type llmSource struct {
 	// instructions is optional spec-level guidance appended to the system prompt
 	// to steer the model's bug-hunting (empty when unset).
 	instructions string
-	logger       *slog.Logger
-	history      *actionHistory
+	// labelSource is the channel each candidate's target is named by in the
+	// numbered list. It lives here rather than on the verifier because only this
+	// policy reads labels at all.
+	labelSource string
+	logger      *slog.Logger
+	history     *actionHistory
 	// recorder persists one record per step: what was sent, what came back, and
 	// how the step ended. Nil only in unit tests that never select.
 	recorder llmCallRecorder
@@ -127,7 +131,7 @@ func (s *llmSource) NextAction(ctx context.Context, stepIndex int) (verifier.Act
 // usable.
 func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCall) {
 	call := trace.LLMCall{Timestamp: time.Now(), Model: s.model}
-	candidates := s.verifier.Candidates()
+	candidates := s.verifier.Candidates(s.labelSource)
 	if len(candidates) == 0 {
 		call.Outcome = trace.LLMOutcomeNoCandidates
 		return llmSelection{}, call
