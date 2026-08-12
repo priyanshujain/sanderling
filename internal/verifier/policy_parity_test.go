@@ -62,7 +62,7 @@ func TestModelCandidateDescriptionsAreUniqueAndNamed(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			verifier := loadVerbSpec(t, verb)
 			seen := map[string]bool{}
-			for _, candidate := range verifier.Candidates() {
+			for _, candidate := range verifier.Candidates(LabelSourceVisibleText) {
 				if candidate.Description == "" {
 					t.Fatalf("%s produced a candidate with no description: %+v", verb, candidate.Action)
 				}
@@ -81,15 +81,62 @@ func TestModelCandidateDescriptionsAreUniqueAndNamed(t *testing.T) {
 // dropped, so the model could never navigate back or let the app settle.
 func TestModelIsOfferedTheUntargetedVerbs(t *testing.T) {
 	verifier := loadVerbSpec(t, "pressKeys")
-	if !hasCandidate(verifier.Candidates(), "Press back") {
+	if !hasCandidate(verifier.Candidates(LabelSourceVisibleText), "Press back") {
 		t.Errorf("pressKeys missing from the model's candidates: %v",
-			descriptions(verifier.Candidates()))
+			descriptions(verifier.Candidates(LabelSourceVisibleText)))
 	}
 	verifier = loadVerbSpec(t, "waitOnce")
-	if !hasCandidate(verifier.Candidates(), "Wait") {
+	if !hasCandidate(verifier.Candidates(LabelSourceVisibleText), "Wait") {
 		t.Errorf("waitOnce missing from the model's candidates: %v",
-			descriptions(verifier.Candidates()))
+			descriptions(verifier.Candidates(LabelSourceVisibleText)))
 	}
+}
+
+// TestSeededDrawStreamIgnoresLabelSource is the manipulation check the
+// labelling factorial needs: the seeded picker selects by index and never asks
+// for a label, so its draw stream must be bit-identical whichever channel the
+// model policy would have been given, and identical again to a run where the
+// candidate list was never enumerated at all. Any difference between two seeded
+// cells is then the application and the harness, not the factor.
+func TestSeededDrawStreamIgnoresLabelSource(t *testing.T) {
+	for _, verb := range policyVerbs {
+		t.Run(verb, func(t *testing.T) {
+			never := seededDrawStream(t, verb, "")
+			text := seededDrawStream(t, verb, LabelSourceVisibleText)
+			identifier := seededDrawStream(t, verb, LabelSourceResourceID)
+			if !slices.Equal(never, text) {
+				t.Errorf("enumerating visible-text candidates moved the seeded stream for %s", verb)
+			}
+			if !slices.Equal(never, identifier) {
+				t.Errorf("enumerating identifier candidates moved the seeded stream for %s", verb)
+			}
+		})
+	}
+}
+
+// seededDrawStream drives the seeded picker for the draw budget and returns
+// every action in order. An empty labelSource enumerates nothing; otherwise the
+// model's candidate list is built under that channel before each draw, which is
+// the only way the two could ever touch.
+func seededDrawStream(t *testing.T, verb, labelSource string) []string {
+	t.Helper()
+	verifier := loadVerbSpec(t, verb)
+	stream := make([]string, 0, seededDrawBudget)
+	for range seededDrawBudget {
+		if labelSource != "" {
+			verifier.Candidates(labelSource)
+		}
+		action, err := verifier.NextAction()
+		if errors.Is(err, ErrNoAction) {
+			stream = append(stream, "no action")
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s next action: %v", verb, err)
+		}
+		stream = append(stream, fmt.Sprintf("%+v", action))
+	}
+	return stream
 }
 
 // loadVerbSpec builds a verifier whose whole action tree is one builtin verb,
@@ -128,7 +175,7 @@ func modelOfferedActions(t *testing.T, verb string) map[string]Action {
 	t.Helper()
 	verifier := loadVerbSpec(t, verb)
 	offered := map[string]Action{}
-	for _, candidate := range verifier.Candidates() {
+	for _, candidate := range verifier.Candidates(LabelSourceVisibleText) {
 		offered[actionIdentity(candidate.Action)] = candidate.Action
 	}
 	return offered

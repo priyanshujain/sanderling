@@ -24,6 +24,23 @@ const enumTreeJSON = `{
   ]
 }`
 
+// labelChannelTreeJSON pulls the two label channels apart: every identifier
+// differs from the text a user reads, one control has a class but no identifier,
+// one has neither, and one has an identifier but nothing readable at all.
+const labelChannelTreeJSON = `{
+  "attributes": {"bounds": "[0,0,1080,2400]"},
+  "children": [
+    {"attributes": {"resource-id": "add_credit_button", "class": "android.widget.Button", "bounds": "[0,100,1080,200]"}, "clickable": true, "enabled": true, "children": [
+      {"attributes": {"text": "Add credit", "bounds": "[0,100,540,200]"}, "children": []}
+    ]},
+    {"attributes": {"class": "android.widget.CheckBox", "text": "Remember me", "bounds": "[0,250,1080,300]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"class": "android.widget.CheckBox", "text": "Stay signed in", "bounds": "[0,300,1080,350]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"text": "Sign in", "bounds": "[0,400,1080,450]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "amount_field", "class": "EditText", "hintText": "Amount", "bounds": "[0,500,1080,600]"}, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "silent_row", "bounds": "[0,650,1080,700]"}, "clickable": true, "enabled": true, "children": []}
+  ]
+}`
+
 // enumVerifier loads a spec whose actions root is the given plain-object graph
 // and stages the given tree, so Candidates walks a controlled action tree. The
 // spec is bundled with the goja runtime entry because the model arm reads the
@@ -56,7 +73,7 @@ func hasCandidate(candidates []ActionCandidate, description string) bool {
 
 func TestCandidatesLabelsControlsByVisibleText(t *testing.T) {
 	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := v.Candidates(LabelSourceVisibleText)
 
 	// The empty-text clickable wrapper is labeled by its child Text, NOT its
 	// resource-id.
@@ -79,9 +96,110 @@ func TestCandidatesLabelsControlsByVisibleText(t *testing.T) {
 	}
 }
 
+func TestCandidatesLabelsControlsByResourceIdentifier(t *testing.T) {
+	candidates := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
+		Candidates(LabelSourceResourceID)
+
+	if !hasCandidate(candidates, `Tap "add_credit_button"`) {
+		t.Errorf("want the control named by its identifier, got %v", descriptions(candidates))
+	}
+	// Nothing a user could read may reach this channel, including through a
+	// fallback rung: an arm that sees the text is the other arm.
+	for _, readable := range []string{`Tap "Add credit"`, `Tap "Remember me"`, `Tap "Sign in"`} {
+		if hasCandidate(candidates, readable) {
+			t.Errorf("visible text leaked in as %s: %v", readable, descriptions(candidates))
+		}
+	}
+}
+
+func TestCandidatesIdentifierChannelFallsBackToClassThenBareControl(t *testing.T) {
+	candidates := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
+		Candidates(LabelSourceResourceID)
+
+	if !hasCandidate(candidates, `Tap "android.widget.CheckBox"`) {
+		t.Errorf("a control with no identifier falls back to its class, got %v", descriptions(candidates))
+	}
+	if !hasCandidate(candidates, `Tap "control"`) {
+		t.Errorf("a control with neither identifier nor class falls back to a bare word, got %v",
+			descriptions(candidates))
+	}
+}
+
+// TestCandidatesIdentifierChannelMergesControlsItCannotTellApart pins the cost
+// of the channel rather than a defect in it: dedup keys on the rendered line, so
+// two identifier-less controls of one class arrive as ONE numbered entry and the
+// model can only reach the first. The list the identifier arm picks from is
+// therefore shorter than the text arm's on the same screen.
+func TestCandidatesIdentifierChannelMergesControlsItCannotTellApart(t *testing.T) {
+	text := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
+		Candidates(LabelSourceVisibleText)
+	identifier := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
+		Candidates(LabelSourceResourceID)
+
+	if count(text, `Tap "Remember me"`) != 1 || count(text, `Tap "Stay signed in"`) != 1 {
+		t.Fatalf("the text channel should address both checkboxes, got %v", descriptions(text))
+	}
+	if got := count(identifier, `Tap "android.widget.CheckBox"`); got != 1 {
+		t.Errorf("the two checkboxes should merge into one line, got %d: %v", got, descriptions(identifier))
+	}
+	if len(identifier) >= len(text) {
+		t.Errorf("identifier list (%d) should be shorter than the text list (%d): %v vs %v",
+			len(identifier), len(text), descriptions(identifier), descriptions(text))
+	}
+}
+
+// TestCandidatesVisibleTextFallsBackToTheIdentifier is where the two channels
+// agree: a control carrying nothing readable is named by its identifier in both,
+// so a screen built entirely from such controls is one cell, not two.
+func TestCandidatesVisibleTextFallsBackToTheIdentifier(t *testing.T) {
+	candidates := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
+		Candidates(LabelSourceVisibleText)
+
+	if !hasCandidate(candidates, `Tap "silent_row"`) {
+		t.Errorf("a control with no readable text falls back to its identifier, got %v",
+			descriptions(candidates))
+	}
+}
+
+func TestCandidatesTypingLabelFollowsTheLabelSource(t *testing.T) {
+	text := enumVerifier(t, "{kind:'builtin', verb:'typing'}", labelChannelTreeJSON).
+		Candidates(LabelSourceVisibleText)
+	if !hasCandidate(text, `Type into "Amount" (number)`) {
+		t.Errorf("want the field named by its hint, got %v", descriptions(text))
+	}
+
+	identifier := enumVerifier(t, "{kind:'builtin', verb:'typing'}", labelChannelTreeJSON).
+		Candidates(LabelSourceResourceID)
+	if !hasCandidate(identifier, `Type into "amount_field" (number)`) {
+		t.Errorf("want the field named by its identifier, got %v", descriptions(identifier))
+	}
+}
+
+// TestLabelSourceChangesOnlyTheDescription is the claim the factorial rests on:
+// the channel renames the target and does nothing else, so a difference in
+// defect yield cannot come from the two arms executing different actions.
+func TestLabelSourceChangesOnlyTheDescription(t *testing.T) {
+	text := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
+		Candidates(LabelSourceVisibleText)
+	identifier := enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON).
+		Candidates(LabelSourceResourceID)
+
+	readable, ok := findCandidate(text, `Tap "Add credit"`)
+	if !ok {
+		t.Fatalf("missing the text-labelled tap: %v", descriptions(text))
+	}
+	named, ok := findCandidate(identifier, `Tap "add_credit_button"`)
+	if !ok {
+		t.Fatalf("missing the identifier-labelled tap: %v", descriptions(identifier))
+	}
+	if readable.Action != named.Action {
+		t.Errorf("same control, different action:\n text=%+v\n   id=%+v", readable.Action, named.Action)
+	}
+}
+
 func TestCandidatesDropsDisabledControls(t *testing.T) {
 	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", enumTreeJSON)
-	for _, candidate := range v.Candidates() {
+	for _, candidate := range v.Candidates(LabelSourceVisibleText) {
 		if strings.Contains(candidate.Description, "Off") {
 			t.Errorf("disabled control surfaced as %q", candidate.Description)
 		}
@@ -90,7 +208,7 @@ func TestCandidatesDropsDisabledControls(t *testing.T) {
 
 func TestCandidatesTypingExposesInputType(t *testing.T) {
 	v := enumVerifier(t, "{kind:'builtin', verb:'typing'}", enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := v.Candidates(LabelSourceVisibleText)
 	candidate, ok := findCandidate(candidates, `Type into "Amount" (number)`)
 	if !ok {
 		t.Fatalf("want typing candidate with input type, got %v", descriptions(candidates))
@@ -113,7 +231,7 @@ func TestCandidatesLabelsEditableFieldByHintNotTypedValue(t *testing.T) {
       ]
     }`
 	v := enumVerifier(t, "{kind:'builtin', verb:'typing'}", tree)
-	candidates := v.Candidates()
+	candidates := v.Candidates(LabelSourceVisibleText)
 	if hasCandidate(candidates, `Type into "99" (number)`) || hasCandidate(candidates, `Type into "99"`) {
 		t.Errorf("editable field labeled by its typed value: %v", descriptions(candidates))
 	}
@@ -126,7 +244,7 @@ func TestCandidatesKeepsGestureVerbsDistinct(t *testing.T) {
 	v := enumVerifier(t,
 		"{kind:'weighted', branches:[[1,{kind:'builtin',verb:'scrolls'}],[1,{kind:'builtin',verb:'swipes'}]]}",
 		enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := v.Candidates(LabelSourceVisibleText)
 
 	// `scrolls` folds to one directional pair over the single scrollable
 	// container, which is what keeps the list short.
@@ -168,7 +286,7 @@ func TestCandidatesWeightsCombineAcrossPaths(t *testing.T) {
 	v := enumVerifier(t,
 		"{kind:'weighted', branches:[[1,{kind:'builtin',verb:'taps'}],[1,{kind:'builtin',verb:'taps'}]]}",
 		oneClickable)
-	candidates := v.Candidates()
+	candidates := v.Candidates(LabelSourceVisibleText)
 	if len(candidates) != 1 {
 		t.Fatalf("want one deduped candidate, got %v", descriptions(candidates))
 	}
@@ -185,7 +303,7 @@ func TestCandidatesWeightReflectsBranchShare(t *testing.T) {
 	v := enumVerifier(t,
 		"{kind:'weighted', branches:[[1,{kind:'builtin',verb:'taps'}],[3,{kind:'builtin',verb:'typing'}]]}",
 		enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := v.Candidates(LabelSourceVisibleText)
 	tap, ok := findCandidate(candidates, `Tap "Sign in"`)
 	if !ok {
 		t.Fatalf("missing tap candidate: %v", descriptions(candidates))
@@ -204,7 +322,7 @@ func TestCandidatesWeightReflectsBranchShare(t *testing.T) {
 
 func TestCandidatesUnweightedTreeShowsNoWeight(t *testing.T) {
 	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", enumTreeJSON)
-	for _, candidate := range v.Candidates() {
+	for _, candidate := range v.Candidates(LabelSourceVisibleText) {
 		if candidate.Weighted || candidate.Weight != 0 {
 			t.Errorf("%q carries a weight despite no weighted node", candidate.Description)
 		}
@@ -218,7 +336,7 @@ func TestCandidatesCallsAuthoredLeafOnce(t *testing.T) {
       {kind:'InputText', into:'id:Amount', text:'42'}
     ]}`
 	v := enumVerifier(t, actions, enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := v.Candidates(LabelSourceVisibleText)
 
 	// Authored Tap resolves its selector to the visible-text label.
 	if !hasCandidate(candidates, `Tap "Sign in"`) {
@@ -252,7 +370,7 @@ func TestCandidatesSurfaceAuthoredUntargetedActions(t *testing.T) {
       {kind:'PressKey', key:'back'},
       {kind:'Wait'}
     ]}`
-	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates()
+	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates(LabelSourceVisibleText)
 	for _, want := range []string{"Swipe from (10,600) to (10,100)", "Press back", "Wait"} {
 		if !hasCandidate(candidates, want) {
 			t.Errorf("authored %q missing: %v", want, descriptions(candidates))
@@ -262,7 +380,7 @@ func TestCandidatesSurfaceAuthoredUntargetedActions(t *testing.T) {
 
 func TestCandidatesOffRouteLeafYieldsNothing(t *testing.T) {
 	v := enumVerifier(t, "{kind:'actions', generate: () => []}", enumTreeJSON)
-	if got := v.Candidates(); len(got) != 0 {
+	if got := v.Candidates(LabelSourceVisibleText); len(got) != 0 {
 		t.Errorf("off-route leaf should yield no candidates, got %v", descriptions(got))
 	}
 }
@@ -280,7 +398,7 @@ func TestCandidatesSkipsCrossFadeFrames(t *testing.T) {
       ]
     }`
 	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", crossFade)
-	if got := v.Candidates(); len(got) != 0 {
+	if got := v.Candidates(LabelSourceVisibleText); len(got) != 0 {
 		t.Errorf("cross-fade frame should yield no candidates, got %v", descriptions(got))
 	}
 	// The seeded policy is skipped by the SAME guard, in the shared producer,
@@ -292,13 +410,13 @@ func TestCandidatesSkipsCrossFadeFrames(t *testing.T) {
 
 func TestCandidatesNilWithoutTreeOrActions(t *testing.T) {
 	withActions := newLoadedVerifier(t, "globalThis.actions = {kind:'builtin', verb:'taps'};")
-	if got := withActions.Candidates(); got != nil {
+	if got := withActions.Candidates(LabelSourceVisibleText); got != nil {
 		t.Errorf("Candidates with no tree = %v, want nil", got)
 	}
 	noActions := newLoadedVerifier(t, "globalThis.properties = {};")
 	tree, _ := hierarchy.Parse(enumTreeJSON)
 	noActions.lastTree = tree
-	if got := noActions.Candidates(); got != nil {
+	if got := noActions.Candidates(LabelSourceVisibleText); got != nil {
 		t.Errorf("Candidates with no actions root = %v, want nil", got)
 	}
 }

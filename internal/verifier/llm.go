@@ -115,7 +115,8 @@ type ActionCandidate struct {
 	// Description is the rendered action shown to the model and echoed back as
 	// chosen_action, e.g. `Tap "Add credit"`. Dedup keys on it, so it is unique.
 	Description string
-	// Label is the visible-text target label (empty for gestures).
+	// Label is the target label the selected LabelSource named (empty for
+	// gestures).
 	Label string
 	// Weight is the effective selection weight as a percentage (1..100),
 	// meaningful only when Weighted is true (the tree used `weighted`).
@@ -142,6 +143,19 @@ type ActionCandidate struct {
 // enough to render on one numbered line.
 const maxLabelRunes = 40
 
+// The label sources a candidate's target can be named by. This is the
+// observation channel the model reads, and nothing else: the seeded picker
+// selects by index and never asks for a label, so the two seeded cells of a
+// labelling factorial draw the identical stream.
+const (
+	// LabelSourceVisibleText names a control by what a user would read. It is
+	// the default, and the channel every run so far was produced with.
+	LabelSourceVisibleText = "visible-text"
+	// LabelSourceResourceID names a control by the identifier the app assigned
+	// it, which no user ever sees.
+	LabelSourceResourceID = "resource-id"
+)
+
 // Candidates enumerates every action the spec's weighted actionsRoot yields at
 // the current step, each tagged with a plainly-worded description and its
 // effective weight, for the LLM generator to pick one number from. It walks the
@@ -149,7 +163,11 @@ const maxLabelRunes = 40
 // selection probability), authored actions()/whenRoute leaves are called once
 // for their concrete actions, and builtin verbs come straight from the picker's
 // own enumeration. Identical descriptions dedup, summing weight.
-func (v *Verifier) Candidates() []ActionCandidate {
+//
+// labelSource selects the channel each target is named by. An unrecognized
+// value (including the zero value) names targets by visible text; the CLI
+// rejects an unknown mode before a run starts, so only a test reaches that.
+func (v *Verifier) Candidates(labelSource string) []ActionCandidate {
 	if v.lastTree == nil {
 		return nil
 	}
@@ -157,9 +175,9 @@ func (v *Verifier) Candidates() []ActionCandidate {
 	if root == nil || goja.IsUndefined(root) || goja.IsNull(root) {
 		return nil
 	}
-	nodeIndex := buildNodeIndex(v.lastTree)
+	labels := labelContext{nodeIndex: buildNodeIndex(v.lastTree), source: labelSource}
 	var raw []ActionCandidate
-	v.collectNode(root, 1.0, false, nodeIndex, &raw)
+	v.collectNode(root, 1.0, false, labels, &raw)
 	return finalizeCandidates(raw)
 }
 
@@ -167,7 +185,7 @@ func (v *Verifier) Candidates() []ActionCandidate {
 // accumulated probability the seeded picker reaches this node; weighted records
 // whether any weighted node lies on the path (so weights are shown only when the
 // spec actually declared them).
-func (v *Verifier) collectNode(node goja.Value, prob float64, weighted bool, nodeIndex map[*hierarchy.Element]*hierarchy.Node, out *[]ActionCandidate) {
+func (v *Verifier) collectNode(node goja.Value, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) {
 	object := node.ToObject(v.runtime)
 	if object == nil {
 		return
@@ -178,13 +196,13 @@ func (v *Verifier) collectNode(node goja.Value, prob float64, weighted bool, nod
 	}
 	switch kind.String() {
 	case "weighted":
-		v.collectWeighted(object, prob, nodeIndex, out)
+		v.collectWeighted(object, prob, labels, out)
 	case "actions":
-		v.collectActions(object, prob, weighted, nodeIndex, out)
+		v.collectActions(object, prob, weighted, labels, out)
 	case "builtin":
 		verb := object.Get("verb")
 		if verb != nil && !goja.IsUndefined(verb) {
-			v.collectBuiltin(verb.String(), prob, weighted, nodeIndex, out)
+			v.collectBuiltin(verb.String(), prob, weighted, labels, out)
 		}
 	case "llm":
 		// The llm marker is the generator, not part of the candidate tree.
@@ -194,7 +212,7 @@ func (v *Verifier) collectNode(node goja.Value, prob float64, weighted bool, nod
 // collectWeighted recurses each branch, splitting the incoming probability by
 // the branch weight over the sibling total (matching the seeded picker's single
 // weighted draw).
-func (v *Verifier) collectWeighted(object *goja.Object, prob float64, nodeIndex map[*hierarchy.Element]*hierarchy.Node, out *[]ActionCandidate) {
+func (v *Verifier) collectWeighted(object *goja.Object, prob float64, labels labelContext, out *[]ActionCandidate) {
 	branches := object.Get("branches")
 	if branches == nil {
 		return
@@ -228,7 +246,7 @@ func (v *Verifier) collectWeighted(object *goja.Object, prob float64, nodeIndex 
 		if children[i] == nil {
 			continue
 		}
-		v.collectNode(children[i], prob*weights[i]/total, true, nodeIndex, out)
+		v.collectNode(children[i], prob*weights[i]/total, true, labels, out)
 	}
 }
 
@@ -236,7 +254,7 @@ func (v *Verifier) collectWeighted(object *goja.Object, prob float64, nodeIndex 
 // and, off-route, returns []), turning each concrete descriptor into a
 // candidate. It runs OUTSIDE the picker's rng scope, so from(...).generate()
 // draws nothing and no seed advances.
-func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bool, nodeIndex map[*hierarchy.Element]*hierarchy.Node, out *[]ActionCandidate) {
+func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) {
 	generate, ok := goja.AssertFunction(object.Get("generate"))
 	if !ok {
 		return
@@ -251,7 +269,7 @@ func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bo
 	}
 	length := int(array.Get("length").ToInteger())
 	for i := range length {
-		candidate, ok := v.candidateFromDescriptor(array.Get(strconv.Itoa(i)), nodeIndex)
+		candidate, ok := v.candidateFromDescriptor(array.Get(strconv.Itoa(i)), labels)
 		if !ok {
 			continue
 		}
@@ -263,8 +281,8 @@ func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bo
 
 // candidateFromDescriptor lowers one authored ActionDescriptor (as a goja
 // object) into a ready-to-run candidate, resolving the target's coordinates,
-// selector, and visible-text label. Actions on a disabled control are dropped.
-func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hierarchy.Element]*hierarchy.Node) (ActionCandidate, bool) {
+// selector, and label. Actions on a disabled control are dropped.
+func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext) (ActionCandidate, bool) {
 	object := value.ToObject(v.runtime)
 	if object == nil {
 		return ActionCandidate{}, false
@@ -276,7 +294,7 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hier
 	kind := ActionKind(kindValue.String())
 	switch kind {
 	case ActionKindTap, ActionKindDoubleTap, ActionKindLongPress:
-		target := v.resolveTarget(object.Get("on"), nodeIndex)
+		target := v.resolveTarget(object.Get("on"), labels)
 		if target.disabled {
 			return ActionCandidate{}, false
 		}
@@ -286,7 +304,7 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hier
 			Action: Action{Kind: kind, On: target.selector, X: target.x, Y: target.y},
 		}, true
 	case ActionKindInputText:
-		target := v.resolveTarget(object.Get("into"), nodeIndex)
+		target := v.resolveTarget(object.Get("into"), labels)
 		if target.disabled {
 			return ActionCandidate{}, false
 		}
@@ -298,7 +316,7 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hier
 			Action:    Action{Kind: kind, On: target.selector, X: target.x, Y: target.y, Text: text},
 		}, true
 	case ActionKindScroll:
-		target := v.resolveTarget(object.Get("in"), nodeIndex)
+		target := v.resolveTarget(object.Get("in"), labels)
 		direction := stringField(object, "direction")
 		if direction == "" {
 			direction = "down"
@@ -309,8 +327,8 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hier
 			Action:    Action{Kind: kind, On: target.selector, Direction: direction},
 		}, true
 	case ActionKindSwipe:
-		from := v.resolveTarget(object.Get("from"), nodeIndex)
-		to := v.resolveTarget(object.Get("to"), nodeIndex)
+		from := v.resolveTarget(object.Get("from"), labels)
+		to := v.resolveTarget(object.Get("to"), labels)
 		return ActionCandidate{
 			Kind: kind,
 			Action: Action{
@@ -343,14 +361,14 @@ type resolvedTarget struct {
 }
 
 // resolveTarget reads an authored action's target. Ax element handles carry
-// x/y/__sanderlingSelector plus their own text; a bare selector string resolves
-// against the current tree; a point carries geometry only.
-func (v *Verifier) resolveTarget(value goja.Value, nodeIndex map[*hierarchy.Element]*hierarchy.Node) resolvedTarget {
+// x/y/__sanderlingSelector plus their own text and id; a bare selector string
+// resolves against the current tree; a point carries geometry only.
+func (v *Verifier) resolveTarget(value goja.Value, labels labelContext) resolvedTarget {
 	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
 		return resolvedTarget{}
 	}
 	if selector, ok := value.Export().(string); ok {
-		return v.targetFromSelector(selector, nodeIndex)
+		return v.targetFromSelector(selector, labels)
 	}
 	object := value.ToObject(v.runtime)
 	if object == nil {
@@ -366,25 +384,25 @@ func (v *Verifier) resolveTarget(value goja.Value, nodeIndex map[*hierarchy.Elem
 		selector: selector,
 	}
 	if element := v.findBySelector(selector); element != nil {
-		target.label = visibleLabel(element, nodeIndex)
+		target.label = labels.label(element)
 		target.inputType = inputTypeHint(element)
 		target.disabled = !element.Enabled && hasEnabled(element)
 	}
 	if target.label == "" {
-		target.label = truncateLabel(stringField(object, "text"))
+		target.label = truncateLabel(stringField(object, labels.handleField()))
 	}
 	return target
 }
 
 // targetFromSelector resolves a bare selector-string target against the tree.
-func (v *Verifier) targetFromSelector(selector string, nodeIndex map[*hierarchy.Element]*hierarchy.Node) resolvedTarget {
+func (v *Verifier) targetFromSelector(selector string, labels labelContext) resolvedTarget {
 	target := resolvedTarget{selector: selector}
 	element := v.findBySelector(selector)
 	if element == nil {
 		return target
 	}
 	target.x, target.y = element.Bounds.Center()
-	target.label = visibleLabel(element, nodeIndex)
+	target.label = labels.label(element)
 	target.inputType = inputTypeHint(element)
 	target.disabled = !element.Enabled && hasEnabled(element)
 	return target
@@ -403,7 +421,7 @@ func (v *Verifier) findBySelector(selector string) *hierarchy.Element {
 // the two policies select over one action space and cannot drift apart. Each
 // entry's action arrives on the wire contract DecodeAction already reads, so a
 // chosen candidate executes the action the seeded draw would have executed.
-func (v *Verifier) collectBuiltin(verb string, prob float64, weighted bool, nodeIndex map[*hierarchy.Element]*hierarchy.Node, out *[]ActionCandidate) {
+func (v *Verifier) collectBuiltin(verb string, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) {
 	entries, err := v.enumerateBuiltin(verb)
 	if err != nil {
 		return
@@ -422,7 +440,7 @@ func (v *Verifier) collectBuiltin(verb string, prob float64, weighted bool, node
 		}
 		if entry.targetIndex >= 0 && entry.targetIndex < len(targets) {
 			element := targets[entry.targetIndex].element
-			candidate.Label = visibleLabel(element, nodeIndex)
+			candidate.Label = labels.label(element)
 			candidate.InputType = inputTypeHint(element)
 		}
 		*out = append(*out, candidate)
@@ -556,6 +574,46 @@ func buildNodeIndex(tree *hierarchy.Tree) map[*hierarchy.Element]*hierarchy.Node
 	}
 	walk(tree.Root)
 	return index
+}
+
+// labelContext carries what naming a candidate's target takes: the node index
+// descendant text is borrowed through, and the channel the name comes from.
+type labelContext struct {
+	nodeIndex map[*hierarchy.Element]*hierarchy.Node
+	source    string
+}
+
+func (l labelContext) label(element *hierarchy.Element) string {
+	if l.source == LabelSourceResourceID {
+		return resourceIdentifierLabel(element)
+	}
+	return visibleLabel(element, l.nodeIndex)
+}
+
+// handleField is the ax-element handle field a label falls back to when the
+// target's selector no longer resolves against the current tree. Reading the
+// handle's text there would leak visible text into an identifier-labelled run,
+// which is the one thing that arm must not see.
+func (l labelContext) handleField() string {
+	if l.source == LabelSourceResourceID {
+		return "id"
+	}
+	return "text"
+}
+
+// resourceIdentifierLabel names a control by the identifier the app assigned it,
+// then by its class, then by a bare word. Every rung a user could read (text,
+// description, hint, descendant text) is deliberately absent: the point of this
+// channel is that the model sees no visible text at all, so a fallback that
+// reached for text would silently turn the arm back into the default one.
+func resourceIdentifierLabel(element *hierarchy.Element) string {
+	if element.ResourceID != "" {
+		return truncateLabel(element.ResourceID)
+	}
+	if element.Class != "" {
+		return element.Class
+	}
+	return "control"
 }
 
 // visibleLabel names a control by what a user would read: its own text, then
