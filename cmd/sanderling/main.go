@@ -27,6 +27,7 @@ type testOptions struct {
 	iosAppPath     string
 	androidAppPath string
 	duration       time.Duration
+	maxSteps       int
 	seed           int64
 	output         string
 	clearData      bool
@@ -60,6 +61,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.StringVar(&options.iosAppPath, "ios-app-path", "", "path to the .app bundle for iOS clear-state reinstall (simulator: simctl; device: devicectl)")
 	flagSet.StringVar(&options.androidAppPath, "android-app-path", "", "path to the .apk for Android clear-state reinstall; required to reset apps on OEM builds that deny `pm clear`")
 	flagSet.DurationVar(&options.duration, "duration", 5*time.Minute, "total test duration")
+	flagSet.IntVar(&options.maxSteps, "max-steps", 0, "stop after this many steps (0 = no cap; the duration deadline governs). A step budget is what makes two generators comparable, since one making a model call per step and one drawing from a PRNG are not comparable per second")
 	flagSet.Int64Var(&options.seed, "seed", 0, "RNG seed (0 = random)")
 	flagSet.StringVar(&options.output, "output", "./runs", "output directory for traces")
 	flagSet.BoolVar(&options.clearData, "clear-data", true, "clear app data before launching so each run starts from a fresh install; pass --clear-data=false to resume prior state")
@@ -77,6 +79,9 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	case "android", "ios", "web":
 	default:
 		return testOptions{}, fmt.Errorf("unsupported platform: %q (android, ios, web)", options.platform)
+	}
+	if options.maxSteps < 0 {
+		return testOptions{}, fmt.Errorf("--max-steps must not be negative: %d", options.maxSteps)
 	}
 	switch options.generator {
 	case "seeded", "llm":

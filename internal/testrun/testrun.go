@@ -31,6 +31,7 @@ type Options struct {
 	IosAppPath     string
 	AndroidAppPath string
 	Duration       time.Duration
+	MaxSteps       int
 	Seed           int64
 	Output         string
 	ClearData      bool
@@ -159,9 +160,14 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	}()
 	fmt.Fprintf(stdout, "trace dir: %s\n", runDirectory)
 
-	fmt.Fprintf(stdout, "running for %s (seed=%d)\n", options.Duration, seed)
+	if options.MaxSteps > 0 {
+		fmt.Fprintf(stdout, "running for %s or %d steps, whichever comes first (seed=%d)\n", options.Duration, options.MaxSteps, seed)
+	} else {
+		fmt.Fprintf(stdout, "running for %s (seed=%d)\n", options.Duration, seed)
+	}
 	summary, err := runner.Run(ctx, runner.Options{
 		Duration:    options.Duration,
+		MaxSteps:    options.MaxSteps,
 		IdleTimeout: 1 * time.Second,
 		BundleID:    options.BundleID,
 		Driver:      activeDriver,

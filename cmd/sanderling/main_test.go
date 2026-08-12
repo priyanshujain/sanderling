@@ -259,3 +259,41 @@ func TestRun_TestSubcommand_PipelineErrors(t *testing.T) {
 		t.Errorf("expected bundle-resolution error for the missing spec, got %v", err)
 	}
 }
+
+func TestParseTestArgs_MaxStepsDefaultsToUncapped(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.maxSteps != 0 {
+		t.Errorf("maxSteps default: got %d, want 0", options.maxSteps)
+	}
+}
+
+func TestParseTestArgs_MaxSteps(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--max-steps", "300",
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.maxSteps != 300 {
+		t.Errorf("maxSteps: got %d, want 300", options.maxSteps)
+	}
+}
+
+func TestParseTestArgs_RejectsNegativeMaxSteps(t *testing.T) {
+	_, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--max-steps", "-1",
+	}, io.Discard)
+	if err == nil {
+		t.Fatal("expected an error for a negative --max-steps")
+	}
+}

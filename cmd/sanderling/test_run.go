@@ -18,6 +18,7 @@ func runTestPipeline(ctx context.Context, options testOptions, stdout io.Writer)
 		IosAppPath:     options.iosAppPath,
 		AndroidAppPath: options.androidAppPath,
 		Duration:       options.duration,
+		MaxSteps:       options.maxSteps,
 		Seed:           options.seed,
 		Output:         options.output,
 		ClearData:      options.clearData,
