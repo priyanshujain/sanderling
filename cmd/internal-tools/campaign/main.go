@@ -29,6 +29,7 @@ type config struct {
 	devices         []string
 	sanderlingPath  string
 	outputDirectory string
+	runTimeout      time.Duration
 	extraArguments  []string
 }
 
@@ -61,6 +62,7 @@ func parseArguments(arguments []string, stderr io.Writer) (config, error) {
 	flagSet.DurationVar(&configuration.duration, "duration", 5*time.Minute, "per-run wall-clock ceiling")
 	flagSet.StringVar(&seedSpecification, "seeds", "", "seeds to run: ranges and lists, e.g. 1-10,20,30-32 (required)")
 	flagSet.StringVar(&deviceList, "devices", "", "comma-separated device identifiers; one concurrent worker per device (on web these are worker labels, no device flag is passed)")
+	flagSet.DurationVar(&configuration.runTimeout, "run-timeout", 0, "kill a run that outlives this (default: three times --duration). A wedged run holds its worker for the rest of the sweep, and nothing else will send it a signal on an unattended host")
 	flagSet.StringVar(&configuration.sanderlingPath, "sanderling", "sanderling", "sanderling binary to invoke")
 	flagSet.StringVar(&configuration.outputDirectory, "output", "", "campaign directory to create (required)")
 	if err := flagSet.Parse(arguments); err != nil {
@@ -96,6 +98,16 @@ func parseArguments(arguments []string, stderr io.Writer) (config, error) {
 	}
 	if configuration.duration <= 0 {
 		return config{}, fmt.Errorf("--duration must be positive: %s", configuration.duration)
+	}
+	if configuration.runTimeout < 0 {
+		return config{}, fmt.Errorf("--run-timeout must not be negative: %s", configuration.runTimeout)
+	}
+	if configuration.runTimeout == 0 {
+		configuration.runTimeout = 3 * configuration.duration
+	}
+	if configuration.runTimeout <= configuration.duration {
+		return config{}, fmt.Errorf("--run-timeout %s must exceed --duration %s, or every run is killed before it finishes",
+			configuration.runTimeout, configuration.duration)
 	}
 	seeds, err := parseSeeds(seedSpecification)
 	if err != nil {

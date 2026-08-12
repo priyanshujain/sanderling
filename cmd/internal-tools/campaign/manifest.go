@@ -26,6 +26,7 @@ type manifest struct {
 	BundleID          string    `json:"bundle_id"`
 	MaxSteps          int       `json:"max_steps"`
 	DurationMillis    int64     `json:"duration_millis"`
+	RunTimeoutMillis  int64     `json:"run_timeout_millis"`
 	Seeds             []int64   `json:"seeds"`
 	Devices           []string  `json:"devices"`
 	Host              string    `json:"host"`
@@ -48,6 +49,7 @@ func buildManifest(configuration config, host, binaryPath, version string, start
 		BundleID:          configuration.bundleID,
 		MaxSteps:          configuration.maxSteps,
 		DurationMillis:    configuration.duration.Milliseconds(),
+		RunTimeoutMillis:  configuration.runTimeout.Milliseconds(),
 		Seeds:             configuration.seeds,
 		Devices:           devices,
 		Host:              host,

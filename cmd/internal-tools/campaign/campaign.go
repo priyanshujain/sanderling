@@ -42,6 +42,7 @@ type runRecord struct {
 	Device         string    `json:"device,omitempty"`
 	ExitCode       int       `json:"exit_code"`
 	LaunchError    string    `json:"launch_error,omitempty"`
+	TimedOut       bool      `json:"timed_out,omitempty"`
 	StartedAt      time.Time `json:"started_at"`
 	DurationMillis int64     `json:"duration_millis"`
 	RunDirectory   string    `json:"run_directory,omitempty"`
@@ -170,8 +171,13 @@ func (c *campaign) runSeed(ctx context.Context, seed int64, device string) runRe
 	}
 	defer logFile.Close()
 
+	runCtx, cancelRun := context.WithTimeout(ctx, c.configuration.runTimeout)
+	defer cancelRun()
 	start := time.Now()
-	exitCode, runErr := c.executor(ctx, c.configuration.sanderlingPath, runArguments(c.configuration, seedText, device), logFile)
+	exitCode, runErr := c.executor(runCtx, c.configuration.sanderlingPath, runArguments(c.configuration, seedText, device), logFile)
+	if runCtx.Err() != nil && ctx.Err() == nil {
+		record.TimedOut = true
+	}
 	record.DurationMillis = time.Since(start).Milliseconds()
 	record.ExitCode = exitCode
 	if runErr != nil {
@@ -208,6 +214,8 @@ func (c *campaign) report(record runRecord) {
 
 func outcome(record runRecord) string {
 	switch {
+	case record.TimedOut:
+		return "timed out"
 	case record.ExitCode != 0:
 		return "failed"
 	case record.FirstViolationOriginStep != nil:

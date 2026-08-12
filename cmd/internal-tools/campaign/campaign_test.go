@@ -315,3 +315,48 @@ func TestRunCampaign_UnreadableTraceIsNotASuccessfulCampaign(t *testing.T) {
 		}
 	}
 }
+
+func TestRunCampaign_KillsAndRecordsAWedgedRun(t *testing.T) {
+	campaignDirectory := filepath.Join(t.TempDir(), "cell")
+	configuration := testConfiguration(t, campaignDirectory,
+		"--seeds", "1", "--duration", "50ms", "--run-timeout", "300ms")
+
+	executor := versionAnswering(func(ctx context.Context, _ string, _ []string, _ io.Writer) (int, error) {
+		<-ctx.Done()
+		return -1, ctx.Err()
+	})
+
+	var stdout bytes.Buffer
+	if err := runCampaign(context.Background(), configuration, executor, &stdout); err == nil {
+		t.Fatal("a campaign whose only run was killed must not report success")
+	}
+	records := readRecords(t, campaignDirectory)
+	if len(records) != 1 {
+		t.Fatalf("want one record, got %d", len(records))
+	}
+	if !records[0].TimedOut {
+		t.Error("a run killed by the run timeout must be recorded as timed out")
+	}
+	if !strings.Contains(stdout.String(), "timed out") {
+		t.Errorf("the progress line must name the outcome:\n%s", stdout.String())
+	}
+}
+
+func TestParseArguments_RunTimeoutMustExceedDuration(t *testing.T) {
+	_, err := parseArguments(append(baseArguments(),
+		"--output", t.TempDir(), "--duration", "5m", "--run-timeout", "1m"), io.Discard)
+	if err == nil {
+		t.Fatal("a run timeout below the duration would kill every run before it finished")
+	}
+}
+
+func TestParseArguments_RunTimeoutDefaultsToThreeTimesDuration(t *testing.T) {
+	configuration, err := parseArguments(append(baseArguments(),
+		"--output", t.TempDir(), "--duration", "4m"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.runTimeout != 12*time.Minute {
+		t.Errorf("run timeout default: got %s, want 12m", configuration.runTimeout)
+	}
+}
