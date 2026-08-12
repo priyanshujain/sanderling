@@ -342,6 +342,14 @@ test("selectorFromObject routes idPrefix to a starts-with id match", () => {
   });
 });
 
+// The native rule matches an iOS merged label ("account_card:7, Tim, $100") by
+// its leading name, and the web table has to mean the same thing by desc.
+test("selectorFromObject matches a merged label by its leading name", () => {
+  assert.deepEqual(selectorFromObject({ desc: "account_card" }), {
+    css: `:is([aria-label="account_card"], [aria-label^="account_card, "])`,
+  });
+});
+
 test("selectorFromString and selectorFromObject agree on descPrefix", () => {
   assert.deepEqual(selectorFromString("descPrefix:account:"), {
     css: `[aria-label^="account\\:"]`,

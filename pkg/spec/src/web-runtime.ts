@@ -94,7 +94,10 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   // The native rule also accepts the local name after Android's "<package>:id/".
   // The DOM has no such prefix, so a plain starts-with is the same rule here.
   idPrefix: (v) => `[id^="${cssEscape(v)}"]`,
-  desc: (v) => `[aria-label="${cssEscape(v)}"]`,
+  // The native rule accepts the label itself or the label at the head of an
+  // iOS merged label ("account_card:7, Tim, $100"). `:is()` keeps that one
+  // compound piece, since a multi-key selector concatenates the parts.
+  desc: (v) => `:is([aria-label="${cssEscape(v)}"], [aria-label^="${cssEscape(v)}, "])`,
   descPrefix: (v) => `[aria-label^="${cssEscape(v)}"]`,
   // The native table aliases testTag onto resource-id, which the host DOM walk
   // fills from el.id, so the native path already accepts a testTag emitted as

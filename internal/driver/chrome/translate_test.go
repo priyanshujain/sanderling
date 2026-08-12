@@ -16,7 +16,8 @@ func TestTranslateStringSelector_KnownKeys(t *testing.T) {
 		{`text:Say "hi"`, `//*[normalize-space(text())='Say "hi"']`, true},
 		{`text:it's`, `//*[normalize-space(text())="it's"]`, true},
 		{`text:it's "fine"`, `//*[normalize-space(text())=concat("it's ", '"', "fine", '"', "")]`, true},
-		{"desc:logout", `[aria-label="logout"]`, false},
+		// desc also accepts an iOS merged label, the way internal/hierarchy does.
+		{"desc:logout", `:is([aria-label="logout"], [aria-label^="logout, "])`, false},
 		{"label:logout", `[aria-label="logout"]`, false},
 		{"accessibilityLabel:logout", `[aria-label="logout"]`, false},
 		{"aria-label:Sign in", `[aria-label="Sign in"]`, false},

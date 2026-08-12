@@ -40,7 +40,12 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 		return cssEscape(value), false, nil
 	case "text":
 		return `//*[normalize-space(text())=` + xpathStringLiteral(value) + `]`, true, nil
-	case "desc", "label", "content-desc", "accessibilityLabel", "accessibilityText", "ariaLabel", "aria-label":
+	case "desc":
+		// Mirrors the native rule: the label itself, or the label at the head of
+		// an iOS merged label ("account_card:7, Tim, $100").
+		escaped := cssEscape(value)
+		return `:is([aria-label="` + escaped + `"], [aria-label^="` + escaped + `, "])`, false, nil
+	case "label", "content-desc", "accessibilityLabel", "accessibilityText", "ariaLabel", "aria-label":
 		return `[aria-label="` + cssEscape(value) + `"]`, false, nil
 	case "descPrefix":
 		return `[aria-label^="` + cssEscape(value) + `"]`, false, nil
