@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -133,15 +134,133 @@ var attributeAliases = map[string][]string{
 	"elementType": {"class"},
 }
 
-// matchPrefixKind resolves the selector kinds that mean starts-with rather than
-// the default substring/exact attribute rule. The second return is false when
-// kind names an ordinary attribute. Routing them here rather than in match()
-// keeps the string form ("idPrefix:customer_row_") and the object form
-// ({idPrefix: "customer_row_"}) on one definition.
-func matchPrefixKind(element *Element, kind, value string) (bool, bool) {
+// selectorKeys is every key an object selector may use. It is the union of the
+// selector kinds, the attribute names the drivers emit on some platform, and
+// the cross-platform aliases, so a key that is meaningful on ONE platform stays
+// silently empty on the others rather than failing the run there.
+//
+// pkg/spec/test/fixtures/selector-keys.json holds the same list for the web
+// runtime; a test on each side asserts its own list against that file, which is
+// what keeps one spec from being accepted by one runtime and rejected by the
+// other.
+var selectorKeys = []string{
+	"accessibilityIdentifier",
+	"accessibilityLabel",
+	"accessibilityText",
+	"aria-label",
+	"ariaLabel",
+	"bounds",
+	"checked",
+	"class",
+	"className",
+	"clickable",
+	"content-desc",
+	"contentDescription",
+	"data-testid",
+	"desc",
+	"descPrefix",
+	"editable",
+	"elementType",
+	"enabled",
+	"focused",
+	"hintText",
+	"id",
+	"idPrefix",
+	"identifier",
+	"label",
+	"package",
+	"placeholder",
+	"placeholderValue",
+	"resource-id",
+	"scrollable",
+	"selected",
+	"tag",
+	"testID",
+	"testTag",
+	"text",
+	"title",
+	"value",
+}
+
+var selectorKeySet = func() map[string]bool {
+	set := make(map[string]bool, len(selectorKeys))
+	for _, key := range selectorKeys {
+		set[key] = true
+	}
+	return set
+}()
+
+// SelectorKeys returns the accepted object-selector keys, sorted.
+func SelectorKeys() []string {
+	return slices.Clone(selectorKeys)
+}
+
+// UnknownSelectorKeys returns the keys in sel that name neither an accepted
+// selector key nor an attribute some element in the tree carries. Such a key
+// can never match: the caller gets an empty result on every screen, which reads
+// exactly like a screen that has no matching element.
+func (t *Tree) UnknownSelectorKeys(sel Selector) []string {
+	if t == nil {
+		return nil
+	}
+	var unknown []string
+	for _, filter := range sel.Filters {
+		if selectorKeySet[filter.Attr] || t.carriesAttribute(filter.Attr) {
+			continue
+		}
+		if !slices.Contains(unknown, filter.Attr) {
+			unknown = append(unknown, filter.Attr)
+		}
+	}
+	return unknown
+}
+
+// carriesAttribute is the escape hatch for raw driver attributes this package
+// does not enumerate: a key some element actually has is a key that can match.
+func (t *Tree) carriesAttribute(key string) bool {
+	for _, element := range t.Elements {
+		if _, ok := element.Attributes[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// UnknownSelectorKeyMessage is the diagnostic for keys UnknownSelectorKeys
+// returned. pkg/spec/src/web-runtime.ts raises the identical text, so one
+// mistake reads the same whichever runtime the spec ran on.
+func UnknownSelectorKeyMessage(keys []string) string {
+	quoted := make([]string, len(keys))
+	for i, key := range keys {
+		quoted[i] = strconv.Quote(key)
+	}
+	return fmt.Sprintf(
+		"selector key %s cannot match: no element carries that attribute, and it is not one of the accepted keys: %s",
+		strings.Join(quoted, ", "),
+		strings.Join(selectorKeys, ", "),
+	)
+}
+
+// matchSelectorKind resolves the selector keys that name a matching rule rather
+// than an attribute: they read a derived field and compare it their own way,
+// where an ordinary key does a substring test against the raw attribute map.
+// The second return is false when kind names an ordinary attribute.
+//
+// The string form and the object form both come through here, so one key cannot
+// mean one thing in "id:save" and another in {id: "save"}. It used to: the
+// object form fell through to the attribute map, which carries no `id` or
+// `desc` key on any platform, so those selectors matched nothing at all and
+// said nothing about it.
+func matchSelectorKind(element *Element, kind, value string) (bool, bool) {
 	switch kind {
+	case "id":
+		return element.ResourceID == value ||
+			strings.HasSuffix(element.ResourceID, ":id/"+value), true
 	case "idPrefix":
 		return matchIDPrefix(element.ResourceID, value), true
+	case "desc":
+		return element.Description == value ||
+			strings.HasPrefix(element.Description, value+", "), true
 	case "descPrefix":
 		return strings.HasPrefix(element.Description, value), true
 	default:
@@ -164,12 +283,17 @@ func matchIDPrefix(resourceID, value string) bool {
 	return false
 }
 
-// matchAttr returns true when the element has an attribute matching attr:value.
-// Alias expansion is applied so cross-platform names resolve correctly.
-// Boolean values ("true"/"false") use exact comparison; all others use substring.
-// Returns false gracefully when no candidate attribute has data.
+// matchAttr returns true when the element matches key:value. It is the one
+// entry point for both selector forms: the string form's kind and the object
+// form's key are the same name and get the same rule.
+//
+// Keys naming a rule (id, desc and the prefix forms) resolve in
+// matchSelectorKind; everything else is an attribute name, with alias expansion
+// so cross-platform names resolve correctly. Boolean values ("true"/"false")
+// use exact comparison; all others use substring. Returns false gracefully when
+// no candidate attribute has data.
 func matchAttr(element *Element, attr, value string) bool {
-	if matched, handled := matchPrefixKind(element, attr, value); handled {
+	if matched, handled := matchSelectorKind(element, attr, value); handled {
 		return matched
 	}
 	candidates := append([]string{attr}, attributeAliases[attr]...)
@@ -404,7 +528,7 @@ func (n *Node) FindAll(selector string) []*Node {
 		return nil
 	}
 	return n.scopedNodes(func(element *Element) bool {
-		return match(element, kind, value)
+		return matchAttr(element, kind, value)
 	})
 }
 
@@ -605,7 +729,7 @@ func searchSubtree(root *Node, kind, value string) []*Node {
 		return nil
 	}
 	var result []*Node
-	if match(&root.Element, kind, value) {
+	if matchAttr(&root.Element, kind, value) {
 		result = append(result, root)
 	}
 	for _, child := range root.Children {
@@ -635,22 +759,6 @@ func parseSelector(selector string) (string, string, bool) {
 		return "", "", false
 	}
 	return selector[:index], selector[index+1:], true
-}
-
-func match(element *Element, kind, value string) bool {
-	switch kind {
-	case "id":
-		if element.ResourceID == value {
-			return true
-		}
-		return strings.HasSuffix(element.ResourceID, ":id/"+value)
-	case "text":
-		return matchAttr(element, "text", value)
-	case "desc":
-		return element.Description == value || strings.HasPrefix(element.Description, value+", ")
-	default:
-		return matchAttr(element, kind, value)
-	}
 }
 
 // boundsPattern matches "[l,t,r,b]" (4-value Android/sidecar format).
