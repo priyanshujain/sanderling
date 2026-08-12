@@ -85,6 +85,10 @@ function noopFormula(): unknown {
 const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   id: (v) => `[id="${cssEscape(v)}"]`,
   "resource-id": (v) => `[id="${cssEscape(v)}"]`,
+  // The native rule also accepts the local name after Android's "<package>:id/".
+  // The DOM has no such prefix, so a plain starts-with is the same rule here.
+  idPrefix: (v) => `[id^="${cssEscape(v)}"]`,
+  descPrefix: (v) => `[aria-label^="${cssEscape(v)}"]`,
   // The native table aliases testTag onto resource-id, which the host DOM walk
   // fills from el.id, so the native path already accepts a testTag emitted as
   // an id (what Compose Multiplatform does on web). Accept both here so the
@@ -131,7 +135,6 @@ function selectorFromObject(selector: Record<string, string | boolean | undefine
 } {
   const parts: string[] = [];
   let textValue: string | undefined;
-  let descPrefix: string | undefined;
   for (const key of Object.keys(selector)) {
     const raw = selector[key];
     if (raw === undefined) continue;
@@ -140,19 +143,12 @@ function selectorFromObject(selector: Record<string, string | boolean | undefine
       textValue = value;
       continue;
     }
-    if (key === "descPrefix") {
-      descPrefix = value;
-      continue;
-    }
     const builder = KNOWN_KEY_TO_CSS[key];
     if (builder) {
       parts.push(builder(value));
     } else {
       parts.push(`[${key}="${cssEscape(value)}"]`);
     }
-  }
-  if (descPrefix !== undefined) {
-    parts.push(`[aria-label^="${cssEscape(descPrefix)}"]`);
   }
   if (textValue !== undefined && parts.length === 0) {
     return {
@@ -181,9 +177,6 @@ function selectorFromString(selector: string): { css?: string; xpath?: string } 
   const value = selector.slice(colon + 1);
   if (kind === "text") {
     return { xpath: `//*[normalize-space(text())=${xpathStringLiteral(value)}]` };
-  }
-  if (kind === "descPrefix") {
-    return { css: `[aria-label^="${cssEscape(value)}"]` };
   }
   return selectorFromObject({ [kind]: value });
 }

@@ -45,13 +45,26 @@ export interface KnownAttrSelectors {
 }
 
 /**
+ * Keys that name a matching rule rather than an attribute a driver reports.
+ * They belong to the selector surface only, which is why they are not part of
+ * `KnownAttrSelectors` (and so never appear in `RawAttrs`).
+ */
+export interface PrefixSelectors {
+  /** Identifier starts with this, after Android's "<package>:id/" if present. */
+  idPrefix?: string;
+  /** Accessibility description starts with this. */
+  descPrefix?: string;
+}
+
+/**
  * Object-form selector for `find` / `findAll`. Known attributes are typed
  * via `KnownAttrSelectors`; arbitrary string keys are still allowed for
  * raw driver attributes the typed surface doesn't yet cover.
  */
-export type AttrSelector = KnownAttrSelectors & {
-  [key: string]: string | boolean | undefined;
-};
+export type AttrSelector = KnownAttrSelectors &
+  PrefixSelectors & {
+    [key: string]: string | boolean | undefined;
+  };
 
 export type SelectorPath = readonly AttrSelector[];
 

@@ -327,6 +327,36 @@ test("selectorFromObject composes testTag with a second key", () => {
   });
 });
 
+// A list whose rows are named <role>_<record id> is only reachable by the role
+// half. internal/driver/chrome/translate.go builds the same CSS for the same
+// selector, and internal/hierarchy resolves it against the dump of this page.
+test("selectorFromString routes idPrefix to a starts-with id match", () => {
+  assert.deepEqual(selectorFromString("idPrefix:customer_row_"), {
+    css: `[id^="customer_row_"]`,
+  });
+});
+
+test("selectorFromObject routes idPrefix to a starts-with id match", () => {
+  assert.deepEqual(selectorFromObject({ idPrefix: "customer_row_" }), {
+    css: `[id^="customer_row_"]`,
+  });
+});
+
+test("selectorFromString and selectorFromObject agree on descPrefix", () => {
+  assert.deepEqual(selectorFromString("descPrefix:account:"), {
+    css: `[aria-label^="account\\:"]`,
+  });
+  assert.deepEqual(selectorFromObject({ descPrefix: "account:" }), {
+    css: `[aria-label^="account\\:"]`,
+  });
+});
+
+test("selectorFromObject composes idPrefix with a second key", () => {
+  assert.deepEqual(selectorFromObject({ idPrefix: "customer_row_", "aria-label": "first" }), {
+    css: `[id^="customer_row_"][aria-label="first"]`,
+  });
+});
+
 test("selectorFromObject falls back to a literal attribute for unknown keys", () => {
   assert.deepEqual(selectorFromObject({ "data-foo": "bar" }), {
     css: `[data-foo="bar"]`,
