@@ -429,3 +429,66 @@ func readLines(t *testing.T, path string) []string {
 	}
 	return lines
 }
+
+func TestWriteMeta_ArmMembershipRoundTrip(t *testing.T) {
+	directory := t.TempDir()
+	writer, err := NewWriter(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	meta := Meta{
+		Seed:              7,
+		SpecPath:          "spec.ts",
+		BundleSHA256:      "deadbeef",
+		Platform:          "android",
+		BundleID:          "com.example",
+		StartedAt:         time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC),
+		SanderlingVersion: "0.0.1",
+		Arm:               "llm-visible-text",
+		Generator:         "llm",
+		Model:             "claude-sonnet-5",
+		Instructions:      "exercise the outbox",
+		MaxSteps:          300,
+		DurationMillis:    180000,
+		Host:              "emulator-farm-01",
+	}
+	if err := writer.WriteMeta(meta); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(filepath.Join(directory, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Meta
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("meta.json is not valid JSON: %v\n%s", err, body)
+	}
+	if got != meta {
+		t.Errorf("meta round-trip mismatch:\n got: %+v\nwant: %+v", got, meta)
+	}
+}
+
+func TestWriteMeta_OmitsArmMembershipWhenUnset(t *testing.T) {
+	directory := t.TempDir()
+	writer, err := NewWriter(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	if err := writer.WriteMeta(Meta{Seed: 1, Platform: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(directory, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"arm", "generator", "model", "instructions", "max_steps", "duration_millis", "host"} {
+		if strings.Contains(string(body), `"`+key+`"`) {
+			t.Errorf("meta.json carries %q when unset:\n%s", key, body)
+		}
+	}
+}

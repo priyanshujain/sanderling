@@ -28,7 +28,7 @@ export function useTheme(): { theme: ThemeMode; toggle: () => void } {
     try {
       window.localStorage.setItem(STORAGE_KEY, theme);
     } catch {
-      // private mode or storage disabled — theme still applies for the session.
+      // private mode or storage disabled. Theme still applies for the session.
     }
   }, [theme]);
 

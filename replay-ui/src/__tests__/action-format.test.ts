@@ -7,7 +7,7 @@ import {
 } from "../lib/action-format";
 import { summary } from "./fixtures";
 
-// Bug class: selector parsing mislabels every action row — splitting on the
+// Bug class: selector parsing mislabels every action row. Splitting on the
 // wrong colon, treating a value-with-colon as the kind, or dropping the prefix
 // ellipsis would render the wrong target tag for every step.
 describe("parseSelector", () => {

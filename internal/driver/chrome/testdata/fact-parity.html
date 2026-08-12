@@ -1,0 +1,72 @@
+<!doctype html>
+<html id="page">
+  <head id="page-head">
+    <meta id="page-charset" charset="utf-8" />
+    <title id="page-title">fact parity</title>
+    <style id="page-style">
+      :root {
+        --frame-w: 420px;
+        --frame-h: 640px;
+      }
+      body {
+        margin: 0;
+      }
+      #scroller {
+        width: 320px;
+        height: 120px;
+        overflow: auto;
+      }
+      #scroller-content {
+        height: 600px;
+      }
+      #sideways {
+        width: 320px;
+        height: 40px;
+        overflow: auto;
+      }
+      #sideways-content {
+        width: 900px;
+        height: 20px;
+      }
+      #fits {
+        width: 320px;
+        height: 120px;
+        overflow: auto;
+      }
+      #fits-content {
+        height: 40px;
+      }
+      #collapsed {
+        display: none;
+      }
+      #filler {
+        height: 900px;
+      }
+    </style>
+  </head>
+  <body id="page-body">
+    <button id="save">save</button>
+    <button id="cancel" disabled>cancel</button>
+    <a id="link" href="#detail">detail</a>
+    <select id="choice">
+      <option id="choice-first">first</option>
+    </select>
+    <input id="amount" type="text" value="10" />
+    <input id="agree" type="checkbox" />
+    <textarea id="notes"></textarea>
+    <div id="bio" contenteditable="true">bio</div>
+    <div id="menu" role="button">menu</div>
+    <div id="attribute-click" onclick="void 0">attribute click</div>
+    <div id="delegating-root">delegating root</div>
+    <div id="plain">plain</div>
+    <div id="edit-text-field" class="EditTextField">styled</div>
+    <span id="collapsed">collapsed</span>
+    <div id="scroller"><div id="scroller-content"></div></div>
+    <div id="sideways"><div id="sideways-content"></div></div>
+    <div id="fits"><div id="fits-content"></div></div>
+    <div id="filler"></div>
+    <script id="page-script">
+      document.getElementById("delegating-root").onclick = function () {};
+    </script>
+  </body>
+</html>

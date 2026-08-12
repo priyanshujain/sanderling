@@ -110,9 +110,11 @@ web-test:
 	cd replay-ui && bun install --frozen-lockfile && bun test
 
 # Drives small web fixtures and the chrome driver through real headless Chrome.
-# Kept out of `test` because it needs a Chrome binary on PATH.
+# Kept out of `test` because it needs a Chrome binary on PATH. -p 1 runs the two
+# packages one after the other: both launch Chrome, and launching two at once
+# has failed with "Launch: context canceled".
 test-browser:
-	$(GO) test -tags browser ./test/browser/... ./internal/driver/chrome/...
+	$(GO) test -p 1 -tags browser ./test/browser/... ./internal/driver/chrome/...
 
 # Runs the withcompanion-tagged tests (asset embedding, extraction, checksum
 # reuse) against the real companion and runner bundles. Kept out of `test`

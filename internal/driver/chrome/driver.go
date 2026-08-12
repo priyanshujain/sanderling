@@ -97,19 +97,31 @@ func New() *Driver {
 }
 
 func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _ map[string]string) error {
+	// Allocate the browser against the driver's own context before anything
+	// caller-bound runs. chromedp starts Chrome under whichever context first
+	// calls Run, so allocating under a caller deadline would tie the browser
+	// process to this one call and kill it the moment Launch returns.
+	if err := chromedp.Run(d.tabCtx); err != nil {
+		return err
+	}
+	// Everything after allocation goes through runCtx, so a caller deadline or
+	// a SIGTERM aborts a launch that would otherwise wait forever on a target
+	// that accepts the connection and never answers.
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	if clearState {
-		if err := d.clearState(bundleID); err != nil {
+		if err := d.clearState(runCtx, bundleID); err != nil {
 			return err
 		}
 	}
-	if err := chromedp.Run(d.tabCtx, chromedp.Navigate(bundleID)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.Navigate(bundleID)); err != nil {
 		return err
 	}
 	// After navigation, read CSS custom properties --frame-w / --frame-h (common
 	// mobile-frame convention) so screenshots fit the app without grey borders.
 	// Falls back to the body scroll dimensions if the properties are absent.
 	var dims [2]int64
-	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(`
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(`
 		(function() {
 			const s = getComputedStyle(document.documentElement);
 			const pw = parseInt(s.getPropertyValue('--frame-w'), 10);
@@ -118,7 +130,7 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _
 			const h = isNaN(ph) ? document.body.scrollHeight : ph;
 			return [w, h];
 		})()`, &dims)); err == nil && dims[0] > 0 && dims[1] > 0 {
-		_ = chromedp.Run(d.tabCtx, chromedp.EmulateViewport(dims[0], dims[1]))
+		_ = chromedp.Run(runCtx, chromedp.EmulateViewport(dims[0], dims[1]))
 	}
 	return nil
 }
@@ -130,8 +142,8 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _
 // which needs no navigation. sessionStorage is per-tab and outside that
 // domain's reach; it only survives when a relaunch reuses a tab already on
 // the target origin, which is the one case where script can reach it.
-func (d *Driver) clearState(bundleID string) error {
-	if err := chromedp.Run(d.tabCtx, network.ClearBrowserCookies()); err != nil {
+func (d *Driver) clearState(runCtx context.Context, bundleID string) error {
+	if err := chromedp.Run(runCtx, network.ClearBrowserCookies()); err != nil {
 		return fmt.Errorf("clear cookies: %w", err)
 	}
 	origin := securityOrigin(bundleID)
@@ -139,12 +151,12 @@ func (d *Driver) clearState(bundleID string) error {
 		return nil
 	}
 	clearForOrigin := storage.ClearDataForOrigin(origin, string(storage.TypeAll))
-	if err := chromedp.Run(d.tabCtx, clearForOrigin); err != nil {
+	if err := chromedp.Run(runCtx, clearForOrigin); err != nil {
 		return fmt.Errorf("clear storage for %s: %w", origin, err)
 	}
 	script := fmt.Sprintf(
 		`location.origin === %q && (sessionStorage.clear(), true)`, origin)
-	return chromedp.Run(d.tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+	return chromedp.Run(runCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 		_, exception, err := runtime.Evaluate(script).Do(ctx)
 		if err != nil {
 			return fmt.Errorf("clear session storage: %w", err)
@@ -357,6 +369,24 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
 	script := `
 (function() {
   const route = window.location.hash.replace(/^#/, '').split('?')[0] || '/';
+  // clickable and editable are resolved through the SAME selector sets
+  // pkg/spec/src/web-runtime.ts uses, so the goja host (which reads this dump)
+  // and the V8 host (which reads the DOM directly) cannot mean different things
+  // by one fact on one platform. Testing el.onclick instead made every React
+  // root a full-viewport tap target here and nowhere else.
+  const NON_TEXT_INPUT_TYPES =
+    ['button','submit','checkbox','radio','range','color','file','image','reset'];
+  function isEditableElement(el) {
+    if (el.isContentEditable) return true;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'textarea') return true;
+    if (tag === 'input') return !NON_TEXT_INPUT_TYPES.includes((el.type || '').toLowerCase());
+    return false;
+  }
+  const clickableSet = new Set(document.querySelectorAll(
+    'a, button, input, select, textarea, [role="button"], [onclick]'));
+  const editableSet = new Set(Array.from(
+    document.querySelectorAll('input, textarea, [contenteditable]')).filter(isEditableElement));
   function buildTree(el, isRoot) {
     const rect = el.getBoundingClientRect();
     const attrs = {};
@@ -373,15 +403,19 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     if (el.className && typeof el.className === 'string' && el.className.trim()) {
       attrs['class'] = el.className.trim();
     }
+    // The goja host reads scrollable off this attribute (internal/verifier
+    // worker.go targets). Without it every web element looks unscrollable there,
+    // so the goja-side enumeration offers no scroll while the V8 picker, which
+    // computes the same overflow test in web-runtime.ts, offers plenty.
+    if (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth) {
+      attrs['scrollable'] = 'true';
+    }
     if (isRoot) attrs['sanderling-screen'] = route;
-    const isClickable = !!(el.onclick || el.tagName === 'A' || el.tagName === 'BUTTON' ||
-      el.tagName === 'INPUT' || el.tagName === 'SELECT' ||
-      el.getAttribute('role') === 'button' || el.getAttribute('onclick'));
-    const isEditable = el.isContentEditable || tag === 'textarea' ||
-      (tag === 'input' && !['button','submit','checkbox','radio','range','color','file','image','reset']
-        .includes((el.type || '').toLowerCase()));
+    const isClickable = clickableSet.has(el);
+    const isEditable = editableSet.has(el);
     const children = [];
     for (const child of el.children) {
+      if (child.tagName === 'HEAD') continue;
       children.push(buildTree(child, false));
     }
     return {
@@ -392,10 +426,22 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
       focused: document.activeElement === el || null,
       checked: el.checked || null,
       selected: el.selected || null,
-      editable: isEditable || null,
+      // Emitted as a plain boolean, never null: internal/hierarchy falls back to
+      // the native heuristic when the field is absent, which reads any class
+      // name containing "EditText" as an Android text widget. On web that is a
+      // CSS class, so a page styling a div with it made the goja host offer
+      // typing into a div the web runtime never calls editable.
+      editable: isEditable,
     };
   }
-  return buildTree(document.body, true);
+  // Rooted at documentElement, not body, because collectTargets in
+  // pkg/spec/src/web-runtime.ts walks querySelectorAll("*") and therefore sees
+  // html. Page-level scrolling lives on html on a standard page, so a dump
+  // rooted at body hides it from the goja host and the two enumerations
+  // disagree on exactly the page scroll. The head subtree is skipped: it is all
+  // zero-bounds, so it changes no eligible set, and it would otherwise pull
+  // script and title text into the trace and the replay view.
+  return buildTree(document.documentElement, true);
 })()`
 
 	var result any

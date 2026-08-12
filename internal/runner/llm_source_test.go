@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/priyanshujain/sanderling/internal/driver"
+	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
 	"github.com/priyanshujain/sanderling/internal/llmclient"
 	"github.com/priyanshujain/sanderling/internal/verifier"
@@ -273,6 +275,100 @@ func TestPickSourcesSeededByDefault(t *testing.T) {
 	// Even with a generator = llm() config present, the seeded flag wins.
 	if _, ok := action.(gojaSource); !ok {
 		t.Errorf("action source = %T, want gojaSource for --generator seeded", action)
+	}
+}
+
+// seededFixtureSpec declares no generator = llm(...), so --generator llm has
+// nothing to build a picker from.
+const seededFixtureSpec = `
+import { always, taps, typing, weighted } from "@sanderling/spec";
+globalThis.properties = { ok: always(() => true) };
+globalThis.actions = weighted([1, taps], [1, typing]);
+`
+
+func newSeededVerifier(t *testing.T) *verifier.Verifier {
+	t.Helper()
+	verifierInstance, err := verifier.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifierInstance.Load(bundleSpec(t, seededFixtureSpec)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := verifierInstance.LLMConfig(); ok {
+		t.Fatal("seeded fixture spec must not register an llm action backend")
+	}
+	return verifierInstance
+}
+
+// TestPickSourcesRejectsLLMWithoutSpecConfig pins the abort. Falling back to the
+// seeded picker here completes the run, writes a well-formed output directory,
+// and records it under the requested arm, so a campaign cell silently reports
+// the wrong policy's numbers.
+func TestPickSourcesRejectsLLMWithoutSpecConfig(t *testing.T) {
+	for name, activeDriver := range map[string]driver.DeviceDriver{
+		"native": nil,
+		"web":    &webMockDriver{Driver: mockdriver.New()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			action, extractor, err := pickSources(Options{
+				Driver:    activeDriver,
+				Verifier:  newSeededVerifier(t),
+				Generator: "llm",
+				Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+			})
+			if err == nil {
+				t.Fatalf("pickSources = (%T, %T), want an error", action, extractor)
+			}
+			if action != nil || extractor != nil {
+				t.Errorf("sources = (%v, %v), want both nil alongside the error", action, extractor)
+			}
+			if !strings.Contains(err.Error(), "generator = llm(...)") {
+				t.Errorf("error = %q, want it to name the missing spec declaration", err)
+			}
+		})
+	}
+}
+
+// TestPickSourcesOnWebComposesLLMWithWebExtractors covers the second half of the
+// same claim: the picker is chosen by --generator and the extractor source by
+// the driver, so the llm policy runs on web instead of being silently replaced
+// by the V8 picker.
+func TestPickSourcesOnWebComposesLLMWithWebExtractors(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	_, verifierInstance := newLLMSource(t, fake)
+	action, extractor, err := pickSources(Options{
+		Driver:    &webMockDriver{Driver: mockdriver.New()},
+		Verifier:  verifierInstance,
+		Generator: "llm",
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("pickSources: %v", err)
+	}
+	if _, ok := action.(*llmSource); !ok {
+		t.Errorf("action source = %T, want *llmSource on web with --generator llm", action)
+	}
+	if _, ok := extractor.(webSource); !ok {
+		t.Errorf("extractor source = %T, want webSource so overrides still come from V8", extractor)
+	}
+}
+
+func TestPickSourcesOnWebSeededKeepsBothOnV8(t *testing.T) {
+	action, extractor, err := pickSources(Options{
+		Driver:    &webMockDriver{Driver: mockdriver.New()},
+		Verifier:  newSeededVerifier(t),
+		Generator: "seeded",
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("pickSources: %v", err)
+	}
+	if _, ok := action.(webSource); !ok {
+		t.Errorf("action source = %T, want webSource for the seeded web path", action)
+	}
+	if _, ok := extractor.(webSource); !ok {
+		t.Errorf("extractor source = %T, want webSource for the seeded web path", extractor)
 	}
 }
 

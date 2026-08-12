@@ -18,8 +18,8 @@ export interface RunHistory {
 // that armed it, so the checker records the violation on the DETECTION step
 // while its witness names the CAUSE step. The timeline dot (the backend's
 // markViolations) already sits on the cause step; mirror that here so the
-// Violations tab and property lanes light up on the same step — the guilty
-// action — not the unrelated action that happened to be running when the
+// Violations tab and property lanes light up on the same step: the guilty
+// action, not the unrelated action that happened to be running when the
 // obligation resolved. Steps are cloned, never mutated in place.
 export function relocateViolationsToCause(
   steps: (Step | null)[],

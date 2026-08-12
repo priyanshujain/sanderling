@@ -113,7 +113,7 @@ export interface State {
 
 /**
  * State as observed inside a web (V8/browser) extractor. Adds the live
- * `document` and `window` handles. `state.document` is V8-only — goja-side
+ * `document` and `window` handles. `state.document` is V8-only, so goja-side
  * predicates do not see it; if you need DOM data in a predicate, surface it
  * via an `extract()`.
  */

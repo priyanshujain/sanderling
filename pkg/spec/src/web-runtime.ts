@@ -514,6 +514,21 @@ function pointOf(element: Element): Candidate {
   };
 }
 
+// HEAD_SELECTOR is the one subtree the enumeration leaves out. It never renders,
+// so no verb can reach it, and the hierarchy dump the goja host reads
+// (internal/driver/chrome/driver.go) drops it as well. Enumerating it here would
+// put the two hosts on different element sets for every page that has a <head>.
+const HEAD_SELECTOR = "head, head *";
+
+// targetElements is the walk the target list is built from: the document in
+// pre-order, minus the head subtree.
+function targetElements(): HTMLElement[] {
+  const inHead = new Set<Element>(Array.from(document.querySelectorAll(HEAD_SELECTOR)));
+  return Array.from(document.querySelectorAll<HTMLElement>("*")).filter(
+    (element) => !inHead.has(element),
+  );
+}
+
 // collectTargets walks the document ONCE and reports every element with the facts
 // the shared eligibility rule reads. The tappable/editable membership sets are
 // resolved by selector first so the DOM's answer to "clickable" and "editable"
@@ -525,7 +540,7 @@ function collectTargets(): TargetElement[] {
       isEditableElement,
     ),
   );
-  return Array.from(document.querySelectorAll<HTMLElement>("*")).map((element) => ({
+  return targetElements().map((element) => ({
     ...pointOf(element),
     clickable: clickable.has(element),
     enabled: !(element as HTMLButtonElement).disabled,
@@ -577,6 +592,7 @@ export const __testing__ = {
   host,
   seedBigInt,
   collectTargets,
+  targetElements,
   TAPPABLE_SELECTOR,
   EDITABLE_SELECTOR,
   resetTargetCache,

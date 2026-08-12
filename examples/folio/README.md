@@ -82,8 +82,8 @@ Traces land in `./sanderling/runs/<timestamp>/`.
 
 The same `sanderling/spec.ts` runs under either generator: `--generator seeded`
 (the default weighted fuzzer) or `--generator llm`, where a vision model picks
-from the SAME weighted candidate set — reading the screenshot plus a numbered,
-weight-annotated list of concrete actions — and returns one number. The spec's
+from the SAME weighted candidate set (reading the screenshot plus a numbered,
+weight-annotated list of concrete actions) and returns one number. The spec's
 `generator = llm({ model, instructions })` export configures it.
 
 ```sh

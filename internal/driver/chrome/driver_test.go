@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -185,6 +186,125 @@ func TestHierarchy_EditableFlag(t *testing.T) {
 	}
 }
 
+// TestHierarchy_ClickableMatchesTheWebRuntimeSelector pins clickable to the
+// same membership test pkg/spec/src/web-runtime.ts applies. The dump used to
+// test el.onclick, which React sets on its root container for event delegation,
+// so the whole viewport became a tap target in this dump and in no other
+// enumeration of the same page.
+func TestHierarchy_ClickableMatchesTheWebRuntimeSelector(t *testing.T) {
+	const html = `<body>` +
+		`<div id="root"><button id="go">go</button></div>` +
+		`<textarea id="bio"></textarea>` +
+		`<div id="plain">text</div>` +
+		`<div id="rolebutton" role="button">act</div>` +
+		`<script>document.getElementById("root").onclick = function () {};</script>` +
+		`</body>`
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+
+	type node struct {
+		Attributes map[string]string `json:"attributes"`
+		Children   []node            `json:"children"`
+		Clickable  *bool             `json:"clickable"`
+	}
+	var root node
+	if err := json.Unmarshal([]byte(dump), &root); err != nil {
+		t.Fatalf("unmarshal hierarchy: %v", err)
+	}
+	clickableByID := map[string]*bool{}
+	var walk func(n node)
+	walk = func(n node) {
+		if id := n.Attributes["resource-id"]; id != "" {
+			clickableByID[id] = n.Clickable
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+
+	isClickable := func(id string) bool {
+		return clickableByID[id] != nil && *clickableByID[id]
+	}
+	for _, id := range []string{"go", "bio", "rolebutton"} {
+		if !isClickable(id) {
+			t.Errorf("%q: clickable = %v, want true", id, clickableByID[id])
+		}
+	}
+	for _, id := range []string{"root", "plain"} {
+		if isClickable(id) {
+			t.Errorf("%q: clickable = true, want false/absent (an onclick property is not a target)", id)
+		}
+	}
+}
+
+// TestHierarchy_ScrollableAttribute covers the fact the goja host reads off the
+// attributes map. The V8 picker computes the same overflow test in
+// web-runtime.ts, so leaving it out of the dump made the two enumerations
+// disagree on web: the model policy could never be offered a scroll the seeded
+// policy could draw.
+func TestHierarchy_ScrollableAttribute(t *testing.T) {
+	const html = `<body style="margin:0">` +
+		`<div id="overflowing" style="width:100px;height:100px;overflow:auto">` +
+		`<div style="width:100px;height:900px"></div></div>` +
+		`<div id="sideways" style="width:100px;height:50px;overflow:auto">` +
+		`<div style="width:900px;height:20px"></div></div>` +
+		`<div id="fits" style="width:100px;height:100px;overflow:auto">` +
+		`<div style="width:50px;height:50px"></div></div>` +
+		`</body>`
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+
+	type node struct {
+		Attributes map[string]string `json:"attributes"`
+		Children   []node            `json:"children"`
+	}
+	var root node
+	if err := json.Unmarshal([]byte(dump), &root); err != nil {
+		t.Fatalf("unmarshal hierarchy: %v", err)
+	}
+	scrollableByID := map[string]string{}
+	var walk func(n node)
+	walk = func(n node) {
+		if id := n.Attributes["resource-id"]; id != "" {
+			scrollableByID[id] = n.Attributes["scrollable"]
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+
+	for _, id := range []string{"overflowing", "sideways"} {
+		if scrollableByID[id] != "true" {
+			t.Errorf("%q: scrollable = %q, want \"true\"", id, scrollableByID[id])
+		}
+	}
+	if scrollableByID["fits"] != "" {
+		t.Errorf("%q: scrollable = %q, want absent", "fits", scrollableByID["fits"])
+	}
+}
+
 // TestRunCtx_CallerCancelPropagates confirms that cancelling the caller's
 // context cancels the chromedp-bound context returned by runCtx. This is the
 // channel by which step deadlines and Ctrl-C reach in-flight CDP calls.
@@ -219,5 +339,138 @@ func TestRunCtx_TabCancelPropagates(t *testing.T) {
 	case <-derived.Done():
 	case <-time.After(time.Second):
 		t.Fatal("derived ctx did not cancel after tab cancellation")
+	}
+}
+
+// TestHierarchy_RootsAtDocumentElementWithoutHead pins the dump's root to html,
+// because collectTargets in pkg/spec/src/web-runtime.ts walks
+// querySelectorAll("*") and therefore sees html. A dump rooted at body hides
+// page-level scrolling, which lives on html on a standard page, so the two
+// enumerations disagree on exactly that candidate. The head subtree stays out:
+// it is all zero-bounds, so it changes no eligible set, and it would otherwise
+// carry script and title text into the trace.
+func TestHierarchy_RootsAtDocumentElementWithoutHead(t *testing.T) {
+	const html = `<html><head><title>secret title</title>` +
+		`<script>window.marker = 1;</script></head>` +
+		`<body><div id="content">hello</div></body></html>`
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+
+	type node struct {
+		Attributes map[string]string `json:"attributes"`
+		Children   []node            `json:"children"`
+	}
+	var root node
+	if err := json.Unmarshal([]byte(dump), &root); err != nil {
+		t.Fatalf("unmarshal hierarchy: %v", err)
+	}
+	if root.Attributes["tag"] != "html" {
+		t.Errorf("root tag: got %q, want html", root.Attributes["tag"])
+	}
+	if root.Attributes["sanderling-screen"] == "" {
+		t.Error("the root must still carry sanderling-screen")
+	}
+
+	tags := map[string]bool{}
+	var walk func(n node)
+	walk = func(n node) {
+		tags[n.Attributes["tag"]] = true
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	if !tags["body"] {
+		t.Error("body must appear under the root")
+	}
+	for _, tag := range []string{"head", "title", "script"} {
+		if tags[tag] {
+			t.Errorf("the head subtree must stay out of the dump, found %q", tag)
+		}
+	}
+}
+
+// TestLaunch_HonorsCallerDeadline points the driver at a listener that accepts
+// the connection and never answers. Chrome has no page-load deadline of its
+// own, so a Launch that ignored its caller context waited forever: an
+// unattended campaign worker aimed at an unreachable target wedged with no
+// diagnostic and did not even answer SIGTERM.
+func TestLaunch_HonorsCallerDeadline(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	held := make(chan net.Conn, 8)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			held <- conn
+		}
+	}()
+	defer func() {
+		close(held)
+		for conn := range held {
+			conn.Close()
+		}
+	}()
+
+	d := New()
+	defer d.Terminate(context.Background())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- d.Launch(ctx, "http://"+listener.Addr().String(), false, nil) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Launch returned nil against a target that never answers")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			t.Fatalf("Launch error = %v, want a context error", err)
+		}
+	case <-time.After(45 * time.Second):
+		t.Fatal("Launch ignored the caller deadline and blocked")
+	}
+}
+
+// TestLaunch_KeepsBrowserAliveAfterCallerContextEnds guards the trap that made
+// Launch use the driver context in the first place: chromedp starts Chrome
+// under whichever context runs first, so allocating under the caller's
+// short-lived context would kill the browser as soon as Launch returned.
+func TestLaunch_KeepsBrowserAliveAfterCallerContextEnds(t *testing.T) {
+	d := New()
+	defer d.Terminate(context.Background())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	if err := d.Launch(ctx, "data:text/html,<body>alive</body>", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	cancel()
+
+	var text string
+	if err := chromedp.Run(d.tabCtx,
+		chromedp.Evaluate(`document.body.textContent`, &text)); err != nil {
+		t.Fatalf("browser died with the caller context: %v", err)
+	}
+	if text != "alive" {
+		t.Errorf("body text = %q, want \"alive\"", text)
+	}
+	if err := d.Launch(context.Background(), "data:text/html,<body>again</body>", false, nil); err != nil {
+		t.Fatalf("second Launch after the first caller context ended: %v", err)
 	}
 }

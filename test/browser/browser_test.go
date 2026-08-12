@@ -130,8 +130,8 @@ func bundleSpec(t *testing.T, specPath string) (goja, web []byte) {
 	t.Helper()
 	specSrc := specSrcDir(t)
 	aliases := map[string]string{
-		"@sanderling/spec":                    filepath.Join(specSrc, "index.ts"),
-		"@sanderling/spec/defaults":           filepath.Join(specSrc, "defaults/index.ts"),
+		"@sanderling/spec":                     filepath.Join(specSrc, "index.ts"),
+		"@sanderling/spec/defaults":            filepath.Join(specSrc, "defaults/index.ts"),
 		"@sanderling/spec/defaults/properties": filepath.Join(specSrc, "defaults/properties.ts"),
 	}
 	defines := map[string]string{"SANDERLING_SEED": strconv.Itoa(fixtureSeed)}

@@ -17,12 +17,20 @@
 #   ./gates.sh                          run the simulator gates
 #   BACKEND=device IOS_DEVICE="iPhone" ./gates.sh
 #   BACKEND=android ANDROID_DEVICE="663c91b1" ./gates.sh
+#   RUNS=1 SEEDS=303 ./gates.sh         re-run just the seed that failed
 #   ./gates.sh --self-test              run the offline analyzer tests only
 #
 # Tunables (environment):
 #   RUNS=5            number of serial runs
 #   DURATION=3m       per-run fuzz duration
-#   SEED=0            fuzz seed
+#   SEEDS="101 202 303 404 505"
+#                     one fuzz seed per run, whitespace separated, consumed in
+#                     order. The values differ so the runs explore different
+#                     action streams, and they are fixed so a failing gate can
+#                     be re-run exactly; the results table prints the seed each
+#                     run used. A 0 is rejected: sanderling test reads --seed 0
+#                     as "derive the seed from the clock", which is the one
+#                     thing a gate cannot reproduce.
 #   P95_LIMIT_MS      G5 p95 step-latency ceiling in ms (default 2500 for iOS,
 #                     5500 for the android backend's higher and more variable
 #                     per-step USB cost, especially cold right after a reboot)
@@ -36,7 +44,7 @@ folio_directory="$(cd "${script_directory}/../examples/folio" && pwd)"
 BACKEND="${BACKEND:-simulator}"
 RUNS="${RUNS:-5}"
 DURATION="${DURATION:-3m}"
-SEED="${SEED:-0}"
+SEEDS="${SEEDS:-101 202 303 404 505}"
 # The p95 ceiling is backend-specific: a physical Android device drives every
 # step over USB (snapshot + settle + adb round-trips), so its per-step floor is
 # several times the iOS simulator's in-process cost. 2500ms was calibrated on
@@ -50,6 +58,11 @@ fi
 SANDERLING="${SANDERLING:-sanderling}"
 IOS_DEVICE="${IOS_DEVICE:-iPhone 17 Pro}"
 ANDROID_DEVICE="${ANDROID_DEVICE:-}"
+
+if [[ -n "${SEED:-}" ]]; then
+  echo "gates.sh: SEED is not read any more; set SEEDS to one seed per run" >&2
+  exit 2
+fi
 
 bundle_id="app.folio"
 spec_path="${folio_directory}/sanderling/spec.ts"
@@ -246,10 +259,40 @@ orphan_processes() {
 
 # ---- run orchestration -----------------------------------------------------
 
+# Split a seed list into the global seed_list, one entry per requested run.
+# sanderling test reads --seed 0 as "derive the seed from the clock", so a 0
+# here would make that run unreproducible and is refused.
+seed_list=()
+select_seeds() {
+  local requested="$1"
+  local -a candidates=()
+  read -r -a candidates <<<"$2"
+  if [[ "${#candidates[@]}" -lt "$requested" ]]; then
+    echo "gates.sh: SEEDS has ${#candidates[@]} value(s) but RUNS=${requested}; give one seed per run" >&2
+    return 1
+  fi
+  local index seed
+  for ((index = 0; index < ${#candidates[@]}; index++)); do
+    seed="${candidates[index]}"
+    case "$seed" in
+      '' | *[!0-9]*)
+        echo "gates.sh: SEEDS takes whitespace-separated positive integers; got \"${seed}\"" >&2
+        return 1
+        ;;
+    esac
+    if [[ "$((10#$seed))" -eq 0 ]]; then
+      echo "gates.sh: SEEDS may not contain 0; sanderling test derives a clock seed from 0, so a gate configured with it cannot be reproduced" >&2
+      return 1
+    fi
+  done
+  seed_list=("${candidates[@]:0:requested}")
+}
+
 invoke_sanderling() {
   local output_directory="$1"
   local output_log="$2"
   local exit_status_file="$3"
+  local seed="$4"
 
   local platform target_flags=()
   if [[ "$BACKEND" == "android" ]]; then
@@ -281,7 +324,7 @@ invoke_sanderling() {
     --bundle-id "$bundle_id" \
     "${target_flags[@]}" \
     --duration "$DURATION" \
-    --seed "$SEED" \
+    --seed "$seed" \
     --output "$output_directory" \
     >"$output_log" 2>&1 || status=$?
   printf '%s' "$status" >"$exit_status_file"
@@ -300,6 +343,8 @@ collect_run_artifacts() {
 }
 
 run_gates() {
+  select_seeds "$RUNS" "$SEEDS" || exit 2
+
   if [[ "$BACKEND" == "android" ]]; then
     # Build only; invoke_sanderling reinstalls per run via adb (gradle's ddmlib
     # install is flaky on some physical devices).
@@ -326,7 +371,7 @@ run_gates() {
   local gate_root="${script_directory}/runs/${timestamp}"
   mkdir -p "$gate_root"
   echo "gate root: ${gate_root}"
-  echo "backend=${BACKEND} runs=${RUNS} duration=${DURATION} seed=${SEED} p95_limit_ms=${P95_LIMIT_MS}"
+  echo "backend=${BACKEND} runs=${RUNS} duration=${DURATION} seeds=${seed_list[*]} p95_limit_ms=${P95_LIMIT_MS}"
 
   local all_latencies="${gate_root}/all-latencies.txt"
   : >"$all_latencies"
@@ -335,10 +380,12 @@ run_gates() {
   local run_index
   for ((run_index = 1; run_index <= RUNS; run_index++)); do
     local run_directory="${gate_root}/run-${run_index}"
+    local seed="${seed_list[run_index - 1]}"
     mkdir -p "$run_directory"
-    echo "run ${run_index}/${RUNS} -> ${run_directory}"
+    printf '%s' "$seed" >"${run_directory}/seed"
+    echo "run ${run_index}/${RUNS} seed=${seed} -> ${run_directory}"
 
-    invoke_sanderling "$run_directory" "${run_directory}/output.log" "${run_directory}/exit_status"
+    invoke_sanderling "$run_directory" "${run_directory}/output.log" "${run_directory}/exit_status" "$seed"
     collect_run_artifacts "$run_directory"
 
     g1[run_index]=$(gate_exit_zero      "$run_directory" && echo PASS || echo FAIL)
@@ -383,11 +430,12 @@ run_gates() {
   done
 
   echo
-  printf 'run  G1    G2    G3    G4    G5\n'
+  printf 'run  seed   G1    G2    G3    G4    G5\n'
   local verdict="PASS"
   for ((run_index = 1; run_index <= RUNS; run_index++)); do
-    printf '%-4s %-5s %-5s %-5s %-5s %-5s\n' \
-      "$run_index" "${g1[run_index]}" "${g2[run_index]}" "${g3[run_index]}" "${g4[run_index]}" "${g5[run_index]}"
+    printf '%-4s %-6s %-5s %-5s %-5s %-5s %-5s\n' \
+      "$run_index" "${seed_list[run_index - 1]}" \
+      "${g1[run_index]}" "${g2[run_index]}" "${g3[run_index]}" "${g4[run_index]}" "${g5[run_index]}"
     for cell in "${g1[run_index]}" "${g2[run_index]}" "${g3[run_index]}" "${g4[run_index]}" "${g5[run_index]}"; do
       [[ "$cell" == "PASS" ]] || verdict="FAIL"
     done
@@ -399,6 +447,7 @@ run_gates() {
     return 0
   fi
   echo "GATES FAIL"
+  echo "reproduce one run with: RUNS=1 SEEDS=<seed from the table> BACKEND=${BACKEND} $0"
   return 1
 }
 
@@ -446,6 +495,19 @@ self_test() {
     "$(gate_no_doubled_text "${testdata}/pass" && echo PASS || echo FAIL)"
   assert "G4 doubled text caught" FAIL \
     "$(gate_no_doubled_text "${testdata}/g4-doubled-text" && echo PASS || echo FAIL)"
+
+  assert "seeds default to one distinct value per run" "101 202 303 404 505" \
+    "$(select_seeds 5 "101 202 303 404 505" >/dev/null 2>&1 && echo "${seed_list[*]}")"
+  assert "seeds override honoured, extras ignored" "11 22" \
+    "$(select_seeds 2 "11 22 33" >/dev/null 2>&1 && echo "${seed_list[*]}")"
+  assert "seed 0 rejected" FAIL \
+    "$(select_seeds 1 "0" >/dev/null 2>&1 && echo PASS || echo FAIL)"
+  assert "padded seed 00 rejected" FAIL \
+    "$(select_seeds 1 "00" >/dev/null 2>&1 && echo PASS || echo FAIL)"
+  assert "non-numeric seed rejected" FAIL \
+    "$(select_seeds 1 "abc" >/dev/null 2>&1 && echo PASS || echo FAIL)"
+  assert "seed list shorter than RUNS rejected" FAIL \
+    "$(select_seeds 5 "101 202" >/dev/null 2>&1 && echo PASS || echo FAIL)"
 
   local pass_p95 slow_p95
   pass_p95="$(emit_step_latencies "${testdata}/pass/trace.jsonl" | p95_of)"

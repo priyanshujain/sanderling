@@ -39,11 +39,35 @@ func Extract(dir string) (string, error) {
 		}
 	}
 
-	if err := os.WriteFile(jarPath, embeddedJAR, 0o644); err != nil {
+	if err := writeAtomic(jarPath, embeddedJAR); err != nil {
 		return "", fmt.Errorf("write %s: %w", jarPath, err)
 	}
-	if err := os.WriteFile(checksumPath, []byte(checksum), 0o644); err != nil {
+	if err := writeAtomic(checksumPath, []byte(checksum)); err != nil {
 		return "", fmt.Errorf("write checksum: %w", err)
 	}
 	return jarPath, nil
+}
+
+// writeAtomic publishes content at path through a rename, so a reader never
+// observes a partial file. dir is shared between every sanderling process on
+// the host, so a campaign running one worker per device has several of them
+// extracting the same JAR at once on a cold host; a plain write let one
+// process spawn a JVM against another's half-written file.
+func writeAtomic(path string, content []byte) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.partial")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temporary.Name())
+	if _, err := temporary.Write(content); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(temporary.Name(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(temporary.Name(), path)
 }

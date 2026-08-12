@@ -45,9 +45,9 @@ func TestThunk_TransitionFromHoldToViolate(t *testing.T) {
 	wantSequence := []Verdict{
 		VerdictHolds,    // true
 		VerdictHolds,    // true
-		VerdictViolated, // false — latches
-		VerdictViolated, // true after violation — still violated
-		VerdictViolated, // true after violation — still violated
+		VerdictViolated, // false: latches
+		VerdictViolated, // true after violation: still violated
+		VerdictViolated, // true after violation: still violated
 	}
 	for index, want := range wantSequence {
 		got := evaluator.Observe()
