@@ -414,7 +414,12 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
       focused: document.activeElement === el || null,
       checked: el.checked || null,
       selected: el.selected || null,
-      editable: isEditable || null,
+      // Emitted as a plain boolean, never null: internal/hierarchy falls back to
+      // the native heuristic when the field is absent, which reads any class
+      // name containing "EditText" as an Android text widget. On web that is a
+      // CSS class, so a page styling a div with it made the goja host offer
+      // typing into a div the web runtime never calls editable.
+      editable: isEditable,
     };
   }
   // Rooted at documentElement, not body, because collectTargets in
