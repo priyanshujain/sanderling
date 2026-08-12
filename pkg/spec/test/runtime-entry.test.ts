@@ -75,14 +75,60 @@ test("Swipe defaults durationMillis to 250", () => {
   assert.equal(action.durationMillis, 250);
 });
 
-test("Scroll emits direction plus from/to point and duration", () => {
+// An author Scroll names a container and leaves the drag to the runner, which
+// sizes it from that container's bounds. Sending the container's own point as
+// both endpoints would be a drag from a point to itself, which the runner takes
+// at face value and dispatches as a zero-length gesture.
+test("an author Scroll carries no endpoints", () => {
   assert.deepEqual(serializeAction({ kind: "Scroll", direction: "down", in: POINT }), {
     kind: "Scroll",
     direction: "down",
-    fromX: 12,
-    fromY: 34,
-    toX: 12,
-    toY: 34,
+    fromX: 0,
+    fromY: 0,
+    toX: 0,
+    toY: 0,
+    durationMillis: 250,
+  });
+});
+
+test("an author Scroll names the container it scrolls", () => {
+  assert.deepEqual(serializeAction({ kind: "Scroll", direction: "down", in: "id:list" }), {
+    kind: "Scroll",
+    direction: "down",
+    fromX: 0,
+    fromY: 0,
+    toX: 0,
+    toY: 0,
+    durationMillis: 250,
+    selector: "id:list",
+  });
+  assert.deepEqual(
+    serializeAction({
+      kind: "Scroll",
+      direction: "down",
+      in: { x: 1, y: 2, selector: "id:list" },
+    }),
+    {
+      kind: "Scroll",
+      direction: "down",
+      fromX: 0,
+      fromY: 0,
+      toX: 0,
+      toY: 0,
+      durationMillis: 250,
+      selector: "id:list",
+    },
+  );
+});
+
+test("a Scroll with no container scrolls the screen rather than dropping", () => {
+  assert.deepEqual(serializeAction({ kind: "Scroll", direction: "up" }), {
+    kind: "Scroll",
+    direction: "up",
+    fromX: 0,
+    fromY: 0,
+    toX: 0,
+    toY: 0,
     durationMillis: 250,
   });
 });

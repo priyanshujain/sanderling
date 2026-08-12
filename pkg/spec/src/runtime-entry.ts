@@ -29,6 +29,7 @@ export type SerializedAction =
       toX: number;
       toY: number;
       durationMillis: number;
+      selector?: string;
     }
   | { kind: "PressKey"; key: string }
   | { kind: "Wait"; durationMillis: number };
@@ -90,20 +91,27 @@ export function serializeAction(action: ActionDescriptor | null): SerializedActi
       };
     }
     case "Scroll": {
-      const from = pointOf(action.from) ?? pointOf(action.in);
-      if (!from) return null;
-      // The builtin generator pre-computes `to`; an author Scroll without it
-      // collapses to a zero-length gesture the runner re-derives from bounds.
-      const to = pointOf(action.to) ?? from;
-      return {
+      // The builtin generator pre-computes the whole gesture. An author names
+      // the container instead and leaves the drag to the runner, which sizes it
+      // from that container's bounds: sending the container's own point as both
+      // endpoints would be a drag from a point to itself, which the runner
+      // executes as written, and sending no container at all would scroll
+      // whatever else is on screen.
+      const from = pointOf(action.from);
+      const to = pointOf(action.to);
+      const gesture =
+        from && to
+          ? { fromX: from.x, fromY: from.y, toX: to.x, toY: to.y }
+          : { fromX: 0, fromY: 0, toX: 0, toY: 0 };
+      const out: SerializedAction = {
         kind: "Scroll",
         direction: action.direction,
-        fromX: from.x,
-        fromY: from.y,
-        toX: to.x,
-        toY: to.y,
+        ...gesture,
         durationMillis: DEFAULT_SWIPE_DURATION,
       };
+      const container = pointOf(action.in);
+      if (container?.selector) out.selector = container.selector;
+      return out;
     }
     case "PressKey":
       return { kind: "PressKey", key: action.key };
