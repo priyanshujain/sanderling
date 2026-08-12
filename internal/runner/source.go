@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -64,39 +65,48 @@ func (s webSource) ExtractorOverrides(ctx context.Context) (map[int]json.RawMess
 
 // pickSources selects the runtime's action and extractor sources ONCE at setup
 // from the driver's capabilities, the --generator flag, and the spec, so the
-// step loop never type-asserts. With --generator llm and a spec-declared
-// generator = llm({...}) it constructs the chat-completions client and returns
-// an llmSource for selection while extractor overrides still come from the goja
-// path. Otherwise the seeded goja picker drives.
+// step loop never type-asserts.
+//
+// The two axes are independent. The DRIVER decides where extractor overrides
+// come from: the web path reads the values its extractors computed in V8, every
+// other path has none. The --generator flag decides who picks the action, and
+// the llm picker composes with either extractor source because it reads the
+// goja-side candidate list and screenshot, both of which the runner populates on
+// every platform.
+//
+// A missing generator = llm(...) is fatal rather than a fallback to the seeded
+// picker. Falling back silently corrupts a comparison campaign: the run
+// completes and the output directory looks correct while the wrong policy drove
+// it.
 func pickSources(options Options) (ActionSource, ExtractorSource, error) {
+	seeded := ActionSource(gojaSource{verifier: options.Verifier})
+	extractor := ExtractorSource(gojaSource{verifier: options.Verifier})
 	if web, ok := options.Driver.(driver.WebDriver); ok {
 		source := webSource{web: web}
-		return source, source, nil
+		seeded, extractor = source, source
+	}
+	if options.Generator != "llm" {
+		return seeded, extractor, nil
+	}
+	config, ok := options.Verifier.LLMConfig()
+	if !ok {
+		return nil, nil, errors.New("--generator llm: the spec declares no generator = llm(...); add one to the spec or drop --generator llm")
+	}
+	client, err := llmclient.New()
+	if err != nil {
+		return nil, nil, fmt.Errorf("llm action generator: %w", err)
 	}
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if options.Generator == "llm" {
-		config, ok := options.Verifier.LLMConfig()
-		if !ok {
-			logger.Warn("--generator llm requested but spec declares no generator = llm(); using the seeded picker")
-		} else {
-			client, err := llmclient.New()
-			if err != nil {
-				return nil, nil, fmt.Errorf("llm action generator: %w", err)
-			}
-			action := &llmSource{
-				verifier:     options.Verifier,
-				client:       client,
-				model:        config.Model,
-				instructions: config.Instructions,
-				logger:       logger,
-				history:      newActionHistory(llmHistorySize),
-			}
-			return action, gojaSource{verifier: options.Verifier}, nil
-		}
+	action := &llmSource{
+		verifier:     options.Verifier,
+		client:       client,
+		model:        config.Model,
+		instructions: config.Instructions,
+		logger:       logger,
+		history:      newActionHistory(llmHistorySize),
 	}
-	source := gojaSource{verifier: options.Verifier}
-	return source, source, nil
+	return action, extractor, nil
 }
