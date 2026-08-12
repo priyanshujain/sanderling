@@ -27,8 +27,13 @@ case "$platform" in
       examples/folio/app/androidApp/build/outputs/apk/debug/androidApp-debug.apk)
     ;;
   ios)
+    # --clear-data=false because the caller has just installed a fresh build (a
+    # freshly installed app IS clear state). The in-run reinstall path is worth
+    # avoiding here: `simctl uninstall` + `install` immediately followed by the
+    # XCTest runner's own launch hits "app.folio is unknown to FrontBoard"
+    # perhaps half the time, and the run then hangs rather than failing.
     folio_args+=(--platform ios
-      --ios-app-path examples/folio/app/iosApp/build/Build/Products/Debug-iphonesimulator/iosApp.app
+      --clear-data=false
       --ios-device "${IOS_DEVICE:-iPhone 16 Pro}")
     ;;
   web)

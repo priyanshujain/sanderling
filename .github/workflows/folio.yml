@@ -37,6 +37,7 @@ on:
 
 jobs:
   android:
+    timeout-minutes: 90
     if: ${{ inputs.platforms == 'all' || inputs.platforms == 'android' }}
     runs-on: ubuntu-latest
     steps:
@@ -111,6 +112,7 @@ jobs:
           retention-days: 14
 
   ios:
+    timeout-minutes: 90
     if: ${{ inputs.platforms == 'all' || inputs.platforms == 'ios' }}
     runs-on: macos-15
     steps:
@@ -192,6 +194,7 @@ jobs:
           retention-days: 14
 
   web:
+    timeout-minutes: 60
     if: ${{ inputs.platforms == 'all' || inputs.platforms == 'web' }}
     runs-on: ubuntu-latest
     steps:

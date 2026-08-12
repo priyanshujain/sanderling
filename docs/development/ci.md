@@ -42,17 +42,27 @@ knew "non-zero" could not tell a working fuzzer from a broken emulator.
 
 **web is a health gate**, not an expect-the-bug leg. The same spec logs into the
 wasmJs build and drives it to the transaction screen (the job asserts the trace
-reached `AddTransactionScreen`), but the submit property cannot fire there. It
+reached `AddTransactionScreen`), but the submit property cannot fire there: it
 keys off `state.lastAction`, which the web runtime reports as `null`, and off the
-action's selector, which the web picker does not carry - it emits coordinates,
-and element identity never crosses the V8 boundary. Both are fixable; neither is
-a small fix, and until they are, asserting exit 2 on web would be asserting
-something the spec cannot observe.
+action's selector, which the web picker does not carry, since it emits
+coordinates and element identity never crosses the V8 boundary.
 
 The wasmJs app is served with `Cross-Origin-Opener-Policy` and
 `Cross-Origin-Embedder-Policy` headers, because its sqlite worker needs
 cross-origin isolation. Served without them the app loads a blank canvas and
 every step observes an empty accessibility tree.
+
+The seeds in the workflow are calibrated, not guessed. On an M-series mac,
+android seed 3 finds the bug at step 110-116 (seeds 1, 2 and 4 run 120 steps
+clean) and ios seed 1 finds it at step 129-134, both against a 240-step budget.
+The web leg ran five seeds x 200 steps clean.
+
+The ios leg passes `--clear-data=false`, because the job installs a fresh build
+immediately before the run and a freshly installed app is already clear state.
+The in-run reinstall is worth avoiding: `simctl uninstall` + `install` followed
+straight away by the XCTest runner's own launch fails with `app.folio is unknown
+to FrontBoard` maybe half the time, and the run then hangs rather than failing.
+The job timeouts are the backstop if it happens anyway.
 
 ## replay-ui
 
