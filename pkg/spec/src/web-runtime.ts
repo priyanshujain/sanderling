@@ -85,7 +85,12 @@ function noopFormula(): unknown {
 const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   id: (v) => `[id="${cssEscape(v)}"]`,
   "resource-id": (v) => `[id="${cssEscape(v)}"]`,
-  testTag: (v) => `[data-testid="${cssEscape(v)}"]`,
+  // The native table aliases testTag onto resource-id, which the host DOM walk
+  // fills from el.id, so the native path already accepts a testTag emitted as
+  // an id (what Compose Multiplatform does on web). Accept both here so the
+  // tables agree. `:is()` keeps this one compound, since a multi-key selector
+  // concatenates the parts.
+  testTag: (v) => `:is([data-testid="${cssEscape(v)}"], [id="${cssEscape(v)}"])`,
   testID: (v) => `[data-testid="${cssEscape(v)}"]`,
   "data-testid": (v) => `[data-testid="${cssEscape(v)}"]`,
   className: (v) => `[class~="${cssEscape(v)}"]`,

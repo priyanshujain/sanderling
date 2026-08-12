@@ -310,6 +310,23 @@ test("selectorFromObject maps known keys to their canonical attribute", () => {
   });
 });
 
+// Compose Multiplatform emits its testTag into `id`, which the native table
+// already accepts via the resource-id alias. The web table must not be the one
+// place that rejects it.
+test("selectorFromObject resolves testTag through data-testid or id", () => {
+  assert.deepEqual(selectorFromObject({ testTag: "LoginSubmit" }), {
+    css: `:is([data-testid="LoginSubmit"], [id="LoginSubmit"])`,
+  });
+});
+
+// Multi-key selectors concatenate their parts into one compound, so the
+// two-attribute testTag match has to stay a single compound piece.
+test("selectorFromObject composes testTag with a second key", () => {
+  assert.deepEqual(selectorFromObject({ testTag: "Row", "aria-label": "first" }), {
+    css: `:is([data-testid="Row"], [id="Row"])[aria-label="first"]`,
+  });
+});
+
 test("selectorFromObject falls back to a literal attribute for unknown keys", () => {
   assert.deepEqual(selectorFromObject({ "data-foo": "bar" }), {
     css: `[data-foo="bar"]`,
