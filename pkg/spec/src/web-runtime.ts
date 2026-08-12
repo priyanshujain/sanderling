@@ -188,13 +188,32 @@ function selectorFromString(selector: string): { css?: string; xpath?: string } 
   return selectorFromObject({ [kind]: value });
 }
 
+// deepQueryAll resolves a CSS selector against a root AND every shadow root
+// beneath it. querySelectorAll stops dead at a shadow boundary, and a canvas app
+// (Compose for Web mounts its canvas and its whole accessibility tree inside a
+// shadow root on the mount element) keeps its entire UI on the far side of one:
+// without this a spec sees four nodes and can neither enumerate a target nor
+// resolve a testTag. Light-DOM matches come first, then shadow content in walk
+// order. XPath has no equivalent, so `text:` selectors stop at the boundary.
+function deepQueryAll(selector: string, root: ParentNode): Element[] {
+  const found: Element[] = [];
+  const visit = (scope: ParentNode): void => {
+    for (const element of Array.from(scope.querySelectorAll(selector))) found.push(element);
+    for (const element of Array.from(scope.querySelectorAll<HTMLElement>("*"))) {
+      if (element.shadowRoot) visit(element.shadowRoot);
+    }
+  };
+  visit(root);
+  return found;
+}
+
 function queryElement(
   root: ParentNode,
   selector: unknown,
 ): Element | null {
   if (typeof selector === "string") {
     const { css, xpath } = selectorFromString(selector);
-    if (css) return root.querySelector(css);
+    if (css) return deepQueryAll(css, root)[0] ?? null;
     if (xpath) {
       const result = document.evaluate(
         xpath,
@@ -219,7 +238,7 @@ function queryElement(
   }
   if (selector && typeof selector === "object") {
     const { css, xpath } = selectorFromObject(selector as Record<string, string | boolean | undefined>);
-    if (css) return root.querySelector(css);
+    if (css) return deepQueryAll(css, root)[0] ?? null;
     if (xpath) {
       const result = document.evaluate(
         xpath,
@@ -237,13 +256,13 @@ function queryElement(
 function queryAllElements(root: ParentNode, selector: unknown): Element[] {
   if (typeof selector === "string") {
     const { css, xpath } = selectorFromString(selector);
-    if (css) return Array.from(root.querySelectorAll(css));
+    if (css) return deepQueryAll(css, root);
     if (xpath) return evaluateXPathAll(xpath, root as Node);
     return [];
   }
   if (selector && typeof selector === "object" && !Array.isArray(selector)) {
     const { css, xpath } = selectorFromObject(selector as Record<string, string | boolean | undefined>);
-    if (css) return Array.from(root.querySelectorAll(css));
+    if (css) return deepQueryAll(css, root);
     if (xpath) return evaluateXPathAll(xpath, root as Node);
   }
   return [];
@@ -521,12 +540,31 @@ function pointOf(element: Element): Candidate {
 const HEAD_SELECTOR = "head, head *";
 
 // targetElements is the walk the target list is built from: the document in
-// pre-order, minus the head subtree.
+// pre-order, minus the head subtree, with each shadow host's content spliced in
+// directly after the host. That is buildTree's order in
+// internal/driver/chrome/driver.go, and the two producers are compared element
+// by element in enumeration order.
 function targetElements(): HTMLElement[] {
   const inHead = new Set<Element>(Array.from(document.querySelectorAll(HEAD_SELECTOR)));
-  return Array.from(document.querySelectorAll<HTMLElement>("*")).filter(
-    (element) => !inHead.has(element),
+  const walked: HTMLElement[] = [];
+  expandShadowContent(
+    Array.from(document.querySelectorAll<HTMLElement>("*")).filter(
+      (element) => !inHead.has(element),
+    ),
+    walked,
   );
+  return walked;
+}
+
+// expandShadowContent copies a tree-ordered element list into `into`, following
+// each host into its shadow root (and into nested hosts) as it goes.
+function expandShadowContent(elements: HTMLElement[], into: HTMLElement[]): void {
+  for (const element of elements) {
+    into.push(element);
+    const shadow = element.shadowRoot;
+    if (!shadow) continue;
+    expandShadowContent(Array.from(shadow.querySelectorAll<HTMLElement>("*")), into);
+  }
 }
 
 // collectTargets walks the document ONCE and reports every element with the facts
@@ -534,11 +572,9 @@ function targetElements(): HTMLElement[] {
 // resolved by selector first so the DOM's answer to "clickable" and "editable"
 // stays expressed in CSS, as it always was.
 function collectTargets(): TargetElement[] {
-  const clickable = new Set<Element>(Array.from(document.querySelectorAll(TAPPABLE_SELECTOR)));
+  const clickable = new Set<Element>(deepQueryAll(TAPPABLE_SELECTOR, document));
   const editable = new Set<Element>(
-    Array.from(document.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR)).filter(
-      isEditableElement,
-    ),
+    (deepQueryAll(EDITABLE_SELECTOR, document) as HTMLElement[]).filter(isEditableElement),
   );
   return targetElements().map((element) => ({
     ...pointOf(element),

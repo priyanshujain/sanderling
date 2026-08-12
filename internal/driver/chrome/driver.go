@@ -383,10 +383,23 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     if (tag === 'input') return !NON_TEXT_INPUT_TYPES.includes((el.type || '').toLowerCase());
     return false;
   }
-  const clickableSet = new Set(document.querySelectorAll(
+  // Shadow roots are part of the page a user sees, so they are part of the page
+  // we enumerate. Compose for Web mounts its canvas AND its accessibility tree
+  // inside a shadow root on the mount element, so a light-DOM-only walk reports
+  // four nodes for a whole app and offers no action on any of them.
+  function deepQuery(sel) {
+    const out = [];
+    const visit = (root) => {
+      for (const el of root.querySelectorAll(sel)) out.push(el);
+      for (const el of root.querySelectorAll('*')) if (el.shadowRoot) visit(el.shadowRoot);
+    };
+    visit(document);
+    return out;
+  }
+  const clickableSet = new Set(deepQuery(
     'a, button, input, select, textarea, [role="button"], [onclick]'));
-  const editableSet = new Set(Array.from(
-    document.querySelectorAll('input, textarea, [contenteditable]')).filter(isEditableElement));
+  const editableSet = new Set(deepQuery(
+    'input, textarea, [contenteditable]').filter(isEditableElement));
   function buildTree(el, isRoot) {
     const rect = el.getBoundingClientRect();
     const attrs = {};
@@ -414,6 +427,14 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     const isClickable = clickableSet.has(el);
     const isEditable = editableSet.has(el);
     const children = [];
+    // Shadow content first, then light children: the shadow tree is what the
+    // host actually renders, and targetElements in web-runtime.ts walks the same
+    // order, which is the order the two enumerations are compared in.
+    if (el.shadowRoot) {
+      for (const child of el.shadowRoot.children) {
+        children.push(buildTree(child, false));
+      }
+    }
     for (const child of el.children) {
       if (child.tagName === 'HEAD') continue;
       children.push(buildTree(child, false));
