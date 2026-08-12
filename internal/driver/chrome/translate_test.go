@@ -21,6 +21,9 @@ func TestTranslateStringSelector_KnownKeys(t *testing.T) {
 		{"accessibilityLabel:logout", `[aria-label="logout"]`, false},
 		{"aria-label:Sign in", `[aria-label="Sign in"]`, false},
 		{"descPrefix:account:", `[aria-label^="account:"]`, false},
+		// Must stay the string pkg/spec/src/web-runtime.ts builds for the same
+		// selector; the two translators feed the same page.
+		{"idPrefix:customer_row_", `[id^="customer_row_"]`, false},
 		{"testTag:submit", `:is([data-testid="submit"], [id="submit"])`, false},
 		{"testID:submit", `[data-testid="submit"]`, false},
 		{"placeholder:Email", `[placeholder="Email"]`, false},

@@ -32,6 +32,8 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 	switch kind {
 	case "id", "resource-id":
 		return `[id="` + cssEscape(value) + `"]`, false, nil
+	case "idPrefix":
+		return `[id^="` + cssEscape(value) + `"]`, false, nil
 	case "class":
 		return `[class~="` + cssEscape(value) + `"]`, false, nil
 	case "tag":
