@@ -363,6 +363,11 @@ globalThis.actions = actions(() => []);
 		if witness.Step != 2 {
 			t.Errorf("witness step: got %d, want 2 (causing step)", witness.Step)
 		}
+		// The two indices the witness spans are recorded separately: the
+		// extractor snapshot it carries is step 3's state, not step 2's.
+		if witness.DetectedStep != 3 {
+			t.Errorf("witness detected step: got %d, want 3", witness.DetectedStep)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan trace: %v", err)
