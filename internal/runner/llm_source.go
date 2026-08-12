@@ -302,7 +302,14 @@ func describeAction(action verifier.Action) string {
 	case verifier.ActionKindInputText:
 		return fmt.Sprintf("InputText %s = %q", actionTarget(action), action.Text)
 	case verifier.ActionKindScroll:
-		return fmt.Sprintf("Scroll %s %s", action.Direction, action.On)
+		// A builtin gesture carries endpoints rather than a selector, so name the
+		// container by where the drag starts; that is what tells two scrollable
+		// regions apart in the recent-action memory.
+		target := action.On
+		if target == "" {
+			target = fmt.Sprintf("(%d,%d)", action.FromX, action.FromY)
+		}
+		return fmt.Sprintf("Scroll %s %s", action.Direction, target)
 	case verifier.ActionKindSwipe:
 		// Coordinates make a repeated identical swipe recognizable in the
 		// prompt's recent-action memory.
