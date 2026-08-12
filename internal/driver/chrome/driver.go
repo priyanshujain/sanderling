@@ -357,6 +357,24 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
 	script := `
 (function() {
   const route = window.location.hash.replace(/^#/, '').split('?')[0] || '/';
+  // clickable and editable are resolved through the SAME selector sets
+  // pkg/spec/src/web-runtime.ts uses, so the goja host (which reads this dump)
+  // and the V8 host (which reads the DOM directly) cannot mean different things
+  // by one fact on one platform. Testing el.onclick instead made every React
+  // root a full-viewport tap target here and nowhere else.
+  const NON_TEXT_INPUT_TYPES =
+    ['button','submit','checkbox','radio','range','color','file','image','reset'];
+  function isEditableElement(el) {
+    if (el.isContentEditable) return true;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'textarea') return true;
+    if (tag === 'input') return !NON_TEXT_INPUT_TYPES.includes((el.type || '').toLowerCase());
+    return false;
+  }
+  const clickableSet = new Set(document.querySelectorAll(
+    'a, button, input, select, textarea, [role="button"], [onclick]'));
+  const editableSet = new Set(Array.from(
+    document.querySelectorAll('input, textarea, [contenteditable]')).filter(isEditableElement));
   function buildTree(el, isRoot) {
     const rect = el.getBoundingClientRect();
     const attrs = {};
@@ -373,15 +391,19 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     if (el.className && typeof el.className === 'string' && el.className.trim()) {
       attrs['class'] = el.className.trim();
     }
+    // The goja host reads scrollable off this attribute (internal/verifier
+    // worker.go targets). Without it every web element looks unscrollable there,
+    // so the goja-side enumeration offers no scroll while the V8 picker, which
+    // computes the same overflow test in web-runtime.ts, offers plenty.
+    if (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth) {
+      attrs['scrollable'] = 'true';
+    }
     if (isRoot) attrs['sanderling-screen'] = route;
-    const isClickable = !!(el.onclick || el.tagName === 'A' || el.tagName === 'BUTTON' ||
-      el.tagName === 'INPUT' || el.tagName === 'SELECT' ||
-      el.getAttribute('role') === 'button' || el.getAttribute('onclick'));
-    const isEditable = el.isContentEditable || tag === 'textarea' ||
-      (tag === 'input' && !['button','submit','checkbox','radio','range','color','file','image','reset']
-        .includes((el.type || '').toLowerCase()));
+    const isClickable = clickableSet.has(el);
+    const isEditable = editableSet.has(el);
     const children = [];
     for (const child of el.children) {
+      if (child.tagName === 'HEAD') continue;
       children.push(buildTree(child, false));
     }
     return {
@@ -395,7 +417,14 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
       editable: isEditable || null,
     };
   }
-  return buildTree(document.body, true);
+  // Rooted at documentElement, not body, because collectTargets in
+  // pkg/spec/src/web-runtime.ts walks querySelectorAll("*") and therefore sees
+  // html. Page-level scrolling lives on html on a standard page, so a dump
+  // rooted at body hides it from the goja host and the two enumerations
+  // disagree on exactly the page scroll. The head subtree is skipped: it is all
+  // zero-bounds, so it changes no eligible set, and it would otherwise pull
+  // script and title text into the trace and the replay view.
+  return buildTree(document.documentElement, true);
 })()`
 
 	var result any
