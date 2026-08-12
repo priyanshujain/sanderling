@@ -54,6 +54,7 @@ Selectors are passed to `ax.find()`, `ax.findAll()`, and element-scoped `.find()
 | Form | Matches |
 |---|---|
 | `id:<value>` | Exact match on resource-id, or element whose resource-id ends with `:id/<value>` (Android) |
+| `idPrefix:<prefix>` | Starts-with match on resource-id, matched against the whole id and against the local name after `:id/` (Android) |
 | `text:<value>` | Substring match on text content |
 | `desc:<value>` | Exact match on accessibility description; also matches when description starts with `<value>, ` (iOS merged labels) |
 | `descPrefix:<prefix>` | Starts-with match on accessibility description |
@@ -71,6 +72,7 @@ s.ax.find({ testTag: "AccountCard", clickable: true })
 ```
 
 Every key-value pair must match. Substring and boolean rules apply per attribute.
+`idPrefix` and `descPrefix` are accepted as keys here too, with the starts-with meaning they carry in the string form.
 
 Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
 
