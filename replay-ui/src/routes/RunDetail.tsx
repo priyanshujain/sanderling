@@ -172,7 +172,7 @@ export default function RunDetail() {
       label: "Violations",
       badge:
         stepViolations.length > 0 ? (
-          <span className="tabs-badge" data-kind="violation">
+          <span className="tabs-badge" data-testid="violations-badge" data-kind="violation">
             {stepViolations.length}
           </span>
         ) : undefined,
@@ -239,7 +239,7 @@ export default function RunDetail() {
       label: "Violations",
       badge:
         stepViolations.length > 0 ? (
-          <span className="tabs-badge" data-kind="violation">
+          <span className="tabs-badge" data-testid="violations-badge" data-kind="violation">
             {stepViolations.length}
           </span>
         ) : undefined,
