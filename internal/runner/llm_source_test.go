@@ -5,21 +5,27 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
 	"github.com/priyanshujain/sanderling/internal/llmclient"
+	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
@@ -168,6 +174,9 @@ type fakeOpenRouter struct {
 	chosenAction string
 	text         string
 	reasoning    string
+	usage        llmclient.Usage
+	servedModel  string
+	delay        time.Duration
 	lastRequest  map[string]any
 }
 
@@ -184,8 +193,11 @@ func newFakeOpenRouter(t *testing.T) *fakeOpenRouter {
 			"text":          fake.text,
 		})
 		response, _ := json.Marshal(llmclient.Response{
+			Model:   fake.servedModel,
 			Choices: []llmclient.Choice{{Message: llmclient.ResponseMessage{Content: string(content)}}},
+			Usage:   fake.usage,
 		})
+		time.Sleep(fake.delay)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(response)
 	}))
@@ -193,7 +205,41 @@ func newFakeOpenRouter(t *testing.T) *fakeOpenRouter {
 	return fake
 }
 
+// fakeCallRecorder keeps the per-step selection records in memory so a test can
+// assert on them without opening the run directory.
+type fakeCallRecorder struct {
+	calls []trace.LLMCall
+}
+
+func (r *fakeCallRecorder) WriteLLMCall(call trace.LLMCall) error {
+	r.calls = append(r.calls, call)
+	return nil
+}
+
+func recordedCalls(t *testing.T, source *llmSource) []trace.LLMCall {
+	t.Helper()
+	recorder, ok := source.recorder.(*fakeCallRecorder)
+	if !ok {
+		t.Fatalf("recorder = %T, want *fakeCallRecorder", source.recorder)
+	}
+	return recorder.calls
+}
+
+func lastCall(t *testing.T, source *llmSource) trace.LLMCall {
+	t.Helper()
+	calls := recordedCalls(t, source)
+	if len(calls) == 0 {
+		t.Fatal("no selection record written")
+	}
+	return calls[len(calls)-1]
+}
+
 func newLLMSource(t *testing.T, fake *fakeOpenRouter) (*llmSource, *verifier.Verifier) {
+	t.Helper()
+	return newLLMSourceWithSpec(t, fake, llmFixtureSpec)
+}
+
+func newLLMSourceWithSpec(t *testing.T, fake *fakeOpenRouter, spec string) (*llmSource, *verifier.Verifier) {
 	t.Helper()
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("OPENROUTER_BASE_URL", fake.server.URL)
@@ -206,7 +252,7 @@ func newLLMSource(t *testing.T, fake *fakeOpenRouter) (*llmSource, *verifier.Ver
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifierInstance.Load(bundleSpec(t, llmFixtureSpec)); err != nil {
+	if err := verifierInstance.Load(bundleSpec(t, spec)); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := verifierInstance.LLMConfig(); !ok {
@@ -219,19 +265,46 @@ func newLLMSource(t *testing.T, fake *fakeOpenRouter) (*llmSource, *verifier.Ver
 		model:    "test/model",
 		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		history:  newActionHistory(llmHistorySize),
+		recorder: &fakeCallRecorder{},
 	}
 	return source, verifierInstance
 }
 
 func pushLLMSnapshot(t *testing.T, v *verifier.Verifier) {
 	t.Helper()
+	pushLLMSnapshotAtStep(t, v, 0)
+}
+
+func pushLLMSnapshotAtStep(t *testing.T, v *verifier.Verifier, stepIndex int) {
+	t.Helper()
 	tree, err := hierarchy.Parse(llmTreeJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.PushSnapshot(verifier.SnapshotInput{Tree: tree, ScreenshotPNG: tinyPNG(t)}); err != nil {
+	if err := v.PushSnapshot(verifier.SnapshotInput{
+		Tree:          tree,
+		ScreenshotPNG: tinyPNG(t),
+		StepIndex:     stepIndex,
+	}); err != nil {
 		t.Fatalf("PushSnapshot: %v", err)
 	}
+}
+
+func readLLMCalls(t *testing.T, directory string) []trace.LLMCall {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(directory, trace.LLMCallFileName))
+	if err != nil {
+		t.Fatalf("read %s: %v", trace.LLMCallFileName, err)
+	}
+	var calls []trace.LLMCall
+	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+		var call trace.LLMCall
+		if err := json.Unmarshal([]byte(line), &call); err != nil {
+			t.Fatalf("decode record %q: %v", line, err)
+		}
+		calls = append(calls, call)
+	}
+	return calls
 }
 
 func candidateByKind(t *testing.T, candidates []verifier.ActionCandidate, kind verifier.ActionKind) verifier.ActionCandidate {
@@ -385,7 +458,7 @@ func TestLLMSourceDrivesExecutedActions(t *testing.T) {
 	fake.chosenAction = tap.Description
 	fake.reasoning = "tap submit"
 	fake.text = ""
-	action, err := source.NextAction(context.Background())
+	action, err := source.NextAction(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("NextAction: %v", err)
 	}
@@ -411,7 +484,7 @@ func TestLLMSourceDrivesExecutedActions(t *testing.T) {
 	fake.chosenAction = typing.Description
 	fake.reasoning = "type a name"
 	fake.text = "Priya"
-	action, err = source.NextAction(context.Background())
+	action, err = source.NextAction(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("NextAction: %v", err)
 	}
@@ -440,7 +513,7 @@ func TestLLMSourceSkipsOnOutOfRangeChoice(t *testing.T) {
 
 	fake.choice = 9999
 	fake.chosenAction = "whatever"
-	_, err := source.NextAction(context.Background())
+	_, err := source.NextAction(context.Background(), 1)
 	if !errors.Is(err, verifier.ErrNoAction) {
 		t.Fatalf("NextAction err = %v, want ErrNoAction for an out-of-range choice", err)
 	}
@@ -460,7 +533,7 @@ func TestLLMSourceAcceptsEchoWithWeightSuffix(t *testing.T) {
 	tap := candidateByKind(t, candidates, verifier.ActionKindTap)
 	fake.choice = tap.Index
 	fake.chosenAction = tap.Description + "  (w" + strconv.Itoa(tap.Weight) + ")"
-	action, err := source.NextAction(context.Background())
+	action, err := source.NextAction(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("NextAction: %v", err)
 	}
@@ -497,7 +570,7 @@ func TestLLMSourceStrictSkipsOnEchoMismatch(t *testing.T) {
 	tap := candidateByKind(t, candidates, verifier.ActionKindTap)
 	fake.choice = tap.Index
 	fake.chosenAction = "Tap \"Something Else\""
-	_, err := source.NextAction(context.Background())
+	_, err := source.NextAction(context.Background(), 1)
 	if !errors.Is(err, verifier.ErrNoAction) {
 		t.Fatalf("NextAction err = %v, want ErrNoAction on chosen_action mismatch", err)
 	}
@@ -516,9 +589,244 @@ func TestLLMSourceSkipsOnHTTPError(t *testing.T) {
 	pushLLMSnapshot(t, verifierInstance)
 
 	fake.choice = 1
-	_, err := source.NextAction(context.Background())
+	_, err := source.NextAction(context.Background(), 1)
 	if !errors.Is(err, verifier.ErrNoAction) {
 		t.Fatalf("NextAction err = %v, want ErrNoAction on HTTP failure", err)
+	}
+}
+
+// llmSetupFixtureSpec drives the first action from setup, so the model is never
+// consulted for that step.
+const llmSetupFixtureSpec = `
+import { llm, always, actions, taps, typing, weighted, Tap } from "@sanderling/spec";
+globalThis.properties = { ok: always(() => true) };
+globalThis.setup = actions(() => [Tap({ on: "id:Submit" })]);
+globalThis.actions = weighted([1, taps], [1, typing]);
+globalThis.generator = llm({ model: "test/model" });
+`
+
+// TestLLMCallRecordSeparatesGuardSkipFromDecline pins the reason these records
+// exist. A step the echo guard threw away and a step where the picker had
+// nothing to choose both used to leave nothing behind but a log line, so any
+// defect-yield or actions-per-hour figure computed from a model run silently
+// mixed the two with each other and with steps that acted.
+func TestLLMCallRecordSeparatesGuardSkipFromDecline(t *testing.T) {
+	const stepIndex = 7
+
+	guardSkipped := func(t *testing.T) trace.LLMCall {
+		fake := newFakeOpenRouter(t)
+		source, verifierInstance := newLLMSource(t, fake)
+		pushLLMSnapshot(t, verifierInstance)
+		tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+		fake.choice = tap.Index
+		fake.chosenAction = `Tap "Something Else"`
+		if _, err := source.NextAction(context.Background(), stepIndex); !errors.Is(err, verifier.ErrNoAction) {
+			t.Fatalf("NextAction err = %v, want ErrNoAction on echo mismatch", err)
+		}
+		return lastCall(t, source)
+	}
+	declined := func(t *testing.T) trace.LLMCall {
+		fake := newFakeOpenRouter(t)
+		// No snapshot pushed, so the action tree yields nothing to pick from.
+		source, _ := newLLMSource(t, fake)
+		if _, err := source.NextAction(context.Background(), stepIndex); !errors.Is(err, verifier.ErrNoAction) {
+			t.Fatalf("NextAction err = %v, want ErrNoAction with no candidates", err)
+		}
+		return lastCall(t, source)
+	}
+	acted := func(t *testing.T) trace.LLMCall {
+		fake := newFakeOpenRouter(t)
+		source, verifierInstance := newLLMSource(t, fake)
+		pushLLMSnapshot(t, verifierInstance)
+		tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+		fake.choice = tap.Index
+		fake.chosenAction = tap.Description
+		if _, err := source.NextAction(context.Background(), stepIndex); err != nil {
+			t.Fatalf("NextAction: %v", err)
+		}
+		return lastCall(t, source)
+	}
+
+	skip, decline, pick := guardSkipped(t), declined(t), acted(t)
+	if skip.Outcome != trace.LLMOutcomeEchoMismatch {
+		t.Errorf("guard-skipped outcome = %q, want %q", skip.Outcome, trace.LLMOutcomeEchoMismatch)
+	}
+	if decline.Outcome != trace.LLMOutcomeNoCandidates {
+		t.Errorf("declined outcome = %q, want %q", decline.Outcome, trace.LLMOutcomeNoCandidates)
+	}
+	if pick.Outcome != trace.LLMOutcomeSelected {
+		t.Errorf("executed outcome = %q, want %q", pick.Outcome, trace.LLMOutcomeSelected)
+	}
+	for _, call := range []trace.LLMCall{skip, decline, pick} {
+		if call.Step != stepIndex {
+			t.Errorf("record step = %d, want %d so it joins its trace line", call.Step, stepIndex)
+		}
+		if call.Timestamp.IsZero() {
+			t.Error("record carries no timestamp")
+		}
+	}
+	// The guard skip must carry what only the dropped log line used to hold.
+	if skip.Choice == 0 || skip.EchoedAction != `Tap "Something Else"` || skip.RawResponse == "" {
+		t.Errorf("guard-skip record = %+v, want the choice, the echo, and the raw response", skip)
+	}
+	if len(skip.Candidates) == 0 {
+		t.Error("guard-skip record must keep the candidate list the mismatch is judged against")
+	}
+	// A decline never reached the provider, so it must not look like a call.
+	if decline.RawResponse != "" || decline.UserPrompt != "" || len(decline.Candidates) != 0 {
+		t.Errorf("decline record = %+v, want no prompt, candidates, or response", decline)
+	}
+}
+
+// TestLLMCallRecordsCandidateListAsShown covers the companion experiment that
+// varies how candidates are labelled: the labels are an independent variable, so
+// each call must be recoverable with the exact numbered list it saw.
+func TestLLMCallRecordsCandidateListAsShown(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	source, verifierInstance := newLLMSource(t, fake)
+	source.instructions = "hunt for double submits"
+	pushLLMSnapshot(t, verifierInstance)
+	tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+	fake.choice = tap.Index
+	fake.chosenAction = tap.Description
+	if _, err := source.NextAction(context.Background(), 1); err != nil {
+		t.Fatalf("NextAction: %v", err)
+	}
+
+	call := lastCall(t, source)
+	if len(call.Candidates) == 0 {
+		t.Fatal("no candidate list recorded")
+	}
+	for _, candidate := range call.Candidates {
+		line := fmt.Sprintf("%d. %s", candidate.Index, candidate.Description)
+		if !strings.Contains(call.UserPrompt, line) {
+			t.Errorf("recorded candidate %q is not a line of the prompt:\n%s", line, call.UserPrompt)
+		}
+		if candidate.Weight > 0 && !strings.Contains(call.UserPrompt, fmt.Sprintf("%s  (w%d)", candidate.Description, candidate.Weight)) {
+			t.Errorf("recorded weight %d for %q is not the weight the prompt showed:\n%s",
+				candidate.Weight, candidate.Description, call.UserPrompt)
+		}
+	}
+	numberedLine := regexp.MustCompile(`(?m)^\d+\. `)
+	if shown := len(numberedLine.FindAllString(call.UserPrompt, -1)); shown != len(call.Candidates) {
+		t.Errorf("prompt showed %d numbered lines but %d candidates were recorded", shown, len(call.Candidates))
+	}
+	if got := candidateLabels(call.Candidates); !slices.Contains(got, tap.Label) {
+		t.Errorf("recorded labels = %v, want the target label %q among them", got, tap.Label)
+	}
+	// The system prompt is assembled from a constant plus spec instructions, so
+	// the record has to be the assembled text, not the constant.
+	if call.SystemPrompt != source.systemPrompt() {
+		t.Errorf("recorded system prompt = %q, want the assembled prompt", call.SystemPrompt)
+	}
+	if !strings.Contains(call.SystemPrompt, "hunt for double submits") {
+		t.Error("recorded system prompt dropped the spec instructions")
+	}
+	if call.Model != "test/model" {
+		t.Errorf("recorded model = %q, want test/model", call.Model)
+	}
+}
+
+func candidateLabels(candidates []trace.LLMCandidate) []string {
+	labels := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		labels = append(labels, candidate.Label)
+	}
+	return labels
+}
+
+func TestLLMCallRecordsSetupDrivenStep(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	source, verifierInstance := newLLMSourceWithSpec(t, fake, llmSetupFixtureSpec)
+	pushLLMSnapshot(t, verifierInstance)
+
+	action, err := source.NextAction(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("NextAction: %v", err)
+	}
+	if action.On != "id:Submit" {
+		t.Fatalf("action = %+v, want the setup tap on id:Submit", action)
+	}
+	call := lastCall(t, source)
+	if call.Outcome != trace.LLMOutcomeSetupAction {
+		t.Errorf("outcome = %q, want %q", call.Outcome, trace.LLMOutcomeSetupAction)
+	}
+	if call.UserPrompt != "" || call.RawResponse != "" || call.TotalTokens != 0 {
+		t.Errorf("setup-driven step = %+v, want no model call recorded", call)
+	}
+	if source.lastSource != "" {
+		t.Errorf("lastSource = %q, want empty: setup chose the action, not the model", source.lastSource)
+	}
+}
+
+func TestLLMCallFileRecordsUsageLatencyAndScreenshot(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	fake.usage = llmclient.Usage{PromptTokens: 1200, CompletionTokens: 34, TotalTokens: 1234}
+	fake.servedModel = "vendor/model-2026-05"
+	fake.delay = 15 * time.Millisecond
+	source, verifierInstance := newLLMSource(t, fake)
+
+	directory := t.TempDir()
+	writer, err := trace.NewWriter(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.recorder = writer
+
+	pushLLMSnapshotAtStep(t, verifierInstance, 4)
+	tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+	fake.choice = tap.Index
+	fake.chosenAction = tap.Description
+	if _, err := source.NextAction(context.Background(), 4); err != nil {
+		t.Fatalf("NextAction: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := readLLMCalls(t, directory)
+	if len(calls) != 1 {
+		t.Fatalf("recorded %d calls, want 1", len(calls))
+	}
+	call := calls[0]
+	if call.PromptTokens != 1200 || call.CompletionTokens != 34 || call.TotalTokens != 1234 {
+		t.Errorf("tokens = %d/%d/%d, want 1200/34/1234",
+			call.PromptTokens, call.CompletionTokens, call.TotalTokens)
+	}
+	if call.LatencyMillis < 15 {
+		t.Errorf("latency = %dms, want at least the server's 15ms", call.LatencyMillis)
+	}
+	if call.ServedModel != "vendor/model-2026-05" {
+		t.Errorf("served model = %q, want the id the provider reported", call.ServedModel)
+	}
+	if want := trace.ScreenshotReference(4); call.Screenshot != want {
+		t.Errorf("screenshot = %q, want %q", call.Screenshot, want)
+	}
+	if call.Reasoning == "" || call.EchoedAction != tap.Description {
+		t.Errorf("record = %+v, want the parsed reasoning and echo", call)
+	}
+}
+
+// TestLLMCallScreenshotNamesObservedStep guards the one case where the image
+// sent is not the current step's: the runner skips PushSnapshot on a
+// transitional observation, so the model still sees the last observed screen.
+func TestLLMCallScreenshotNamesObservedStep(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	source, verifierInstance := newLLMSource(t, fake)
+	pushLLMSnapshotAtStep(t, verifierInstance, 4)
+	tap := candidateByKind(t, verifierInstance.Candidates(), verifier.ActionKindTap)
+	fake.choice = tap.Index
+	fake.chosenAction = tap.Description
+	if _, err := source.NextAction(context.Background(), 6); err != nil {
+		t.Fatalf("NextAction: %v", err)
+	}
+
+	call := lastCall(t, source)
+	if call.Step != 6 {
+		t.Errorf("record step = %d, want the current step 6", call.Step)
+	}
+	if want := trace.ScreenshotReference(4); call.Screenshot != want {
+		t.Errorf("screenshot = %q, want %q: the image sent was step 4's", call.Screenshot, want)
 	}
 }
 

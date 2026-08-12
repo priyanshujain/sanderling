@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/priyanshujain/sanderling/internal/llmclient"
 	"github.com/priyanshujain/sanderling/internal/trace"
@@ -51,6 +52,9 @@ type llmSource struct {
 	instructions string
 	logger       *slog.Logger
 	history      *actionHistory
+	// recorder persists one record per step: what was sent, what came back, and
+	// how the step ended. Nil only in unit tests that never select.
+	recorder llmCallRecorder
 
 	// lastSource/lastReasoning describe the most recent NextAction so the runner
 	// can stamp the trace. lastSource is "llm" only when the LLM (not setup)
@@ -71,10 +75,18 @@ type llmSelection struct {
 	chosenAction string
 }
 
+// llmCallRecorder persists one selection record per step. *trace.Writer
+// implements it.
+type llmCallRecorder interface {
+	WriteLLMCall(call trace.LLMCall) error
+}
+
 // NextAction returns the step's action. Setup precedence is preserved by
 // running the JS path first (the llm marker is inert there, so a null result
-// means setup yielded nothing); the LLM selection then takes over.
-func (s *llmSource) NextAction(ctx context.Context) (verifier.Action, error) {
+// means setup yielded nothing); the LLM selection then takes over. Every way a
+// step can end lands one record keyed to stepIndex, so a step the guards threw
+// away is never confused with one the picker declined.
+func (s *llmSource) NextAction(ctx context.Context, stepIndex int) (verifier.Action, error) {
 	s.lastSource = ""
 	s.lastReasoning = ""
 	s.lastChoice = 0
@@ -85,17 +97,20 @@ func (s *llmSource) NextAction(ctx context.Context) (verifier.Action, error) {
 	// setup (e.g. login) first but never the weighted picker.
 	action, err := s.verifier.SetupAction()
 	if err == nil {
+		s.record(stepIndex, trace.LLMCall{Outcome: trace.LLMOutcomeSetupAction})
 		s.history.add(describeAction(action))
 		return action, nil
 	}
 	if !errors.Is(err, verifier.ErrNoAction) {
+		s.record(stepIndex, trace.LLMCall{Outcome: trace.LLMOutcomeSetupFailed, Error: err.Error()})
 		return verifier.Action{}, err
 	}
 
-	selection, ok := s.selectViaLLM(ctx)
-	if !ok {
-		// Any failure (HTTP error, unusable output, invalid choice, echo
-		// mismatch) skips the step; the next step re-observes and tries again.
+	selection, call := s.selectViaLLM(ctx)
+	s.record(stepIndex, call)
+	if call.Outcome != trace.LLMOutcomeSelected {
+		// Every other outcome skips the step; the next step re-observes and
+		// tries again. The record says which one it was.
 		return verifier.Action{}, verifier.ErrNoAction
 	}
 	s.lastSource = "llm"
@@ -107,33 +122,57 @@ func (s *llmSource) NextAction(ctx context.Context) (verifier.Action, error) {
 }
 
 // selectViaLLM runs one multimodal call and maps the chosen number to an action.
-// It returns ok=false on any error/empty/invalid output, logging the cause; the
-// caller turns that into a skipped step.
-func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, bool) {
+// The returned record is complete whichever way the selection ended: its
+// Outcome is trace.LLMOutcomeSelected exactly when the returned selection is
+// usable.
+func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCall) {
+	call := trace.LLMCall{Timestamp: time.Now(), Model: s.model}
 	candidates := s.verifier.Candidates()
 	if len(candidates) == 0 {
-		return llmSelection{}, false
+		call.Outcome = trace.LLMOutcomeNoCandidates
+		return llmSelection{}, call
 	}
+	call.Candidates = recordCandidates(candidates)
 
-	response, err := s.client.ChatCompletion(ctx, s.buildRequest(candidates))
+	request, screenshotReference := s.buildRequest(candidates)
+	call.Screenshot = screenshotReference
+	call.SystemPrompt, call.UserPrompt = promptTexts(request)
+
+	requestStart := time.Now()
+	response, err := s.client.ChatCompletion(ctx, request)
+	call.LatencyMillis = time.Since(requestStart).Milliseconds()
 	if err != nil {
 		s.logger.Warn("llm action selection failed", "err", err)
-		return llmSelection{}, false
+		call.Outcome = trace.LLMOutcomeRequestFailed
+		call.Error = err.Error()
+		return llmSelection{}, call
 	}
+	call.ServedModel = response.Model
+	call.PromptTokens = response.Usage.PromptTokens
+	call.CompletionTokens = response.Usage.CompletionTokens
+	call.TotalTokens = response.Usage.TotalTokens
 	if len(response.Choices) == 0 {
 		s.logger.Warn("llm returned no choices")
-		return llmSelection{}, false
+		call.Outcome = trace.LLMOutcomeNoChoices
+		return llmSelection{}, call
 	}
+	call.RawResponse = response.Choices[0].Message.Content
 
-	output, err := parseChoice(response.Choices[0].Message.Content)
+	output, err := parseChoice(call.RawResponse)
 	if err != nil {
 		s.logger.Warn("llm output unusable", "err", err)
-		return llmSelection{}, false
+		call.Outcome = trace.LLMOutcomeUnparsableResponse
+		call.Error = err.Error()
+		return llmSelection{}, call
 	}
+	call.Choice = output.Choice
+	call.EchoedAction = output.ChosenAction
+	call.Reasoning = output.Reasoning
 	// choice is 1-based into the numbered list.
 	if output.Choice < 1 || output.Choice > len(candidates) {
 		s.logger.Warn("llm choice out of range", "choice", output.Choice, "candidates", len(candidates))
-		return llmSelection{}, false
+		call.Outcome = trace.LLMOutcomeChoiceOutOfRange
+		return llmSelection{}, call
 	}
 	candidate := candidates[output.Choice-1]
 	// Strict skip: the echoed action must match the numbered entry, so a model
@@ -143,19 +182,79 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, bool) {
 	if stripWeightSuffix(output.ChosenAction) != candidate.Description {
 		s.logger.Warn("llm chosen_action mismatch; skipping",
 			"choice", output.Choice, "echoed", output.ChosenAction, "candidate", candidate.Description)
-		return llmSelection{}, false
+		call.Outcome = trace.LLMOutcomeEchoMismatch
+		return llmSelection{}, call
 	}
 	action, err := s.actionForCandidate(candidate, output.Text)
 	if err != nil {
 		s.logger.Warn("building action from candidate failed", "choice", output.Choice, "err", err)
-		return llmSelection{}, false
+		call.Outcome = trace.LLMOutcomeActionBuildFailed
+		call.Error = err.Error()
+		return llmSelection{}, call
 	}
+	call.Outcome = trace.LLMOutcomeSelected
 	return llmSelection{
 		action:       action,
 		reasoning:    output.Reasoning,
 		choice:       output.Choice,
 		chosenAction: candidate.Description,
-	}, true
+	}, call
+}
+
+// record stamps the step this selection belongs to and appends the record. A
+// write failure must not kill the run, but it does mean the step is
+// unattributable, so it is logged.
+func (s *llmSource) record(stepIndex int, call trace.LLMCall) {
+	if s.recorder == nil {
+		return
+	}
+	call.Step = stepIndex
+	if call.Timestamp.IsZero() {
+		call.Timestamp = time.Now()
+	}
+	if err := s.recorder.WriteLLMCall(call); err != nil {
+		s.logger.Warn("llm call record failed", "step", stepIndex, "err", err)
+	}
+}
+
+// recordCandidates snapshots the numbered list as the prompt rendered it, so a
+// campaign that varies candidate labelling can recover the labels each call saw.
+func recordCandidates(candidates []verifier.ActionCandidate) []trace.LLMCandidate {
+	recorded := make([]trace.LLMCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		entry := trace.LLMCandidate{
+			Index:       candidate.Index,
+			Kind:        string(candidate.Kind),
+			Description: candidate.Description,
+			Label:       candidate.Label,
+		}
+		if candidate.Weighted {
+			entry.Weight = candidate.Weight
+		}
+		recorded = append(recorded, entry)
+	}
+	return recorded
+}
+
+// promptTexts reads the text parts back off the built request, so the record is
+// what went on the wire rather than a second rendering of the same templates.
+func promptTexts(request llmclient.Request) (systemPrompt, userPrompt string) {
+	for _, message := range request.Messages {
+		var parts []string
+		for _, part := range message.Content {
+			if part.Type == "text" {
+				parts = append(parts, part.Text)
+			}
+		}
+		text := strings.Join(parts, "\n")
+		switch message.Role {
+		case "system":
+			systemPrompt = text
+		case "user":
+			userPrompt = text
+		}
+	}
+	return systemPrompt, userPrompt
 }
 
 // actionForCandidate turns a chosen candidate into the executable action. The
@@ -182,14 +281,23 @@ func (s *llmSource) actionForCandidate(candidate verifier.ActionCandidate, text 
 // buildRequest assembles the one-shot multimodal request: a system frame, the
 // numbered candidate list plus recent-action memory, and the downscaled
 // screenshot. The strict json_schema response format pins the ranked output.
-func (s *llmSource) buildRequest(candidates []verifier.ActionCandidate) llmclient.Request {
+//
+// The second return is the run-relative path of the screenshot attached, empty
+// when none was, so a record can never claim an image the call did not carry.
+// It names the step the image was captured at, which is the last observed step
+// rather than the current one whenever an observation was skipped.
+func (s *llmSource) buildRequest(candidates []verifier.ActionCandidate) (llmclient.Request, string) {
 	userParts := []llmclient.ContentPart{llmclient.TextPart(s.userPrompt(candidates))}
+	screenshotReference := ""
 	if screenshot := s.verifier.Screenshot(); len(screenshot) > 0 {
 		if dataURL, ok := screenshotDataURL(screenshot, llmMaxImageEdge); ok {
 			userParts = append(userParts, llmclient.ImagePart(dataURL))
+			if step := s.verifier.SnapshotStep(); step > 0 {
+				screenshotReference = trace.ScreenshotReference(step)
+			}
 		}
 	}
-	return llmclient.Request{
+	request := llmclient.Request{
 		Model: s.model,
 		Messages: []llmclient.Message{
 			{Role: "system", Content: []llmclient.ContentPart{llmclient.TextPart(s.systemPrompt())}},
@@ -197,6 +305,7 @@ func (s *llmSource) buildRequest(candidates []verifier.ActionCandidate) llmclien
 		},
 		ResponseFormat: choiceResponseFormat(len(candidates)),
 	}
+	return request, screenshotReference
 }
 
 // systemPrompt is the base framing plus any spec-level instructions, appended as
