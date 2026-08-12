@@ -71,10 +71,11 @@ s.ax.find({ accessibilityText: "LoginScreen" })
 s.ax.find({ testTag: "AccountCard", clickable: true })
 ```
 
-Every key-value pair must match. Substring and boolean rules apply per attribute.
-`idPrefix` and `descPrefix` are accepted as keys here too, with the starts-with meaning they carry in the string form.
+Every key-value pair must match. A key means the same thing here as in the string form: `id`, `desc`, `idPrefix` and `descPrefix` keep their matching rules, and every other key is an attribute name, with substring and boolean rules per attribute.
 
 Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
+
+A key that names neither an accepted selector key nor an attribute some element on screen carries fails the run, naming the key and the accepted list. Such a key can never match, and an empty result is indistinguishable from a screen with no matching element: the generator declines to act, the runner waits out the step, and the run ends clean having explored nothing. The string form keeps its open kind space, since `<attr>:<value>` is the documented way to reach a raw driver attribute.
 
 ### Path selectors
 
@@ -293,6 +294,8 @@ export const generator = llm({
 Set `OPENROUTER_API_KEY` or `OPENAI_API_KEY` (OpenRouter wins if both are set). With a plain OpenAI key, drop the vendor prefix from the model id. The model needs image input and strict `json_schema` structured output.
 
 Each step it gets a screenshot plus a numbered list of the concrete actions your tree yields right now, each tagged with its weight, and picks one number. That list is the seeded picker's own candidate enumeration, so both modes explore the same action space and only the choice differs. `instructions` are appended to the prompt: say what the app is, not how to test it; the model works that part out. Everything else is unchanged. Setup actions still run first, typing still falls back to the edge-case corpus when the model supplies no text, and the trace records the reasoning, the chosen number, and `source: "llm"` so the replay UI can show why each pick happened.
+
+One thing this mode refuses outright: a multi-item sampler inside an `actions()` leaf. `from(...).generate()` draws from the seeded picker's stream, which the model never enters, so it would be offered the first item on every step while a seeded run reaches all of them. The run stops and names the leaf rather than degrade quietly. Return one action per item instead (`cards.map(card => Tap({ on: card }))`); a one-item list never draws and needs no change.
 
 Every step of a model-driven run also appends one record to `llm-calls.jsonl` in the run directory, keyed by the step index it shares with `trace.jsonl`: the system and user prompts as sent, the numbered candidate list as the model saw it, the path of the screenshot that went with the call, the raw response, token counts, latency, and an `outcome`. `outcome` is `selected` when the pick became an action; every other value (`echo_mismatch`, `choice_out_of_range`, `unparsable_response`, `request_failed`, `no_candidates`, `setup_action`, ...) names a step that ran no model-chosen action, so a step a guard threw away can never be mistaken for one where the model had nothing to pick. A seeded run writes no such file.
 
