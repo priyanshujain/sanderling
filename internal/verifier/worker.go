@@ -476,21 +476,27 @@ func (v *Verifier) EvaluateProperties() map[string]ltl.Verdict {
 }
 
 // Witness is the verifier-level record of a property violation: the LTL reason
-// (a predicate's thrown-error text, "predicate false", or a liveness failure),
-// the step it fired at, and a snapshot of every extractor's current value at
-// that step. The snapshot lets a reader see the state that produced the
-// violation without replaying the run.
+// (a predicate's thrown-error text, "predicate false", or a liveness failure)
+// and the two step indices a deferred obligation spans.
+//
+// Step is the origin: the step whose observation armed the obligation that
+// failed. DetectedStep is the observation whose reduction produced the
+// violation, which for a next or an eventually is later. Extractors is that
+// observation's state, so it belongs to DetectedStep and not to Step; the two
+// were previously conflated under one index.
 type Witness struct {
-	Property   string
-	Reason     string
-	Step       int
-	IsError    bool
-	Extractors map[string]json.RawMessage
+	Property     string
+	Reason       string
+	Step         int
+	DetectedStep int
+	IsError      bool
+	Extractors   map[string]json.RawMessage
 }
 
 // captureWitness records the witness for a property that just transitioned to
 // violated, snapshotting the current extractor values so the cause is visible
-// after the run.
+// after the run. The snapshot is the state of the observation being reduced,
+// which the witness records as its detection step.
 func (v *Verifier) captureWitness(name string) {
 	evaluator, ok := v.evaluators[name]
 	if !ok {
@@ -501,11 +507,12 @@ func (v *Verifier) captureWitness(name string) {
 		return
 	}
 	v.witnesses[name] = Witness{
-		Property:   name,
-		Reason:     violation.Reason,
-		Step:       violation.Step,
-		IsError:    violation.IsError,
-		Extractors: v.extractorSnapshot(),
+		Property:     name,
+		Reason:       violation.Reason,
+		Step:         violation.Step,
+		DetectedStep: v.stepIndex,
+		IsError:      violation.IsError,
+		Extractors:   v.extractorSnapshot(),
 	}
 }
 
