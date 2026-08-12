@@ -1,0 +1,123 @@
+name: replay-ui
+
+# Sanderling fuzzing sanderling's own replay UI. Dispatch-only: it takes minutes
+# and it is a demo of the product loop, not a merge gate.
+#
+# The shape is: produce a real trace, serve it with `sanderling replay`, then run
+# a spec against that UI. Any violation fails the job, because every property in
+# replay-ui/sanderling/spec.ts is a cross-panel agreement that holds for any
+# trace.
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: seed for the dogfood run
+        default: "3"
+      max-steps:
+        description: step budget for the dogfood run
+        default: "80"
+
+jobs:
+  dogfood:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      # Pinned stable plus the AppArmor sysctl: the same setup ci.yml's browser
+      # job needs to get headless Chrome up on ubuntu-latest.
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Allow Chrome under unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Verify headless Chrome starts
+        run: |
+          chrome --version
+          chrome --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --dump-dom 'data:text/html,<title>ok</title>'
+
+      # The UI the spec drives is the one embedded in this binary, so the build
+      # has to come after any change to replay-ui/src.
+      - name: Build sanderling
+        run: make sanderling-web
+
+      # A trace with a violation and uncaught exceptions in it, so the UI has
+      # something to render in every panel the spec looks at. No
+      # --exit-on-violation here: the run is the fixture, and stopping it at the
+      # first violation would leave a four-step trace to fuzz.
+      - name: Record a fixture trace
+        run: |
+          python3 -m http.server 8792 --bind 127.0.0.1 \
+            --directory test/browser/testdata/throwing &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8792/ >/dev/null && break
+            sleep 1
+          done
+          ./bin/sanderling test \
+            --platform web \
+            --spec test/browser/testdata/throwing/spec.ts \
+            --bundle-id http://127.0.0.1:8792/ \
+            --duration 5m --max-steps 25 --seed 7 \
+            --output runs/fixture
+
+      - name: Serve the trace with sanderling replay
+        run: |
+          # Flags before the positional argument: Go's flag package stops
+          # parsing at the first non-flag word.
+          ./bin/sanderling replay --port 8793 --no-open runs/fixture &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8793/api/runs >/dev/null && break
+            sleep 1
+          done
+          run_id="$(ls runs/fixture | head -1)"
+          echo "RUN_URL=http://127.0.0.1:8793/runs/$run_id/steps/1" >> "$GITHUB_ENV"
+          curl -sf "http://127.0.0.1:8793/runs/$run_id/steps/1" >/dev/null
+
+      - name: Fuzz the replay UI
+        run: |
+          ./bin/sanderling test \
+            --platform web \
+            --spec replay-ui/sanderling/spec.ts \
+            --bundle-id "$RUN_URL" \
+            --duration 10m \
+            --max-steps "${{ inputs.max-steps }}" \
+            --seed "${{ inputs.seed }}" \
+            --exit-on-violation \
+            --output runs/dogfood
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### replay-ui dogfood"
+            echo
+            echo "- seed \`${{ inputs.seed }}\`, budget ${{ inputs.max-steps }} steps"
+            for dir in runs/dogfood/*/; do
+              steps=$(wc -l < "$dir/trace.jsonl" | tr -d ' ')
+              violations=$(grep -c '"violations":\[' "$dir/trace.jsonl" || true)
+              echo "- $steps steps recorded, $violations step(s) with violations"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-ui-runs
+          path: runs/
+          retention-days: 14

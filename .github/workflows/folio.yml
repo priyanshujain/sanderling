@@ -1,0 +1,244 @@
+name: folio
+
+# One spec, three platforms. Dispatch-only: each job boots a device or a
+# browser, builds the folio app for that platform, and runs
+# examples/folio/sanderling/spec.ts against it.
+#
+# android and ios are expect-the-bug jobs: folio double-submits a transaction on
+# a double tap, so the run is supposed to end with exit 2. Exit 0 means the
+# fuzzer stopped finding a bug that is still there; exit 1 means the harness
+# broke. The two are worth telling apart, which is why --exit-on-violation exits
+# 2 and not 1.
+#
+# web is a health gate instead: the same spec drives the wasmJs build through
+# login and into the transaction flow, but it cannot observe the double submit.
+# The property keys off state.lastAction, which the web runtime does not report,
+# and off the action's selector, which the web picker does not carry (it emits
+# coordinates). Both are fixable, neither is a small fix; see
+# docs/development/ci.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: which legs to run
+        type: choice
+        options: [all, android, ios, web]
+        default: all
+      seed:
+        description: seed override (0 = each job's calibrated seed)
+        default: "0"
+      duration:
+        description: wall-clock budget per run
+        default: 20m
+      max-steps:
+        description: step budget override (0 = each job's calibrated budget)
+        default: "0"
+
+jobs:
+  android:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'android' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: folio-gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            folio-gradle-${{ runner.os }}-
+
+      # Without this the emulator falls back to software rendering and every
+      # step costs several seconds.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build the folio APK
+        run: ./gradlew :app:androidApp:assembleDebug
+        working-directory: examples/folio
+
+      - name: Build sanderling
+        run: make sanderling-android
+
+      - name: Fuzz folio on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: .github/scripts/folio-run.sh android
+        env:
+          SEED: ${{ inputs.seed != '0' && inputs.seed || '3' }}
+          MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '240' }}
+          DURATION: ${{ inputs.duration }}
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: folio-android
+          path: runs/
+          retention-days: 14
+
+  ios:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'ios' }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      - name: Install idb-companion and xcodegen
+        run: brew install idb-companion xcodegen
+
+      # Both asset tarballs are built by the prepare scripts, and the runner
+      # bundle is an xcodebuild of companion/Sources. Keyed on the scripts and
+      # the versions the Makefile embeds, so a later run reuses them.
+      - name: Cache the companion and runner bundles
+        uses: actions/cache@v4
+        with:
+          path: |
+            internal/driver/ioscompanion/companionassets/assets
+            internal/driver/ioscompanion/runnerassets/assets
+          key: ios-assets-${{ runner.os }}-${{ hashFiles('internal/driver/ioscompanion/companionassets/prepare.sh', 'companion/prepare.sh', 'companion/project.yml', 'companion/Sources/**') }}
+
+      - name: Build sanderling
+        run: make sanderling-ios
+
+      - name: Boot a simulator
+        run: |
+          xcrun simctl boot "$IOS_DEVICE" || true
+          xcrun simctl bootstatus "$IOS_DEVICE" -b
+        env:
+          IOS_DEVICE: iPhone 16 Pro
+
+      - name: Build and install folio
+        run: just ios
+        working-directory: examples/folio
+        env:
+          IOS_DEVICE: iPhone 16 Pro
+
+      - name: Fuzz folio on the simulator
+        run: .github/scripts/folio-run.sh ios
+        env:
+          SEED: ${{ inputs.seed != '0' && inputs.seed || '1' }}
+          MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '240' }}
+          DURATION: ${{ inputs.duration }}
+          IOS_DEVICE: iPhone 16 Pro
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: folio-ios
+          path: runs/
+          retention-days: 14
+
+  web:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'web' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: folio-gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            folio-gradle-${{ runner.os }}-
+
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Allow Chrome under unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Verify headless Chrome starts
+        run: |
+          chrome --version
+          chrome --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --dump-dom 'data:text/html,<title>ok</title>'
+
+      - name: Build the folio wasmJs app
+        run: ./gradlew :app:webApp:wasmJsBrowserDevelopmentExecutableDistribution
+        working-directory: examples/folio
+
+      - name: Build sanderling
+        run: make sanderling-web
+
+      - name: Fuzz folio in the browser
+        run: .github/scripts/folio-run.sh web
+        env:
+          SEED: ${{ inputs.seed != '0' && inputs.seed || '1' }}
+          MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '200' }}
+          DURATION: ${{ inputs.duration }}
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: folio-web
+          path: runs/
+          retention-days: 14
