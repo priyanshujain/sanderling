@@ -62,6 +62,28 @@ func TestLaunch_ClearStateWipesStorageForTheTargetOrigin(t *testing.T) {
 	}
 }
 
+// TestLaunch_WebGLContextIsAvailable pins the SwiftShader fallback. Headless
+// Chrome runs with --disable-gpu, and without --enable-unsafe-swiftshader it
+// refuses the software WebGL backend: getContext returns null, so a
+// canvas-rendered app paints nothing and every screenshot is identical black.
+func TestLaunch_WebGLContextIsAvailable(t *testing.T) {
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, "data:text/html,<body></body>", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	var hasContext bool
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(
+		`!!document.createElement("canvas").getContext("webgl2")`, &hasContext)); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if !hasContext {
+		t.Error("webgl2 context is null; a canvas-rendered app would render nothing")
+	}
+}
+
 // TestActionMethods_HonorCallerCancellation confirms the DeviceDriver action
 // methods route through runCtx so a cancelled caller context aborts the CDP
 // round-trip instead of blocking on d.tabCtx. Without this a hung browser would

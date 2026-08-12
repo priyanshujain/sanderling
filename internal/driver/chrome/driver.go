@@ -39,6 +39,11 @@ func New() *Driver {
 		append(chromedp.DefaultExecAllocatorOptions[:],
 			chromedp.Flag("headless", true),
 			chromedp.Flag("disable-gpu", true),
+			// Chrome refuses to fall back to the SwiftShader WebGL backend
+			// without this flag, so with --disable-gpu a canvas app (Compose
+			// for Web, Flutter web, anything on WebGL) gets a null context and
+			// paints nothing: black screenshots and an empty accessibility DOM.
+			chromedp.Flag("enable-unsafe-swiftshader", true),
 			chromedp.NoSandbox,
 			// CI runners give Chrome a tiny /dev/shm; without this the browser
 			// process hangs on startup and never reports its DevTools socket.
