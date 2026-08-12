@@ -536,10 +536,62 @@ func (d *Driver) RecentLogs(_ context.Context, since time.Time, minLevel string)
 	return result, nil
 }
 
-func (d *Driver) WaitForIdle(ctx context.Context, _ time.Duration) error {
+// domQuietPeriod is how long the DOM must stop changing before the page counts
+// as settled. Compose for Web syncs its accessibility DOM off the frame loop:
+// measured at ~136 ms behind an InputText on the folio wasm build, so waiting
+// for frames alone (~16 ms each) returns while the app still reports the old
+// text, and the next step types into a field it believes is still empty.
+const domQuietPeriod = 150 * time.Millisecond
+
+func (d *Driver) WaitForIdle(ctx context.Context, timeout time.Duration) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
-	return chromedp.Run(runCtx, chromedp.WaitReady("body", chromedp.ByQuery))
+	// Leave the caller's deadline some room: returning late by our own doing
+	// would surface as a context cancellation instead of a settled page.
+	budget := timeout - 100*time.Millisecond
+	if budget < domQuietPeriod {
+		budget = domQuietPeriod
+	}
+	script := fmt.Sprintf(settleScript, domQuietPeriod.Milliseconds(), budget.Milliseconds())
+	return chromedp.Run(runCtx,
+		chromedp.WaitReady("body", chromedp.ByQuery),
+		chromedp.Evaluate(script, nil, awaitPromise),
+	)
+}
+
+// settleScript resolves once the document has gone quiet for %d ms, or after
+// %d ms whatever happens. Shadow roots get their own observer: a canvas app
+// keeps its whole accessibility tree inside one, and mutations there do not
+// reach an observer on the document.
+const settleScript = `
+new Promise(resolve => {
+  const quietMillis = %d, budgetMillis = %d;
+  const observers = [];
+  let timer = null;
+  const finish = () => {
+    clearTimeout(timer);
+    for (const observer of observers) observer.disconnect();
+    resolve();
+  };
+  const restart = () => {
+    clearTimeout(timer);
+    timer = setTimeout(finish, quietMillis);
+  };
+  const watch = (root) => {
+    const observer = new MutationObserver(restart);
+    observer.observe(root, {subtree: true, childList: true, attributes: true, characterData: true});
+    observers.push(observer);
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot) watch(element.shadowRoot);
+    }
+  };
+  watch(document);
+  setTimeout(finish, budgetMillis);
+  restart();
+})`
+
+func awaitPromise(params *runtime.EvaluateParams) *runtime.EvaluateParams {
+	return params.WithAwaitPromise(true)
 }
 
 func (d *Driver) Health(_ context.Context) (driver.Health, error) {

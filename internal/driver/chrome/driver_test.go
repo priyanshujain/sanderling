@@ -590,3 +590,76 @@ func TestHierarchy_ScreenFallsBackToThePathname(t *testing.T) {
 		})
 	}
 }
+
+// TestWaitForIdle_WaitsForWorkTheActionKickedOff pins the settle the runner
+// relies on between acting and observing. WaitForIdle used to return the moment
+// <body> existed, which is true before the app has reacted at all: measured on
+// the folio wasm build, Compose's accessibility DOM lands ~136 ms after an
+// InputText, so the next step read the pre-action text and typed into a field
+// it believed was still empty.
+func TestWaitForIdle_WaitsForWorkTheActionKickedOff(t *testing.T) {
+	const page = `<body><div id="app"></div><script>
+	  const root = document.getElementById("app").attachShadow({mode: "open"});
+	  root.innerHTML = '<button id="go" style="width:200px;height:80px">go</button><div id="out">pending</div>';
+	  root.getElementById("go").addEventListener("click", function () {
+	    setTimeout(function () { root.getElementById("out").textContent = "settled"; }, 100);
+	  });
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.Tap(ctx, 40, 40); err != nil {
+		t.Fatalf("Tap: %v", err)
+	}
+	if err := d.WaitForIdle(ctx, time.Second); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+
+	var shown string
+	script := `document.getElementById("app").shadowRoot.getElementById("out").textContent`
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &shown)); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if shown != "settled" {
+		t.Errorf("observed %q; WaitForIdle returned before the tap's own work landed", shown)
+	}
+}
+
+// TestWaitForIdle_ReturnsOnABusyPage is the other half: a page that never stops
+// mutating (an animation, a polling widget) must not hold the step loop open.
+func TestWaitForIdle_ReturnsOnABusyPage(t *testing.T) {
+	const page = `<body><div id="tick">0</div><script>
+	  let n = 0;
+	  setInterval(function () { document.getElementById("tick").textContent = String(++n); }, 15);
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	start := time.Now()
+	if err := d.WaitForIdle(ctx, time.Second); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("WaitForIdle took %s on a busy page; it must return inside its budget", elapsed)
+	}
+}
