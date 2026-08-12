@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -396,5 +397,80 @@ func TestHierarchy_RootsAtDocumentElementWithoutHead(t *testing.T) {
 		if tags[tag] {
 			t.Errorf("the head subtree must stay out of the dump, found %q", tag)
 		}
+	}
+}
+
+// TestLaunch_HonorsCallerDeadline points the driver at a listener that accepts
+// the connection and never answers. Chrome has no page-load deadline of its
+// own, so a Launch that ignored its caller context waited forever: an
+// unattended campaign worker aimed at an unreachable target wedged with no
+// diagnostic and did not even answer SIGTERM.
+func TestLaunch_HonorsCallerDeadline(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	held := make(chan net.Conn, 8)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			held <- conn
+		}
+	}()
+	defer func() {
+		close(held)
+		for conn := range held {
+			conn.Close()
+		}
+	}()
+
+	d := New()
+	defer d.Terminate(context.Background())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- d.Launch(ctx, "http://"+listener.Addr().String(), false, nil) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Launch returned nil against a target that never answers")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			t.Fatalf("Launch error = %v, want a context error", err)
+		}
+	case <-time.After(45 * time.Second):
+		t.Fatal("Launch ignored the caller deadline and blocked")
+	}
+}
+
+// TestLaunch_KeepsBrowserAliveAfterCallerContextEnds guards the trap that made
+// Launch use the driver context in the first place: chromedp starts Chrome
+// under whichever context runs first, so allocating under the caller's
+// short-lived context would kill the browser as soon as Launch returned.
+func TestLaunch_KeepsBrowserAliveAfterCallerContextEnds(t *testing.T) {
+	d := New()
+	defer d.Terminate(context.Background())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	if err := d.Launch(ctx, "data:text/html,<body>alive</body>", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	cancel()
+
+	var text string
+	if err := chromedp.Run(d.tabCtx,
+		chromedp.Evaluate(`document.body.textContent`, &text)); err != nil {
+		t.Fatalf("browser died with the caller context: %v", err)
+	}
+	if text != "alive" {
+		t.Errorf("body text = %q, want \"alive\"", text)
+	}
+	if err := d.Launch(context.Background(), "data:text/html,<body>again</body>", false, nil); err != nil {
+		t.Fatalf("second Launch after the first caller context ended: %v", err)
 	}
 }

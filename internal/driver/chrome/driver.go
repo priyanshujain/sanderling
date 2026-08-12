@@ -97,19 +97,31 @@ func New() *Driver {
 }
 
 func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _ map[string]string) error {
+	// Allocate the browser against the driver's own context before anything
+	// caller-bound runs. chromedp starts Chrome under whichever context first
+	// calls Run, so allocating under a caller deadline would tie the browser
+	// process to this one call and kill it the moment Launch returns.
+	if err := chromedp.Run(d.tabCtx); err != nil {
+		return err
+	}
+	// Everything after allocation goes through runCtx, so a caller deadline or
+	// a SIGTERM aborts a launch that would otherwise wait forever on a target
+	// that accepts the connection and never answers.
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
 	if clearState {
-		if err := d.clearState(bundleID); err != nil {
+		if err := d.clearState(runCtx, bundleID); err != nil {
 			return err
 		}
 	}
-	if err := chromedp.Run(d.tabCtx, chromedp.Navigate(bundleID)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.Navigate(bundleID)); err != nil {
 		return err
 	}
 	// After navigation, read CSS custom properties --frame-w / --frame-h (common
 	// mobile-frame convention) so screenshots fit the app without grey borders.
 	// Falls back to the body scroll dimensions if the properties are absent.
 	var dims [2]int64
-	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(`
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(`
 		(function() {
 			const s = getComputedStyle(document.documentElement);
 			const pw = parseInt(s.getPropertyValue('--frame-w'), 10);
@@ -118,7 +130,7 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _
 			const h = isNaN(ph) ? document.body.scrollHeight : ph;
 			return [w, h];
 		})()`, &dims)); err == nil && dims[0] > 0 && dims[1] > 0 {
-		_ = chromedp.Run(d.tabCtx, chromedp.EmulateViewport(dims[0], dims[1]))
+		_ = chromedp.Run(runCtx, chromedp.EmulateViewport(dims[0], dims[1]))
 	}
 	return nil
 }
@@ -130,8 +142,8 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _
 // which needs no navigation. sessionStorage is per-tab and outside that
 // domain's reach; it only survives when a relaunch reuses a tab already on
 // the target origin, which is the one case where script can reach it.
-func (d *Driver) clearState(bundleID string) error {
-	if err := chromedp.Run(d.tabCtx, network.ClearBrowserCookies()); err != nil {
+func (d *Driver) clearState(runCtx context.Context, bundleID string) error {
+	if err := chromedp.Run(runCtx, network.ClearBrowserCookies()); err != nil {
 		return fmt.Errorf("clear cookies: %w", err)
 	}
 	origin := securityOrigin(bundleID)
@@ -139,12 +151,12 @@ func (d *Driver) clearState(bundleID string) error {
 		return nil
 	}
 	clearForOrigin := storage.ClearDataForOrigin(origin, string(storage.TypeAll))
-	if err := chromedp.Run(d.tabCtx, clearForOrigin); err != nil {
+	if err := chromedp.Run(runCtx, clearForOrigin); err != nil {
 		return fmt.Errorf("clear storage for %s: %w", origin, err)
 	}
 	script := fmt.Sprintf(
 		`location.origin === %q && (sessionStorage.clear(), true)`, origin)
-	return chromedp.Run(d.tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+	return chromedp.Run(runCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 		_, exception, err := runtime.Evaluate(script).Do(ctx)
 		if err != nil {
 			return fmt.Errorf("clear session storage: %w", err)
