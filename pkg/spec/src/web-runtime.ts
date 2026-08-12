@@ -70,7 +70,13 @@ function seedBigInt(): bigint {
   }
 }
 
-const SEED_HI = seedBigInt();
+// Read on every call rather than once at module scope. The bundler replaces the
+// seed expression with a literal, so production reads a constant either way,
+// and parsing one decimal string per run costs nothing. Binding it at module
+// scope bound it instead to whenever this module was first imported, which made
+// the seed depend on test file ordering: a file importing this module before
+// the seed was set froze it at zero, and the failure then surfaced in a
+// different file that had set it correctly.
 
 function noopFormula(): unknown {
   const formula: Record<string, unknown> = { __sanderlingFormula: true };
@@ -553,7 +559,7 @@ function resetTargetCache(): void {
 
 const host: Host = {
   platform: () => "web",
-  seedHi: () => SEED_HI,
+  seedHi: () => seedBigInt(),
   // lo = 0 matches the goja side's rand.NewPCG(seed, 0).
   seedLo: () => 0n,
   queryTargets(): TargetElement[] {
