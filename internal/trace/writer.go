@@ -31,6 +31,10 @@ type Step struct {
 	// retry budget. The verifier is skipped for these steps so transient
 	// state does not poison the previous/current extractor advance.
 	Transitional bool `json:"transitional,omitempty"`
+	// ActionSkipped names why NextAction was chosen but never dispatched, so a
+	// count of executed actions cannot be inflated by steps whose action the
+	// runner threw away. Empty when the action ran (or when none was chosen).
+	ActionSkipped string `json:"action_skipped,omitempty"`
 	// SkippedVerification is set true exactly when the verifier was skipped
 	// for this step, so downstream tooling can tell a deliberately-skipped
 	// step from one that was verified and came back clean.
@@ -151,6 +155,10 @@ type Writer struct {
 	mutex     sync.Mutex
 	file      io.WriteCloser
 	encoder   *json.Encoder
+	// llmCallFile is opened on the first WriteLLMCall, so a run whose picker
+	// never called a model leaves no llm-calls.jsonl behind at all.
+	llmCallFile    io.WriteCloser
+	llmCallEncoder *json.Encoder
 }
 
 // NewWriter ensures `directory` exists and opens trace.jsonl for append.
@@ -194,14 +202,27 @@ func (w *Writer) WriteStep(step Step) error {
 // file via os.WriteFile and touches no field of Writer, so concurrent calls
 // never contend.
 func (w *Writer) WriteScreenshot(stepIndex int, png []byte) error {
-	return w.writePNG(fmt.Sprintf("step-%05d.png", stepIndex), png)
+	return w.writePNG(screenshotName(stepIndex), png)
 }
+
+func screenshotName(stepIndex int) string {
+	return fmt.Sprintf("step-%05d.png", stepIndex)
+}
+
+// ScreenshotReference is the run-relative path WriteScreenshot puts a step's
+// screenshot at. Records that describe an image point at it instead of copying
+// the bytes.
+func ScreenshotReference(stepIndex int) string {
+	return screenshotDirectory + "/" + screenshotName(stepIndex)
+}
+
+const screenshotDirectory = "screenshots"
 
 func (w *Writer) writePNG(name string, png []byte) error {
 	if len(png) == 0 {
 		return nil
 	}
-	directory := filepath.Join(w.directory, "screenshots")
+	directory := filepath.Join(w.directory, screenshotDirectory)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return fmt.Errorf("mkdir screenshots: %w", err)
 	}
@@ -211,10 +232,18 @@ func (w *Writer) writePNG(name string, png []byte) error {
 func (w *Writer) Close() error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
-	if w.file == nil {
-		return nil
+	var err error
+	if w.llmCallFile != nil {
+		err = w.llmCallFile.Close()
+		w.llmCallFile = nil
+		w.llmCallEncoder = nil
 	}
-	err := w.file.Close()
+	if w.file == nil {
+		return err
+	}
+	if closeErr := w.file.Close(); closeErr != nil {
+		err = closeErr
+	}
 	w.file = nil
 	return err
 }
