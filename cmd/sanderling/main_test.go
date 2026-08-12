@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
 func TestParseTestArgs_Defaults(t *testing.T) {
@@ -125,6 +127,63 @@ func TestParseTestArgs_RejectsUnknownGenerator(t *testing.T) {
 	}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unsupported generator") {
 		t.Fatalf("expected unsupported-generator error, got %v", err)
+	}
+}
+
+// The label-source cases compare against the verifier's own constants, because
+// the flag and the code that reads it are the two halves of one contract: a
+// rename on either side would otherwise leave every run silently labelled by
+// the default channel while meta.json claimed the other one.
+func TestParseTestArgs_LabelSourceDefaultsToVisibleText(t *testing.T) {
+	options, err := parseTestArgs([]string{"--spec", "s.ts", "--bundle-id", "com.example"}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.labelSource != verifier.LabelSourceVisibleText {
+		t.Fatalf("label source default: got %q, want %q", options.labelSource, verifier.LabelSourceVisibleText)
+	}
+}
+
+func TestParseTestArgs_AcceptsResourceIDLabelSource(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--label-source", verifier.LabelSourceResourceID,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.labelSource != verifier.LabelSourceResourceID {
+		t.Fatalf("label source: got %q, want %q", options.labelSource, verifier.LabelSourceResourceID)
+	}
+}
+
+func TestParseTestArgs_RejectsUnknownLabelSource(t *testing.T) {
+	_, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--label-source", "resource_id",
+	}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unsupported label source") {
+		t.Fatalf("expected unsupported-label-source error, got %v", err)
+	}
+}
+
+func TestPipelineOptionsCarriesTheExperimentCell(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--generator", "llm",
+		"--label-source", verifier.LabelSourceResourceID,
+		"--arm", "llm-resource-id",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	pipeline := pipelineOptions(options)
+	if pipeline.Generator != "llm" || pipeline.LabelSource != verifier.LabelSourceResourceID || pipeline.Arm != "llm-resource-id" {
+		t.Errorf("cell lost between the flags and the pipeline: generator=%q labelSource=%q arm=%q",
+			pipeline.Generator, pipeline.LabelSource, pipeline.Arm)
 	}
 }
 

@@ -33,6 +33,7 @@ type testOptions struct {
 	output         string
 	clearData      bool
 	generator      string
+	labelSource    string
 }
 
 const topUsage = `sanderling is a property-based UI fuzzer for mobile apps.
@@ -68,6 +69,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.BoolVar(&options.clearData, "clear-data", true, "clear app data before launching so each run starts from a fresh install; pass --clear-data=false to resume prior state")
 	flagSet.StringVar(&options.arm, "arm", "", "experiment cell label, recorded in meta.json so a directory of runs can be attributed to a cell")
 	flagSet.StringVar(&options.generator, "generator", "seeded", "action generator: seeded (weighted random) or llm (model picks from the same candidate set; requires generator = llm() in the spec)")
+	flagSet.StringVar(&options.labelSource, "label-source", "visible-text", "how candidates are named to the llm generator: visible-text (what a user reads) or resource-id (the identifier the app assigned). The seeded generator picks by index and ignores this")
 	if err := flagSet.Parse(args); err != nil {
 		return testOptions{}, err
 	}
@@ -89,6 +91,14 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	case "seeded", "llm":
 	default:
 		return testOptions{}, fmt.Errorf("unsupported generator: %q (seeded, llm)", options.generator)
+	}
+	// Rejected here rather than defaulted, because a campaign that finishes with
+	// the wrong labelling and a plausible output directory is worse than one
+	// that never starts.
+	switch options.labelSource {
+	case "visible-text", "resource-id":
+	default:
+		return testOptions{}, fmt.Errorf("unsupported label source: %q (visible-text, resource-id)", options.labelSource)
 	}
 	return options, nil
 }
