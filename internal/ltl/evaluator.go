@@ -37,6 +37,10 @@ type Evaluator struct {
 	violated  bool
 	steps     int
 	violation *Violation
+	// oneShot marks a root that is armed once at the first observation rather
+	// than re-asserted at every one; armed records that it has been.
+	oneShot bool
+	armed   bool
 }
 
 // obligation pairs a residual formula with the step that spawned it, so a
@@ -62,7 +66,8 @@ type Violation struct {
 }
 
 func NewEvaluator(formula Formula) *Evaluator {
-	return &Evaluator{root: nnf(formula)}
+	normalized := nnf(formula)
+	return &Evaluator{root: normalized, oneShot: isOneShotRoot(normalized)}
 }
 
 // Observe evaluates the formula against the current state and returns the
@@ -89,8 +94,11 @@ func (e *Evaluator) ObserveAtStep(now time.Time, step int) Verdict {
 	}
 	e.steps = step
 
-	fresh := obligation{formula: rootObligation(e.root), origin: step}
-	obligations := append(e.pending, fresh)
+	obligations := make([]obligation, 0, len(e.pending)+1)
+	obligations = append(obligations, e.pending...)
+	if formula, ok := e.instantiateRoot(); ok {
+		obligations = append(obligations, obligation{formula: formula, origin: step})
+	}
 	e.pending = e.pending[:0]
 
 	for _, entry := range obligations {
@@ -267,10 +275,48 @@ func (e *Evaluator) Residual() Formula {
 	return combined
 }
 
-// rootObligation returns the formula to instantiate at each step. An outer
-// Always is stripped so its inner is re-evaluated every step; any other root
-// formula is itself re-instantiated each step (matching the v0.1 semantics
-// where a bare Thunk is re-observed on every call).
+// instantiateRoot returns the obligation to register for this observation, and
+// whether there is one at all. A one-shot root is armed only at the first
+// observation; a recurring root is re-asserted at every one.
+func (e *Evaluator) instantiateRoot() (Formula, bool) {
+	if !e.oneShot {
+		return rootObligation(e.root), true
+	}
+	if e.armed {
+		return nil, false
+	}
+	e.armed = true
+	return e.root, true
+}
+
+// isOneShotRoot reports whether a root formula is a single obligation for the
+// whole run rather than one instance per observation.
+//
+// A root that carries its own horizon is one-shot: an eventually is a
+// reachability goal ("this happens at some point"), and a bounded always is a
+// single window. Re-instantiating either at every step would monitor a
+// different property -- G F<=n(p) instead of F<=n(p), and G(p) instead of
+// G<=n(p), the latter because a re-instantiated window restarts and never
+// closes -- and would leave one live obligation per step behind.
+//
+// Every other root keeps the implicit-always reading: an unbounded always
+// re-instantiates its inner (which is what gives each instance its own origin
+// step), and a bare predicate or connective is re-asserted each observation.
+func isOneShotRoot(root Formula) bool {
+	switch concrete := root.(type) {
+	case EventuallyFormula:
+		return true
+	case AlwaysFormula:
+		return concrete.HasStepBound || concrete.HasDeadline || concrete.Duration > 0
+	default:
+		return false
+	}
+}
+
+// rootObligation returns the formula a recurring root instantiates at each
+// step. An outer Always is stripped so its inner is re-evaluated every step;
+// any other root formula is itself re-instantiated each step (matching the
+// v0.1 semantics where a bare Thunk is re-observed on every call).
 func rootObligation(root Formula) Formula {
 	if always, ok := root.(AlwaysFormula); ok {
 		return always.Inner
