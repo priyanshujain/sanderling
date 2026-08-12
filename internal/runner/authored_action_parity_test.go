@@ -11,13 +11,15 @@ import (
 )
 
 // authoredParityTreeJSON holds one target per authored action shape: a button to
-// tap, a field to type into, and a scrollable container to scroll.
+// tap, a field to type into, a scrollable container to scroll, and a disabled
+// button, which is a target like any other here.
 const authoredParityTreeJSON = `{
   "attributes": {"bounds": "[0,0,400,800]"},
   "children": [
     {"attributes": {"resource-id": "Save", "text": "Save", "bounds": "[0,0,200,60]"}, "clickable": true, "enabled": true, "children": []},
     {"attributes": {"resource-id": "Amount", "class": "EditText", "hintText": "Amount", "bounds": "[0,100,400,160]"}, "enabled": true, "children": []},
-    {"attributes": {"resource-id": "List", "scrollable": "true", "bounds": "[0,300,400,700]"}, "children": []}
+    {"attributes": {"resource-id": "List", "scrollable": "true", "bounds": "[0,300,400,700]"}, "children": []},
+    {"attributes": {"resource-id": "Off", "text": "Off", "bounds": "[0,700,200,760]"}, "clickable": true, "enabled": false, "children": []}
   ]
 }`
 
@@ -36,6 +38,11 @@ func TestPoliciesDispatchTheSameAuthoredAction(t *testing.T) {
 	}{
 		{"tap an element", `const e = state.ax.find("id:Save"); return e ? [Tap({on: e})] : [];`},
 		{"tap a selector", `return [Tap({on: "id:Save"})];`},
+		// Attempting a disabled control is a legitimate thing for a UI fuzzer to
+		// do and is exactly where boundary defects live, so neither policy may
+		// quietly refuse to offer it.
+		{"tap a disabled element", `const e = state.ax.find("id:Off"); return e ? [Tap({on: e})] : [];`},
+		{"tap a disabled selector", `return [Tap({on: "id:Off"})];`},
 		{"double-tap an element", `const e = state.ax.find("id:Save"); return e ? [DoubleTap({on: e})] : [];`},
 		{"long-press an element", `const e = state.ax.find("id:Save"); return e ? [LongPress({on: e})] : [];`},
 		{"type into an element", `const e = state.ax.find("id:Amount"); return e ? [InputText({into: e, text: "42"})] : [];`},
@@ -60,7 +67,7 @@ func TestPoliciesDispatchTheSameAuthoredAction(t *testing.T) {
 			}
 
 			modelVerifier := loadAuthoredSpec(t, spec, tree)
-			candidates := modelVerifier.Candidates(verifier.LabelSourceVisibleText)
+			candidates := mustCandidates(t, modelVerifier, verifier.LabelSourceVisibleText)
 			if len(candidates) != 1 {
 				t.Fatalf("model was offered %d candidates, want the one authored action", len(candidates))
 			}

@@ -234,6 +234,17 @@ func lastCall(t *testing.T, source *llmSource) trace.LLMCall {
 	return calls[len(calls)-1]
 }
 
+// mustCandidates enumerates the model policy's list, failing the test on the
+// refusal an authored multi-item sampler raises.
+func mustCandidates(t *testing.T, v *verifier.Verifier, labelSource string) []verifier.ActionCandidate {
+	t.Helper()
+	candidates, err := v.Candidates(labelSource)
+	if err != nil {
+		t.Fatalf("Candidates: %v", err)
+	}
+	return candidates
+}
+
 func newLLMSource(t *testing.T, fake *fakeOpenRouter) (*llmSource, *verifier.Verifier) {
 	t.Helper()
 	return newLLMSourceWithSpec(t, fake, llmFixtureSpec)
@@ -428,7 +439,7 @@ func TestLLMSourceRecordsTheLabelsTheModelSaw(t *testing.T) {
 			source.labelSource = want.labelSource
 			pushSnapshotTree(t, verifierInstance, labelSplitTreeJSON)
 
-			tap := candidateByKind(t, verifierInstance.Candidates(want.labelSource), verifier.ActionKindTap)
+			tap := candidateByKind(t, mustCandidates(t, verifierInstance, want.labelSource), verifier.ActionKindTap)
 			fake.choice = tap.Index
 			fake.chosenAction = tap.Description
 			if _, err := source.NextAction(context.Background(), 0); err != nil {
@@ -550,7 +561,7 @@ func TestLLMSourceDrivesExecutedActions(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
-	candidates := verifierInstance.Candidates(verifier.LabelSourceVisibleText)
+	candidates := mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText)
 
 	// Step 1: the model picks the Tap on Submit by its number, echoing its
 	// description.
@@ -629,7 +640,7 @@ func TestLLMSourceAcceptsEchoWithWeightSuffix(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
-	candidates := verifierInstance.Candidates(verifier.LabelSourceVisibleText)
+	candidates := mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText)
 
 	tap := candidateByKind(t, candidates, verifier.ActionKindTap)
 	fake.choice = tap.Index
@@ -664,7 +675,7 @@ func TestLLMSourceStrictSkipsOnEchoMismatch(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshot(t, verifierInstance)
-	candidates := verifierInstance.Candidates(verifier.LabelSourceVisibleText)
+	candidates := mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText)
 
 	// A valid number, but the echoed action disagrees with that numbered entry:
 	// the model reasoned about one control and picked another's number.
@@ -701,7 +712,7 @@ func TestLLMSourceEchoGuardAdmitsARepeatedDescription(t *testing.T) {
 	pushSnapshotTree(t, verifierInstance, llmSharedLabelTreeJSON)
 
 	var repeated []verifier.ActionCandidate
-	for _, candidate := range verifierInstance.Candidates(verifier.LabelSourceVisibleText) {
+	for _, candidate := range mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText) {
 		if candidate.Description == `Tap "Delete"` {
 			repeated = append(repeated, candidate)
 		}
@@ -763,7 +774,7 @@ func TestLLMCallRecordSeparatesGuardSkipFromDecline(t *testing.T) {
 		fake := newFakeOpenRouter(t)
 		source, verifierInstance := newLLMSource(t, fake)
 		pushLLMSnapshot(t, verifierInstance)
-		tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
+		tap := candidateByKind(t, mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 		fake.choice = tap.Index
 		fake.chosenAction = `Tap "Something Else"`
 		if _, err := source.NextAction(context.Background(), stepIndex); !errors.Is(err, verifier.ErrNoAction) {
@@ -784,7 +795,7 @@ func TestLLMCallRecordSeparatesGuardSkipFromDecline(t *testing.T) {
 		fake := newFakeOpenRouter(t)
 		source, verifierInstance := newLLMSource(t, fake)
 		pushLLMSnapshot(t, verifierInstance)
-		tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
+		tap := candidateByKind(t, mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 		fake.choice = tap.Index
 		fake.chosenAction = tap.Description
 		if _, err := source.NextAction(context.Background(), stepIndex); err != nil {
@@ -832,7 +843,7 @@ func TestLLMCallRecordsCandidateListAsShown(t *testing.T) {
 	source, verifierInstance := newLLMSource(t, fake)
 	source.instructions = "hunt for double submits"
 	pushLLMSnapshot(t, verifierInstance)
-	tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
+	tap := candidateByKind(t, mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 	fake.choice = tap.Index
 	fake.chosenAction = tap.Description
 	if _, err := source.NextAction(context.Background(), 1); err != nil {
@@ -920,7 +931,7 @@ func TestLLMCallFileRecordsUsageLatencyAndScreenshot(t *testing.T) {
 	source.recorder = writer
 
 	pushLLMSnapshotAtStep(t, verifierInstance, 4)
-	tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
+	tap := candidateByKind(t, mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 	fake.choice = tap.Index
 	fake.chosenAction = tap.Description
 	if _, err := source.NextAction(context.Background(), 4); err != nil {
@@ -960,7 +971,7 @@ func TestLLMCallScreenshotNamesObservedStep(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	source, verifierInstance := newLLMSource(t, fake)
 	pushLLMSnapshotAtStep(t, verifierInstance, 4)
-	tap := candidateByKind(t, verifierInstance.Candidates(verifier.LabelSourceVisibleText), verifier.ActionKindTap)
+	tap := candidateByKind(t, mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText), verifier.ActionKindTap)
 	fake.choice = tap.Index
 	fake.chosenAction = tap.Description
 	if _, err := source.NextAction(context.Background(), 6); err != nil {
@@ -1029,4 +1040,36 @@ func tinyPNG(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return buffer.Bytes()
+}
+
+// llmSamplerFixtureSpec drives the model policy over an authored leaf that
+// samples one of three targets, which is the shape the seeded picker draws from
+// and the model policy cannot.
+const llmSamplerFixtureSpec = `
+import { actions, from, llm, Tap, always } from "@sanderling/spec";
+globalThis.properties = { ok: always(() => true) };
+const targets = from(["id:Submit", "id:Name"]);
+globalThis.actions = actions(() => [Tap({ on: targets.generate() })]);
+globalThis.generator = llm({ model: "test/model" });
+`
+
+// TestLLMSourceRefusesAMultiItemAuthoredSampler: the step must fail the run, not
+// skip. A skip would leave the model quietly fuzzing a spec whose authored
+// targets it can never reach past the first, which is the comparison the seeded
+// arm is measured against.
+func TestLLMSourceRefusesAMultiItemAuthoredSampler(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	source, verifierInstance := newLLMSourceWithSpec(t, fake, llmSamplerFixtureSpec)
+	pushLLMSnapshot(t, verifierInstance)
+
+	_, err := source.NextAction(context.Background(), 1)
+	if err == nil || errors.Is(err, verifier.ErrNoAction) {
+		t.Fatalf("NextAction err = %v, want the run to stop on a sampler the model cannot draw", err)
+	}
+	if !strings.Contains(err.Error(), "targets.generate()") {
+		t.Errorf("error does not name the offending leaf: %v", err)
+	}
+	if outcome := lastCall(t, source).Outcome; outcome != trace.LLMOutcomeCandidatesFailed {
+		t.Errorf("recorded outcome = %q, want %q", outcome, trace.LLMOutcomeCandidatesFailed)
+	}
 }

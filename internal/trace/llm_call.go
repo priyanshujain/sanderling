@@ -35,6 +35,9 @@ const (
 	// LLMOutcomeNoCandidates: the action tree yielded nothing on this screen, so
 	// no call was made.
 	LLMOutcomeNoCandidates = "no_candidates"
+	// LLMOutcomeCandidatesFailed: the action tree cannot be enumerated for this
+	// policy at all (an authored leaf samples), which aborts the run.
+	LLMOutcomeCandidatesFailed = "candidates_failed"
 	// LLMOutcomeRequestFailed: the provider call failed (transport, timeout,
 	// non-2xx).
 	LLMOutcomeRequestFailed = "request_failed"

@@ -110,8 +110,11 @@ func (s *llmSource) NextAction(ctx context.Context, stepIndex int) (verifier.Act
 		return verifier.Action{}, err
 	}
 
-	selection, call := s.selectViaLLM(ctx)
+	selection, call, err := s.selectViaLLM(ctx)
 	s.record(stepIndex, call)
+	if err != nil {
+		return verifier.Action{}, err
+	}
 	if call.Outcome != trace.LLMOutcomeSelected {
 		// Every other outcome skips the step; the next step re-observes and
 		// tries again. The record says which one it was.
@@ -129,12 +132,21 @@ func (s *llmSource) NextAction(ctx context.Context, stepIndex int) (verifier.Act
 // The returned record is complete whichever way the selection ended: its
 // Outcome is trace.LLMOutcomeSelected exactly when the returned selection is
 // usable.
-func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCall) {
+//
+// The error is the spec refusing this policy rather than a step going nowhere:
+// every later step would refuse identically, so the run stops instead of
+// recording two hundred skipped steps.
+func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCall, error) {
 	call := trace.LLMCall{Timestamp: time.Now(), Model: s.model}
-	candidates := s.verifier.Candidates(s.labelSource)
+	candidates, err := s.verifier.Candidates(s.labelSource)
+	if err != nil {
+		call.Outcome = trace.LLMOutcomeCandidatesFailed
+		call.Error = err.Error()
+		return llmSelection{}, call, err
+	}
 	if len(candidates) == 0 {
 		call.Outcome = trace.LLMOutcomeNoCandidates
-		return llmSelection{}, call
+		return llmSelection{}, call, nil
 	}
 	call.Candidates = recordCandidates(candidates)
 
@@ -149,7 +161,7 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCa
 		s.logger.Warn("llm action selection failed", "err", err)
 		call.Outcome = trace.LLMOutcomeRequestFailed
 		call.Error = err.Error()
-		return llmSelection{}, call
+		return llmSelection{}, call, nil
 	}
 	call.ServedModel = response.Model
 	call.PromptTokens = response.Usage.PromptTokens
@@ -158,7 +170,7 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCa
 	if len(response.Choices) == 0 {
 		s.logger.Warn("llm returned no choices")
 		call.Outcome = trace.LLMOutcomeNoChoices
-		return llmSelection{}, call
+		return llmSelection{}, call, nil
 	}
 	call.RawResponse = response.Choices[0].Message.Content
 
@@ -167,7 +179,7 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCa
 		s.logger.Warn("llm output unusable", "err", err)
 		call.Outcome = trace.LLMOutcomeUnparsableResponse
 		call.Error = err.Error()
-		return llmSelection{}, call
+		return llmSelection{}, call, nil
 	}
 	call.Choice = output.Choice
 	call.EchoedAction = output.ChosenAction
@@ -176,7 +188,7 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCa
 	if output.Choice < 1 || output.Choice > len(candidates) {
 		s.logger.Warn("llm choice out of range", "choice", output.Choice, "candidates", len(candidates))
 		call.Outcome = trace.LLMOutcomeChoiceOutOfRange
-		return llmSelection{}, call
+		return llmSelection{}, call, nil
 	}
 	candidate := candidates[output.Choice-1]
 	// Strict skip: the echoed action must match the numbered entry, so a model
@@ -187,14 +199,14 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCa
 		s.logger.Warn("llm chosen_action mismatch; skipping",
 			"choice", output.Choice, "echoed", output.ChosenAction, "candidate", candidate.Description)
 		call.Outcome = trace.LLMOutcomeEchoMismatch
-		return llmSelection{}, call
+		return llmSelection{}, call, nil
 	}
 	action, err := s.actionForCandidate(candidate, output.Text)
 	if err != nil {
 		s.logger.Warn("building action from candidate failed", "choice", output.Choice, "err", err)
 		call.Outcome = trace.LLMOutcomeActionBuildFailed
 		call.Error = err.Error()
-		return llmSelection{}, call
+		return llmSelection{}, call, nil
 	}
 	call.Outcome = trace.LLMOutcomeSelected
 	return llmSelection{
@@ -202,7 +214,7 @@ func (s *llmSource) selectViaLLM(ctx context.Context) (llmSelection, trace.LLMCa
 		reasoning:    output.Reasoning,
 		choice:       output.Choice,
 		chosenAction: candidate.Description,
-	}, call
+	}, call, nil
 }
 
 // record stamps the step this selection belongs to and appends the record. A
