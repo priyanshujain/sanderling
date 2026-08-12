@@ -187,19 +187,23 @@ func TestResolveSpecAPIPath_ReturnsEmptyWhenMissing(t *testing.T) {
 
 func TestBuildRunMeta_RecordsArmMembership(t *testing.T) {
 	options := Options{
-		Spec:      "spec.ts",
-		BundleID:  "com.example",
-		Platform:  "android",
-		Duration:  3 * time.Minute,
-		MaxSteps:  300,
-		Arm:       "llm-visible-text",
-		Generator: "llm",
+		Spec:        "spec.ts",
+		BundleID:    "com.example",
+		Platform:    "android",
+		Duration:    3 * time.Minute,
+		MaxSteps:    300,
+		Arm:         "llm-visible-text",
+		Generator:   "llm",
+		LabelSource: verifier.LabelSourceVisibleText,
 	}
 	meta := buildRunMeta(options, "deadbeef", 7, "farm-01",
 		verifier.LLMConfig{Model: "claude-sonnet-5", Instructions: "exercise the outbox"}, true)
 
 	if meta.Arm != "llm-visible-text" || meta.Generator != "llm" {
 		t.Errorf("arm membership: got arm=%q generator=%q", meta.Arm, meta.Generator)
+	}
+	if meta.LabelSource != verifier.LabelSourceVisibleText {
+		t.Errorf("label source: got %q, want %q", meta.LabelSource, verifier.LabelSourceVisibleText)
 	}
 	if meta.Model != "claude-sonnet-5" || meta.Instructions != "exercise the outbox" {
 		t.Errorf("llm config: got model=%q instructions=%q", meta.Model, meta.Instructions)
@@ -220,6 +224,25 @@ func TestBuildRunMeta_OmitsModelWhenSeededPickerRuns(t *testing.T) {
 	if meta.Model != "" || meta.Instructions != "" {
 		t.Errorf("a seeded run must not be labelled with a model it never called: model=%q instructions=%q",
 			meta.Model, meta.Instructions)
+	}
+}
+
+// TestBuildRunMeta_RecordsLabelSourceForASeededRun is the deliberate difference
+// from Model and Instructions above. The seeded picker never reads a label, but
+// the run still belongs to a labelling cell, and the pair of seeded runs across
+// the two cells is the manipulation check. Omitting it here would leave those
+// two runs indistinguishable in the artifact.
+func TestBuildRunMeta_RecordsLabelSourceForASeededRun(t *testing.T) {
+	options := Options{
+		Platform:    "android",
+		Generator:   "seeded",
+		Duration:    time.Minute,
+		LabelSource: verifier.LabelSourceResourceID,
+	}
+	meta := buildRunMeta(options, "deadbeef", 1, "farm-01", verifier.LLMConfig{}, false)
+
+	if meta.LabelSource != verifier.LabelSourceResourceID {
+		t.Errorf("label source: got %q, want %q", meta.LabelSource, verifier.LabelSourceResourceID)
 	}
 }
 

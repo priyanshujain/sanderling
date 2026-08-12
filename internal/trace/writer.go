@@ -140,6 +140,12 @@ type Meta struct {
 	Generator    string `json:"generator,omitempty"`
 	Model        string `json:"model,omitempty"`
 	Instructions string `json:"instructions,omitempty"`
+	// LabelSource records how candidates were named to the picker. It is written
+	// for a seeded run too, even though that picker selects by index and never
+	// reads a label: it is the cell the run was assigned to, and the pair of
+	// seeded runs across the two label modes is the manipulation check that says
+	// how much of any difference is just application nondeterminism.
+	LabelSource string `json:"label_source,omitempty"`
 	// MaxSteps and DurationMillis are the budget the run was given, which has
 	// to be identical across arms for a comparison to mean anything.
 	MaxSteps       int   `json:"max_steps,omitempty"`

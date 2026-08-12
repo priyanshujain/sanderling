@@ -40,6 +40,9 @@ type Options struct {
 	Arm string
 	// Generator selects the action picker: "llm" or the default seeded picker.
 	Generator string
+	// LabelSource selects how candidates are named to the model picker, and is
+	// recorded in meta.json as part of the run's cell.
+	LabelSource string
 
 	// iosUDID, iosIsSimulator, and iosCoreDeviceID are filled by Execute after
 	// resolving the iOS target, then read by buildDriver to choose the simulator
@@ -66,6 +69,7 @@ func buildRunMeta(options Options, bundleSHA256 string, seed int64, host string,
 		SanderlingVersion: "0.0.1",
 		Arm:               options.Arm,
 		Generator:         options.Generator,
+		LabelSource:       options.LabelSource,
 		MaxSteps:          options.MaxSteps,
 		DurationMillis:    options.Duration.Milliseconds(),
 		Host:              host,
@@ -198,6 +202,7 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		TraceWriter: traceWriter,
 		Logger:      newProgressLogger(stdout),
 		Generator:   options.Generator,
+		LabelSource: options.LabelSource,
 	})
 
 	terminateCtx, terminateCancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -448,6 +448,7 @@ func TestWriteMeta_ArmMembershipRoundTrip(t *testing.T) {
 		SanderlingVersion: "0.0.1",
 		Arm:               "llm-visible-text",
 		Generator:         "llm",
+		LabelSource:       "visible-text",
 		Model:             "claude-sonnet-5",
 		Instructions:      "exercise the outbox",
 		MaxSteps:          300,
@@ -486,7 +487,7 @@ func TestWriteMeta_OmitsArmMembershipWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"arm", "generator", "model", "instructions", "max_steps", "duration_millis", "host"} {
+	for _, key := range []string{"arm", "generator", "label_source", "model", "instructions", "max_steps", "duration_millis", "host"} {
 		if strings.Contains(string(body), `"`+key+`"`) {
 			t.Errorf("meta.json carries %q when unset:\n%s", key, body)
 		}
