@@ -65,6 +65,13 @@ func (v *Verifier) Screenshot() []byte {
 	return v.lastScreenshot
 }
 
+// SnapshotStep returns the step index of the most recent PushSnapshot. It lags
+// the runner's current step whenever an observation was skipped (a transitional
+// tree), which is exactly when Screenshot returns an older step's image.
+func (v *Verifier) SnapshotStep() int {
+	return v.stepIndex
+}
+
 // CurrentScreen returns the screen id of the most recent snapshot's first
 // element, matching the runner's own screen labeling. Empty when no tree is
 // loaded.
