@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -97,5 +98,81 @@ func TestStateAxFindWorks(t *testing.T) {
 	count := verifier.runtime.GlobalObject().Get("count").ToObject(verifier.runtime).Get("current").ToInteger()
 	if count != 1 {
 		t.Fatalf("findAll count = %d, want 1", count)
+	}
+}
+
+// A selector key that can never match is a spec bug, and an empty result hides
+// it: the generator yields no action, the runner waits out the step, and the
+// run ends clean having explored nothing. The spec must fail instead.
+func TestStateAxObjectSelectorRejectsAnUnknownKey(t *testing.T) {
+	tree, err := hierarchy.Parse(`{
+		"attributes": {"resource-id": "root"},
+		"children": [{"attributes": {"content-desc": "Supplier"}, "children": []}]
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.probe = __sanderling__.extract(state => !!state.ax.find({ descripton: "Supplier" }));
+	`)
+
+	err = verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree})
+	if err == nil {
+		t.Fatal("expected an unknown selector key to fail the spec")
+	}
+	if !strings.Contains(err.Error(), "descripton") {
+		t.Errorf("error does not name the offending key: %v", err)
+	}
+	if !strings.Contains(err.Error(), "accepted keys") {
+		t.Errorf("error does not list the accepted keys: %v", err)
+	}
+}
+
+// desc names the accessibility description in the element fields and in the
+// string form, so the object form answers to it too rather than reporting it as
+// a mistake.
+func TestStateAxObjectSelectorAcceptsDesc(t *testing.T) {
+	tree, err := hierarchy.Parse(`{
+		"attributes": {"resource-id": "root"},
+		"children": [{"attributes": {"content-desc": "Supplier"}, "children": []}]
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.probe = __sanderling__.extract(state => state.ax.find({ desc: "Supplier" }) ? "matched" : "miss");
+	`)
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+	got := verifier.runtime.GlobalObject().Get("probe").ToObject(verifier.runtime).Get("current").String()
+	if got != "matched" {
+		t.Fatalf("probe = %q, want matched", got)
+	}
+}
+
+// A key that belongs to another platform must stay silent: one spec runs on
+// every platform, and iOS-only attributes are absent from an Android tree by
+// design rather than by mistake.
+func TestStateAxObjectSelectorKeepsCrossPlatformKeysSilent(t *testing.T) {
+	tree, err := hierarchy.Parse(`{
+		"attributes": {"resource-id": "root"},
+		"children": []
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.probe = __sanderling__.extract(state => state.ax.find({ title: "Settings" }) ? "matched" : "miss");
+	`)
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatalf("a platform-specific key must not fail the run: %v", err)
+	}
+	got := verifier.runtime.GlobalObject().Get("probe").ToObject(verifier.runtime).Get("current").String()
+	if got != "miss" {
+		t.Fatalf("probe = %q, want miss", got)
 	}
 }

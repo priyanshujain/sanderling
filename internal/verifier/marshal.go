@@ -3,6 +3,7 @@ package verifier
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -151,12 +152,14 @@ func findNodeFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Value)
 		return tree.FindNode(s)
 	}
 	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		requireKnownSelectorKeys(runtime, tree, path...)
 		return tree.FindBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
 	}
+	requireKnownSelectorKeys(runtime, tree, sel)
 	return tree.Root.FindBySelector(sel)
 }
 
@@ -169,12 +172,14 @@ func findAllNodesFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Va
 		return tree.FindAllNodes(s)
 	}
 	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		requireKnownSelectorKeys(runtime, tree, path...)
 		return tree.FindAllBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
 	}
+	requireKnownSelectorKeys(runtime, tree, sel)
 	return tree.Root.FindAllBySelector(sel)
 }
 
@@ -187,12 +192,14 @@ func findNodeInSubtreeFromJS(runtime *goja.Runtime, node *hierarchy.Node, arg go
 		return node.Find(s)
 	}
 	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		requireKnownSelectorKeys(runtime, node.Tree(), path...)
 		return node.FindBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
 	}
+	requireKnownSelectorKeys(runtime, node.Tree(), sel)
 	return node.FindBySelector(sel)
 }
 
@@ -205,13 +212,39 @@ func findAllNodesInSubtreeFromJS(runtime *goja.Runtime, node *hierarchy.Node, ar
 		return node.FindAll(s)
 	}
 	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		requireKnownSelectorKeys(runtime, node.Tree(), path...)
 		return node.FindAllBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
 	}
+	requireKnownSelectorKeys(runtime, node.Tree(), sel)
 	return node.FindAllBySelector(sel)
+}
+
+// requireKnownSelectorKeys throws a JS error when a selector names a key that
+// can never match. Returning an empty result instead is indistinguishable from
+// a screen that simply has no such element, so a spec built on a mistyped key
+// generates no action, the runner waits out every step, and the campaign
+// finishes clean having explored nothing.
+func requireKnownSelectorKeys(
+	runtime *goja.Runtime,
+	tree *hierarchy.Tree,
+	selectors ...hierarchy.Selector,
+) {
+	var unknown []string
+	for _, sel := range selectors {
+		for _, key := range tree.UnknownSelectorKeys(sel) {
+			if !slices.Contains(unknown, key) {
+				unknown = append(unknown, key)
+			}
+		}
+	}
+	if len(unknown) == 0 {
+		return
+	}
+	panic(runtime.NewTypeError(hierarchy.UnknownSelectorKeyMessage(unknown)))
 }
 
 // selectorFromJSObject converts a JS object {attr: value, ...} into a Selector.

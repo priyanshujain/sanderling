@@ -792,3 +792,13 @@ func parseBounds(text string) (Bounds, error) {
 	}
 	return Bounds{}, fmt.Errorf("bounds %q: not in [L,T,R,B] or [x1,y1][x2,y2] form", text)
 }
+
+// Tree returns the tree this node belongs to, or nil for a node built outside
+// Parse. Selector validation needs the whole tree: a key absent from one
+// subtree but present elsewhere is a key that can match.
+func (n *Node) Tree() *Tree {
+	if n == nil {
+		return nil
+	}
+	return n.tree
+}
