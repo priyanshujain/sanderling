@@ -240,7 +240,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		applySkipped := false
-		actionSkipped := ""
+		var actionSkipped actionSkipReason
 		if nextErr == nil && !appIsForeground(ctx, options) {
 			// The app left the foreground between observe and apply (a prior
 			// action's gesture settling late, or an async navigation). The
@@ -253,7 +253,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			actionSkipped = actionSkippedForeground
 			lastAction = nil
 		} else if nextErr == nil {
-			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
+			notDispatched, err := applyAction(ctx, options.Driver, nextAction, tree)
+			if err != nil {
 				if isWDADrop(err) {
 					return summary, fmt.Errorf("step %d: the iOS XCTest runner could not be restarted - re-run the test: %w", stepIndex, err)
 				}
@@ -275,6 +276,17 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				applySkipped = true
 				actionSkipped = actionSkippedApplyError
 				lastAction = nil
+			} else if notDispatched != "" {
+				// The action was chosen but nothing reached the driver, so the
+				// screen is exactly the one already verified: the step stays
+				// non-transitional and only records why it acted on nothing.
+				// The apply-failure streak is left alone; a step that never
+				// reached the device says nothing about the device's health.
+				logger.Warn("action not dispatched",
+					"step", stepIndex, "action", nextAction.Kind, "reason", notDispatched)
+				applySkipped = true
+				actionSkipped = notDispatched
+				lastAction = nil
 			} else {
 				consecutiveApplyFailures = 0
 				actionCopy := nextAction
@@ -295,7 +307,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			Metrics:             metrics,
 			ExtractorChanges:    extractorChanges,
 			Transitional:        transitional,
-			ActionSkipped:       actionSkipped,
+			ActionSkipped:       string(actionSkipped),
 			SkippedVerification: skippedVerification,
 			Witnesses:           witnesses,
 		}
@@ -572,34 +584,41 @@ func settleForForeground(ctx context.Context, options Options) {
 	cancel()
 }
 
-func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
+// applyAction dispatches one chosen action to the driver. The returned reason is
+// empty exactly when the driver was called; a non-empty reason means nothing was
+// dispatched and names why, so the step can record that it acted on nothing
+// instead of showing a next_action that looks executed.
+func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) (actionSkipReason, error) {
 	switch action.Kind {
 	case verifier.ActionKindTap:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
 			if action.On == "" {
-				return nil
+				return actionSkippedNoTarget, nil
 			}
-			return drv.TapSelector(ctx, action.On)
+			return "", drv.TapSelector(ctx, action.On)
 		}
-		return drv.Tap(ctx, x, y)
+		return "", drv.Tap(ctx, x, y)
 	case verifier.ActionKindDoubleTap:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
 			if action.On == "" {
-				return nil
+				return actionSkippedNoTarget, nil
 			}
-			return drv.DoubleTapSelector(ctx, action.On)
+			return "", drv.DoubleTapSelector(ctx, action.On)
 		}
-		return drv.DoubleTap(ctx, x, y)
+		return "", drv.DoubleTap(ctx, x, y)
 	case verifier.ActionKindLongPress:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
-			// No long-press-by-selector RPC exists, so an unresolved target is
-			// nothing we can dispatch; skip rather than error.
-			return nil
+			if action.On == "" {
+				return actionSkippedNoTarget, nil
+			}
+			// No long-press-by-selector RPC exists, so a selector that resolves
+			// to no coordinates is nothing we can dispatch.
+			return actionSkippedUnresolvedSelector, nil
 		}
-		return drv.LongPress(ctx, x, y)
+		return "", drv.LongPress(ctx, x, y)
 	case verifier.ActionKindScroll:
 		fromX, fromY, toX, toY := scrollEndpoints(action, tree)
 		fromX, fromY, toX, toY = clampGestureToSafeArea(fromX, fromY, toX, toY, screenBounds(tree))
@@ -607,17 +626,17 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		if duration <= 0 {
 			duration = 300 * time.Millisecond
 		}
-		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
+		return "", drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindInputText:
 		tapped := false
 		if x, y, ok := resolveCoordinates(action, tree); ok {
 			if err := drv.Tap(ctx, x, y); err != nil {
-				return err
+				return "", err
 			}
 			tapped = true
 		} else if action.On != "" {
 			if err := drv.TapSelector(ctx, action.On); err != nil {
-				return err
+				return "", err
 			}
 			tapped = true
 		}
@@ -631,7 +650,7 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return ctx.Err()
+				return "", ctx.Err()
 			case <-timer.C:
 			}
 		}
@@ -643,38 +662,38 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		if !inputReplacesText(drv) {
 			if count := existingTextLength(action, tree); count > 0 {
 				if err := drv.EraseText(ctx, count); err != nil {
-					return err
+					return "", err
 				}
 			}
 		}
-		return drv.InputText(ctx, action.Text)
+		return "", drv.InputText(ctx, action.Text)
 	case verifier.ActionKindSwipe:
 		duration := time.Duration(action.DurationMillis) * time.Millisecond
 		if duration <= 0 {
 			duration = 250 * time.Millisecond
 		}
 		fromX, fromY, toX, toY := clampGestureToSafeArea(action.FromX, action.FromY, action.ToX, action.ToY, screenBounds(tree))
-		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
+		return "", drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindPressKey:
 		if action.Key == "" {
-			return nil
+			return actionSkippedMissingKey, nil
 		}
-		return drv.PressKey(ctx, action.Key)
+		return "", drv.PressKey(ctx, action.Key)
 	case verifier.ActionKindWait:
 		duration := time.Duration(action.DurationMillis) * time.Millisecond
 		if duration <= 0 {
-			return nil
+			return actionSkippedZeroDurationWait, nil
 		}
 		timer := time.NewTimer(duration)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return "", ctx.Err()
 		case <-timer.C:
-			return nil
+			return "", nil
 		}
 	default:
-		return fmt.Errorf("unknown action kind %q", action.Kind)
+		return "", fmt.Errorf("unknown action kind %q", action.Kind)
 	}
 }
 
@@ -1082,12 +1101,23 @@ func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessa
 	return encoded, firstErr
 }
 
-// Reasons a chosen action was never dispatched, recorded on the step so a count
-// of executed actions is not inflated by the next_action of a step that acted on
-// nothing.
+// actionSkipReason names why a chosen action was never dispatched. It is
+// recorded on the step so a count of executed actions is not inflated by the
+// next_action of a step that acted on nothing. Empty means the action ran.
+type actionSkipReason string
+
 const (
-	actionSkippedForeground = "app_left_foreground"
-	actionSkippedApplyError = "apply_error"
+	actionSkippedForeground actionSkipReason = "app_left_foreground"
+	actionSkippedApplyError actionSkipReason = "apply_error"
+	// The action named no target at all: no selector, and no usable
+	// coordinates (a web candidate scrolled out of the viewport carries
+	// negative ones).
+	actionSkippedNoTarget actionSkipReason = "no_target"
+	// The action named a selector that resolved to no on-screen coordinates,
+	// and its verb has no by-selector dispatch to fall back to.
+	actionSkippedUnresolvedSelector actionSkipReason = "unresolved_selector"
+	actionSkippedMissingKey         actionSkipReason = "missing_key"
+	actionSkippedZeroDurationWait   actionSkipReason = "zero_duration_wait"
 )
 
 // maxConsecutiveApplyFailures bounds how many transient apply failures in a
