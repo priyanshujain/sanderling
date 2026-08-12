@@ -57,7 +57,7 @@ install: $(SIDECAR_EMBED) $(COMPANION_EMBED) $(RUNNER_EMBED) web-build
 web-build:
 	cd replay-ui && bun install --frozen-lockfile && bun run build
 	mkdir -p $(REPLAY_DIST)
-	rm -rf $(REPLAY_DIST)/assets $(REPLAY_DIST)/fonts
+	rm -rf $(REPLAY_DIST)/assets
 	cp -R $(WEB_DIST)/. $(REPLAY_DIST)/
 
 web-dev:
