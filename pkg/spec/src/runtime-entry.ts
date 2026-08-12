@@ -151,7 +151,7 @@ export function installRuntime(
   defineLockedGlobal("__sanderlingExtractors__", () => evaluateExtractors());
   // __sanderlingSetupAction__ walks ONLY the setup generator once, for the LLM
   // action generator (Go), which drives selection itself and must not run the
-  // seeded action root — but still wants setup's precondition steps (e.g. login)
+  // seeded action root, but still wants setup's precondition steps (e.g. login)
   // to run first. Returns null when setup is unset or yields nothing.
   defineLockedGlobal("__sanderlingSetupAction__", () => {
     resolveRoot();

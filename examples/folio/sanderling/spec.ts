@@ -192,7 +192,7 @@ export const actionsRoot = weighted(
 // The LLM generator is orthogonal to actionsRoot: with `--generator llm` a model
 // picks from the SAME weighted candidate set above, reading the screenshot and a
 // numbered, weight-annotated list; the default `--generator seeded` ignores it.
-// instructions describe only WHAT the app is, never HOW to test it — the model
+// instructions describe only WHAT the app is, never HOW to test it. The model
 // figures out how to surface bugs on its own. With a plain OpenAI key, drop the
 // vendor prefix from the model id.
 export const generator = llm({

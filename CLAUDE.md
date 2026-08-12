@@ -17,7 +17,7 @@
 
 ## PR Rules
 
-  - Simple PR title, few-line description. Never write a wall of text — nobody reads it.
+  - Simple PR title, few-line description. Never write a wall of text. Nobody reads it.
   - Everything lowercase in PR titles, descriptions, and comments.
 
 ### PR Description Rules

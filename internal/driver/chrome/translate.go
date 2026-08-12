@@ -68,7 +68,7 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 //   - everything else passes through, including non-ASCII
 //
 // Callers should not pass this output into identifier contexts (class names,
-// tag names) — use an attribute selector form (`[class~="..."]`) instead.
+// tag names). Use an attribute selector form (`[class~="..."]`) instead.
 func cssEscape(value string) string {
 	var builder strings.Builder
 	builder.Grow(len(value))

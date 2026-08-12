@@ -34,7 +34,7 @@ const (
 // screenshot, picks ONE number, and echoes that action so a mismatch can be
 // caught. The app-specific description (spec instructions) is appended.
 const llmSystemPrompt = "You are exercising a UI to find bugs. Each turn you get a screenshot and a numbered list of concrete actions, each with a weight hinting how much the test author wants it exercised (higher = more). " +
-	"Pick the ONE action most likely to make progress or expose a defect. Bugs often hide in repeated or rapid actions, so once a screen works, deliberately stress it — for example submitting the same form twice in a row to check it is not applied more than once — rather than only advancing. " +
+	"Pick the ONE action most likely to make progress or expose a defect. Bugs often hide in repeated or rapid actions, so once a screen works, deliberately stress it (for example submitting the same form twice in a row to check it is not applied more than once) rather than only advancing. " +
 	"Respond with your reasoning, the chosen number, and chosen_action copied verbatim from that line. For a typing action, also provide the text to enter."
 
 // llmSource selects each step's action with an OpenAI-compatible vision model

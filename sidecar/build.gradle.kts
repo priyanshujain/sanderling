@@ -26,7 +26,7 @@ val maestroVersion = "2.4.0"
 // Maestro 2.4.0 still declares grpc-netty:1.50.2 and grpc-okhttp:1.50.2 which
 // were compiled against AbstractManagedChannelImplBuilder removed in grpc-core 1.64+.
 // Force them to the version we pin so they stay binary-compatible.
-// Also exclude GraalVM JS — not used by our sidecar and causes shadow JAR expansion errors.
+// Also exclude GraalVM JS: not used by our sidecar and causes shadow JAR expansion errors.
 configurations.all {
     resolutionStrategy.eachDependency {
         if (requested.group == "io.grpc" &&
