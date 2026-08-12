@@ -372,6 +372,9 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		if innerResult.status == statusHolds {
 			return holds()
 		}
+		// The window is measured in observations at which the inner could have
+		// discharged, so an inner that is merely pending has not discharged and
+		// the window closing on it is a violation.
 		if concrete.HasStepBound && concrete.StepBound <= 1 {
 			return violatedFrom(innerResult, concrete, "eventually bound exhausted")
 		}
@@ -381,6 +384,14 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		next := concrete
 		if concrete.HasStepBound {
 			next.StepBound = concrete.StepBound - 1
+		}
+		// F(inner) unrolls to inner or X F(inner). A pending inner is a
+		// deferred way of satisfying the promise, so it is kept as a disjunct
+		// rather than dropped; dropping it is what made an inner that only
+		// resolves on a later step unsatisfiable, and it is the mirror of the
+		// conjunct Always keeps below.
+		if innerResult.status == statusPending {
+			return pending(OrFormula{Left: innerResult.formula, Right: next})
 		}
 		return pending(next)
 
@@ -453,25 +464,20 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		if innerResult.status == statusViolated {
 			return violatedFrom(innerResult, concrete, "always inner violated")
 		}
-		// A bounded Always is the dual of a bounded Eventually: once the window
-		// closes without a breach it is vacuously satisfied. A pending inner at
-		// the closing step is a deferred obligation (a strong next, or an inner
-		// liveness that has not discharged); it must be carried so a later step
-		// or Finalize resolves it, never dropped to holds.
+		// A bounded Always must reduce exactly as its dual does, so that
+		// G<=n(f) and not F<=n(not f) agree on every trace. The dual of "the
+		// window closed on an inner that never definitely held, so violate" is
+		// "the window closed on an inner that was never definitely breached, so
+		// hold". A pending inner has not been breached inside the window, so it
+		// discharges vacuously here exactly as its negation violates on the
+		// Eventually side.
 		if concrete.HasStepBound && concrete.StepBound <= 1 {
-			if innerResult.status == statusHolds {
-				return holds()
-			}
-			return pending(innerResult.formula)
+			return holds()
 		}
 		if concrete.HasDeadline && !now.Before(concrete.Deadline) {
-			if innerResult.status == statusHolds {
-				return holds()
-			}
-			return pending(innerResult.formula)
+			return holds()
 		}
 		next := concrete
-		next.Inner = concrete.Inner
 		if concrete.HasStepBound {
 			next.StepBound = concrete.StepBound - 1
 		}
