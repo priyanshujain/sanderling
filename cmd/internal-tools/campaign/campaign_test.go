@@ -69,6 +69,41 @@ func writeFakeRun(t *testing.T, arguments []string, steps []trace.Step) {
 	writeRunDirectory(t, argumentValue(arguments, "--output"), "20260101-000000", steps)
 }
 
+func TestRunCampaign_RecordsDispatchedActionsNotSteps(t *testing.T) {
+	directory := t.TempDir()
+	configuration := testConfiguration(t, directory, "--seeds", "1")
+
+	executor := versionAnswering(func(_ context.Context, _ string, arguments []string, _ io.Writer) (int, error) {
+		writeFakeRun(t, arguments, []trace.Step{
+			actingStep(1), observedStep(2), skippedActionStep(3, "unresolved_selector"), actingStep(4),
+		})
+		return 0, nil
+	})
+	if err := runCampaign(context.Background(), configuration, executor, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	records := readRecords(t, directory)
+	if len(records) != 1 {
+		t.Fatalf("records: got %d, want 1", len(records))
+	}
+	if records[0].Steps != 4 || records[0].Actions != 2 {
+		t.Errorf("steps %d actions %d, want 4 and 2", records[0].Steps, records[0].Actions)
+	}
+}
+
+// A run that never produced a readable trace still has to carry the field, so
+// analysis can tell a zero-action run from a file written before the count.
+func TestRunRecord_AlwaysCarriesTheActionCount(t *testing.T) {
+	body, err := json.Marshal(runRecord{Seed: 7, TraceError: "no run directory with meta.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"actions":0`) {
+		t.Errorf("record %s omits the action count", body)
+	}
+}
+
 func TestRunCampaign_WritesManifestBeforeAnyRun(t *testing.T) {
 	directory := t.TempDir()
 	configuration := testConfiguration(t, directory)

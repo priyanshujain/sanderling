@@ -22,6 +22,18 @@ func observedStep(index int) trace.Step {
 	}
 }
 
+func actingStep(index int) trace.Step {
+	step := observedStep(index)
+	step.NextAction = &trace.Action{Kind: "tap", X: 12, Y: 34}
+	return step
+}
+
+func skippedActionStep(index int, reason string) trace.Step {
+	step := actingStep(index)
+	step.ActionSkipped = reason
+	return step
+}
+
 func writeRunDirectory(t *testing.T, seedDirectory, name string, steps []trace.Step) string {
 	t.Helper()
 	directory := filepath.Join(seedDirectory, name)
@@ -69,6 +81,88 @@ func TestSummarizeRun_CleanRunIsCensored(t *testing.T) {
 	}
 	if len(summary.ViolatedProperties) != 0 {
 		t.Errorf("violated properties: got %v", summary.ViolatedProperties)
+	}
+}
+
+func TestSummarizeRun_CountsOnlyStepsThatDispatchedAnAction(t *testing.T) {
+	seedDirectory := t.TempDir()
+	writeRunDirectory(t, seedDirectory, "20260812-090000", []trace.Step{
+		actingStep(1),
+		observedStep(2),
+		actingStep(3),
+		skippedActionStep(4, "no_target"),
+		skippedActionStep(5, "unresolved_selector"),
+		skippedActionStep(6, "missing_key"),
+		skippedActionStep(7, "zero_duration_wait"),
+		skippedActionStep(8, "app_left_foreground"),
+		skippedActionStep(9, "apply_error"),
+		actingStep(10),
+	})
+
+	_, summary, err := summarizeRun(seedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Steps != 10 {
+		t.Errorf("steps: got %d, want 10", summary.Steps)
+	}
+	if summary.Actions != 3 {
+		t.Errorf("actions: got %d, want 3 (one step chose nothing and six were never dispatched)", summary.Actions)
+	}
+}
+
+func TestSummarizeRun_SkipReasonsEachSuppressTheAction(t *testing.T) {
+	for _, reason := range []string{
+		"no_target", "unresolved_selector", "missing_key",
+		"zero_duration_wait", "app_left_foreground", "apply_error",
+	} {
+		seedDirectory := t.TempDir()
+		writeRunDirectory(t, seedDirectory, "20260812-090000", []trace.Step{
+			actingStep(1), skippedActionStep(2, reason),
+		})
+		_, summary, err := summarizeRun(seedDirectory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if summary.Actions != 1 {
+			t.Errorf("%s: actions got %d, want 1", reason, summary.Actions)
+		}
+	}
+}
+
+func TestSummarizeTrace_NullActionIsNoAction(t *testing.T) {
+	seedDirectory := t.TempDir()
+	directory := writeRunDirectory(t, seedDirectory, "20260812-090000", []trace.Step{observedStep(1)})
+	lines := "{\"step\":1,\"hierarchy\":{},\"next_action\":null}\n" +
+		"{\"step\":2,\"hierarchy\":{},\"next_action\":{\"kind\":\"tap\"},\"action_skipped\":\"\"}\n"
+	if err := os.WriteFile(filepath.Join(directory, "trace.jsonl"), []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, summary, err := summarizeRun(seedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Actions != 1 {
+		t.Errorf("actions: got %d, want 1", summary.Actions)
+	}
+}
+
+func TestSummarizeRun_FinalizeLineIsNotAnAction(t *testing.T) {
+	seedDirectory := t.TempDir()
+	finalize := trace.Step{
+		Index:      3,
+		Timestamp:  time.Now().UTC(),
+		NextAction: &trace.Action{Kind: "tap"},
+		Violations: []string{"eventuallySettles"},
+	}
+	writeRunDirectory(t, seedDirectory, "20260812-090000", []trace.Step{actingStep(1), actingStep(2), finalize})
+
+	_, summary, err := summarizeRun(seedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Actions != 2 {
+		t.Errorf("actions: got %d, want 2", summary.Actions)
 	}
 }
 

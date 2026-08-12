@@ -19,7 +19,13 @@ const maxTraceLineBytes = 16 * 1024 * 1024
 // traceSummary is everything the analysis needs from one run, so it never has
 // to open trace.jsonl again.
 type traceSummary struct {
-	Steps                      int      `json:"steps"`
+	Steps int `json:"steps"`
+	// Actions counts only the steps that both chose an action and dispatched
+	// it. A step whose policy declined to act, and a step whose chosen action
+	// the runner threw away, changed nothing about the app, so counting either
+	// as an action inflates the denominator of every per-action rate. The
+	// inflation is policy-dependent, so it does not cancel between arms.
+	Actions                    int      `json:"actions"`
 	FirstViolationOriginStep   *int     `json:"first_violation_origin_step"`
 	FirstViolationDetectedStep *int     `json:"first_violation_detected_step"`
 	FirstViolationProperties   []string `json:"first_violation_properties,omitempty"`
@@ -32,9 +38,20 @@ type traceLine struct {
 	Index int `json:"step"`
 	// Hierarchy is read only for its presence: the run-end finalize line is the
 	// one line carrying violations without an observed hierarchy.
-	Hierarchy  json.RawMessage          `json:"hierarchy"`
-	Violations []string                 `json:"violations"`
-	Witnesses  map[string]trace.Witness `json:"witnesses"`
+	Hierarchy json.RawMessage `json:"hierarchy"`
+	// NextAction is read only for its presence: a step that chose no action
+	// carries none at all.
+	NextAction    json.RawMessage          `json:"next_action"`
+	ActionSkipped string                   `json:"action_skipped"`
+	Violations    []string                 `json:"violations"`
+	Witnesses     map[string]trace.Witness `json:"witnesses"`
+}
+
+func dispatchedAction(line traceLine) bool {
+	if line.ActionSkipped != "" {
+		return false
+	}
+	return len(line.NextAction) > 0 && string(line.NextAction) != "null"
 }
 
 // findRunDirectory returns the run directory `sanderling test` created inside
@@ -102,6 +119,9 @@ func summarizeTrace(tracePath string) (traceSummary, error) {
 		synthetic := len(line.Violations) > 0 && len(line.Hierarchy) == 0
 		if !synthetic && line.Index > summary.Steps {
 			summary.Steps = line.Index
+		}
+		if !synthetic && dispatchedAction(line) {
+			summary.Actions++
 		}
 		for _, property := range line.Violations {
 			violated[property] = true
