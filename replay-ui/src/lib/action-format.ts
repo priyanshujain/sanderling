@@ -8,6 +8,7 @@ export interface FormattedRow {
 
 const SELECTOR_PREFIXES = [
   "id",
+  "idPrefix",
   "text",
   "textPrefix",
   "desc",
