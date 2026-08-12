@@ -219,10 +219,43 @@ func (n NotFormula) describe() string { return "Not(" + n.Inner.describe() + ")"
 func Describe(formula Formula) string { return formula.describe() }
 
 // withinNode mirrors the optional `within` clause attached to bounded
-// Eventually nodes in the JSON AST.
+// Always/Eventually nodes in the JSON AST.
 type withinNode struct {
 	Amount int64  `json:"amount"`
 	Unit   string `json:"unit"`
+	// Deadline is the absolute instant the window closes, in unix
+	// milliseconds, present once the evaluator resolved a relative duration
+	// against an observation. Two obligations spawned at different steps from
+	// the same duration differ only here, so without it they serialize
+	// identically and the trace erases the distinction the evaluator makes.
+	Deadline int64 `json:"deadline,omitempty"`
+}
+
+// withinFor renders the bound clause of a bounded Always or Eventually. The
+// authored window (steps or duration) stays in amount/unit so readers keep
+// seeing what the spec asked for; the resolved deadline rides alongside.
+func withinFor(
+	hasStepBound bool,
+	stepBound int,
+	duration time.Duration,
+	hasDeadline bool,
+	deadline time.Time,
+) *withinNode {
+	var node *withinNode
+	switch {
+	case hasStepBound:
+		node = &withinNode{Amount: int64(stepBound), Unit: "steps"}
+	case duration > 0:
+		node = &withinNode{Amount: duration.Milliseconds(), Unit: "milliseconds"}
+	case hasDeadline:
+		return &withinNode{Amount: deadline.UnixMilli(), Unit: "deadline"}
+	default:
+		return nil
+	}
+	if hasDeadline {
+		node.Deadline = deadline.UnixMilli()
+	}
+	return node
 }
 
 func (a AlwaysFormula) MarshalJSON() ([]byte, error) {
@@ -231,14 +264,9 @@ func (a AlwaysFormula) MarshalJSON() ([]byte, error) {
 		Arg    Formula     `json:"arg"`
 		Within *withinNode `json:"within,omitempty"`
 	}{Op: "always", Arg: a.Inner}
-	switch {
-	case a.HasStepBound:
-		payload.Within = &withinNode{Amount: int64(a.StepBound), Unit: "steps"}
-	case a.Duration > 0:
-		payload.Within = &withinNode{Amount: a.Duration.Milliseconds(), Unit: "milliseconds"}
-	case a.HasDeadline:
-		payload.Within = &withinNode{Amount: a.Deadline.UnixMilli(), Unit: "deadline"}
-	}
+	payload.Within = withinFor(
+		a.HasStepBound, a.StepBound, a.Duration, a.HasDeadline, a.Deadline,
+	)
 	return json.Marshal(payload)
 }
 
@@ -269,14 +297,9 @@ func (e EventuallyFormula) MarshalJSON() ([]byte, error) {
 		Arg    Formula     `json:"arg"`
 		Within *withinNode `json:"within,omitempty"`
 	}{Op: "eventually", Arg: e.Inner}
-	switch {
-	case e.HasStepBound:
-		payload.Within = &withinNode{Amount: int64(e.StepBound), Unit: "steps"}
-	case e.Duration > 0:
-		payload.Within = &withinNode{Amount: e.Duration.Milliseconds(), Unit: "milliseconds"}
-	case e.HasDeadline:
-		payload.Within = &withinNode{Amount: e.Deadline.UnixMilli(), Unit: "deadline"}
-	}
+	payload.Within = withinFor(
+		e.HasStepBound, e.StepBound, e.Duration, e.HasDeadline, e.Deadline,
+	)
 	return json.Marshal(payload)
 }
 

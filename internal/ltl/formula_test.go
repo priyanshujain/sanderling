@@ -288,3 +288,32 @@ func TestResidual_HoldsViolatedPending(t *testing.T) {
 		t.Errorf("pending residual:\n got: %s\nwant: %s", body, want)
 	}
 }
+
+// TestMarshalJSON_ResolvedDeadlineDistinguishesObligations: obligations spawned
+// at different steps from one duration-bounded eventually differ only in the
+// deadline the evaluator resolved for them, and collapse keeps them apart on
+// exactly that. The serialized AST has to keep them apart too, or the trace
+// shows N copies of one node where the evaluator has N different obligations.
+func TestMarshalJSON_ResolvedDeadlineDistinguishesObligations(t *testing.T) {
+	base := time.UnixMilli(1700000000000)
+	first := EventuallyFormula{
+		Inner:       PureFormula{Value: false},
+		Duration:    300 * time.Second,
+		Deadline:    base.Add(300 * time.Second),
+		HasDeadline: true,
+	}
+	second := first
+	second.Deadline = base.Add(301 * time.Second)
+
+	firstBody, _ := json.Marshal(first)
+	secondBody, _ := json.Marshal(second)
+	if string(firstBody) == string(secondBody) {
+		t.Errorf("obligations with different deadlines serialize identically: %s", firstBody)
+	}
+	if !strings.Contains(string(firstBody), `"unit":"milliseconds"`) {
+		t.Errorf("authored window lost: %s", firstBody)
+	}
+	if !strings.Contains(string(firstBody), `"deadline":1700000300000`) {
+		t.Errorf("resolved deadline missing: %s", firstBody)
+	}
+}
