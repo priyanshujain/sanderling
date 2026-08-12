@@ -182,14 +182,20 @@ func (v *Verifier) Load(source string) error {
 }
 
 // buildFormula walks the formula-spec registry and produces a Go ltl.Formula
-// tree rooted at the given spec index. Specs built at the top level are
-// always wrapped in Always unless the top-level spec is already an Always.
+// tree rooted at the given spec index.
+//
+// A top-level spec that is not already a temporal obligation is wrapped in
+// Always, which is what an author writing a bare predicate or a combinator
+// means. An always is left alone, and so is an eventually: wrapping
+// `eventually(p).within(5, "minutes")` would turn one reachability goal into
+// "within five minutes of every step", a different and far stronger property.
 func (v *Verifier) buildFormula(rootIndex int) (ltl.Formula, error) {
 	inner, err := v.buildFormulaNode(rootIndex)
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := inner.(ltl.AlwaysFormula); ok {
+	switch inner.(type) {
+	case ltl.AlwaysFormula, ltl.EventuallyFormula:
 		return inner, nil
 	}
 	return ltl.Always(inner), nil

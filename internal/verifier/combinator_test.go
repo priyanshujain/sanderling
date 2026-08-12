@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/priyanshujain/sanderling/internal/ltl"
 )
@@ -114,5 +115,56 @@ func TestWithin_InvalidUnitPanics(t *testing.T) {
 		if !strings.Contains(err.Error(), "within unit must be") {
 			t.Errorf("unit %q: error = %v, want within-unit diagnostic", unit, err)
 		}
+	}
+}
+
+// TestTopLevelEventually_IsOneReachabilityObligation drives the folio-web shape
+// `eventually(p).within(300, "seconds")` as a top-level property over a run of
+// the same length and cadence as the 553-step run that exposed this: 60 seconds
+// of steps, a predicate that never fires, a window far longer than the run.
+//
+// The property is one reachability goal, so the run leaves one obligation and
+// one residual node behind. Wrapping the root in Always made it "within 300
+// seconds of EVERY step" instead, which spawned an obligation per step (each
+// with its own resolved deadline, so none of them collapsed), re-ran the
+// predicate once per obligation per step, and serialized a 75 KB residual.
+func TestTopLevelEventually_IsOneReachabilityObligation(t *testing.T) {
+	const source = `
+globalThis.seen = __sanderling__.extract(state => state.snapshots["seen"] ?? false, "seen");
+globalThis.properties = {
+  reachable: __sanderling__.eventually(() => seen.current).within(300, 'seconds'),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, source)
+
+	base := time.Unix(1780000000, 0)
+	const steps = 553
+	for index := range steps {
+		if err := verifier.PushSnapshot(SnapshotInput{
+			Snapshots: Snapshots{"seen": json.RawMessage(`false`)},
+			StepIndex: index + 1,
+			StepTime:  base.Add(time.Duration(index) * 108 * time.Millisecond),
+			RunStart:  base,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got := verifier.EvaluateProperties()["reachable"]; got != ltl.VerdictPending {
+			t.Fatalf("step %d: got %v, want pending", index+1, got)
+		}
+	}
+
+	residual, err := json.Marshal(verifier.Residuals()["reachable"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(residual), `"op":"and"`) {
+		t.Errorf("residual accumulated obligations (%d bytes): %s", len(residual), residual)
+	}
+	if !strings.Contains(string(residual), `"op":"eventually"`) {
+		t.Errorf("residual lost the eventually: %s", residual)
+	}
+	if !strings.Contains(string(residual), `"unit":"milliseconds"`) {
+		t.Errorf("residual lost the bound: %s", residual)
 	}
 }
