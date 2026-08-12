@@ -292,6 +292,8 @@ Set `OPENROUTER_API_KEY` or `OPENAI_API_KEY` (OpenRouter wins if both are set). 
 
 Each step it gets a screenshot plus a numbered list of the concrete actions your tree yields right now, each tagged with its weight, and picks one number. That list is the seeded picker's own candidate enumeration, so both modes explore the same action space and only the choice differs. `instructions` are appended to the prompt: say what the app is, not how to test it; the model works that part out. Everything else is unchanged. Setup actions still run first, typing still falls back to the edge-case corpus when the model supplies no text, and the trace records the reasoning, the chosen number, and `source: "llm"` so the replay UI can show why each pick happened.
 
+Every step of a model-driven run also appends one record to `llm-calls.jsonl` in the run directory, keyed by the step index it shares with `trace.jsonl`: the system and user prompts as sent, the numbered candidate list as the model saw it, the path of the screenshot that went with the call, the raw response, token counts, latency, and an `outcome`. `outcome` is `selected` when the pick became an action; every other value (`echo_mismatch`, `choice_out_of_range`, `unparsable_response`, `request_failed`, `no_candidates`, `setup_action`, ...) names a step that ran no model-chosen action, so a step a guard threw away can never be mistaken for one where the model had nothing to pick. A seeded run writes no such file.
+
 It is one model call per step, so keep `--duration` modest.
 
 ## Defaults

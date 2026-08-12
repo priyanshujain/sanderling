@@ -23,6 +23,7 @@ sanderling test --spec spec.ts --bundle-id com.example.app --duration 30m
         └── trace written to ./runs/<timestamp>/
               ├── trace.jsonl
               ├── screenshots/
+              ├── llm-calls.jsonl   (--generator llm only)
               └── meta.json
 ```
 
