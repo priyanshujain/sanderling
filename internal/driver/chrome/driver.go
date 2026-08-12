@@ -548,10 +548,7 @@ func (d *Driver) WaitForIdle(ctx context.Context, timeout time.Duration) error {
 	defer cancel()
 	// Leave the caller's deadline some room: returning late by our own doing
 	// would surface as a context cancellation instead of a settled page.
-	budget := timeout - 100*time.Millisecond
-	if budget < domQuietPeriod {
-		budget = domQuietPeriod
-	}
+	budget := max(timeout-100*time.Millisecond, domQuietPeriod)
 	script := fmt.Sprintf(settleScript, domQuietPeriod.Milliseconds(), budget.Milliseconds())
 	return chromedp.Run(runCtx,
 		chromedp.WaitReady("body", chromedp.ByQuery),
