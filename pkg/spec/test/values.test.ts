@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Pcg } from "../src/pcg.ts";
-import { setSamplerRng } from "../src/sampler-rng.ts";
+import {
+  SAMPLER_REFUSAL_NAME,
+  setEnumeratingCandidates,
+  setSamplerRng,
+} from "../src/sampler-rng.ts";
 import { edgeCaseText, emails, integers, strings } from "../src/values.ts";
 import { INPUT_CORPUS } from "../src/corpus.ts";
 import type { Sampler } from "../src/types.ts";
@@ -72,4 +76,59 @@ test("outside a walk generators return a fixed deterministic default", () => {
   assert.equal(strings().length(4, 8).alpha().generate(), "aaaa");
   assert.equal(emails().domain("folio.app").generate(), "aaa@folio.app");
   assert.equal(edgeCaseText().generate(), INPUT_CORPUS[0]);
+});
+
+function whileEnumerating<T>(body: () => T): T {
+  setEnumeratingCandidates(true);
+  try {
+    return body();
+  } finally {
+    setEnumeratingCandidates(false);
+  }
+}
+
+test("every value generator refuses a multi-value draw while the model policy enumerates", () => {
+  whileEnumerating(() => {
+    assert.throws(() => integers().between(1, 500).generate(), {
+      name: SAMPLER_REFUSAL_NAME,
+      message: /random value from integers\(\)/,
+    });
+    assert.throws(() => strings().length(3, 6).alpha().generate(), {
+      name: SAMPLER_REFUSAL_NAME,
+      message: /random value from strings\(\)/,
+    });
+    assert.throws(() => emails().domain("folio.app").generate(), {
+      name: SAMPLER_REFUSAL_NAME,
+      message: /random value from emails\(\)/,
+    });
+    assert.throws(() => edgeCaseText().generate(), {
+      name: SAMPLER_REFUSAL_NAME,
+      message: /random value from edgeCaseText\(\)/,
+    });
+  });
+});
+
+test("a fixed-length string still refuses, because its characters vary", () => {
+  whileEnumerating(() => {
+    assert.throws(() => strings().length(4, 4).alpha().generate(), {
+      name: SAMPLER_REFUSAL_NAME,
+    });
+  });
+});
+
+test("a single-valued generator keeps drawing while the model policy enumerates", () => {
+  whileEnumerating(() => {
+    assert.equal(integers().between(7, 7).generate(), 7);
+    assert.equal(strings().length(0, 0).generate(), "");
+  });
+});
+
+test("a refused generator draws again once enumeration ends", () => {
+  whileEnumerating(() => {
+    assert.throws(() => integers().between(1, 500).generate());
+  });
+  withRng(5n, () => {
+    const value = integers().between(1, 500).generate();
+    assert.ok(value >= 1 && value <= 500);
+  });
 });
