@@ -464,6 +464,7 @@ func DecodeAction(raw json.RawMessage) (Action, error) {
 	case "Scroll":
 		return Action{
 			Kind:           ActionKindScroll,
+			On:             wire.Selector,
 			Direction:      wire.Direction,
 			FromX:          wire.FromX,
 			FromY:          wire.FromY,

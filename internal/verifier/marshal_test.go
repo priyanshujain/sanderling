@@ -48,6 +48,13 @@ func TestDecodeAction_AllKinds(t *testing.T) {
 			want: Action{Kind: ActionKindScroll, Direction: "down", FromX: 1, FromY: 2, ToX: 3, ToY: 4, DurationMillis: 100},
 		},
 		{
+			// An author names the container and leaves the drag to the runner,
+			// which needs the selector to size it against the right bounds.
+			name: "Scroll with a container and no endpoints",
+			raw:  `{"kind":"Scroll","direction":"up","selector":"id:list","fromX":0,"fromY":0,"toX":0,"toY":0,"durationMillis":250}`,
+			want: Action{Kind: ActionKindScroll, On: "id:list", Direction: "up", DurationMillis: 250},
+		},
+		{
 			name: "PressKey",
 			raw:  `{"kind":"PressKey","key":"back"}`,
 			want: Action{Kind: ActionKindPressKey, Key: "back"},
