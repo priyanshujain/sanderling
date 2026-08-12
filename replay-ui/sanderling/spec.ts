@@ -43,12 +43,15 @@ const stepRows = extract("stepRows", (s) =>
   })),
 );
 
-// The screenshot panels' claim, read off the image URL each one is rendering.
-// The "state before" panel comes first in the DOM and shows the selected step;
-// "state after" shows the next one.
-const screenshotSteps = extract("screenshotSteps", (s) =>
-  s.ax.findAll({ "data-testid": "screenshot" }).map((image) => numberOf(dataOf(image, "step"))),
-);
+// What the "state before" panel is showing, read off the image URL it renders.
+// Scoped to that panel by name rather than by DOM position: an earlier draft
+// took the first screenshot on the page, and the fuzzer put the before panel on
+// another tab, which left the after panel's image first and fired the property
+// against a UI that was behaving correctly.
+const beforeScreenshotStep = extract("beforeScreenshotStep", (s) => {
+  const image = s.ax.find([{ "data-testid": "state-before" }, { "data-testid": "screenshot" }]);
+  return image ? numberOf(dataOf(image, "step")) : null;
+});
 
 // Which tab is selected in each tab strip, as one comparable string.
 const activeTabs = extract("activeTabs", (s) =>
@@ -100,10 +103,9 @@ const stepCountMatchesTheList = always(() => {
 // prints the step from the URL. They must name the same step.
 const screenshotShowsTheSelectedStep = always(() => {
   const current = toolbar.current;
-  const shown = screenshotSteps.current;
-  if (!current || current.step === null || shown.length === 0) return true;
-  const before = shown[0];
-  return before === null || before === current.step;
+  const shown = beforeScreenshotStep.current;
+  if (!current || current.step === null || shown === null) return true;
+  return shown === current.step;
 });
 
 // Switching a tab is a view change, not a navigation: it must never move the
@@ -154,6 +156,22 @@ const selectAStep = actions(() => {
 const arrowKeys = from<Key>(["left", "right"]);
 const navigateByKeyboard = actions(() => [PressKey({ key: arrowKeys.generate() })]);
 
-// defaultActions carries the rest: the tab strips, the jump-to-violation
-// button, the theme toggle, the link back to the run list, and the scrolling.
-export const actionsRoot = weighted([35, selectAStep], [25, navigateByKeyboard], [40, defaultActions]);
+// Tabs get their own weight rather than being left to the undirected tap mix:
+// with ~15 clickable elements on the page, an undirected run went 40 steps
+// without switching a single tab, which left both tab-facing properties
+// vacuously true. Weighting them is what makes those properties mean something.
+const tabElements = extract("tabElements", (s) => s.ax.findAll({ "data-testid": "tab" }));
+
+const switchATab = actions(() => {
+  const tabs = tabElements.current;
+  return tabs.length === 0 ? [] : [Tap({ on: from(tabs).generate() })];
+});
+
+// defaultActions carries the rest: the jump-to-violation button, the theme
+// toggle, the link back to the run list, and the scrolling.
+export const actionsRoot = weighted(
+  [30, selectAStep],
+  [20, navigateByKeyboard],
+  [25, switchATab],
+  [25, defaultActions],
+);

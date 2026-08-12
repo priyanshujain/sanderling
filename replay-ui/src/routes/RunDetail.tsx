@@ -323,14 +323,14 @@ export default function RunDetail() {
           </div>
         </aside>
 
-        <section className="detail-state-before detail-panel">
+        <section className="detail-state-before detail-panel" data-testid="state-before">
           <h2>state before</h2>
           <div className="detail-panel-body">
             <Tabs tabs={beforeTabs} defaultTabId="screenshot" ariaLabel="state before" />
           </div>
         </section>
 
-        <section className="detail-state-after detail-panel">
+        <section className="detail-state-after detail-panel" data-testid="state-after">
           <h2>state after</h2>
           <div className="detail-panel-body">
             <Tabs tabs={afterTabs} defaultTabId="screenshot" ariaLabel="state after" />
