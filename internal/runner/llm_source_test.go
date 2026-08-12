@@ -680,6 +680,51 @@ func TestLLMSourceStrictSkipsOnEchoMismatch(t *testing.T) {
 	}
 }
 
+// llmSharedLabelTreeJSON has two rows a user reads as the same word, so the
+// numbered list holds two entries rendering identically.
+const llmSharedLabelTreeJSON = `{
+  "attributes": {"bounds": "[0,0,400,800]"},
+  "children": [
+    {"attributes": {"resource-id": "delete_alpha", "text": "Delete", "bounds": "[0,0,400,100]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "delete_beta", "text": "Delete", "bounds": "[0,100,400,200]"}, "clickable": true, "enabled": true, "children": []}
+  ]
+}`
+
+// TestLLMSourceEchoGuardAdmitsARepeatedDescription is the other half of the
+// strict skip: it compares the echo against the entry the model NUMBERED, so a
+// description shared by two entries still selects the one whose number came
+// back. A guard that looked the echo up by description instead would run the
+// first row for both numbers.
+func TestLLMSourceEchoGuardAdmitsARepeatedDescription(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	source, verifierInstance := newLLMSource(t, fake)
+	pushSnapshotTree(t, verifierInstance, llmSharedLabelTreeJSON)
+
+	var repeated []verifier.ActionCandidate
+	for _, candidate := range verifierInstance.Candidates(verifier.LabelSourceVisibleText) {
+		if candidate.Description == `Tap "Delete"` {
+			repeated = append(repeated, candidate)
+		}
+	}
+	if len(repeated) != 2 {
+		t.Fatalf("want two entries sharing one description, got %d", len(repeated))
+	}
+
+	second := repeated[1]
+	fake.choice = second.Index
+	fake.chosenAction = second.Description
+	action, err := source.NextAction(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("NextAction err = %v, want the second row's tap", err)
+	}
+	if action.On != "id:delete_beta" {
+		t.Errorf("action targets %q, want id:delete_beta", action.On)
+	}
+	if source.lastSource != "llm" {
+		t.Errorf("lastSource = %q, want llm; a repeated description must not strict-skip", source.lastSource)
+	}
+}
+
 func TestLLMSourceSkipsOnHTTPError(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	// Replace the handler with one that always errors.
