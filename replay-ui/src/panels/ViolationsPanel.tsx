@@ -59,9 +59,30 @@ function WitnessView({
           )}
         </div>
       ) : null}
+      {witness.detected_step && witness.detected_step !== witness.step ? (
+        <div className="violations-panel-witness-line">
+          <span className="violations-panel-witness-key">detected at</span>
+          {onJumpToStep ? (
+            <button
+              type="button"
+              className="violations-panel-witness-step"
+              onClick={() => onJumpToStep(witness.detected_step as number)}
+            >
+              step {witness.detected_step}
+            </button>
+          ) : (
+            <span className="violations-panel-witness-value">
+              step {witness.detected_step}
+            </span>
+          )}
+        </div>
+      ) : null}
       {evidence.length > 0 ? (
         <details className="violations-panel-residual" open={open}>
-          <summary>witness</summary>
+          <summary>
+            witness
+            {witness.detected_step ? ` (state at step ${witness.detected_step})` : ""}
+          </summary>
           <dl className="violations-panel-witness-evidence">
             {evidence.map(([name, value]) => (
               <div key={name} className="violations-panel-witness-line">

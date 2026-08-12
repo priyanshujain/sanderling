@@ -128,6 +128,9 @@ export interface Witness {
   // which for deferred obligations (next, eventually) is earlier than the
   // step whose record carries the witness.
   step?: number;
+  // detected_step is the step whose evaluation produced the violation. The
+  // extractors below are that step's state, not step's.
+  detected_step?: number;
   extractors?: Record<string, unknown>;
 }
 
