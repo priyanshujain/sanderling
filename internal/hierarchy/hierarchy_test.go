@@ -106,6 +106,95 @@ func TestDescPrefix(t *testing.T) {
 	}
 }
 
+// idPrefixDump is a list whose rows carry a durable role prefix followed by the
+// record's identifier, the convention that makes every row's full id unique and
+// unwritable in a spec.
+const idPrefixDump = `{
+  "attributes": {"resource-id": "com.example:id/customer_list", "bounds": "[0,0,100,400]"},
+  "children": [
+    {"attributes": {"resource-id": "com.example:id/customer_row_abc-123", "bounds": "[0,0,100,100]"}, "children": []},
+    {"attributes": {"resource-id": "com.example:id/customer_row_def-456", "bounds": "[0,100,100,200]"}, "children": []},
+    {"attributes": {"resource-id": "com.example:id/supplier_row_xyz", "bounds": "[0,200,100,300]"}, "children": []},
+    {"attributes": {"identifier": "customer_row_ghi-789", "bounds": "[0,300,100,400]"}, "children": []}
+  ]
+}`
+
+func TestIDPrefixMatchesEveryRowSharingTheRole(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	rows := tree.FindAll("idPrefix:customer_row_")
+	if len(rows) != 3 {
+		t.Fatalf("want 3 customer rows, got %d", len(rows))
+	}
+}
+
+func TestIDPrefixDoesNotRequireThePackagePrefix(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	el := tree.Find("idPrefix:customer_row_abc")
+	if el == nil {
+		t.Fatal("expected the local name after :id/ to match on its own")
+	}
+	if el.ResourceID != "com.example:id/customer_row_abc-123" {
+		t.Fatalf("got %q", el.ResourceID)
+	}
+}
+
+func TestIDPrefixAlsoMatchesTheWholeIdentifier(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	if tree.Find("idPrefix:com.example:id/customer_row_") == nil {
+		t.Fatal("expected a package-qualified prefix to match")
+	}
+}
+
+func TestIDPrefixMatchesIOSAccessibilityIdentifier(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	el := tree.Find("idPrefix:customer_row_ghi")
+	if el == nil {
+		t.Fatal("expected identifier to match on a node with no resource-id")
+	}
+	if el.Bounds.Top != 300 {
+		t.Fatalf("matched the wrong node: %+v", el.Bounds)
+	}
+}
+
+func TestIDPrefixMatchesNothingWhenNoIDStartsWithIt(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	if rows := tree.FindAll("idPrefix:invoice_row_"); len(rows) != 0 {
+		t.Fatalf("want no matches, got %d", len(rows))
+	}
+}
+
+func TestIDPrefixIsNotASubstringMatch(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	if tree.Find("idPrefix:row_") != nil {
+		t.Fatal("expected starts-with, not substring")
+	}
+}
+
+// The string and object forms are one rule, so a prefix filter combined with a
+// second attribute has to keep the same meaning it has on its own.
+func TestIDPrefixInObjectSelector(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "idPrefix", Value: "customer_row_"}}}
+	if nodes := tree.Root.FindAllBySelector(sel); len(nodes) != 3 {
+		t.Fatalf("want 3 customer rows, got %d", len(nodes))
+	}
+}
+
+func TestDescPrefixInObjectSelector(t *testing.T) {
+	input := `{
+	  "attributes": {},
+	  "children": [
+	    {"attributes": {"content-desc": "customer_row_abc-123", "bounds": "[0,0,100,100]"}, "children": []},
+	    {"attributes": {"content-desc": "supplier_row_xyz", "bounds": "[0,100,100,200]"}, "children": []}
+	  ]
+	}`
+	tree, _ := Parse(input)
+	sel := Selector{Filters: []AttrFilter{{Attr: "descPrefix", Value: "customer_row_"}}}
+	if nodes := tree.Root.FindAllBySelector(sel); len(nodes) != 1 {
+		t.Fatalf("want 1 customer row, got %d", len(nodes))
+	}
+}
+
 func TestBoolFieldsFromNode(t *testing.T) {
 	input := `{
 	  "attributes": {"resource-id": "x", "bounds": "[0,0,100,100]"},

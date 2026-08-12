@@ -6,6 +6,7 @@
 //	String selectors (global scan or element-scoped):
 //	  attribute:value      - substring match; exact for "true"/"false" booleans
 //	  id:<suffix>          - substring on resource-id / identifier (backward compat)
+//	  idPrefix:<prefix>    - starts-with on resource-id / identifier, package prefix skipped
 //	  text:<value>         - substring on text attribute
 //	  desc:<value>         - substring on content-desc / accessibilityText
 //	  descPrefix:<prefix>  - starts-with on content-desc / accessibilityText
@@ -132,11 +133,45 @@ var attributeAliases = map[string][]string{
 	"elementType": {"class"},
 }
 
+// matchPrefixKind resolves the selector kinds that mean starts-with rather than
+// the default substring/exact attribute rule. The second return is false when
+// kind names an ordinary attribute. Routing them here rather than in match()
+// keeps the string form ("idPrefix:customer_row_") and the object form
+// ({idPrefix: "customer_row_"}) on one definition.
+func matchPrefixKind(element *Element, kind, value string) (bool, bool) {
+	switch kind {
+	case "idPrefix":
+		return matchIDPrefix(element.ResourceID, value), true
+	case "descPrefix":
+		return strings.HasPrefix(element.Description, value), true
+	default:
+		return false, false
+	}
+}
+
+// matchIDPrefix is the id: rule with starts-with in place of equality: the
+// whole identifier, or the local name after Android's "<package>:id/". Without
+// the second form a role prefix would only match when the caller wrote the
+// package out, which is exactly the string that varies between build variants.
+func matchIDPrefix(resourceID, value string) bool {
+	if strings.HasPrefix(resourceID, value) {
+		return true
+	}
+	const marker = ":id/"
+	if index := strings.Index(resourceID, marker); index >= 0 {
+		return strings.HasPrefix(resourceID[index+len(marker):], value)
+	}
+	return false
+}
+
 // matchAttr returns true when the element has an attribute matching attr:value.
 // Alias expansion is applied so cross-platform names resolve correctly.
 // Boolean values ("true"/"false") use exact comparison; all others use substring.
 // Returns false gracefully when no candidate attribute has data.
 func matchAttr(element *Element, attr, value string) bool {
+	if matched, handled := matchPrefixKind(element, attr, value); handled {
+		return matched
+	}
 	candidates := append([]string{attr}, attributeAliases[attr]...)
 	for _, key := range candidates {
 		attrVal, ok := element.Attributes[key]
@@ -613,8 +648,6 @@ func match(element *Element, kind, value string) bool {
 		return matchAttr(element, "text", value)
 	case "desc":
 		return element.Description == value || strings.HasPrefix(element.Description, value+", ")
-	case "descPrefix":
-		return strings.HasPrefix(element.Description, value)
 	default:
 		return matchAttr(element, kind, value)
 	}
