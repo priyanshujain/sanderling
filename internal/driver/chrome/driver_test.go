@@ -663,3 +663,133 @@ func TestWaitForIdle_ReturnsOnABusyPage(t *testing.T) {
 		t.Errorf("WaitForIdle took %s on a busy page; it must return inside its budget", elapsed)
 	}
 }
+
+// TestWaitForIdle_WaitsOutARouteTransition covers the settle case a mutation
+// observer cannot see. A canvas app splices the incoming screen's
+// accessibility nodes in when its cross-fade STARTS and drops the outgoing
+// screen's when it ends; between those two mutations the DOM is quiet with both
+// routes live. Returning there hands the next step a tree naming the screen the
+// app is leaving, which on the folio wasm build recorded a submit that had
+// landed on Home as still being on the transaction screen: the route gate of an
+// action-gated property then skipped the very step the action landed on.
+func TestWaitForIdle_WaitsOutARouteTransition(t *testing.T) {
+	const page = `<body><div id="app"></div><script>
+	  const root = document.getElementById("app").attachShadow({mode: "open"});
+	  root.innerHTML = '<button id="go" style="width:200px;height:80px">go</button>' +
+	    '<div id="LedgerScreen">ledger</div>';
+	  root.getElementById("go").addEventListener("click", function () {
+	    const incoming = document.createElement("div");
+	    incoming.id = "HomeScreen";
+	    incoming.textContent = "home";
+	    root.appendChild(incoming);
+	    setTimeout(function () { root.getElementById("LedgerScreen").remove(); }, 400);
+	  });
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.Tap(ctx, 40, 40); err != nil {
+		t.Fatalf("Tap: %v", err)
+	}
+	if err := d.WaitForIdle(ctx, 2*time.Second); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+
+	var live []string
+	script := `Array.from(document.getElementById("app").shadowRoot
+		.querySelectorAll('[id$="Screen"]')).map(e => e.id)`
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &live)); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(live) != 1 || live[0] != "HomeScreen" {
+		t.Errorf("live screens after the settle = %v, want [HomeScreen]; WaitForIdle "+
+			"returned mid-transition, so the next step verifies the outgoing route", live)
+	}
+}
+
+// TestWaitForIdle_BoundsTheTransitionWait is the other half of the transition
+// wait: a page that shows two *Screen ids at rest is not mid-transition, it
+// just matches the heuristic, and it must cost one bounded wait rather than the
+// whole step budget on every step.
+func TestWaitForIdle_BoundsTheTransitionWait(t *testing.T) {
+	const page = `<body><div id="HomeScreen">home</div><div id="LedgerScreen">ledger</div></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	start := time.Now()
+	if err := d.WaitForIdle(ctx, 10*time.Second); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > transitionSettlePeriod+time.Second {
+		t.Errorf("WaitForIdle took %s on a page with two resting screens; the "+
+			"transition wait must be bounded by %s", elapsed, transitionSettlePeriod)
+	}
+}
+
+// TestEvaluateExtractors_WaitsOutARouteTransition covers the other sampler. A
+// step reads the page twice: the hierarchy dump (which re-fetches while the
+// tree looks transitional) and the spec's own extractors in V8. Sampling the
+// extractors mid cross-fade reports the route the app is leaving, and an
+// action-gated property then skips the one step its action can be judged on:
+// on the folio wasm build a double-submit that landed on Home was extracted as
+// still being on the transaction screen.
+func TestEvaluateExtractors_WaitsOutARouteTransition(t *testing.T) {
+	const page = `<body><div id="app"></div><script>
+	  const root = document.getElementById("app").attachShadow({mode: "open"});
+	  root.innerHTML = '<div id="LedgerScreen">ledger</div>';
+	  window.__sanderlingExtractors__ = function () {
+	    return {0: Array.from(root.querySelectorAll('[id$="Screen"]')).map(e => e.id).join(",")};
+	  };
+	  window.startTransition = function () {
+	    const incoming = document.createElement("div");
+	    incoming.id = "HomeScreen";
+	    root.appendChild(incoming);
+	    setTimeout(function () { root.getElementById("LedgerScreen").remove(); }, 400);
+	  };
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(`window.startTransition()`, nil)); err != nil {
+		t.Fatalf("start transition: %v", err)
+	}
+
+	values, err := d.EvaluateExtractors(ctx)
+	if err != nil {
+		t.Fatalf("EvaluateExtractors: %v", err)
+	}
+	if got := string(values[0]); got != `"HomeScreen"` {
+		t.Errorf("extractor read %s, want \"HomeScreen\"; the extractors sampled "+
+			"mid-transition, so the spec sees the route the app is leaving", got)
+	}
+}

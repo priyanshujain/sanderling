@@ -543,36 +543,83 @@ func (d *Driver) RecentLogs(_ context.Context, since time.Time, minLevel string)
 // text, and the next step types into a field it believes is still empty.
 const domQuietPeriod = 150 * time.Millisecond
 
+// transitionSettlePeriod is how much longer the settle waits for a route
+// transition to finish once the DOM has gone quiet. A canvas app's cross-fade
+// is invisible to a mutation observer: Compose splices the incoming screen's
+// accessibility nodes in when the animation STARTS and removes the outgoing
+// screen's when it ends, and nothing in between touches the DOM, so the tree
+// sits byte-identical (and quiet) with both routes live for the whole
+// animation. Settling on quiet alone returns there, and the next step then
+// verifies a tree that names the screen the app is leaving: on the folio wasm
+// build a submit that landed on Home was recorded as still being on the
+// transaction screen, so a property gated on where the action landed read the
+// wrong route and went vacuous. The wait is bounded so a page that genuinely
+// shows two *Screen ids at rest costs this much per step and no more.
+const transitionSettlePeriod = 800 * time.Millisecond
+
 func (d *Driver) WaitForIdle(ctx context.Context, timeout time.Duration) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
 	// Leave the caller's deadline some room: returning late by our own doing
 	// would surface as a context cancellation instead of a settled page.
 	budget := max(timeout-100*time.Millisecond, domQuietPeriod)
-	script := fmt.Sprintf(settleScript, domQuietPeriod.Milliseconds(), budget.Milliseconds())
+	script := fmt.Sprintf(settleScript,
+		domQuietPeriod.Milliseconds(),
+		budget.Milliseconds(),
+		transitionSettlePeriod.Milliseconds(),
+	)
 	return chromedp.Run(runCtx,
 		chromedp.WaitReady("body", chromedp.ByQuery),
 		chromedp.Evaluate(script, nil, awaitPromise),
 	)
 }
 
-// settleScript resolves once the document has gone quiet for %d ms, or after
-// %d ms whatever happens. Shadow roots get their own observer: a canvas app
-// keeps its whole accessibility tree inside one, and mutations there do not
+// liveScreensFunction defines liveScreens(), the page-side count of live ids
+// ending in "Screen". More than one is a route transition in flight: the same
+// rule the tree parser applies (Transitional in internal/hierarchy), so the
+// driver and the runner agree on what a settled route looks like. It descends
+// shadow roots because a canvas app keeps its whole accessibility tree inside
+// one.
+const liveScreensFunction = `
+  const liveScreens = () => {
+    let count = 0;
+    const visit = (root) => {
+      count += root.querySelectorAll('[id$="Screen"]').length;
+      for (const element of root.querySelectorAll('*')) {
+        if (element.shadowRoot) visit(element.shadowRoot);
+      }
+    };
+    visit(document);
+    return count;
+  };`
+
+// settleScript resolves once the document has gone quiet for %d ms and is not
+// mid route transition, or after %d ms whatever happens; the transition wait
+// itself gives up after %d ms. Shadow roots get their own observer: a canvas
+// app keeps its whole accessibility tree inside one, and mutations there do not
 // reach an observer on the document.
 const settleScript = `
 new Promise(resolve => {
-  const quietMillis = %d, budgetMillis = %d;
+  const quietMillis = %d, budgetMillis = %d, transitionMillis = %d;
   const observers = [];
+  const transitionDeadline = Date.now() + transitionMillis;
   let timer = null;
   const finish = () => {
     clearTimeout(timer);
     for (const observer of observers) observer.disconnect();
     resolve();
   };
+` + liveScreensFunction + `
+  const quiet = () => {
+    if (liveScreens() > 1 && Date.now() < transitionDeadline) {
+      timer = setTimeout(quiet, 16);
+      return;
+    }
+    finish();
+  };
   const restart = () => {
     clearTimeout(timer);
-    timer = setTimeout(finish, quietMillis);
+    timer = setTimeout(quiet, quietMillis);
   };
   const watch = (root) => {
     const observer = new MutationObserver(restart);
@@ -683,12 +730,21 @@ func (d *Driver) InstallBundle(ctx context.Context, source []byte) error {
 
 // EvaluateExtractors invokes the bundle-installed extractor table and returns
 // each extractor's JSON-encoded current value keyed by its registration index.
+//
+// The read waits out a route transition first, bounded by
+// transitionSettlePeriod. The hierarchy fetch already re-fetches a transitional
+// tree (fetchSyncedState in internal/runner); without the same rule here the
+// two halves of one step describe different moments, and the spec's own
+// extractors are the half that loses: on the folio wasm build the extractors
+// sampled mid cross-fade and reported the route the app was leaving, so a
+// property gated on where the action landed skipped the only step that action
+// could be judged on.
 func (d *Driver) EvaluateExtractors(ctx context.Context) (map[int]json.RawMessage, error) {
-	const script = `JSON.stringify(window.__sanderlingExtractors__ ? window.__sanderlingExtractors__() : {})`
+	script := fmt.Sprintf(extractorScript, transitionSettlePeriod.Milliseconds())
 	var encoded string
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
-	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded, awaitPromise)); err != nil {
 		return nil, fmt.Errorf("evaluate extractors: %w", err)
 	}
 	if encoded == "" || encoded == "{}" {
@@ -708,6 +764,44 @@ func (d *Driver) EvaluateExtractors(ctx context.Context) (map[int]json.RawMessag
 	}
 	return result, nil
 }
+
+// SetLastAction installs the previous step's action as state.lastAction inside
+// the page runtime. The page cannot derive it: only the runner knows which
+// action was actually applied. Without this call every web state.lastAction is
+// null, so a property gated on what the last action did is vacuously true and
+// reports a green run while checking nothing.
+func (d *Driver) SetLastAction(ctx context.Context, encoded json.RawMessage) error {
+	payload := strings.TrimSpace(string(encoded))
+	if payload == "" {
+		payload = "null"
+	}
+	script := fmt.Sprintf(
+		`window.__sanderlingSetLastAction__ && window.__sanderlingSetLastAction__(%s)`,
+		payload,
+	)
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, nil)); err != nil {
+		return fmt.Errorf("set last action: %w", err)
+	}
+	return nil
+}
+
+// extractorScript resolves the extractor table once the page is not mid route
+// transition, giving up on that wait after %d ms.
+const extractorScript = `
+new Promise(resolve => {
+  const deadline = Date.now() + %d;` + liveScreensFunction + `
+  const read = () => {
+    if (liveScreens() > 1 && Date.now() < deadline) {
+      setTimeout(read, 16);
+      return;
+    }
+    resolve(JSON.stringify(
+      window.__sanderlingExtractors__ ? window.__sanderlingExtractors__() : {}));
+  };
+  read();
+})`
 
 // NextActionFromV8 invokes the bundle-installed action generator and returns
 // the resulting Action JSON. Returns an empty json.RawMessage when the
