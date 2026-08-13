@@ -260,6 +260,20 @@ function queryAllElements(root: ParentNode, selector: unknown): Element[] {
     if (xpath) return evaluateXPathAll(xpath, root as Node);
     return [];
   }
+  // A selector path: every match of the first segment is searched for the rest,
+  // concatenated in walk order, mirroring FindAllBySelectorPath in
+  // internal/hierarchy. Falling through to the object branch (as this did)
+  // returned NOTHING for a path on web while native returned matches, so a spec
+  // reading state.ax.findAll([{screen}, {row}]) saw an empty list on web and
+  // every property over it passed by having nothing to check.
+  if (Array.isArray(selector)) {
+    const head = selector[0];
+    if (head === undefined) return [];
+    const heads = queryAllElements(root, head);
+    if (selector.length === 1) return heads;
+    const rest = selector.slice(1);
+    return heads.flatMap((element) => queryAllElements(element, rest));
+  }
   if (selector && typeof selector === "object" && !Array.isArray(selector)) {
     const { css, xpath } = selectorFromObject(selector as Record<string, string | boolean | undefined>);
     if (css) return deepQueryAll(css, root);
@@ -284,7 +298,37 @@ function evaluateXPathAll(xpath: string, root: Node): Element[] {
   return out;
 }
 
-function elementHandle(element: Element): Record<string, unknown> {
+// SELECTOR_TAG is the key an ax element carries the selector it was found by,
+// the same key the goja host writes (internal/verifier/bindings.go tagSelector).
+// The shared serializer (runtime-entry.ts pointOf) reads it off an author
+// target, so a spec's Tap({ on: state.ax.find(...) }) reaches the runner naming
+// the control it acted on instead of a bare pair of coordinates. Without it
+// `lastAction.on` is empty on web for exactly the actions a spec authored.
+const SELECTOR_TAG = "__sanderlingSelector";
+
+// selectorTag renders a selector argument in the canonical "k:v" grammar the
+// hierarchy package parses, chains joined by " > ". It mirrors
+// selectorStringFromJS in internal/verifier/marshal.go, so an element found by
+// the same selector is labelled with the SAME string on both hosts.
+function selectorTag(selector: unknown): string {
+  if (typeof selector === "string") return selector;
+  if (Array.isArray(selector)) {
+    return selector
+      .map(selectorTag)
+      .filter((segment) => segment !== "")
+      .join(" > ");
+  }
+  if (selector && typeof selector === "object") {
+    const source = selector as Record<string, unknown>;
+    return Object.keys(source)
+      .filter((key) => key !== SELECTOR_TAG && source[key] !== undefined && source[key] !== null)
+      .map((key) => `${key}:${String(source[key])}`)
+      .join(" ");
+  }
+  return "";
+}
+
+function elementHandle(element: Element, selector: unknown): Record<string, unknown> {
   const rect = element.getBoundingClientRect();
   const x = Math.round(rect.left + rect.width / 2);
   const y = Math.round(rect.top + rect.height / 2);
@@ -318,12 +362,15 @@ function elementHandle(element: Element): Record<string, unknown> {
       ...datasetCopy,
     },
     dataset: datasetCopy,
-    find(selector: unknown): unknown {
-      const child = queryElement(element, selector);
-      return child ? elementHandle(child) : undefined;
+    [SELECTOR_TAG]: selectorTag(selector),
+    find(childSelector: unknown): unknown {
+      const child = queryElement(element, childSelector);
+      return child ? elementHandle(child, childSelector) : undefined;
     },
-    findAll(selector: unknown): unknown[] {
-      return queryAllElements(element, selector).map(elementHandle);
+    findAll(childSelector: unknown): unknown[] {
+      return queryAllElements(element, childSelector).map((child) =>
+        elementHandle(child, childSelector),
+      );
     },
   };
 }
@@ -332,10 +379,12 @@ function buildAx(): unknown {
   return {
     find(selector: unknown): unknown {
       const element = queryElement(document, selector);
-      return element ? elementHandle(element) : undefined;
+      return element ? elementHandle(element, selector) : undefined;
     },
     findAll(selector: unknown): unknown[] {
-      return queryAllElements(document, selector).map(elementHandle);
+      return queryAllElements(document, selector).map((element) =>
+        elementHandle(element, selector),
+      );
     },
   };
 }
@@ -372,13 +421,22 @@ if (typeof globalThis.addEventListener === "function") {
   });
 }
 
+// lastAction is what the previous step actually did, pushed in by the Go runner
+// (internal/runner, via __sanderlingSetLastAction__) before each extractor
+// evaluation, in the shape internal/verifier/marshal.go builds for goja. The
+// page cannot derive it: only the runner knows whether the action it picked was
+// really applied, and under --generator llm the action is not picked here at
+// all. Hardcoding null here, as this file used to, makes every spec property
+// that reads state.lastAction vacuously true on web.
+let lastAction: unknown = null;
+
 function buildState(): unknown {
   return {
     snapshots: {},
     ax: buildAx(),
     document,
     window,
-    lastAction: null,
+    lastAction,
     time: 0,
     logs: [],
     exceptions: capturedExceptions.slice(),
@@ -423,6 +481,11 @@ const runtime = {
 // shadow or replace them between AddScriptToEvaluateOnNewDocument running and
 // the host invoking the extractor/next-action callbacks.
 defineLockedGlobal("__sanderling__", runtime);
+
+// The host calls this once per step, before __sanderlingExtractors__.
+defineLockedGlobal("__sanderlingSetLastAction__", (value: unknown) => {
+  lastAction = value ?? null;
+});
 
 // writable:false stops a page script from shadowing the runtime via plain
 // assignment (the realistic in-page threat). configurable:true is required so
@@ -567,6 +630,53 @@ function expandShadowContent(elements: HTMLElement[], into: HTMLElement[]): void
   }
 }
 
+// IDENTITY_KEYS is the ladder a target's selector is built from, mirroring
+// selectorForElement in internal/verifier/worker.go: the id first (where
+// Compose for Web lands a testTag), then data-testid, then the description.
+// Every key here is one the goja host's selector grammar already understands,
+// so the runner can re-resolve the target it names. `desc` reads the same three
+// attributes, in the same order, that the hierarchy dump folds into
+// content-desc (internal/driver/chrome/driver.go); reading fewer of them would
+// let a selector this side calls unique resolve to a different element on the
+// Go side, which re-routes the action to whatever the dump matched first.
+const IDENTITY_KEYS: ReadonlyArray<readonly [string, (element: HTMLElement) => string]> = [
+  ["id", (element) => element.id],
+  ["data-testid", (element) => element.dataset.testid ?? ""],
+  [
+    "desc",
+    (element) =>
+      element.getAttribute("aria-label") ||
+      element.getAttribute("alt") ||
+      element.getAttribute("title") ||
+      "",
+  ],
+];
+
+// selectorsFor names each enumerated element, or leaves it unnamed. A value is
+// only used when it occurs ONCE across the enumeration, so an action carrying
+// the selector can never be re-resolved onto a sibling that shares the value
+// (folio's Home screen has many AccountCards under one testTag). Unnamed
+// elements keep the coordinates-only behaviour the web host always had.
+function selectorsFor(elements: readonly HTMLElement[]): Array<string | undefined> {
+  const counts = IDENTITY_KEYS.map(() => new Map<string, number>());
+  for (const element of elements) {
+    IDENTITY_KEYS.forEach(([, read], index) => {
+      const value = read(element);
+      if (!value) return;
+      const seen = counts[index]!;
+      seen.set(value, (seen.get(value) ?? 0) + 1);
+    });
+  }
+  return elements.map((element) => {
+    for (let index = 0; index < IDENTITY_KEYS.length; index++) {
+      const [key, read] = IDENTITY_KEYS[index]!;
+      const value = read(element);
+      if (value && counts[index]!.get(value) === 1) return `${key}:${value}`;
+    }
+    return undefined;
+  });
+}
+
 // collectTargets walks the document ONCE and reports every element with the facts
 // the shared eligibility rule reads. The tappable/editable membership sets are
 // resolved by selector first so the DOM's answer to "clickable" and "editable"
@@ -576,8 +686,11 @@ function collectTargets(): TargetElement[] {
   const editable = new Set<Element>(
     (deepQueryAll(EDITABLE_SELECTOR, document) as HTMLElement[]).filter(isEditableElement),
   );
-  return targetElements().map((element) => ({
+  const elements = targetElements();
+  const selectors = selectorsFor(elements);
+  return elements.map((element, index) => ({
     ...pointOf(element),
+    selector: selectors[index],
     clickable: clickable.has(element),
     enabled: !(element as HTMLButtonElement).disabled,
     editable: editable.has(element),
@@ -637,6 +750,7 @@ export const __testing__ = {
   evaluateExtractors,
   selectorFromString,
   selectorFromObject,
+  selectorTag,
   xpathStringLiteral,
 };
 
