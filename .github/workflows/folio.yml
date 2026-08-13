@@ -4,18 +4,11 @@ name: folio
 # browser, builds the folio app for that platform, and runs
 # examples/folio/sanderling/spec.ts against it.
 #
-# android and ios are expect-the-bug jobs: folio double-submits a transaction on
-# a double tap, so the run is supposed to end with exit 2. Exit 0 means the
-# fuzzer stopped finding a bug that is still there; exit 1 means the harness
-# broke. The two are worth telling apart, which is why --exit-on-violation exits
-# 2 and not 1.
-#
-# web is a health gate instead: the same spec drives the wasmJs build through
-# login and into the transaction flow, but it cannot observe the double submit.
-# The property keys off state.lastAction, which the web runtime does not report,
-# and off the action's selector, which the web picker does not carry (it emits
-# coordinates). Both are fixable, neither is a small fix; see
-# docs/development/ci.md.
+# All three are expect-the-bug jobs: folio double-submits a transaction on a
+# double tap, so the run is supposed to end with exit 2. Exit 0 means the fuzzer
+# stopped finding a bug that is still there; exit 1 means the harness broke. The
+# two are worth telling apart, which is why --exit-on-violation exits 2 and not
+# 1.
 
 on:
   workflow_dispatch:
@@ -252,7 +245,7 @@ jobs:
         run: .github/scripts/folio-run.sh web
         env:
           SEED: ${{ inputs.seed != '0' && inputs.seed || '1' }}
-          MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '200' }}
+          MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '240' }}
           DURATION: ${{ inputs.duration }}
 
       - name: Upload the run

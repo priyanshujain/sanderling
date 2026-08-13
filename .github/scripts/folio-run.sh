@@ -5,10 +5,8 @@
 #
 #   SEED=3 MAX_STEPS=240 .github/scripts/folio-run.sh android
 #
-# android and ios expect exit 2: folio's double-submit bug is still there, and a
-# run that no longer finds it is a regression in the fuzzer, not a pass. web
-# expects a clean run that reached the transaction screen; it cannot observe the
-# submit bug (see docs/development/ci.md).
+# Every platform expects exit 2: folio's double-submit bug is still there, and a
+# run that no longer finds it is a regression in the fuzzer, not a pass.
 set -uo pipefail
 
 platform="${1:?usage: folio-run.sh android|ios|web}"
@@ -97,22 +95,6 @@ violated=$(grep -ho '"violations":\[[^]]*\]' "$run_dir/trace.jsonl" 2>/dev/null 
   echo "- $steps steps recorded, exit $code"
   [ -n "$violated" ] && echo "- $violated"
 } >> "$summary"
-
-if [ "$platform" = "web" ]; then
-  # The web leg is a health gate: the same spec has to log in and drive the app
-  # as far as the transaction screen. Reaching it is the evidence; the submit
-  # property cannot fire here.
-  if [ "$code" -ne 0 ]; then
-    echo "folio/web: expected a clean run, got exit $code" >&2
-    exit 1
-  fi
-  if ! grep -q '"AddTransactionScreen"' "$run_dir/trace.jsonl"; then
-    echo "folio/web: the run never reached AddTransactionScreen, so it never got past login" >&2
-    exit 1
-  fi
-  echo "folio/web: clean run over $steps steps, reached the transaction screen"
-  exit 0
-fi
 
 case "$code" in
   2) echo "folio/$platform: found the submit bug in $steps steps"; exit 0 ;;
