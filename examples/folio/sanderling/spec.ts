@@ -13,22 +13,19 @@ import {
 } from "@sanderling/spec";
 import { defaultActions, doubleTaps } from "@sanderling/spec/defaults";
 import {
+  cardAccountName,
+  cardBalanceText,
   computeHomeTotalBalance,
+  parseDollarCents,
   parseTypedAmount,
   submitChangesBalanceByTypedAmount,
 } from "./predicates";
 
 interface Account {
+  // Identity key, not a display name: on web it carries the card's initials.
   name: string;
-  balance: number;
-}
-
-// Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to integer cents.
-function parseDollarCents(text: string | undefined): number {
-  if (!text) return 0;
-  const sign = text.startsWith("-") ? -1 : 1;
-  const digits = text.replace(/[^0-9]/g, "");
-  return digits ? sign * parseInt(digits, 10) : 0;
+  // null when the card's balance could not be read at all (see cardBalanceText).
+  balance: number | null;
 }
 
 // Route detection via testTag (resource-id on Android, accessibilityIdentifier on iOS)
@@ -42,11 +39,15 @@ const route = extract<string | null>("route", s => {
   return null;
 });
 
-// Account cards on Home: identity is the AccountName text; balance comes from AccountBalance.
+// Account cards on Home: identity comes from AccountName, balance from
+// AccountBalance. Web exposes neither child (the card is one merged node
+// there), so both readings go through predicates.ts, which falls back to
+// parsing the card's own text.
 const accounts = extract<Account[]>("accounts", s =>
   s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]).map(card => ({
-    name: card.find({ testTag: "AccountName" })?.text ?? "",
-    balance: parseDollarCents(card.find({ testTag: "AccountBalance" })?.text),
+    name: cardAccountName({ childText: card.find({ testTag: "AccountName" })?.text, cardText: card.text }),
+    balance: parseDollarCents(
+      cardBalanceText({ childText: card.find({ testTag: "AccountBalance" })?.text, cardText: card.text })),
   })));
 
 // Total balance: sum of AccountCard balances visible on Home. The carrier
@@ -54,10 +55,11 @@ const accounts = extract<Account[]>("accounts", s =>
 // LedgerBalance is a single-account number on a different scale and would
 // corrupt cross-screen comparisons if mixed in. Off-Home steps carry forward
 // the last-seen Home sum so `previous` and `current` stay on the same scale.
-let lastHomeTotal = 0;
-const totalBalance = extract("totalBalance", s => {
+let lastHomeTotal: number | null = 0;
+const totalBalance = extract<number | null>("totalBalance", s => {
   const cards = s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]);
-  const cardBalanceTexts = cards.map(c => c.find({ testTag: "AccountBalance" })?.text);
+  const cardBalanceTexts = cards.map(c =>
+    cardBalanceText({ childText: c.find({ testTag: "AccountBalance" })?.text, cardText: c.text }));
   lastHomeTotal = computeHomeTotalBalance({ cardBalanceTexts, previousCarrier: lastHomeTotal });
   return lastHomeTotal;
 });
@@ -94,7 +96,9 @@ const newAccountBalanceIsZero = always(
     const curr = accounts.current;
     if (prev.length === 0 || curr.length === 0) return true;
     const prevNames = new Set(prev.map(a => a.name));
-    return curr.filter(a => !prevNames.has(a.name)).every(a => a.balance === 0);
+    return curr
+      .filter(a => !prevNames.has(a.name))
+      .every(a => a.balance === null || a.balance === 0);
   })
 );
 
@@ -108,7 +112,7 @@ const submitMovesBalanceByTypedAmount = always(
       route: route.current,
       lastAction: lastAction.current,
       typedAmount: parseTypedAmount(txnAmountField.previous?.text),
-      prevTotalBalance: totalBalance.previous ?? 0,
+      prevTotalBalance: totalBalance.previous ?? null,
       currTotalBalance: totalBalance.current,
     }),
   ),
