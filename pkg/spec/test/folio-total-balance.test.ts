@@ -34,7 +34,7 @@ test("off Home (no cards) with carrier still 0: returns 0", () => {
 });
 
 test("sequence: Home $30, off-Home, Home $50 tracks new Home totals", () => {
-  let carrier = 0;
+  let carrier: number | null = 0;
   carrier = computeHomeTotalBalance({
     cardBalanceTexts: ["$10.00", "$20.00"],
     previousCarrier: carrier,
@@ -53,7 +53,7 @@ test("sequence: Home $30, off-Home, Home $50 tracks new Home totals", () => {
 });
 
 test("Ledger step (no Home cards) holds the carrier, ignores Ledger balance", () => {
-  let carrier = 0;
+  let carrier: number | null = 0;
   carrier = computeHomeTotalBalance({
     cardBalanceTexts: ["$10.00", "$20.00"],
     previousCarrier: carrier,
@@ -86,12 +86,12 @@ test("single card on Home overrides any previous carrier", () => {
   );
 });
 
-test("undefined card balance text is treated as 0", () => {
+test("undefined card balance text makes the total unknown, not a partial sum", () => {
   assert.equal(
     computeHomeTotalBalance({
       cardBalanceTexts: [undefined, "$10.00"],
       previousCarrier: 0,
     }),
-    1000,
+    null,
   );
 });
