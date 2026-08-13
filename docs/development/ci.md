@@ -27,7 +27,7 @@ script is plain bash so you can reproduce a job locally:
 SEED=3 MAX_STEPS=240 .github/scripts/folio-run.sh android
 ```
 
-**android and ios expect the bug.** Folio double-submits a transaction when the
+**Every leg expects the bug.** Folio double-submits a transaction when the
 submit button is double-tapped, and `submitMovesBalanceByTypedAmount` is the
 property that catches it. The runs pass `--exit-on-violation`, so:
 
@@ -40,12 +40,16 @@ property that catches it. The runs pass `--exit-on-violation`, so:
 Distinguishing 0 from 1 is the whole point of the exit code: a job that only
 knew "non-zero" could not tell a working fuzzer from a broken emulator.
 
-**web is a health gate**, not an expect-the-bug leg. The same spec logs into the
-wasmJs build and drives it to the transaction screen (the job asserts the trace
-reached `AddTransactionScreen`), but the submit property cannot fire there: it
-keys off `state.lastAction`, which the web runtime reports as `null`, and off the
-action's selector, which the web picker does not carry, since it emits
-coordinates and element identity never crosses the V8 boundary.
+On web the property fires for a structural reason worth knowing when you read a
+witness. `AddTransactionViewModel.submit()` inserts the transaction and pops one
+level, so a submit tap lands on Ledger; reaching Home takes two pops, which takes
+two inserts. A submit tap that lands on Home therefore is the double submit. Over
+451 single taps on the submit button, none reached Home.
+
+The witness's arithmetic is noisier than that reasoning. `totalBalance` only
+refreshes on a Home step, so the recorded delta covers every transaction since
+the last Home visit, and only some witnesses read as a clean 2x the typed amount.
+The violation is still real; the number beside it just needs that context.
 
 The wasmJs app is served with `Cross-Origin-Opener-Policy` and
 `Cross-Origin-Embedder-Policy` headers, because its sqlite worker needs
@@ -54,8 +58,10 @@ every step observes an empty accessibility tree.
 
 The seeds in the workflow are calibrated, not guessed. On an M-series mac,
 android seed 3 finds the bug at step 110-116 (seeds 1, 2 and 4 run 120 steps
-clean) and ios seed 1 finds it at step 129-134, both against a 240-step budget.
-The web leg ran five seeds x 200 steps clean.
+clean), ios seed 1 finds it at step 129-134, and web seed 1 finds it at step 109,
+reproducing 3 runs out of 3. All three run against a 240-step budget. Keep the
+web seed pinned: 9 of 12 random seeds found the bug within 200 steps, so an
+unpinned one would flake.
 
 The ios leg passes `--clear-data=false`, because the job installs a fresh build
 immediately before the run and a freshly installed app is already clear state.
