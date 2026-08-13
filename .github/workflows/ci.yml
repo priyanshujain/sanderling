@@ -53,8 +53,16 @@ jobs:
           restore-keys: |
             bun-${{ runner.os }}-
 
+      # The token is what stops this step flaking: without it the action pulls
+      # buf's release tarball from github.com anonymously, on the shared runner
+      # IP's rate limit, and a throttled connection shows up as `socket hang
+      # up` after three retries. The version is the action's own default, made
+      # explicit so a new action release cannot move the buf we build with.
       - name: Install buf
         uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.50.0"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install protoc plugins
         run: |
