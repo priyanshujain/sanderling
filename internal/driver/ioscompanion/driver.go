@@ -42,6 +42,17 @@ const runnerStartupTimeout = 120 * time.Second
 // before it is killed. A variable so the kill-escalation test can shrink it.
 var shutdownGrace = 15 * time.Second
 
+// launchTimeout bounds a single app lifecycle RPC. The runner serves lifecycle
+// inside its XCTest session, and a launch the simulator rejects sends that
+// session down a recovery chain (a 120s accessibility wait, a spindump, then an
+// idle wait) that answers minutes late or never. Callers reach Launch with an
+// undeadlined context, since it runs before the run's duration clock starts, so
+// the bound has to come from here or a wedged session hangs the run with no
+// trace, no error, and no end. Kept under runnerStartupTimeout: launching an
+// app inside a live session must cost less than cold-starting that session.
+// A variable so the timeout test can shrink it.
+var launchTimeout = 90 * time.Second
+
 // longPressHoldMilliseconds is how long LongPress holds the finger down.
 const longPressHoldMilliseconds = 600
 
@@ -141,6 +152,34 @@ type Driver struct {
 	// the moment startup finishes.
 	processContext context.Context
 	processCancel  context.CancelFunc
+
+	// deviceLock is the exclusive claim on the target, held for the driver's
+	// whole life and released by Close.
+	deviceLock io.Closer
+}
+
+// acquireDeviceLock takes an exclusive advisory lock on the target so only one
+// run drives it at a time. Two runs on one device interleave app lifecycle: the
+// second run's uninstall and reinstall land under the first's live automation
+// session, leaving its app proxies bound to a bundle the simulator no longer
+// knows, and every later snapshot and launch on that session stalls. Failing
+// fast beats recovering silently, since the other run owns the device and would
+// be corrupted either way. The lock lives on the file descriptor, so a crashed
+// run's claim is released by the kernel and never strands the device.
+func acquireDeviceLock(udid string) (io.Closer, error) {
+	path := filepath.Join(os.TempDir(), "sanderling-ios-"+udid+".lock")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open device lock %s: %w", path, err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		return nil, fmt.Errorf(
+			"ios target %s is already driven by another sanderling run (lock %s); "+
+				"wait for that run to finish or point this one at a different device with --ios-device",
+			udid, path)
+	}
+	return file, nil
 }
 
 // New extracts the embedded companion, spawns it against the configured
@@ -199,7 +238,15 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 	driverInstance.grantPaste = driverInstance.grantPasteboardAccess
 	driverInstance.processContext, driverInstance.processCancel = context.WithCancel(ctx)
 
+	lock, err := acquireDeviceLock(driverInstance.udid)
+	if err != nil {
+		driverInstance.processCancel()
+		return nil, err
+	}
+	driverInstance.deviceLock = lock
+
 	if err := driverInstance.bringUp(ctx); err != nil {
+		driverInstance.Close()
 		return nil, err
 	}
 	if driverInstance.hybrid {
@@ -408,7 +455,9 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 
 	// Terminate first so the launch is a clean cold start regardless of the
 	// app's prior state. A not-running app is not an error here.
-	_ = d.withRecovery(ctx, func() error { return d.lifecycleCompanion().Terminate(ctx, d.bundleID) })
+	_ = d.lifecycleCall(ctx, func(callCtx context.Context, companion transport.Companion) error {
+		return companion.Terminate(callCtx, d.bundleID)
+	})
 
 	if clearState {
 		if err := d.clearAppState(ctx); err != nil {
@@ -428,12 +477,24 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 		}
 	}
 
-	if err := d.withRecovery(ctx, func() error {
-		return d.lifecycleCompanion().Launch(ctx, d.bundleID, true)
+	if err := d.lifecycleCall(ctx, func(callCtx context.Context, companion transport.Companion) error {
+		return companion.Launch(callCtx, d.bundleID, true)
 	}); err != nil {
 		return fmt.Errorf("launch %s: %w", d.bundleID, err)
 	}
 	return nil
+}
+
+// lifecycleCall runs an app lifecycle RPC against lifecycleCompanion under a
+// launchTimeout-bounded context, with the usual one-restart recovery. The
+// companion is resolved inside the retry so a restart's replacement client
+// serves the second attempt.
+func (d *Driver) lifecycleCall(ctx context.Context, call func(context.Context, transport.Companion) error) error {
+	boundedCtx, cancel := context.WithTimeout(ctx, launchTimeout)
+	defer cancel()
+	return d.withRecovery(boundedCtx, func() error {
+		return call(boundedCtx, d.lifecycleCompanion())
+	})
 }
 
 // lifecycleCompanion is the transport that owns app launch and terminate: the
@@ -528,7 +589,9 @@ func (d *Driver) resetDataContainer(ctx context.Context) error {
 }
 
 func (d *Driver) Terminate(ctx context.Context) error {
-	return d.withRecovery(ctx, func() error { return d.lifecycleCompanion().Terminate(ctx, d.bundleID) })
+	return d.lifecycleCall(ctx, func(callCtx context.Context, companion transport.Companion) error {
+		return companion.Terminate(callCtx, d.bundleID)
+	})
 }
 
 func (d *Driver) Tap(ctx context.Context, x, y int) error {
@@ -998,6 +1061,10 @@ func (d *Driver) Close() {
 	d.stopTunnel()
 	if d.processCancel != nil {
 		d.processCancel()
+	}
+	if d.deviceLock != nil {
+		_ = d.deviceLock.Close()
+		d.deviceLock = nil
 	}
 }
 
