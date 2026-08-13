@@ -23,8 +23,23 @@ type ActionSource interface {
 // ExtractorSource yields per-step extractor overrides the runner applies after
 // PushSnapshot. The mobile path has none (returns nil); the web path returns the
 // values its extractors computed in V8 against the real DOM.
+//
+// lastAction is the action the previous step actually applied, the same value
+// PushSnapshot hands the goja state. The web path has to install it in the page
+// before its extractors run: a spec extractor reading state.lastAction runs in
+// V8 there, and V8 has no way to know what the runner dispatched.
 type ExtractorSource interface {
-	ExtractorOverrides(ctx context.Context) (map[int]json.RawMessage, error)
+	ExtractorOverrides(
+		ctx context.Context,
+		lastAction *verifier.Action,
+	) (map[int]json.RawMessage, error)
+}
+
+// lastActionInstaller is the web driver's channel for the previous step's
+// action. It is declared here rather than folded into driver.WebDriver so the
+// mobile drivers stay untouched; every web driver must implement it.
+type lastActionInstaller interface {
+	SetLastAction(ctx context.Context, encoded json.RawMessage) error
 }
 
 // gojaSource drives both action selection and (trivially) extractor overrides
@@ -38,7 +53,10 @@ func (s gojaSource) NextAction(context.Context) (verifier.Action, error) {
 	return s.verifier.NextAction()
 }
 
-func (gojaSource) ExtractorOverrides(context.Context) (map[int]json.RawMessage, error) {
+func (gojaSource) ExtractorOverrides(
+	context.Context,
+	*verifier.Action,
+) (map[int]json.RawMessage, error) {
 	return nil, nil
 }
 
@@ -59,7 +77,24 @@ func (s webSource) NextAction(ctx context.Context) (verifier.Action, error) {
 	return verifier.DecodeAction(raw)
 }
 
-func (s webSource) ExtractorOverrides(ctx context.Context) (map[int]json.RawMessage, error) {
+// ExtractorOverrides installs the previous step's action in the page, then
+// reads back what the spec's extractors computed against the live DOM. The
+// install is not best-effort: a web driver that cannot take it leaves
+// state.lastAction null in V8, which silently turns every action-gated
+// property vacuously true, so it is reported as an error instead.
+func (s webSource) ExtractorOverrides(
+	ctx context.Context,
+	lastAction *verifier.Action,
+) (map[int]json.RawMessage, error) {
+	installer, ok := s.web.(lastActionInstaller)
+	if !ok {
+		return nil, fmt.Errorf(
+			"web driver %T cannot install state.lastAction; every property gated "+
+				"on the last action would be vacuously true", s.web)
+	}
+	if err := installer.SetLastAction(ctx, verifier.EncodeLastAction(lastAction)); err != nil {
+		return nil, fmt.Errorf("install last action: %w", err)
+	}
 	return s.web.EvaluateExtractors(ctx)
 }
 

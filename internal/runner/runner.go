@@ -144,8 +144,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			return nil
 		})
 		var v8Overrides map[int]json.RawMessage
+		// The same lastAction PushSnapshot hands the goja state below: the two
+		// engines evaluate this step against one action, not two.
+		stepAction := lastAction
 		g.Go(func() error {
-			overrides, err := extractorSource.ExtractorOverrides(gctx)
+			overrides, err := extractorSource.ExtractorOverrides(gctx, stepAction)
 			if err != nil {
 				logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
 				return nil

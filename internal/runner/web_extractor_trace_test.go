@@ -44,6 +44,8 @@ func (d *webMockDriver) NextActionFromV8(context.Context) (json.RawMessage, erro
 	return nil, nil
 }
 
+func (d *webMockDriver) SetLastAction(context.Context, json.RawMessage) error { return nil }
+
 // TestRunner_TraceRecordsTheValueTheVerdictUsed fails if the trace and the
 // verdict disagree about an extractor. A witness is only an explanation of a
 // violation if it holds the state the violated property was evaluated against.
