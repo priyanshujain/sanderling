@@ -20,6 +20,26 @@ import (
 
 const sidecarStartupTimeout = 30 * time.Second
 
+// launchTimeout bounds the pre-run app launch. It happens before the runner
+// starts, so --duration does not cover it, and Execute's context is the bare
+// signal-aware root with no deadline of its own: a driver wedged here would
+// hang the run forever having printed nothing and written no trace. Generous
+// enough to sit above every driver's own launch bound (the iOS clear-state path
+// reinstalls the app first) so a driver-level error is what a user usually
+// sees, and this stays the backstop. A variable so the timeout test can shrink
+// it.
+var launchTimeout = 3 * time.Minute
+
+// launchApp starts the app under test under a bounded context.
+func launchApp(ctx context.Context, activeDriver driver.DeviceDriver, options Options) error {
+	launchCtx, cancel := context.WithTimeout(ctx, launchTimeout)
+	defer cancel()
+	if err := activeDriver.Launch(launchCtx, options.BundleID, options.ClearData, nil); err != nil {
+		return fmt.Errorf("launch app: %w", err)
+	}
+	return nil
+}
+
 // Options are the parameters for a single test pipeline run.
 type Options struct {
 	Spec           string
@@ -145,8 +165,8 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	}
 	defer cleanup()
 
-	if err := activeDriver.Launch(ctx, options.BundleID, options.ClearData, nil); err != nil {
-		return fmt.Errorf("launch app: %w", err)
+	if err := launchApp(ctx, activeDriver, options); err != nil {
+		return err
 	}
 
 	if web, ok := activeDriver.(driver.WebDriver); ok && len(webBundle.JavaScript) > 0 {

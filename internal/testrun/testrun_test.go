@@ -1,6 +1,7 @@
 package testrun
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/runner"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
@@ -259,5 +261,46 @@ func TestRunOutcome_ReportsViolationsOnlyUnderTheFlag(t *testing.T) {
 	}
 	if violations.Count != 1 {
 		t.Errorf("count: got %d, want 1", violations.Count)
+	}
+}
+
+// wedgedLaunchDriver never returns from Launch, standing in for a driver whose
+// device-side session is stuck.
+type wedgedLaunchDriver struct {
+	driver.DeviceDriver
+	release chan struct{}
+}
+
+func (w *wedgedLaunchDriver) Launch(ctx context.Context, _ string, _ bool, _ map[string]string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.release:
+		return nil
+	}
+}
+
+// TestLaunchAppBoundsWedgedDriver proves the pre-run launch carries a deadline.
+// It runs before the runner starts, so --duration does not cover it and
+// Execute's root context has no deadline: unbounded, a wedged driver hangs the
+// run forever with no trace directory and no error.
+func TestLaunchAppBoundsWedgedDriver(t *testing.T) {
+	previous := launchTimeout
+	launchTimeout = 100 * time.Millisecond
+	defer func() { launchTimeout = previous }()
+
+	wedged := &wedgedLaunchDriver{release: make(chan struct{})}
+	defer close(wedged.release)
+
+	done := make(chan error, 1)
+	go func() { done <- launchApp(context.Background(), wedged, Options{BundleID: "com.example.app"}) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want a deadline-exceeded error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("launchApp never returned: the pre-run launch is unbounded, so a wedged driver hangs the run forever")
 	}
 }
