@@ -822,6 +822,103 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 	})
 }
 
+// loginFocusOnEmail is the folio login screen as Android reports it once the
+// email field has been typed into: email holds focus, password does not.
+const loginFocusOnEmail = `{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+	{"attributes":{"resource-id":"LoginEmail","text":"demo@folio.app","bounds":"[94,240,986,372]"},"focused":true,"children":[]},
+	{"attributes":{"resource-id":"LoginPassword","bounds":"[94,461,986,593]"},"focused":false,"children":[]}
+]}`
+
+const loginFocusOnPassword = `{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+	{"attributes":{"resource-id":"LoginEmail","text":"demo@folio.app","bounds":"[94,240,986,372]"},"focused":false,"children":[]},
+	{"attributes":{"resource-id":"LoginPassword","bounds":"[94,461,986,593]"},"focused":true,"children":[]}
+]}`
+
+// A keyboard overlay window can sit over the field the focus tap aims at, so
+// the tap never reaches it and focus stays where it was. Typing then appends to
+// the previously focused field: on folio the password ran into the email field
+// and the login setup leaf retried forever.
+func TestApplyAction_InputTextStopsWhenAnotherFieldHoldsFocus(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(loginFocusOnEmail)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.HierarchyJSON = loginFocusOnEmail
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "id:LoginPassword",
+		Text: "ledger123",
+	}
+
+	_, err = applyAction(context.Background(), driverMock, action, tree)
+	if err == nil {
+		t.Fatal("a focus tap that never focused the target must be reported, not typed through")
+	}
+	if !strings.Contains(err.Error(), "LoginEmail") {
+		t.Errorf("error must name the field holding focus, got: %v", err)
+	}
+	if containsAction(driverMock.Actions(), mockdriver.ActionInputText, "") {
+		t.Errorf("password text must not be typed into the focused email field: %v", driverMock.Actions())
+	}
+}
+
+func TestApplyAction_InputTextTypesWhenTargetTakesFocus(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(loginFocusOnEmail)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.HierarchyJSON = loginFocusOnPassword
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "id:LoginPassword",
+		Text: "ledger123",
+	}
+
+	mustDispatch(t, driverMock, action, tree)
+	if !typedText(driverMock.Actions(), "ledger123") {
+		t.Errorf("expected InputText once the target holds focus, got %v", driverMock.Actions())
+	}
+}
+
+// Platforms whose hierarchy omits focus entirely (iOS) have nothing to compare,
+// so they must not pay a hierarchy read per InputText.
+func TestApplyAction_InputTextSkipsFocusCheckWhenHierarchyOmitsFocus(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"resource-id":"LoginPassword","bounds":"[94,461,986,593]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "id:LoginPassword",
+		Text: "ledger123",
+	}
+
+	mustDispatch(t, driverMock, action, tree)
+	if containsAction(driverMock.Actions(), mockdriver.ActionHierarchy, "") {
+		t.Errorf("no focus to compare: expected no hierarchy read, got %v", driverMock.Actions())
+	}
+	if !typedText(driverMock.Actions(), "ledger123") {
+		t.Errorf("expected InputText, got %v", driverMock.Actions())
+	}
+}
+
+func typedText(actions []mockdriver.Action, text string) bool {
+	for _, action := range actions {
+		if action.Kind == mockdriver.ActionInputText && action.Text == text {
+			return true
+		}
+	}
+	return false
+}
+
 func TestApplyAction_V8InputTextTapsAtCoordinates(t *testing.T) {
 	fastFocusSettle(t)
 	driverMock := mockdriver.New()

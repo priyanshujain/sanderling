@@ -653,6 +653,9 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 				return "", ctx.Err()
 			case <-timer.C:
 			}
+			if err := confirmFocus(ctx, drv, action.On, tree); err != nil {
+				return "", err
+			}
 		}
 		// InputText replaces the field's content: erase what the target
 		// holds before typing. Appending instead lets repeated draws grow
@@ -722,6 +725,94 @@ func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) 
 func inputReplacesText(drv driver.DeviceDriver) bool {
 	replacer, ok := drv.(driver.TextReplacer)
 	return ok && replacer.ReplacesTextOnInput()
+}
+
+// confirmFocus fails the action when the device reports focus on an element
+// other than the one the focus tap aimed at. Typing is a blind write to
+// whatever holds focus, so a tap the target never received (a keyboard overlay
+// window covering it, a target that cannot take focus) would stream the
+// characters into a different field, corrupting it and every property that
+// reads it. Hierarchies that carry no focus at all (iOS) leave nothing to
+// compare against, so those platforms are not charged the extra read.
+func confirmFocus(
+	ctx context.Context,
+	drv driver.DeviceDriver,
+	selector string,
+	tree *hierarchy.Tree,
+) error {
+	if selector == "" || !reportsFocus(tree) {
+		return nil
+	}
+	dump, err := drv.Hierarchy(ctx)
+	if err != nil {
+		return fmt.Errorf("focus check for %s: %w", selector, err)
+	}
+	current, err := hierarchy.Parse(dump)
+	if err != nil {
+		return fmt.Errorf("focus check for %s: %w", selector, err)
+	}
+	focused := focusedElement(current)
+	if focused == nil {
+		return nil
+	}
+	if target := current.FindNode(selector); target != nil && holdsFocus(target) {
+		return nil
+	}
+	return fmt.Errorf(
+		"focus tap on %s did not focus it: %s holds focus, so the text would land there",
+		selector, elementName(focused),
+	)
+}
+
+// reportsFocus reports whether the platform describes focus at all, which is
+// what makes a post-tap focus check meaningful.
+func reportsFocus(tree *hierarchy.Tree) bool {
+	if tree == nil {
+		return false
+	}
+	for _, element := range tree.Elements {
+		if _, ok := element.Attributes["focused"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func focusedElement(tree *hierarchy.Tree) *hierarchy.Element {
+	for _, element := range tree.Elements {
+		if element.Focused {
+			return element
+		}
+	}
+	return nil
+}
+
+// holdsFocus accepts focus anywhere in the target's subtree: a selector often
+// names the field wrapper while the platform reports focus on the inner
+// editable node.
+func holdsFocus(node *hierarchy.Node) bool {
+	if node.Focused {
+		return true
+	}
+	for _, child := range node.Children {
+		if holdsFocus(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func elementName(element *hierarchy.Element) string {
+	switch {
+	case element.ResourceID != "":
+		return element.ResourceID
+	case element.Description != "":
+		return element.Description
+	case element.Class != "":
+		return element.Class
+	default:
+		return "an unnamed element"
+	}
 }
 
 // existingTextLength returns the character count of the InputText target's
