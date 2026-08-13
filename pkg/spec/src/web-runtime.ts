@@ -359,6 +359,38 @@ function evaluateXPathAll(xpath: string, root: Node): Element[] {
   return out;
 }
 
+// rawAttributes keys an element's attributes by the names the markup writes,
+// which is what `attrs` means on every other backend. element.dataset would key
+// `data-cents` as `cents`, so a spec reading attrs["data-cents"] the way the
+// native hosts report it read undefined on web and every assertion over it
+// passed vacuously.
+function rawAttributes(element: Element): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const attribute of Array.from(element.attributes ?? [])) {
+    out[attribute.name] = attribute.value;
+  }
+  return out;
+}
+
+// fieldHint names an editable field the way a user reads it, in the order the
+// accessible name is computed: its own aria-label, the <label> bound to it, the
+// placeholder standing in the empty box, then the name the form gives it. It
+// lands on `hintText`, the rung visibleLabel (internal/verifier/llm.go) reads
+// first for an editable element, so an authored InputText on web names its field
+// the way the same action names it on Android.
+function fieldHint(element: Element): string {
+  if (!isEditableElement(element as HTMLElement)) return "";
+  const ariaLabel = element.getAttribute("aria-label");
+  if (ariaLabel) return ariaLabel;
+  for (const label of Array.from((element as HTMLInputElement).labels ?? [])) {
+    const text = (label.textContent ?? "").trim();
+    if (text) return text;
+  }
+  const placeholder = element.getAttribute("placeholder");
+  if (placeholder) return placeholder;
+  return element.getAttribute("name") ?? "";
+}
+
 function elementHandle(element: Element): Record<string, unknown> {
   const rect = element.getBoundingClientRect();
   const x = Math.round(rect.left + rect.width / 2);
@@ -371,6 +403,13 @@ function elementHandle(element: Element): Record<string, unknown> {
     const value = (dataset as Record<string, string | undefined>)[key];
     if (value !== undefined) datasetCopy[key] = value;
   }
+  const attrs: Record<string, string> = {
+    tag: element.tagName.toLowerCase(),
+    "aria-label": ariaLabel,
+    ...rawAttributes(element),
+  };
+  const hint = fieldHint(element);
+  if (hint) attrs.hintText = hint;
   return {
     id: element.id,
     text,
@@ -378,6 +417,7 @@ function elementHandle(element: Element): Record<string, unknown> {
     class: (element as HTMLElement).className ?? "",
     clickable: true,
     enabled: !(element as HTMLButtonElement).disabled,
+    editable: isEditableElement(element as HTMLElement),
     focused: document.activeElement === element,
     x,
     y,
@@ -387,11 +427,7 @@ function elementHandle(element: Element): Record<string, unknown> {
       right: Math.round(rect.right),
       bottom: Math.round(rect.bottom),
     },
-    attrs: {
-      tag: element.tagName.toLowerCase(),
-      "aria-label": ariaLabel,
-      ...datasetCopy,
-    },
+    attrs,
     dataset: datasetCopy,
     find(selector: unknown): unknown {
       const child = queryElement(element, selector);

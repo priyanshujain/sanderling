@@ -414,3 +414,110 @@ test("selectorFromObject text-only selector becomes an XPath", () => {
     xpath: `//*[normalize-space(text())="Go"]`,
   });
 });
+
+// domElement is one element as elementHandle reads it. dataset camelCases its
+// keys the way a real DOMStringMap does, which is what hid `data-cents` and
+// friends behind `attrs.cents` and made every assertion over them read
+// undefined.
+function domElement(spec: {
+  tag: string;
+  attributes?: Record<string, string>;
+  labels?: string[];
+  text?: string;
+}): unknown {
+  const attributes = spec.attributes ?? {};
+  return {
+    tagName: spec.tag.toUpperCase(),
+    type: spec.tag === "input" ? "text" : "",
+    isContentEditable: false,
+    id: attributes.id ?? "",
+    className: attributes.class ?? "",
+    textContent: spec.text ?? "",
+    dataset: Object.fromEntries(
+      Object.entries(attributes)
+        .filter(([name]) => name.startsWith("data-"))
+        .map(([name, value]) => [
+          name.slice("data-".length).replace(/-(.)/g, (_, letter: string) => letter.toUpperCase()),
+          value,
+        ]),
+    ),
+    attributes: Object.entries(attributes).map(([name, value]) => ({ name, value })),
+    labels: (spec.labels ?? []).map((textContent) => ({ textContent })),
+    getAttribute: (name: string) => attributes[name] ?? null,
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 40, bottom: 20, width: 40, height: 20 }),
+  };
+}
+
+function handleOf(element: unknown): Record<string, unknown> {
+  const global = globalThis as Record<string, unknown>;
+  const original = global.document;
+  global.document = { querySelector: () => element, querySelectorAll: () => [element] };
+  try {
+    const ax = __testing__.buildAx() as { find(selector: unknown): Record<string, unknown> };
+    return ax.find({ id: "any" });
+  } finally {
+    global.document = original;
+  }
+}
+
+function attrsOf(element: unknown): Record<string, string> {
+  return handleOf(element).attrs as Record<string, string>;
+}
+
+// `attrs` means the same thing on every backend: the attributes the markup
+// writes, keyed by the names it writes them under. A spec reading
+// attrs["data-cents"] the way examples/folio-web does read undefined here, so
+// the properties over those values could never hold OR fail.
+test("attrs keys data attributes by the name the markup writes", () => {
+  const element = domElement({
+    tag: "div",
+    attributes: { id: "ledger", "data-txn-count": "3", "data-account-id": "a-1" },
+  });
+  assert.equal(attrsOf(element)["data-txn-count"], "3");
+  assert.equal(attrsOf(element)["data-account-id"], "a-1");
+  // `dataset` stays the DOMStringMap view, camelCase keys and all.
+  assert.deepEqual(handleOf(element).dataset, { txnCount: "3", accountId: "a-1" });
+});
+
+test("attrs carries every other attribute alongside tag and aria-label", () => {
+  const attrs = attrsOf(
+    domElement({ tag: "input", attributes: { id: "txn-note", placeholder: "What's this for?" } }),
+  );
+  assert.equal(attrs.tag, "input");
+  assert.equal(attrs["aria-label"], "");
+  assert.equal(attrs.id, "txn-note");
+  assert.equal(attrs.placeholder, "What's this for?");
+});
+
+// An input has no text of its own, so a handle that names it by text names it
+// "". hintText is the rung visibleLabel reads first for an editable element,
+// and it is what lets a model tell the amount field from the note field.
+test("an editable field's hintText is the label bound to it", () => {
+  const element = domElement({
+    tag: "input",
+    attributes: { id: "txn-amount", placeholder: "0.00" },
+    labels: ["Amount"],
+  });
+  assert.equal(attrsOf(element).hintText, "Amount");
+  assert.equal(handleOf(element).editable, true);
+  assert.equal(handleOf(element).text, "");
+});
+
+test("an unlabelled field's hintText falls back to aria-label, placeholder, then name", () => {
+  assert.equal(
+    attrsOf(domElement({ tag: "input", attributes: { "aria-label": "Search", placeholder: "Type here" } }))
+      .hintText,
+    "Search",
+  );
+  assert.equal(
+    attrsOf(domElement({ tag: "input", attributes: { placeholder: "What's this for?" } })).hintText,
+    "What's this for?",
+  );
+  assert.equal(attrsOf(domElement({ tag: "input", attributes: { name: "note" } })).hintText, "note");
+});
+
+test("a non-editable element carries no hintText", () => {
+  const element = domElement({ tag: "button", attributes: { id: "txn-submit" }, text: "Add credit" });
+  assert.equal(attrsOf(element).hintText, undefined);
+  assert.equal(handleOf(element).editable, false);
+});
