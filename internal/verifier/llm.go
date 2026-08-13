@@ -504,7 +504,7 @@ func (v *Verifier) resolveTarget(value goja.Value, labels labelContext) (resolve
 		target.inputType = inputTypeHint(element)
 	}
 	if target.label == "" {
-		target.label = truncateLabel(stringField(object, labels.handleField()))
+		target.label = truncateLabel(v.handleLabel(object, labels))
 	}
 	return target, true
 }
@@ -721,15 +721,35 @@ func (l labelContext) label(element *hierarchy.Element) string {
 	return visibleLabel(element, l.nodeIndex)
 }
 
-// handleField is the ax-element handle field a label falls back to when the
-// target's selector no longer resolves against the current tree. Reading the
-// handle's text there would leak visible text into an identifier-labelled run,
-// which is the one thing that arm must not see.
-func (l labelContext) handleField() string {
-	if l.source == LabelSourceResourceID {
-		return "id"
+// handleLabel names a target from the ax handle alone, for the web tick path
+// where the handle was built in V8 and carries no selector to resolve against
+// the tree. It walks visibleLabel's rungs over the fields a handle has: an
+// editable field's hint names its purpose, its own text is the transient typed
+// value. The identifier arm reads the handle's id and nothing a user could
+// read, which is the one thing that arm must not see.
+func (v *Verifier) handleLabel(object *goja.Object, labels labelContext) string {
+	if labels.source == LabelSourceResourceID {
+		return stringField(object, "id")
 	}
-	return "text"
+	hint := v.handleAttribute(object, "hintText")
+	if hint != "" && boolField(object, "editable") {
+		return hint
+	}
+	if text := stringField(object, "text"); text != "" {
+		return text
+	}
+	if desc := stringField(object, "desc"); desc != "" {
+		return desc
+	}
+	return hint
+}
+
+func (v *Verifier) handleAttribute(object *goja.Object, name string) string {
+	attrs := object.Get("attrs")
+	if attrs == nil || goja.IsUndefined(attrs) || goja.IsNull(attrs) {
+		return ""
+	}
+	return stringField(attrs.ToObject(v.runtime), name)
 }
 
 // resourceIdentifierLabel names a control by the identifier the app assigned it,
@@ -839,6 +859,16 @@ func stringField(object *goja.Object, key string) string {
 		return ""
 	}
 	return value.String()
+}
+
+// boolField reads a boolean property off a goja object, returning false when
+// absent, null, or undefined.
+func boolField(object *goja.Object, key string) bool {
+	value := object.Get(key)
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return false
+	}
+	return value.ToBoolean()
 }
 
 // intField reads a numeric property off a goja object, returning 0 when absent,

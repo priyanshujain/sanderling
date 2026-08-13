@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -737,5 +738,98 @@ func TestCandidatesAcceptASingleItemAuthoredSampler(t *testing.T) {
 	}
 	if !hasCandidate(candidates, `Tap "Sign in"`) {
 		t.Errorf("sampled tap missing: %v", descriptions(candidates))
+	}
+}
+
+// webFieldTreeJSON is the add-transaction screen as the chrome driver dumps it:
+// two inputs a user tells apart by the <label> bound to each, which the dump
+// does not carry. Named from the tree alone they collapse onto their CSS class.
+const webFieldTreeJSON = `{
+  "attributes": {"tag": "html", "bounds": "[0,0,400,800]"},
+  "children": [
+    {"attributes": {"resource-id": "txn-amount", "tag": "input", "class": "input amount-input", "bounds": "[0,100,400,160]"}, "editable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "txn-note", "tag": "input", "class": "input", "bounds": "[0,200,400,260]"}, "editable": true, "enabled": true, "children": []}
+  ]
+}`
+
+// The web tick evaluates extractors in V8 and injects the handles here, so an
+// authored action's target is a plain object with no selector to resolve
+// against the tree. Naming it by the handle's own text names every input "",
+// and the model then cannot tell the amount field from the note field.
+// pkg/spec/test/web-runtime.test.ts asserts the producing side builds these
+// handles with the hint each assertion here reads.
+func TestCandidatesNameWebAuthoredFieldsByTheirHint(t *testing.T) {
+	const amountHandle = `{
+      "id": "txn-amount", "text": "", "desc": "", "class": "input amount-input",
+      "clickable": true, "enabled": true, "editable": true, "focused": false,
+      "x": 200, "y": 130, "bounds": {"left": 0, "top": 100, "right": 400, "bottom": 160},
+      "attrs": {"tag": "input", "aria-label": "", "id": "txn-amount",
+                "class": "input amount-input", "placeholder": "0.00", "hintText": "Amount"}
+    }`
+	const noteHandle = `{
+      "id": "txn-note", "text": "", "desc": "", "class": "input",
+      "clickable": true, "enabled": true, "editable": true, "focused": false,
+      "x": 200, "y": 230, "bounds": {"left": 0, "top": 200, "right": 400, "bottom": 260},
+      "attrs": {"tag": "input", "aria-label": "", "id": "txn-note", "class": "input",
+                "placeholder": "What's this for?", "hintText": "Note (optional)"}
+    }`
+
+	v := newVerifier(t)
+	loadActionSpec(t, v, `
+		import { InputText, actions, extract } from "@sanderling/spec";
+		const amount = extract((s) => s.ax.find({ id: "txn-amount" })).named("amount");
+		const note = extract((s) => s.ax.find({ id: "txn-note" })).named("note");
+		globalThis.actions = actions(() => {
+			if (!amount.current || !note.current) return [];
+			return [
+				InputText({ into: amount.current, text: "12.34" }),
+				InputText({ into: note.current, text: "Coffee" }),
+			];
+		});
+	`)
+	pushTree(t, v, webFieldTreeJSON)
+	if _, err := v.OverrideExtractorValues(map[int]json.RawMessage{
+		0: json.RawMessage(amountHandle),
+		1: json.RawMessage(noteHandle),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := mustCandidates(t, v, LabelSourceVisibleText)
+	if !hasCandidate(candidates, `Type "12.34" into "Amount"`) {
+		t.Errorf("amount field unnamed: %v", descriptions(candidates))
+	}
+	if !hasCandidate(candidates, `Type "Coffee" into "Note (optional)"`) {
+		t.Errorf("note field unnamed: %v", descriptions(candidates))
+	}
+}
+
+// The identifier arm must stay blind to anything a user reads, hint included.
+func TestCandidatesNameWebAuthoredFieldsByIdentifierOnThatArm(t *testing.T) {
+	const amountHandle = `{
+      "id": "txn-amount", "text": "", "editable": true, "enabled": true,
+      "x": 200, "y": 130,
+      "attrs": {"tag": "input", "hintText": "Amount"}
+    }`
+	v := newVerifier(t)
+	loadActionSpec(t, v, `
+		import { InputText, actions, extract } from "@sanderling/spec";
+		const amount = extract((s) => s.ax.find({ id: "txn-amount" })).named("amount");
+		globalThis.actions = actions(() =>
+			amount.current ? [InputText({ into: amount.current, text: "12.34" })] : []);
+	`)
+	pushTree(t, v, webFieldTreeJSON)
+	if _, err := v.OverrideExtractorValues(map[int]json.RawMessage{
+		0: json.RawMessage(amountHandle),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := mustCandidates(t, v, LabelSourceResourceID)
+	if !hasCandidate(candidates, `Type "12.34" into "txn-amount"`) {
+		t.Errorf("identifier arm lost the field name: %v", descriptions(candidates))
+	}
+	if hasCandidate(candidates, `Type "12.34" into "Amount"`) {
+		t.Error("identifier arm leaked the hint a user reads")
 	}
 }
