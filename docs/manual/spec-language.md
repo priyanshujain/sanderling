@@ -147,7 +147,11 @@ Fields available on every element returned by `find` / `findAll`:
 - `id` maps to the HTML `id` attribute.
 - `desc` is derived from `aria-label`, `alt`, or `title`.
 - `class` is the lowercase HTML tag name (e.g., `button`, `input`).
-- `attrs` contains all HTML attributes available to CDP.
+- `attrs` contains all HTML attributes available to CDP, keyed by the name the
+  markup writes (`attrs["data-cents"]`, not `attrs.cents`).
+- `attrs.hintText` names an editable field the way a user reads it: its
+  `aria-label`, the `<label>` bound to it, its `placeholder`, then its `name`.
+  The `hintText` selector key still matches the `placeholder` attribute alone.
 
 ### KMP (Kotlin Multiplatform)
 
