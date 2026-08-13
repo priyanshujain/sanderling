@@ -31,7 +31,9 @@ case "$platform" in
     # freshly installed app IS clear state). The in-run reinstall path is worth
     # avoiding here: `simctl uninstall` + `install` immediately followed by the
     # XCTest runner's own launch hits "app.folio is unknown to FrontBoard"
-    # perhaps half the time, and the run then hangs rather than failing.
+    # perhaps half the time. The launch RPC is bounded now, so that surfaces
+    # as an error rather than an indefinite hang, but a failed leg is still a
+    # failed leg and a fresh install is already clear state.
     folio_args+=(--platform ios
       --clear-data=false
       --ios-device "${IOS_DEVICE:-iPhone 16 Pro}")

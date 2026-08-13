@@ -61,8 +61,15 @@ The ios leg passes `--clear-data=false`, because the job installs a fresh build
 immediately before the run and a freshly installed app is already clear state.
 The in-run reinstall is worth avoiding: `simctl uninstall` + `install` followed
 straight away by the XCTest runner's own launch fails with `app.folio is unknown
-to FrontBoard` maybe half the time, and the run then hangs rather than failing.
-The job timeouts are the backstop if it happens anyway.
+to FrontBoard` maybe half the time. That used to hang the run outright; the
+launch RPC is bounded now, so it fails in about 90 seconds with a real error
+instead, but a failing leg is still a failing leg. The job timeouts are the
+backstop if it happens anyway.
+
+Only one sanderling run may drive a given simulator at a time. The driver takes
+an advisory lock on the target's UDID and a second run is refused with the lock
+path in the message, because two runs interleaving app lifecycle leave the first
+run's automation session bound to a bundle the simulator no longer knows.
 
 ## replay-ui
 
