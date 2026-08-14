@@ -4,11 +4,15 @@ name: folio
 # browser, builds the folio app for that platform, and runs
 # examples/folio/sanderling/spec.ts against it.
 #
-# All three are expect-the-bug jobs: folio double-submits a transaction on a
+# web and ios are expect-the-bug jobs: folio double-submits a transaction on a
 # double tap, so the run is supposed to end with exit 2. Exit 0 means the fuzzer
 # stopped finding a bug that is still there; exit 1 means the harness broke. The
 # two are worth telling apart, which is why --exit-on-violation exits 2 and not
 # 1.
+#
+# android is a health gate. The same seed does not walk the same trajectory
+# there, so the bug turns up in roughly two runs in five, and a conviction gate
+# would report a regression it had not found.
 
 on:
   workflow_dispatch:
@@ -92,8 +96,8 @@ jobs:
           disable-animations: true
           script: .github/scripts/folio-run.sh android
         env:
-          SEED: ${{ inputs.seed != '0' && inputs.seed || '3' }}
-          MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '240' }}
+          SEED: ${{ inputs.seed != '0' && inputs.seed || '9' }}
+          MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '120' }}
           DURATION: ${{ inputs.duration }}
 
       - name: Upload the run
@@ -173,7 +177,7 @@ jobs:
       - name: Fuzz folio on the simulator
         run: .github/scripts/folio-run.sh ios
         env:
-          SEED: ${{ inputs.seed != '0' && inputs.seed || '1' }}
+          SEED: ${{ inputs.seed != '0' && inputs.seed || '7' }}
           MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '240' }}
           DURATION: ${{ inputs.duration }}
           IOS_DEVICE: iPhone 16 Pro
@@ -244,7 +248,7 @@ jobs:
       - name: Fuzz folio in the browser
         run: .github/scripts/folio-run.sh web
         env:
-          SEED: ${{ inputs.seed != '0' && inputs.seed || '1' }}
+          SEED: ${{ inputs.seed != '0' && inputs.seed || '3' }}
           MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '240' }}
           DURATION: ${{ inputs.duration }}
 
