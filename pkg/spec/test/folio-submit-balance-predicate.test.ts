@@ -241,3 +241,141 @@ test("route gate: home landing with double-insert delta fires", () => {
     false,
   );
 });
+
+// Precision. Cents are integers in float64 here, so the equality only means
+// something while every number involved is exactly representable. The app takes
+// any amount that fits a Kotlin Long, and an iOS run reached a balance around
+// 1e18 cents, where representable values sit 128 apart: the delta of a
+// perfectly healthy single submit no longer reads back as the typed amount.
+const HUGE_BALANCE = 999999999999999900;
+
+test("above 2^53 the arithmetic itself is wrong, which is why the guard exists", () => {
+  assert.notEqual(Math.abs(HUGE_BALANCE + 1600 - HUGE_BALANCE), 1600);
+});
+
+test("above 2^53 a healthy single submit is not reported", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: 1600,
+      prevTotalBalance: HUGE_BALANCE,
+      currTotalBalance: HUGE_BALANCE + 1600,
+    }),
+    true,
+  );
+});
+
+test("above 2^53 a double-submit delta is not reported either", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: 1600,
+      prevTotalBalance: HUGE_BALANCE,
+      currTotalBalance: HUGE_BALANCE + 3200,
+    }),
+    true,
+  );
+});
+
+test("an unreadable previous balance above 2^53 is not evidence", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: 1600,
+      prevTotalBalance: HUGE_BALANCE,
+      currTotalBalance: 5000,
+    }),
+    true,
+  );
+});
+
+// A typed amount past the safe range cannot be compared either. parseTypedAmount
+// returns 0 for those now, but the predicate takes the number from its caller
+// and must not convict on one it cannot hold.
+test("typed amount above 2^53 is not evidence", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: 1e23,
+      prevTotalBalance: 0,
+      currTotalBalance: 0,
+    }),
+    true,
+  );
+});
+
+// The boundary, from both sides. MAX_SAFE_INTEGER still gets judged; one cent
+// more is where counting stops being exact.
+test("boundary: a double submit landing exactly on MAX_SAFE_INTEGER still fires", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: 4503599627370495,
+      prevTotalBalance: 0,
+      currTotalBalance: 9007199254740990,
+    }),
+    false,
+  );
+});
+
+test("boundary: a single submit landing exactly on MAX_SAFE_INTEGER passes", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: 9007199254740991,
+      prevTotalBalance: 0,
+      currTotalBalance: 9007199254740991,
+    }),
+    true,
+  );
+});
+
+test("boundary: one cent past MAX_SAFE_INTEGER stops being evidence", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: 4503599627370496,
+      prevTotalBalance: 0,
+      currTotalBalance: 9007199254740992,
+    }),
+    true,
+  );
+});
+
+// The guard covers the balances and the typed amount, not their difference: two
+// safe balances subtract exactly whenever the result could have matched a safe
+// typed amount, so a mismatch here is real and must still be reported.
+test("a large but exact difference between safe balances still fires", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: 500,
+      prevTotalBalance: -9007199254740991,
+      currTotalBalance: 9007199254740991,
+    }),
+    false,
+  );
+});
+
+// The 21-digit corpus amount end to end: the app refuses it, so nothing moves,
+// and the property must stay quiet rather than demand a 1e23-cent move.
+test("21-digit typed amount with an unmoved balance is not a violation", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn },
+      typedAmount: parseTypedAmount("999999999999999999999"),
+      prevTotalBalance: 220900,
+      currTotalBalance: 220900,
+    }),
+    true,
+  );
+});
