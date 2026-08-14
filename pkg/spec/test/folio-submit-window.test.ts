@@ -68,13 +68,13 @@ test("a second submit with no Home reading between them counts two", () => {
 
 // The two traces the freshness rule exists to tell apart, driven step by step
 // through the same pair of carriers the spec holds.
-function run(steps: { onHome: boolean; totalText?: string; lastAction: unknown }[]) {
+function run(steps: { route: string | null; totalText?: string; lastAction: unknown }[]) {
   let carrier: number | null = null;
   let submits = 0;
   const out: { total: number | null; submits: number }[] = [];
   for (const step of steps) {
     const reading = readHomeTotalBalance({
-      onHome: step.onHome,
+      route: step.route,
       totalText: step.totalText,
       previousCarrier: carrier,
     });
@@ -99,10 +99,10 @@ const doubleSubmit = { kind: "DoubleTap", on: submitOn };
 // which is why the property can see it at all.
 test("clean double submit: one action in the window, delta is 2x", () => {
   const trace = run([
-    { onHome: true, totalText: "$0.00", lastAction: null },
-    { onHome: false, lastAction: idle },
-    { onHome: false, lastAction: idle },
-    { onHome: true, totalText: "$100.00", lastAction: doubleSubmit },
+    { route: "home", totalText: "$0.00", lastAction: null },
+    { route: "ledger", lastAction: idle },
+    { route: "ledger", lastAction: idle },
+    { route: "home", totalText: "$100.00", lastAction: doubleSubmit },
   ]);
   assert.equal(trace[3]?.submits, 1);
   assert.equal(trace[0]?.total, 0);
@@ -114,11 +114,11 @@ test("clean double submit: one action in the window, delta is 2x", () => {
 // transactions, so it is not evidence about either typed amount.
 test("two submits between Home visits: the window is not evidence", () => {
   const trace = run([
-    { onHome: true, totalText: "$0.00", lastAction: null },
-    { onHome: false, lastAction: idle },
-    { onHome: false, lastAction: submit },
-    { onHome: false, lastAction: idle },
-    { onHome: true, totalText: "-$130.00", lastAction: doubleSubmit },
+    { route: "home", totalText: "$0.00", lastAction: null },
+    { route: "ledger", lastAction: idle },
+    { route: "ledger", lastAction: submit },
+    { route: "ledger", lastAction: idle },
+    { route: "home", totalText: "-$130.00", lastAction: doubleSubmit },
   ]);
   assert.equal(trace[4]?.submits, 2);
 });
@@ -126,11 +126,11 @@ test("two submits between Home visits: the window is not evidence", () => {
 // Freshness is restored by seeing Home, not by time passing.
 test("a Home visit between two submits restores a one-action window", () => {
   const trace = run([
-    { onHome: true, totalText: "$0.00", lastAction: null },
-    { onHome: false, lastAction: submit },
-    { onHome: true, totalText: "$262.00", lastAction: idle },
-    { onHome: false, lastAction: idle },
-    { onHome: true, totalText: "$66.00", lastAction: doubleSubmit },
+    { route: "home", totalText: "$0.00", lastAction: null },
+    { route: "ledger", lastAction: submit },
+    { route: "home", totalText: "$262.00", lastAction: idle },
+    { route: "ledger", lastAction: idle },
+    { route: "home", totalText: "$66.00", lastAction: doubleSubmit },
   ]);
   assert.equal(trace[1]?.submits, 1);
   assert.equal(trace[2]?.submits, 1);
@@ -141,10 +141,10 @@ test("a Home visit between two submits restores a one-action window", () => {
 // the count would go back to zero against a total nobody read.
 test("an unreadable Home does not close the window", () => {
   const trace = run([
-    { onHome: true, totalText: "$0.00", lastAction: null },
-    { onHome: false, lastAction: submit },
-    { onHome: true, totalText: undefined, lastAction: idle },
-    { onHome: true, totalText: "$66.00", lastAction: doubleSubmit },
+    { route: "home", totalText: "$0.00", lastAction: null },
+    { route: "ledger", lastAction: submit },
+    { route: "home", totalText: undefined, lastAction: idle },
+    { route: "home", totalText: "$66.00", lastAction: doubleSubmit },
   ]);
   assert.equal(trace[2]?.total, null);
   assert.equal(trace[3]?.submits, 2);
