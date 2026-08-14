@@ -51,18 +51,40 @@ func executeCommand(ctx context.Context, binary string, arguments []string, outp
 // escalation would land while the run was still doing what it was asked.
 const runShutdownGrace = 30 * time.Second
 
-// runRecord is one line of runs.jsonl.
+// runRecord is one line of runs.jsonl. MonotonicMillis is how long the run
+// worked and WallClockMillis is how much time passed; they answer different
+// questions and differ by however long the host slept mid-run, which an
+// unattended overnight sweep is exactly where to expect.
 type runRecord struct {
-	Seed           int64     `json:"seed"`
-	Device         string    `json:"device,omitempty"`
-	ExitCode       int       `json:"exit_code"`
-	LaunchError    string    `json:"launch_error,omitempty"`
-	TimedOut       bool      `json:"timed_out,omitempty"`
-	StartedAt      time.Time `json:"started_at"`
-	DurationMillis int64     `json:"duration_millis"`
-	RunDirectory   string    `json:"run_directory,omitempty"`
-	TraceError     string    `json:"trace_error,omitempty"`
+	Seed            int64     `json:"seed"`
+	Device          string    `json:"device,omitempty"`
+	ExitCode        int       `json:"exit_code"`
+	LaunchError     string    `json:"launch_error,omitempty"`
+	TimedOut        bool      `json:"timed_out,omitempty"`
+	StartedAt       time.Time `json:"started_at"`
+	MonotonicMillis int64     `json:"monotonic_millis"`
+	WallClockMillis int64     `json:"wall_clock_millis"`
+	RunDirectory    string    `json:"run_directory,omitempty"`
+	TraceError      string    `json:"trace_error,omitempty"`
 	traceSummary
+}
+
+// clocks reads the two measures a run is timed on. The monotonic clock does
+// not advance while the host is asleep, so on its own it reports a run that
+// slept through a quarter of an hour as a quarter of an hour shorter than it
+// was; the wall clock advances but can be stepped by the host.
+type clocks struct {
+	monotonicNow func() time.Time
+	wallClockNow func() time.Time
+}
+
+func systemClocks() clocks {
+	return clocks{
+		monotonicNow: time.Now,
+		// Round(0) drops the monotonic reading time.Now carries, so
+		// subtracting two of these readings uses the wall clock.
+		wallClockNow: func() time.Time { return time.Now().Round(0) },
+	}
 }
 
 type campaign struct {
@@ -70,6 +92,7 @@ type campaign struct {
 	executor      commandExecutor
 	stdout        io.Writer
 	records       io.Writer
+	clocks        clocks
 	mutex         sync.Mutex
 	failures      int
 	unreadable    int
@@ -105,7 +128,7 @@ func runCampaign(ctx context.Context, configuration config, executor commandExec
 	}
 	defer recordsFile.Close()
 
-	sweep := &campaign{configuration: configuration, executor: executor, stdout: stdout, records: recordsFile}
+	sweep := &campaign{configuration: configuration, executor: executor, stdout: stdout, records: recordsFile, clocks: systemClocks()}
 	fmt.Fprintf(stdout, "campaign %s: %d seeds, %d worker(s), %s\n",
 		configuration.arm, len(configuration.seeds), len(workerDevices(configuration.devices)), configuration.outputDirectory)
 	sweep.sweep(ctx)
@@ -188,12 +211,14 @@ func (c *campaign) runSeed(ctx context.Context, seed int64, device string) runRe
 
 	runCtx, cancelRun := context.WithTimeout(ctx, c.configuration.runTimeout)
 	defer cancelRun()
-	start := time.Now()
+	monotonicStart := c.clocks.monotonicNow()
+	wallClockStart := c.clocks.wallClockNow()
 	exitCode, runErr := c.executor(runCtx, c.configuration.sanderlingPath, runArguments(c.configuration, seedText, device), logFile)
 	if runCtx.Err() != nil && ctx.Err() == nil {
 		record.TimedOut = true
 	}
-	record.DurationMillis = time.Since(start).Milliseconds()
+	record.MonotonicMillis = c.clocks.monotonicNow().Sub(monotonicStart).Milliseconds()
+	record.WallClockMillis = c.clocks.wallClockNow().Sub(wallClockStart).Milliseconds()
 	record.ExitCode = exitCode
 	if runErr != nil {
 		record.LaunchError = runErr.Error()
@@ -222,9 +247,10 @@ func (c *campaign) report(record runRecord) {
 	if err := json.NewEncoder(c.records).Encode(record); err != nil {
 		fmt.Fprintf(c.stdout, "warning: seed %d record: %v\n", record.Seed, err)
 	}
-	fmt.Fprintf(c.stdout, "seed=%d device=%q outcome=%s steps=%d exit=%d duration=%s\n",
+	fmt.Fprintf(c.stdout, "seed=%d device=%q outcome=%s steps=%d exit=%d monotonic=%s wall_clock=%s\n",
 		record.Seed, record.Device, outcome(record), record.Steps, record.ExitCode,
-		time.Duration(record.DurationMillis)*time.Millisecond)
+		time.Duration(record.MonotonicMillis)*time.Millisecond,
+		time.Duration(record.WallClockMillis)*time.Millisecond)
 }
 
 func outcome(record runRecord) string {

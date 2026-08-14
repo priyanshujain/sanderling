@@ -69,6 +69,51 @@ func writeFakeRun(t *testing.T, arguments []string, steps []trace.Step) {
 	writeRunDirectory(t, argumentValue(arguments, "--output"), "20260101-000000", steps)
 }
 
+// readings hands out the given instants in turn, so a test can script a clock
+// that jumps across a host sleep independently of one that stops through it.
+func readings(instants ...time.Time) func() time.Time {
+	var index int
+	return func() time.Time {
+		instant := instants[min(index, len(instants)-1)]
+		index++
+		return instant
+	}
+}
+
+// A sleeping host stops the monotonic clock and not the wall clock, so a run
+// timed on the monotonic clock alone reports the sleep as time that never
+// passed. The record carries both, named for the clock each came from.
+func TestRunSeed_RecordsTheTimeWorkedAndTheTimeThatPassed(t *testing.T) {
+	directory := t.TempDir()
+	startedAt := time.Date(2026, 8, 14, 2, 0, 0, 0, time.UTC)
+	var records bytes.Buffer
+	sweep := &campaign{
+		configuration: testConfiguration(t, directory, "--seeds", "1"),
+		executor: func(context.Context, string, []string, io.Writer) (int, error) {
+			return 0, nil
+		},
+		stdout:  io.Discard,
+		records: &records,
+		clocks: clocks{
+			monotonicNow: readings(startedAt, startedAt.Add(2*time.Minute)),
+			wallClockNow: readings(startedAt, startedAt.Add(17*time.Minute)),
+		},
+	}
+
+	sweep.report(sweep.runSeed(context.Background(), 1, ""))
+
+	var written map[string]any
+	if err := json.Unmarshal(records.Bytes(), &written); err != nil {
+		t.Fatalf("decode %q: %v", records.String(), err)
+	}
+	if written["monotonic_millis"] != float64((2 * time.Minute).Milliseconds()) {
+		t.Errorf("monotonic_millis %v, want the two minutes of work", written["monotonic_millis"])
+	}
+	if written["wall_clock_millis"] != float64((17 * time.Minute).Milliseconds()) {
+		t.Errorf("wall_clock_millis %v, want the seventeen minutes that passed", written["wall_clock_millis"])
+	}
+}
+
 func TestRunCampaign_RecordsDispatchedActionsNotSteps(t *testing.T) {
 	directory := t.TempDir()
 	configuration := testConfiguration(t, directory, "--seeds", "1")
