@@ -39,12 +39,14 @@ func (e ErrorFormula) describe() string {
 // window and is vacuously satisfied once the window closes. An unbounded
 // Always carries no bound fields and is checked at every observed step.
 type AlwaysFormula struct {
-	Inner        Formula
-	StepBound    int
-	HasStepBound bool
-	Duration     time.Duration
-	Deadline     time.Time
-	HasDeadline  bool
+	Inner                Formula
+	StepBound            int
+	HasStepBound         bool
+	ExpiryObservation    int
+	HasExpiryObservation bool
+	Duration             time.Duration
+	Deadline             time.Time
+	HasDeadline          bool
 }
 
 type PureFormula struct {
@@ -91,13 +93,20 @@ type NextFormula struct {
 // resolves the absolute deadline on first reduction using the observation
 // time. This matches the "within N seconds of obligation instantiation"
 // semantics used by nested Always(Eventually(...).within(...)) formulas.
+//
+// StepBound is the step-domain counterpart: the window counts observations the
+// evaluator reduced, and ExpiryObservation is the absolute closing observation
+// the evaluator resolves on first reduction, exactly as Deadline is for
+// Duration.
 type EventuallyFormula struct {
-	Inner        Formula
-	StepBound    int
-	HasStepBound bool
-	Duration     time.Duration
-	Deadline     time.Time
-	HasDeadline  bool
+	Inner                Formula
+	StepBound            int
+	HasStepBound         bool
+	ExpiryObservation    int
+	HasExpiryObservation bool
+	Duration             time.Duration
+	Deadline             time.Time
+	HasDeadline          bool
 }
 
 type ImpliesFormula struct {
@@ -179,6 +188,9 @@ func (a AlwaysFormula) describe() string {
 	if a.HasStepBound {
 		parts = append(parts, fmt.Sprintf("steps=%d", a.StepBound))
 	}
+	if a.HasExpiryObservation {
+		parts = append(parts, fmt.Sprintf("expiresAtObservation=%d", a.ExpiryObservation))
+	}
 	if a.HasDeadline {
 		parts = append(parts, "deadline="+a.Deadline.Format(time.RFC3339Nano))
 	} else if a.Duration > 0 {
@@ -196,6 +208,9 @@ func (e EventuallyFormula) describe() string {
 	parts := []string{e.Inner.describe()}
 	if e.HasStepBound {
 		parts = append(parts, fmt.Sprintf("steps=%d", e.StepBound))
+	}
+	if e.HasExpiryObservation {
+		parts = append(parts, fmt.Sprintf("expiresAtObservation=%d", e.ExpiryObservation))
 	}
 	if e.HasDeadline {
 		parts = append(parts, "deadline="+e.Deadline.Format(time.RFC3339Nano))
@@ -229,33 +244,73 @@ type withinNode struct {
 	// the same duration differ only here, so without it they serialize
 	// identically and the trace erases the distinction the evaluator makes.
 	Deadline int64 `json:"deadline,omitempty"`
+	// ExpiresAtObservation is the step-domain counterpart of Deadline: the
+	// index of the observation the window closes at. It names observations
+	// rather than runner steps because a step the verifier skipped never
+	// reached the evaluator and so cannot close a window; the pair of fields
+	// is what lets a reader tell the two numberings apart.
+	ExpiresAtObservation int `json:"expiresAtObservation,omitempty"`
+}
+
+// boundWindow is the optional window shared by AlwaysFormula and
+// EventuallyFormula: the window the spec authored plus the absolute close the
+// evaluator resolved for this obligation.
+type boundWindow struct {
+	hasStepBound         bool
+	stepBound            int
+	hasExpiryObservation bool
+	expiryObservation    int
+	duration             time.Duration
+	hasDeadline          bool
+	deadline             time.Time
 }
 
 // withinFor renders the bound clause of a bounded Always or Eventually. The
 // authored window (steps or duration) stays in amount/unit so readers keep
-// seeing what the spec asked for; the resolved deadline rides alongside.
-func withinFor(
-	hasStepBound bool,
-	stepBound int,
-	duration time.Duration,
-	hasDeadline bool,
-	deadline time.Time,
-) *withinNode {
-	var node *withinNode
+// seeing what the spec asked for; the resolved close rides alongside.
+func withinFor(window boundWindow) *withinNode {
 	switch {
-	case hasStepBound:
-		node = &withinNode{Amount: int64(stepBound), Unit: "steps"}
-	case duration > 0:
-		node = &withinNode{Amount: duration.Milliseconds(), Unit: "milliseconds"}
-	case hasDeadline:
-		return &withinNode{Amount: deadline.UnixMilli(), Unit: "deadline"}
+	case window.hasStepBound:
+		node := &withinNode{Amount: int64(window.stepBound), Unit: "steps"}
+		if window.hasExpiryObservation {
+			node.ExpiresAtObservation = window.expiryObservation
+		}
+		return node
+	case window.duration > 0:
+		node := &withinNode{Amount: window.duration.Milliseconds(), Unit: "milliseconds"}
+		if window.hasDeadline {
+			node.Deadline = window.deadline.UnixMilli()
+		}
+		return node
+	case window.hasDeadline:
+		return &withinNode{Amount: window.deadline.UnixMilli(), Unit: "deadline"}
 	default:
 		return nil
 	}
-	if hasDeadline {
-		node.Deadline = deadline.UnixMilli()
+}
+
+func (a AlwaysFormula) boundWindow() boundWindow {
+	return boundWindow{
+		hasStepBound:         a.HasStepBound,
+		stepBound:            a.StepBound,
+		hasExpiryObservation: a.HasExpiryObservation,
+		expiryObservation:    a.ExpiryObservation,
+		duration:             a.Duration,
+		hasDeadline:          a.HasDeadline,
+		deadline:             a.Deadline,
 	}
-	return node
+}
+
+func (e EventuallyFormula) boundWindow() boundWindow {
+	return boundWindow{
+		hasStepBound:         e.HasStepBound,
+		stepBound:            e.StepBound,
+		hasExpiryObservation: e.HasExpiryObservation,
+		expiryObservation:    e.ExpiryObservation,
+		duration:             e.Duration,
+		hasDeadline:          e.HasDeadline,
+		deadline:             e.Deadline,
+	}
 }
 
 func (a AlwaysFormula) MarshalJSON() ([]byte, error) {
@@ -264,9 +319,7 @@ func (a AlwaysFormula) MarshalJSON() ([]byte, error) {
 		Arg    Formula     `json:"arg"`
 		Within *withinNode `json:"within,omitempty"`
 	}{Op: "always", Arg: a.Inner}
-	payload.Within = withinFor(
-		a.HasStepBound, a.StepBound, a.Duration, a.HasDeadline, a.Deadline,
-	)
+	payload.Within = withinFor(a.boundWindow())
 	return json.Marshal(payload)
 }
 
@@ -297,9 +350,7 @@ func (e EventuallyFormula) MarshalJSON() ([]byte, error) {
 		Arg    Formula     `json:"arg"`
 		Within *withinNode `json:"within,omitempty"`
 	}{Op: "eventually", Arg: e.Inner}
-	payload.Within = withinFor(
-		e.HasStepBound, e.StepBound, e.Duration, e.HasDeadline, e.Deadline,
-	)
+	payload.Within = withinFor(e.boundWindow())
 	return json.Marshal(payload)
 }
 

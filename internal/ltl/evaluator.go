@@ -37,6 +37,11 @@ type Evaluator struct {
 	violated  bool
 	steps     int
 	violation *Violation
+	// observations counts the states this evaluator actually reduced, which is
+	// what a `within(n, "steps")` window is measured in. It differs from steps
+	// whenever the caller's numbering skipped an observation, and the two are
+	// told apart in the serialized AST by expiresAtObservation.
+	observations int
 	// oneShot marks a root that is armed once at the first observation rather
 	// than re-asserted at every one; armed records that it has been.
 	oneShot bool
@@ -93,6 +98,7 @@ func (e *Evaluator) ObserveAtStep(now time.Time, step int) Verdict {
 		return VerdictViolated
 	}
 	e.steps = step
+	e.observations++
 
 	obligations := make([]obligation, 0, len(e.pending)+1)
 	obligations = append(obligations, e.pending...)
@@ -102,7 +108,7 @@ func (e *Evaluator) ObserveAtStep(now time.Time, step int) Verdict {
 	e.pending = e.pending[:0]
 
 	for _, entry := range obligations {
-		result := reduce(entry.formula, now)
+		result := reduce(entry.formula, now, e.observations)
 		switch result.status {
 		case statusHolds:
 			// drop
@@ -374,7 +380,11 @@ func pending(f Formula) reduceResult {
 	return reduceResult{status: statusPending, formula: f}
 }
 
-func reduce(formula Formula, now time.Time) reduceResult {
+// reduce advances one obligation against the current state. `now` is the
+// observation's wall clock and `observation` its index in the sequence of
+// states this evaluator reduced; the two are the clocks a duration-bounded and
+// a step-bounded window are resolved against.
+func reduce(formula Formula, now time.Time, observation int) reduceResult {
 	switch concrete := formula.(type) {
 	case PureFormula:
 		if concrete.Value {
@@ -399,7 +409,7 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		return violatedWith(concrete, "predicate false")
 
 	case NowFormula:
-		return reduce(concrete.Inner, now)
+		return reduce(concrete.Inner, now, observation)
 
 	case NextFormula:
 		// Next defers the inner obligation to the following step without
@@ -414,23 +424,24 @@ func reduce(formula Formula, now time.Time) reduceResult {
 			concrete.Deadline = now.Add(concrete.Duration)
 			concrete.HasDeadline = true
 		}
-		innerResult := reduce(concrete.Inner, now)
+		if concrete.HasStepBound && !concrete.HasExpiryObservation {
+			concrete.ExpiryObservation = observation + concrete.StepBound - 1
+			concrete.HasExpiryObservation = true
+		}
+		innerResult := reduce(concrete.Inner, now, observation)
 		if innerResult.status == statusHolds {
 			return holds()
 		}
 		// The window is measured in observations at which the inner could have
 		// discharged, so an inner that is merely pending has not discharged and
 		// the window closing on it is a violation.
-		if concrete.HasStepBound && concrete.StepBound <= 1 {
+		if concrete.HasExpiryObservation && observation >= concrete.ExpiryObservation {
 			return violatedFrom(innerResult, concrete, "eventually bound exhausted")
 		}
 		if concrete.HasDeadline && !now.Before(concrete.Deadline) {
 			return violatedFrom(innerResult, concrete, "eventually deadline reached")
 		}
 		next := concrete
-		if concrete.HasStepBound {
-			next.StepBound = concrete.StepBound - 1
-		}
 		// F(inner) unrolls to inner or X F(inner). A pending inner is a
 		// deferred way of satisfying the promise, so it is kept as a disjunct
 		// rather than dropped; dropping it is what made an inner that only
@@ -449,11 +460,11 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		return reduce(OrFormula{
 			Left:  pushNot(concrete.Antecedent),
 			Right: nnf(concrete.Consequent),
-		}, now)
+		}, now, observation)
 
 	case OrFormula:
-		left := reduce(concrete.Left, now)
-		right := reduce(concrete.Right, now)
+		left := reduce(concrete.Left, now, observation)
+		right := reduce(concrete.Right, now, observation)
 		if left.status == statusHolds || right.status == statusHolds {
 			return holds()
 		}
@@ -469,8 +480,8 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		return pending(OrFormula{Left: left.formula, Right: right.formula})
 
 	case AndFormula:
-		left := reduce(concrete.Left, now)
-		right := reduce(concrete.Right, now)
+		left := reduce(concrete.Left, now, observation)
+		right := reduce(concrete.Right, now, observation)
 		if left.status == statusViolated {
 			return violatedFrom(left, concrete, "conjunct violated")
 		}
@@ -489,7 +500,7 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		return pending(AndFormula{Left: left.formula, Right: right.formula})
 
 	case NotFormula:
-		inner := reduce(concrete.Inner, now)
+		inner := reduce(concrete.Inner, now, observation)
 		switch inner.status {
 		case statusHolds:
 			return violatedWith(concrete, "negated formula held")
@@ -506,7 +517,11 @@ func reduce(formula Formula, now time.Time) reduceResult {
 			concrete.Deadline = now.Add(concrete.Duration)
 			concrete.HasDeadline = true
 		}
-		innerResult := reduce(concrete.Inner, now)
+		if concrete.HasStepBound && !concrete.HasExpiryObservation {
+			concrete.ExpiryObservation = observation + concrete.StepBound - 1
+			concrete.HasExpiryObservation = true
+		}
+		innerResult := reduce(concrete.Inner, now, observation)
 		if innerResult.status == statusViolated {
 			return violatedFrom(innerResult, concrete, "always inner violated")
 		}
@@ -517,16 +532,13 @@ func reduce(formula Formula, now time.Time) reduceResult {
 		// hold". A pending inner has not been breached inside the window, so it
 		// discharges vacuously here exactly as its negation violates on the
 		// Eventually side.
-		if concrete.HasStepBound && concrete.StepBound <= 1 {
+		if concrete.HasExpiryObservation && observation >= concrete.ExpiryObservation {
 			return holds()
 		}
 		if concrete.HasDeadline && !now.Before(concrete.Deadline) {
 			return holds()
 		}
 		next := concrete
-		if concrete.HasStepBound {
-			next.StepBound = concrete.StepBound - 1
-		}
 		if innerResult.status == statusHolds {
 			return pending(next)
 		}
