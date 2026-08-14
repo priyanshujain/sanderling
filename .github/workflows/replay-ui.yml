@@ -4,9 +4,10 @@ name: replay-ui
 # and it is a demo of the product loop, not a merge gate.
 #
 # The shape is: produce a real trace, serve it with `sanderling replay`, then run
-# a spec against that UI. Any violation fails the job, because every property in
-# replay-ui/sanderling/spec.ts is a cross-panel agreement that holds for any
-# trace.
+# a spec against that UI. Any violation fails the job. Six of the seven
+# properties in replay-ui/sanderling/spec.ts are cross-panel agreements that hold
+# for any trace; the seventh is the stock noUncaughtExceptions. None of them
+# needs recalibrating when the fixture changes.
 
 on:
   workflow_dispatch:
@@ -89,6 +90,9 @@ jobs:
           echo "RUN_URL=http://127.0.0.1:8793/runs/$run_id/steps/1" >> "$GITHUB_ENV"
           curl -sf "http://127.0.0.1:8793/runs/$run_id/steps/1" >/dev/null
 
+      # Inputs go through env rather than into the script text: a `${{ }}` is
+      # substituted before bash ever sees the line, so a seed of `$(id)` would
+      # run as a command.
       - name: Fuzz the replay UI
         run: |
           ./bin/sanderling test \
@@ -96,10 +100,13 @@ jobs:
             --spec replay-ui/sanderling/spec.ts \
             --bundle-id "$RUN_URL" \
             --duration 10m \
-            --max-steps "${{ inputs.max-steps }}" \
-            --seed "${{ inputs.seed }}" \
+            --max-steps "$MAX_STEPS" \
+            --seed "$SEED" \
             --exit-on-violation \
             --output runs/dogfood
+        env:
+          SEED: ${{ inputs.seed }}
+          MAX_STEPS: ${{ inputs.max-steps }}
 
       - name: Summarise
         if: always()
@@ -107,13 +114,16 @@ jobs:
           {
             echo "### replay-ui dogfood"
             echo
-            echo "- seed \`${{ inputs.seed }}\`, budget ${{ inputs.max-steps }} steps"
+            echo "- seed \`$SEED\`, budget $MAX_STEPS steps"
             for dir in runs/dogfood/*/; do
               steps=$(wc -l < "$dir/trace.jsonl" | tr -d ' ')
               violations=$(grep -c '"violations":\[' "$dir/trace.jsonl" || true)
               echo "- $steps steps recorded, $violations step(s) with violations"
             done
           } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SEED: ${{ inputs.seed }}
+          MAX_STEPS: ${{ inputs.max-steps }}
 
       - name: Upload runs
         if: always()
