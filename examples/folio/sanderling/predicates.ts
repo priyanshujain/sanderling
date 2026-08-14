@@ -1,3 +1,38 @@
+// The screen a frame shows, or null when it does not show exactly one.
+//
+// `present` answers whether a screen's marker node is in the accessibility
+// tree. Android puts two markers there constantly: its hierarchy dump carries
+// the outgoing and the incoming screen together on 425 of 1879 steps measured
+// across 17 runs, better than one frame in five, occasionally three at once.
+// iOS produced none in 2558 steps and web one in 560, so this is not a rule
+// invented for a hypothetical.
+//
+// Such a frame is a navigation transition, and it is evidence about neither
+// screen. Ranking the markers and taking the first is what convicted folio's
+// spec in 11 android runs: `route` answered add-transaction off the screen
+// being torn down while a separate unscoped find answered "on Home" off the one
+// being built, so a half-rendered Home counted as a fresh balance reading and
+// reset the submit window under a tap that had not landed yet. Every reading
+// below takes the route as its only input, so there is no second answer left
+// for it to disagree with.
+//
+// The engine already draws this line: a transitional tree yields no builtin
+// targets at all (see targets() in internal/verifier), so a spec that keeps
+// picking one of the two screens is the only thing still handing out
+// coordinates from an animation.
+export function routeOfFrame<R extends string>(
+  screens: Record<R, string>,
+  present: (tag: string) => boolean,
+): R | null {
+  let shown: R | null = null;
+  for (const route of Object.keys(screens) as R[]) {
+    if (!present(screens[route])) continue;
+    if (shown !== null) return null;
+    shown = route;
+  }
+  return shown;
+}
+
 // Reads the Home screen's own TOTAL BALANCE node and advances the carrier the
 // spec holds between Home visits.
 //
@@ -8,8 +43,9 @@
 //
 // Three cases, and the difference between the reported value and the carrier is
 // the whole point:
-//   - off Home there is nothing to read, so the last total we actually read is
-//     reported and carried on unchanged;
+//   - anywhere but Home there is nothing to read, so the last total we actually
+//     read is reported and carried on unchanged. A transition frame is one of
+//     those places: its route is null, which is not "home";
 //   - on Home with an unreadable total the reading is UNKNOWN, so null is
 //     reported (the property treats null as vacuous) while the carrier keeps
 //     the last value we did read. Writing null into the carrier is what used to
@@ -24,15 +60,56 @@ export interface HomeTotalReading {
 }
 
 export function readHomeTotalBalance(args: {
-  onHome: boolean;
+  route: string | null;
   totalText: string | undefined;
   previousCarrier: number | null;
 }): HomeTotalReading {
-  const { onHome, totalText, previousCarrier } = args;
-  if (!onHome) return { value: previousCarrier, carrier: previousCarrier, fresh: false };
+  const { route, totalText, previousCarrier } = args;
+  if (route !== "home") return { value: previousCarrier, carrier: previousCarrier, fresh: false };
   const total = parseDollarCents(totalText);
   if (total === null) return { value: null, carrier: previousCarrier, fresh: false };
   return { value: total, carrier: total, fresh: true };
+}
+
+// The same reading, taken off Home's account cards instead of its total, for
+// the readings the spec carries between Home visits (the account list and the
+// per-account transaction counts).
+//
+// The empty reading is the whole point. Android renders Home's own node a frame
+// or two before its list, so `findAll` over the cards comes back empty while the
+// screen is already claiming to be Home. That is UNKNOWN, not "no accounts":
+// writing it into the carrier is the poisoning readHomeTotalBalance was already
+// fixed for. It killed the counting invariant outright on android, where
+// counts_prev was {} at every evaluation point of all 17 runs measured.
+//
+// Callers pass null for a reading they could not take, so an empty list and an
+// empty map are one case here rather than two.
+export interface HomeCardReading<T> {
+  value: T | null;
+  carrier: T | null;
+  fresh: boolean;
+}
+
+export function readHomeCards<T>(args: {
+  route: string | null;
+  reading: T | null;
+  previousCarrier: T | null;
+}): HomeCardReading<T> {
+  const { route, reading, previousCarrier } = args;
+  if (route !== "home") return { value: previousCarrier, carrier: previousCarrier, fresh: false };
+  if (reading === null) return { value: null, carrier: previousCarrier, fresh: false };
+  return { value: reading, carrier: reading, fresh: true };
+}
+
+function isTapOn(
+  lastAction: { kind?: string; on?: string | object } | null,
+  target: string,
+): boolean {
+  if (lastAction == null) return false;
+  if (lastAction.kind !== "Tap" && lastAction.kind !== "DoubleTap") return false;
+  const on = lastAction.on;
+  const onString = typeof on === "string" ? on : on != null ? JSON.stringify(on) : "";
+  return onString.includes(target);
 }
 
 // Is this the action that commits a transaction? Nothing else in Folio reaches
@@ -42,11 +119,14 @@ export function readHomeTotalBalance(args: {
 export function isTxnSubmitTap(
   lastAction: { kind?: string; on?: string | object } | null,
 ): boolean {
-  if (lastAction == null) return false;
-  if (lastAction.kind !== "Tap" && lastAction.kind !== "DoubleTap") return false;
-  const on = lastAction.on;
-  const onString = typeof on === "string" ? on : on != null ? JSON.stringify(on) : "";
-  return onString.includes("TxnSubmit");
+  return isTapOn(lastAction, "TxnSubmit");
+}
+
+// Likewise the only action that creates an account.
+export function isAddAccountSubmitTap(
+  lastAction: { kind?: string; on?: string | object } | null,
+): boolean {
+  return isTapOn(lastAction, "AddAccountSubmit");
 }
 
 // Counts the submit actions inside the window the balance property compares
@@ -152,6 +232,84 @@ export function cardTxnCountDigits(args: {
   const { childText, cardText } = args;
   const source = childText ?? cardText?.replace(TRAILING_BALANCE, "");
   return source?.match(TRAILING_TXN_COUNT)?.[1];
+}
+
+export interface Account {
+  // Identity key, not a display name: on web it carries the card's initials.
+  name: string;
+  // null when the card's balance could not be read at all (see cardBalanceText).
+  balance: number | null;
+}
+
+// One Home card, already parsed by the three helpers above.
+export interface CardReading extends Account {
+  digits: string | undefined;
+}
+
+// The two readings Home's card list yields, each null when there is nothing in
+// it to read. Both feed readHomeCards, which is where null stops the carrier
+// from being overwritten.
+//
+// An account list is empty for two reasons a frame cannot tell apart: the app
+// has no accounts, or it has not drawn them yet. Calling both unknown costs one
+// detection, the very first account of a run, and buys back every card that
+// arrived late.
+export function homeAccountsOf(cards: readonly CardReading[]): Account[] | null {
+  if (cards.length === 0) return null;
+  return cards.map(({ name, balance }) => ({ name, balance }));
+}
+
+// A card whose name or count is unreadable is left out rather than guessed at;
+// committedTransactionsExceedSubmits treats a missing account as no evidence.
+// Every card being unreadable leaves nothing to compare, which is unknown.
+export function homeTxnCountsOf(cards: readonly CardReading[]): Record<string, string> | null {
+  const counts: Record<string, string> = {};
+  for (const card of cards) {
+    if (card.name !== "" && card.digits !== undefined) counts[card.name] = card.digits;
+  }
+  return Object.keys(counts).length === 0 ? null : counts;
+}
+
+// Did the account the fuzzer just created come into existence holding money?
+//
+// "Appeared in the visible set" is not "was created". Home lists the accounts
+// that fit the viewport, so an existing account arrives in a later reading
+// whenever the list scrolls, whenever a card that was clipped becomes laid out,
+// and (before the route fix) whenever the earlier reading came off a
+// half-rendered Home mid-transition. All three read as a brand new account, and
+// the last two convicted this property on android over a Travel account holding
+// $24,112.00 and a Savings account holding $429,585.00.
+//
+// The one appearance that IS attributable to a creation is the account the
+// fuzzer asked for: the name it typed into AddAccountScreen, judged on the step
+// where that screen's submit landed on Home. Everything else that shows up is a
+// card that came into view, and this property has nothing to say about it.
+//
+// Returns true only for a violation it can attribute. Unattributable is not the
+// same as fine, and both come back false here.
+export function createdAccountHasNonZeroBalance(args: {
+  route: string | null;
+  lastAction: { kind?: string; on?: string | object } | null;
+  typedName: string | undefined;
+  before: Account[] | null;
+  after: Account[] | null;
+}): boolean {
+  const { route, lastAction, before, after } = args;
+  if (route !== "home") return false;
+  if (!isAddAccountSubmitTap(lastAction)) return false;
+  if (before === null || after === null) return false;
+  const typed = (args.typedName ?? "").trim();
+  if (typed === "") return false;
+  // Web merges the card into one node whose text opens with the avatar
+  // initials, so the identity key is "INInvestments" where android and iOS give
+  // "Investments"; endsWith covers both. Two cards answering to the same typed
+  // name (a second "Travel", or a card the tree exposed twice) leave the
+  // appearance unattributable, so nothing is judged.
+  const matches = after.filter(account => account.name.endsWith(typed));
+  const created = matches.length === 1 ? matches[0] : undefined;
+  if (created === undefined) return false;
+  if (before.some(account => account.name === created.name)) return false;
+  return created.balance !== null && created.balance !== 0;
 }
 
 // Every accepted submit commits exactly one transaction, so over any window the
