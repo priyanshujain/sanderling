@@ -148,19 +148,32 @@ func TestRun_EndToEndAgainstStubBinary(t *testing.T) {
 func TestExecuteCommand_RunTimeoutSignalsSoTheRunReapsItsChildren(t *testing.T) {
 	directory := t.TempDir()
 	marker := filepath.Join(directory, "child-reaped")
+	trapped := filepath.Join(directory, "trap-installed")
 	script := filepath.Join(directory, "wedged")
 	body := "#!/bin/sh\n" +
 		"sleep 300 &\n" +
 		"child=$!\n" +
 		"trap 'kill $child; echo reaped > " + marker + "; exit 143' TERM\n" +
+		"echo installed > " + trapped + "\n" +
 		"wait $child\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// Cancel only once the script has installed its trap. A fixed deadline
+	// races the shell under a loaded machine, and a run signalled before its
+	// trap exists fails this test for a reason it does not test.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if _, err := executeCommand(ctx, script, nil, io.Discard); err != nil {
+	finished := make(chan error, 1)
+	go func() {
+		_, err := executeCommand(ctx, script, nil, io.Discard)
+		finished <- err
+	}()
+	waitForFile(t, trapped)
+	cancel()
+
+	if err := <-finished; err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
@@ -168,4 +181,16 @@ func TestExecuteCommand_RunTimeoutSignalsSoTheRunReapsItsChildren(t *testing.T) 
 		t.Fatal("the run timeout killed the run outright, so it never reaped its own children: " +
 			"an unattended sweep leaks one sidecar per wedged run")
 	}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s never appeared", path)
 }
