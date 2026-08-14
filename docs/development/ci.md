@@ -50,16 +50,27 @@ version of this gate went green on a witness whose delta was 3.16x the typed
 amount. Honest windows are rare, so the counting invariant carries most of the
 detection: it needs no amount and survives a wide window.
 
-**android is a health gate**, not a conviction gate. A run there is not a
-function of its seed. The hierarchy dump can show two screens at once during a
-Compose cross-fade, such a step applies no action, and the count of those frames
-varies run to run, so the same seed walks a different trajectory each time. The
-bug turns up in about two runs in five, which is not a gate: the failure message
-"the double-submit bug was NOT found" would be indistinguishable from the
-regression it exists to catch. The leg asserts instead that the run stayed
-healthy and reached the transaction screen, and reports a conviction as a bonus
-when it gets one. Fixing this means suppressing transitional frames in the
-android driver, the way the ios companion and the chrome driver already do.
+**android is a health gate**, not a conviction gate, because it convicts in four
+runs out of five rather than five. The leg asserts that the run stayed healthy
+and reached the transaction screen, and reports the conviction it usually gets as
+a bonus. A gate that fails one run in five would be useless here: its failure
+message, "the double-submit bug was NOT found", is indistinguishable from the
+regression the gate exists to catch.
+
+It used to be two runs in five. The android backend now waits out a route
+cross-fade before it snapshots, the way the ios companion and the chrome driver
+do, because a dump holding two screens at once makes the runner refuse to act on
+it and a quarter of android steps therefore applied no action at all. The number
+of those wasted steps varied run to run, so the same seed never walked the same
+trajectory. With the wait, four runs of one seed produced byte-identical decision
+sequences over 179 steps.
+
+The fifth diverged for the remaining reason: a route can settle before its
+content composes, so the tree holds one screen and almost nothing in it, and the
+fuzzer acts on a screen that is still filling in. That happened once in about a
+thousand steps. Catching it needs structural stability polling on every snapshot,
+which costs roughly 2.8s per mutating step and was removed for that reason, so it
+is the open item between android and a real conviction gate.
 
 The wasmJs app is served with `Cross-Origin-Opener-Policy` and
 `Cross-Origin-Embedder-Policy` headers, because its sqlite worker needs
@@ -72,9 +83,8 @@ delta of exactly twice the typed amount. Both run a 240-step budget. Keep them
 pinned: honest evidence is rare, and across 2261 ios steps only one submit tap
 landing on Home had a single-submit window.
 
-Android runs seed 9 over 120 steps, but as a health gate the seed is not load
-bearing; the budget is, since a run that finds nothing walks the whole thing and
-costs seven minutes against ninety seconds for one that convicts.
+Android runs seed 9 over 200 steps: its conviction lands at step 178, so a
+shorter budget would never see the bonus. A full run costs about five minutes.
 
 Repeating the ios leg by hand is not the same as running it in CI: with
 `--clear-data=false` a second local run inherits the first one's accounts, so

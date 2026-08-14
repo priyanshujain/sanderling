@@ -10,9 +10,9 @@ name: folio
 # two are worth telling apart, which is why --exit-on-violation exits 2 and not
 # 1.
 #
-# android is a health gate. The same seed does not walk the same trajectory
-# there, so the bug turns up in roughly two runs in five, and a conviction gate
-# would report a regression it had not found.
+# android is a health gate. It convicts in four runs out of five, which is real
+# evidence but not a gate: the fifth would report a regression it had not found.
+# The budget is set so the conviction it usually gets is reported as a bonus.
 
 on:
   workflow_dispatch:
@@ -97,7 +97,7 @@ jobs:
           script: .github/scripts/folio-run.sh android
         env:
           SEED: ${{ inputs.seed != '0' && inputs.seed || '9' }}
-          MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '120' }}
+          MAX_STEPS: ${{ inputs.max-steps != '0' && inputs.max-steps || '200' }}
           DURATION: ${{ inputs.duration }}
 
       - name: Upload the run
