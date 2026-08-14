@@ -219,13 +219,20 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			}); err != nil {
 				return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 			}
+			// Both failures below leave some extractors holding the page's
+			// value and the rest holding goja's reading of the dump, and a
+			// property comparing previous to current across that split fires
+			// on a healthy app. A skip also means the two engines loaded
+			// different bundles, which nothing downstream can reconcile.
 			skipped, overrideErr := options.Verifier.OverrideExtractorValues(v8Overrides)
 			if overrideErr != nil {
-				logger.Warn("v8 override apply failed", "step", stepIndex, "err", overrideErr)
+				return summary, fmt.Errorf("step %d apply extractor overrides: %w", stepIndex, overrideErr)
 			}
 			if skipped > 0 {
-				logger.Warn("v8 override skipped out-of-range entries",
-					"step", stepIndex, "skipped", skipped, "have", len(v8Overrides))
+				return summary, fmt.Errorf(
+					"step %d: %d of %d extractor overrides fell outside the spec's extractor list; "+
+						"the page and the host are running different bundles",
+					stepIndex, skipped, len(v8Overrides))
 			}
 			options.Verifier.EvaluateProperties()
 			violations = options.Verifier.NewlyViolatedProperties()
