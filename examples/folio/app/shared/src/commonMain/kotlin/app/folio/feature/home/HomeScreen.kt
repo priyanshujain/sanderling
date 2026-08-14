@@ -72,7 +72,12 @@ fun HomeScreen(state: HomeUiState, onEvent: (HomeEvent) -> Unit) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Column {
                     Text("TOTAL BALANCE", style = Type.label, color = t.textMuted)
-                    Text(formatCents(total), style = Type.balance, color = t.text)
+                    Text(
+                        formatCents(total),
+                        style = Type.balance,
+                        color = t.text,
+                        modifier = Modifier.testTag("TotalBalance"),
+                    )
                 }
                 Box(Modifier.weight(1f))
                 Text(
@@ -153,7 +158,12 @@ private fun AccountCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("AccountName"),
             )
-            Text(txnLabel, style = Type.caption, color = t.textMuted)
+            Text(
+                txnLabel,
+                style = Type.caption,
+                color = t.textMuted,
+                modifier = Modifier.testTag("AccountTxnCount"),
+            )
         }
         Text(
             formatCents(balance),
