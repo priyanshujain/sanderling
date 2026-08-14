@@ -88,8 +88,14 @@ internal const val TRANSITION_POLL_INTERVAL_MILLIS = 100L
 // NavHost cross-fade is a 700ms tween (Compose navigation's default enter and
 // exit), it starts when the action lands rather than when the snapshot begins,
 // and the streak above has to fit after it. Measured on the emulator, a 600ms
-// cap left about a third of fades unfinished. A layout that holds two routes at
-// rest costs the full cap once per step and no more.
+// cap left about a third of fades unfinished.
+//
+// A layout that holds two routes at rest pays the full cap on every snapshot
+// RPC it is read with, and the runner issues more than one: fetchSyncedState
+// (internal/runner) re-fetches a tree it considers transitional up to 4 times.
+// It stops early once two consecutive fetches come back byte-identical, so such
+// a layout costs 2 caps on a still tree and up to 4 on one that jitters
+// underneath. Per step, not once per step.
 internal const val TRANSITION_POLL_CAP_MILLIS = 1500L
 
 // awaitSettledTree reads the hierarchy and, while the tree it gets back holds
@@ -123,11 +129,14 @@ internal fun awaitSettledTree(read: () -> String): String {
 // state stable.
 //
 // The streak is measured from the start of the read that opened the current
-// run of identical snapshots, not from when that read returned: a hierarchy
-// fetch is not instantaneous, and the UI changing mid-fetch would have changed
-// the snapshot, so the fetch's own duration is evidence of stability. On
-// Android a fetch costs more than the poll interval, so charging it to the
-// streak is the difference between two reads and four.
+// run of identical snapshots, not from when that read returned, so a slow read
+// is charged to the streak. That is a deliberate trade and not a free one: the
+// quiet the poll actually OBSERVED spans the last read's start back to the
+// first read's return, which is shorter than streakMillis by up to the two
+// reads' durations. On Android a hierarchy fetch costs more than the poll
+// interval, so charging it is the difference between two reads and four, and a
+// caller wanting the full streak observed has to widen streakMillis rather than
+// assume it. StabilityPollTest.slowSnapshotReadsCountTowardTheStreak pins this.
 internal fun pollUntilStable(
     timeoutMillis: Long,
     streakMillis: Long = MIN_STABLE_STREAK_MILLIS,

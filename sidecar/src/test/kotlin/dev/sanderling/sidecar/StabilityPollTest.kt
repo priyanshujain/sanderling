@@ -16,6 +16,46 @@ class StabilityPollTest {
         assertTrue(elapsed < 3000L, "should not run to cap when stable, elapsed=${elapsed}ms")
     }
 
+    @Test fun slowSnapshotReadsCountTowardTheStreak() {
+        // The streak runs from the START of the read that opened the run of
+        // identical snapshots, so the read's own duration is charged to it.
+        // Every other test here uses an instant lambda and so passes under
+        // either semantics; this one is the difference. StubDriverBackend's
+        // waitForIdle polls a real `uiautomator dump`, which costs hundreds of
+        // milliseconds, so the slow read is the case it runs in.
+        val readMillis = 400L
+        val sampleStarts = mutableListOf<Long>()
+        val sampleEnds = mutableListOf<Long>()
+        val start = System.currentTimeMillis()
+        pollUntilStable(5000L) {
+            sampleStarts += System.currentTimeMillis() - start
+            Thread.sleep(readMillis)
+            sampleEnds += System.currentTimeMillis() - start
+            "stable"
+        }
+        val elapsed = System.currentTimeMillis() - start
+
+        // One read plus one interval plus one read already clears 750ms, so the
+        // poll settles for two samples where an instant read takes four.
+        assertEquals(
+            2,
+            sampleStarts.size,
+            "a ${readMillis}ms read should clear the streak in two samples, starts=$sampleStarts",
+        )
+        assertTrue(elapsed >= MIN_STABLE_STREAK_MILLIS, "elapsed=${elapsed}ms")
+
+        // What the poll actually watched: the last read began this long after
+        // the first one returned. It is the poll interval, not the streak, and
+        // a caller that needs MIN_STABLE_STREAK_MILLIS of observed quiet has to
+        // ask for a wider streak rather than assume this one delivers it.
+        val observedQuiet = sampleStarts.last() - sampleEnds.first()
+        assertTrue(
+            observedQuiet < MIN_STABLE_STREAK_MILLIS,
+            "the poll returned having observed ${observedQuiet}ms of quiet, not " +
+                "${MIN_STABLE_STREAK_MILLIS}ms; if that changed, the streak semantics changed",
+        )
+    }
+
     @Test fun streakResetsOnAnyChange() {
         // A late transition that fires after the prior streak has already
         // begun must reset the clock: the post-transition stable window has
