@@ -14,7 +14,9 @@ export function next(predicate: () => boolean): Formula {
 
 // An unbounded `eventually` never forces a violation within a finite run.
 // Prefer `.within(n, unit)` when you want the verifier to fail a property
-// that stalls.
+// that stalls. `"steps"` counts observed steps rather than wall-clock time,
+// which is what keeps the window the same size across runs of different
+// speeds.
 export function eventually(predicate: () => boolean): EventuallyFormula {
   return globalThis.__sanderling__.eventually(predicate);
 }

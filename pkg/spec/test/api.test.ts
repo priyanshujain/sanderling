@@ -203,6 +203,12 @@ test("eventually().within forwards unit and amount", () => {
   assert.deepEqual(runtime.withinCalls[0], { amount: 3, unit: "seconds" });
 });
 
+test("eventually().within forwards the step unit unchanged", () => {
+  const runtime = installFakeRuntime();
+  eventually(() => true).within(1915, "steps");
+  assert.deepEqual(runtime.withinCalls[0], { amount: 1915, unit: "steps" });
+});
+
 test("formula chaining exposes implies/or/and/not", () => {
   const runtime = installFakeRuntime();
   const a = now(() => true);

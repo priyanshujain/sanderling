@@ -203,6 +203,10 @@ export interface Formula {
 }
 
 export interface EventuallyFormula extends Formula {
+  // `"milliseconds"` and `"seconds"` bound the window in wall-clock time, which
+  // is what a user-perceived deadline means. `"steps"` bounds it in observed
+  // steps, so the same window costs the same regardless of how long each step
+  // took: use it for anything compared across runs of different speeds.
   within(amount: number, unit: "milliseconds" | "seconds" | "steps"): Formula;
 }
 
