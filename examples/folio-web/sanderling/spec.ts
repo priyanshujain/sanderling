@@ -119,13 +119,19 @@ const balanceMatchesTransactionDelta = always(
   ),
 );
 
-const loginReachable = eventually(() => loggedIn.current).within(90, "seconds");
+// The three reachability goals are bounded in steps, not seconds, because they
+// are compared across action-selection policies and the model policy spends a
+// provider call per step. A 300-step seeded run of this app takes about 47
+// seconds, so the wall-clock windows these replace are 6.38 steps per second:
+// 90 s is 575 steps, 180 s is 1150, and 300 s is 1915. The window now costs
+// the same whatever is driving.
+const loginReachable = eventually(() => loggedIn.current).within(575, "steps");
 const accountCreationReachable = eventually(
   () => accountCards.current.length > 0,
-).within(180, "seconds");
+).within(1150, "steps");
 const someTransactionExists = eventually(
   () => ledgerTxnCount.current > 0,
-).within(300, "seconds");
+).within(1915, "steps");
 
 export const properties = {
   loggedInLeavesLogin,
