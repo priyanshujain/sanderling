@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // stubSanderling answers `version`, writes a run directory shaped like the one
@@ -140,5 +142,30 @@ func TestRun_EndToEndAgainstStubBinary(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "outcome=violation@2") {
 		t.Errorf("progress output: %q", stdout.String())
+	}
+}
+
+func TestExecuteCommand_RunTimeoutSignalsSoTheRunReapsItsChildren(t *testing.T) {
+	directory := t.TempDir()
+	marker := filepath.Join(directory, "child-reaped")
+	script := filepath.Join(directory, "wedged")
+	body := "#!/bin/sh\n" +
+		"sleep 300 &\n" +
+		"child=$!\n" +
+		"trap 'kill $child; echo reaped > " + marker + "; exit 143' TERM\n" +
+		"wait $child\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := executeCommand(ctx, script, nil, io.Discard); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("the run timeout killed the run outright, so it never reaped its own children: " +
+			"an unattended sweep leaks one sidecar per wedged run")
 	}
 }

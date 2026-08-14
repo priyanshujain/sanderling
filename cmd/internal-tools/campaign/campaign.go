@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -25,6 +26,12 @@ func executeCommand(ctx context.Context, binary string, arguments []string, outp
 	command := exec.CommandContext(ctx, binary, arguments...)
 	command.Stdout = output
 	command.Stderr = output
+	// SIGTERM rather than the default kill: a run killed outright never runs its
+	// own shutdown, and its sidecar survives holding a port and a quarter
+	// gigabyte. The run timeout exists for unattended hosts, which is exactly
+	// where nobody is watching to reap what it leaves.
+	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
+	command.WaitDelay = runShutdownGrace
 	err := command.Run()
 	if err == nil {
 		return 0, nil
@@ -33,8 +40,16 @@ func executeCommand(ctx context.Context, binary string, arguments []string, outp
 	if errors.As(err, &exitError) {
 		return exitError.ExitCode(), nil
 	}
+	if ctx.Err() != nil {
+		return -1, nil
+	}
 	return -1, err
 }
+
+// runShutdownGrace bounds how long a signalled run gets to stop its sidecar
+// before it is killed. It exceeds the sidecar's own 15s shutdown grace, or the
+// escalation would land while the run was still doing what it was asked.
+const runShutdownGrace = 30 * time.Second
 
 // runRecord is one line of runs.jsonl.
 type runRecord struct {
