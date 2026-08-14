@@ -4,7 +4,6 @@ import { test } from "node:test";
 import {
   cardAccountName,
   cardBalanceText,
-  computeHomeTotalBalance,
   parseDollarCents,
 } from "../../../examples/folio/sanderling/predicates.ts";
 
@@ -112,21 +111,12 @@ test("account keys are distinct across the accounts a run creates", () => {
 // elementHandle in the web runtime truncates node text at 200 characters, so a
 // long account name (the input corpus types 4096 "a"s) pushes the balance off
 // the end of the string. That balance is unknown, and unknown must not read as
-// zero or the Home total silently drops a card.
+// zero: newAccountBalanceIsZero passes an unknown balance rather than
+// convicting a card it could not read.
 test("card text truncated past the balance reads as unknown, not zero", () => {
   const cardText = "AA" + "a".repeat(198);
   assert.equal(cardBalanceText({ childText: undefined, cardText }), undefined);
   assert.equal(balanceOf(cardText), null);
-  assert.equal(
-    computeHomeTotalBalance({
-      cardBalanceTexts: [
-        cardBalanceText({ childText: undefined, cardText: "SASavings1 transaction$118.00" }),
-        cardBalanceText({ childText: undefined, cardText }),
-      ],
-      previousCarrier: 0,
-    }),
-    null,
-  );
 });
 
 test("empty and missing text are unknown, not zero", () => {
@@ -138,12 +128,12 @@ test("empty and missing text are unknown, not zero", () => {
   assert.equal(cardAccountName({ childText: undefined, cardText: undefined }), "");
 });
 
-test("home total sums merged-text cards the same as structured ones", () => {
+// The two accessibility shapes have to read the same per-card balance, which is
+// what the accounts extractor compares. The Home total is no longer a sum of
+// these: it is the app's own TOTAL BALANCE node (see folio-total-balance.test.ts).
+test("merged card text and a structured child give the same balance", () => {
   const merged = ["INInvestments12 transactions$2,589.00", "Aa0 transactions$0.00"].map(cardText =>
     cardBalanceText({ childText: undefined, cardText }));
-  assert.equal(computeHomeTotalBalance({ cardBalanceTexts: merged, previousCarrier: 0 }), 258900);
-  assert.equal(
-    computeHomeTotalBalance({ cardBalanceTexts: ["$2,589.00", "$0.00"], previousCarrier: 0 }),
-    258900,
-  );
+  assert.deepEqual(merged, ["$2,589.00", "$0.00"]);
+  assert.deepEqual(merged.map(parseDollarCents), [258900, 0]);
 });
