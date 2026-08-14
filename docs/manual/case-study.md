@@ -35,12 +35,16 @@ const submitMovesBalanceByTypedAmount = always(
     if (!JSON.stringify(action.on ?? "").includes("TxnSubmit")) return true;
     const typed = parseTypedAmount(txnAmountField.previous?.text);
     if (typed === 0) return true;
-    return Math.abs(totalBalance.current - (totalBalance.previous ?? 0)) === typed;
+    const before = totalBalance.previous;
+    if (before === null || totalBalance.current === null) return true;
+    return Math.abs(totalBalance.current - before) === typed;
   })
 );
 ```
 
 `always` checks the formula at every step; `next` lets it compare the step before a submit to the step after. The guards narrow it to the one transition that matters, a submit that lands back on home, and the last line states the rule: the balance moved by exactly the typed amount. Double-submit moves it by twice that, and the formula is false.
+
+The null guard is not defensive clutter, it is the difference between a property and a false alarm. Read a balance you could not parse as `0` and the comparison becomes `0 - 0 === typed`, which is false at every healthy submit. A reading you do not have is not evidence, so the property declines to judge. The real spec guards the same way against a balance too large for exact integer arithmetic.
 
 The values it reads come from extractors, which pull state out of the UI tree once per step:
 
