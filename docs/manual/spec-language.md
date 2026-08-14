@@ -180,6 +180,29 @@ Extractors are evaluated before properties and action generators. Use `.previous
 
 A property that is an `eventually` at the top level is one goal for the whole run: it is armed at the first step and discharged for good the first time it holds. Written inside `always(...)` the same formula is armed again at every step, which asks for the window to be met from every step in the run.
 
+### Choosing a bound unit
+
+`"milliseconds"` and `"seconds"` bound the window in wall-clock time, measured from
+the step that armed the obligation. Use them when the deadline is about what a user
+would sit through: a spinner that has to clear, a screen that has to appear.
+
+`"steps"` bounds the window in observed steps instead, so the same window costs the
+same however long each step took. Use it for anything compared across runs that move
+at different speeds, such as two action-selection policies given the same step budget,
+where a wall-clock window fails the slower one on elapsed time rather than on the app
+misbehaving.
+
+An observed step is a step the verifier evaluated. A step it skipped, a transitional
+tree or an empty hierarchy, never reached the property and so does not consume the
+window; the trace marks those steps with `skippedVerification`. The observed-step
+count is therefore at most the runner's step number, and a step-bounded residual
+records both: `within` carries the window the spec authored plus
+`expiresAtObservation`, the observed step the obligation comes due at.
+
+The unit does not change what an undischarged obligation means. An `eventually` that
+never fires is a violation at the end of the run whichever unit bounded it, and a
+window that never closed before the run ended is still a broken promise.
+
 **Formula combinators** - available on every `Formula`:
 
 | Method | Meaning |
