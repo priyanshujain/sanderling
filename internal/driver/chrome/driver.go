@@ -557,12 +557,35 @@ const domQuietPeriod = 150 * time.Millisecond
 // shows two *Screen ids at rest costs this much per step and no more.
 const transitionSettlePeriod = 800 * time.Millisecond
 
+// settleReturnMargin is what WaitForIdle holds back from the caller's timeout,
+// so returning late by our own doing surfaces as a settled page rather than a
+// context cancellation.
+const settleReturnMargin = 100 * time.Millisecond
+
+// settleScanMargin covers the in-page work the two waits do not themselves
+// account for: liveScreens() walks the document and every shadow root on each
+// 16 ms poll, and the whole script costs one CDP round trip.
+const settleScanMargin = 250 * time.Millisecond
+
+// MinIdleTimeout is the shortest timeout WaitForIdle can be handed and still
+// spend the waits it is built from: the DOM quiet period, the route-transition
+// window that only opens once that quiet period has elapsed, and the second
+// quiet period the transition's own closing mutation starts. A caller that
+// passes less caps the settle below its own budget, and the step then samples a
+// page that is still mid-transition - which is the exact failure the transition
+// wait exists to prevent. internal/runner raises a shorter caller timeout to
+// this value.
+func (d *Driver) MinIdleTimeout() time.Duration {
+	return 2*domQuietPeriod + transitionSettlePeriod +
+		settleScanMargin + settleReturnMargin
+}
+
 func (d *Driver) WaitForIdle(ctx context.Context, timeout time.Duration) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
 	// Leave the caller's deadline some room: returning late by our own doing
 	// would surface as a context cancellation instead of a settled page.
-	budget := max(timeout-100*time.Millisecond, domQuietPeriod)
+	budget := max(timeout-settleReturnMargin, domQuietPeriod)
 	script := fmt.Sprintf(settleScript,
 		domQuietPeriod.Milliseconds(),
 		budget.Milliseconds(),
@@ -598,11 +621,18 @@ const liveScreensFunction = `
 // itself gives up after %d ms. Shadow roots get their own observer: a canvas
 // app keeps its whole accessibility tree inside one, and mutations there do not
 // reach an observer on the document.
+//
+// The transition window opens when the quiet period ends, not when the script
+// starts. Anchored at the start it is already spent by the time the check can
+// first run on any page that keeps mutating for longer than the window, so the
+// wait resolves immediately with both routes still live - the mid-transition
+// return this whole wait exists to prevent. Each mutation reopens it, and the
+// budget above bounds the total either way.
 const settleScript = `
 new Promise(resolve => {
   const quietMillis = %d, budgetMillis = %d, transitionMillis = %d;
   const observers = [];
-  const transitionDeadline = Date.now() + transitionMillis;
+  let transitionDeadline = 0;
   let timer = null;
   const finish = () => {
     clearTimeout(timer);
@@ -611,6 +641,7 @@ new Promise(resolve => {
   };
 ` + liveScreensFunction + `
   const quiet = () => {
+    if (transitionDeadline === 0) transitionDeadline = Date.now() + transitionMillis;
     if (liveScreens() > 1 && Date.now() < transitionDeadline) {
       timer = setTimeout(quiet, 16);
       return;
@@ -619,6 +650,7 @@ new Promise(resolve => {
   };
   const restart = () => {
     clearTimeout(timer);
+    transitionDeadline = 0;
     timer = setTimeout(quiet, quietMillis);
   };
   const watch = (root) => {
@@ -770,15 +802,19 @@ func (d *Driver) EvaluateExtractors(ctx context.Context) (map[int]json.RawMessag
 // action was actually applied. Without this call every web state.lastAction is
 // null, so a property gated on what the last action did is vacuously true and
 // reports a green run while checking nothing.
+//
+// The call is deliberately unguarded. A `setter && setter(...)` form evaluates
+// to undefined on a page whose runtime does not define the setter, and chromedp
+// reports that as success, so "the page cannot accept lastAction" would be
+// indistinguishable from "installed". That page is reachable: a run resolving
+// its web runtime from an older published @sanderling/spec would silently no-op
+// every step. Unguarded, the missing global throws and the run fails loudly.
 func (d *Driver) SetLastAction(ctx context.Context, encoded json.RawMessage) error {
 	payload := strings.TrimSpace(string(encoded))
 	if payload == "" {
 		payload = "null"
 	}
-	script := fmt.Sprintf(
-		`window.__sanderlingSetLastAction__ && window.__sanderlingSetLastAction__(%s)`,
-		payload,
-	)
+	script := fmt.Sprintf(`window.__sanderlingSetLastAction__(%s)`, payload)
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
 	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, nil)); err != nil {
@@ -789,16 +825,25 @@ func (d *Driver) SetLastAction(ctx context.Context, encoded json.RawMessage) err
 
 // extractorScript resolves the extractor table once the page is not mid route
 // transition, giving up on that wait after %d ms.
+//
+// A missing table rejects rather than reporting {}, for the same reason
+// SetLastAction no longer guards its call: an empty override map is what a
+// spec with no extractors returns, so the guarded form made "this page has no
+// sanderling runtime" read as a normal step whose properties then ran on
+// goja's dump-derived values instead of the page's.
 const extractorScript = `
-new Promise(resolve => {
+new Promise((resolve, reject) => {
   const deadline = Date.now() + %d;` + liveScreensFunction + `
   const read = () => {
     if (liveScreens() > 1 && Date.now() < deadline) {
       setTimeout(read, 16);
       return;
     }
-    resolve(JSON.stringify(
-      window.__sanderlingExtractors__ ? window.__sanderlingExtractors__() : {}));
+    if (typeof window.__sanderlingExtractors__ !== "function") {
+      reject(new Error("__sanderlingExtractors__ is not installed in the page"));
+      return;
+    }
+    resolve(JSON.stringify(window.__sanderlingExtractors__()));
   };
   read();
 })`

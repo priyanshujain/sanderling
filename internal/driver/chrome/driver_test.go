@@ -672,17 +672,31 @@ func TestWaitForIdle_ReturnsOnABusyPage(t *testing.T) {
 // app is leaving, which on the folio wasm build recorded a submit that had
 // landed on Home as still being on the transaction screen: the route gate of an
 // action-gated property then skipped the very step the action landed on.
+//
+// The page keeps mutating for 300 ms after the route splice, and the settle
+// runs on the timeout production hands it (MinIdleTimeout). Both details are
+// load-bearing. A quiet page reaches the transition check immediately, so it
+// passes whether the transition window is anchored at the script start or at
+// the end of the quiet period; churn is what pushes the check past a
+// start-anchored deadline, which then finishes at once with two live screens.
+// And a caller timeout below MinIdleTimeout cuts the whole settle off before
+// the transition window can be spent, which is the same bug from the other end.
 func TestWaitForIdle_WaitsOutARouteTransition(t *testing.T) {
 	const page = `<body><div id="app"></div><script>
 	  const root = document.getElementById("app").attachShadow({mode: "open"});
 	  root.innerHTML = '<button id="go" style="width:200px;height:80px">go</button>' +
-	    '<div id="LedgerScreen">ledger</div>';
+	    '<div id="LedgerScreen">ledger</div><div id="spinner">0</div>';
 	  root.getElementById("go").addEventListener("click", function () {
 	    const incoming = document.createElement("div");
 	    incoming.id = "HomeScreen";
 	    incoming.textContent = "home";
 	    root.appendChild(incoming);
-	    setTimeout(function () { root.getElementById("LedgerScreen").remove(); }, 400);
+	    let frame = 0;
+	    const churn = setInterval(function () {
+	      root.getElementById("spinner").textContent = String(++frame);
+	    }, 30);
+	    setTimeout(function () { clearInterval(churn); }, 300);
+	    setTimeout(function () { root.getElementById("LedgerScreen").remove(); }, 1000);
 	  });
 	</script></body>`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -701,7 +715,7 @@ func TestWaitForIdle_WaitsOutARouteTransition(t *testing.T) {
 	if err := d.Tap(ctx, 40, 40); err != nil {
 		t.Fatalf("Tap: %v", err)
 	}
-	if err := d.WaitForIdle(ctx, 2*time.Second); err != nil {
+	if err := d.WaitForIdle(ctx, d.MinIdleTimeout()); err != nil {
 		t.Fatalf("WaitForIdle: %v", err)
 	}
 
@@ -791,5 +805,83 @@ func TestEvaluateExtractors_WaitsOutARouteTransition(t *testing.T) {
 	if got := string(values[0]); got != `"HomeScreen"` {
 		t.Errorf("extractor read %s, want \"HomeScreen\"; the extractors sampled "+
 			"mid-transition, so the spec sees the route the app is leaving", got)
+	}
+}
+
+// TestSetLastAction_ReportsAPageThatCannotTakeIt covers the install the whole
+// web path's action-gated properties hang off. A page without the setter is
+// reachable: internal/testrun resolves the web runtime from
+// node_modules/@sanderling/spec when no sibling checkout is present, and an
+// older published runtime does not define it. Guarded as
+// `setter && setter(...)`, that page returns undefined and chromedp reports
+// success, so every step silently no-ops and every property gated on the last
+// action goes vacuously true - a green run that checked nothing.
+func TestSetLastAction_ReportsAPageThatCannotTakeIt(t *testing.T) {
+	const withSetter = `<body><script>
+	  window.__lastActionSeen = null;
+	  window.__sanderlingSetLastAction__ = function (value) { window.__lastActionSeen = value; };
+	</script></body>`
+	const withoutSetter = `<body><div id="app">no sanderling runtime here</div></body>`
+	pages := map[string]string{"/with": withSetter, "/without": withoutSetter}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(pages[r.URL.Path]))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := d.Launch(ctx, server.URL+"/with", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	action := json.RawMessage(`{"kind":"Tap","on":"id:TxnSubmit"}`)
+	if err := d.SetLastAction(ctx, action); err != nil {
+		t.Fatalf("SetLastAction on a page that defines the setter: %v", err)
+	}
+	var seen map[string]string
+	if err := chromedp.Run(d.tabCtx,
+		chromedp.Evaluate(`window.__lastActionSeen`, &seen)); err != nil {
+		t.Fatalf("read installed action: %v", err)
+	}
+	if seen["on"] != "id:TxnSubmit" {
+		t.Errorf("the page received %v, want the action the runner applied", seen)
+	}
+
+	if err := d.Launch(ctx, server.URL+"/without", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.SetLastAction(ctx, action); err == nil {
+		t.Error("SetLastAction reported success on a page with no setter; " +
+			"a runtime that cannot take lastAction is indistinguishable from one that did")
+	}
+}
+
+// TestEvaluateExtractors_ReportsAMissingTable is the same failure on the other
+// sampler. An empty override map is what a spec with no extractors returns, so
+// treating a missing table as {} makes "this page has no sanderling runtime"
+// read as an ordinary step - and the verifier then judges the run on goja's
+// dump-derived values while believing they came from the page.
+func TestEvaluateExtractors_ReportsAMissingTable(t *testing.T) {
+	const page = `<body><div id="app">no sanderling runtime here</div></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	values, err := d.EvaluateExtractors(ctx)
+	if err == nil {
+		t.Errorf("EvaluateExtractors returned %v and no error on a page with no "+
+			"extractor table; a page that cannot be read must not read as empty", values)
 	}
 }
