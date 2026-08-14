@@ -211,27 +211,45 @@ export function cardAccountName(args: {
   return head.slice(0, label.index).trim();
 }
 
-// The digit run in front of a card's "transaction(s)" label, kept as TEXT.
+// One card's transaction count, in the strongest form its SOURCE supports. The
+// two forms are the whole reason this is not just a number:
 //
-// A string rather than a number because web merges the card into one node and
-// an account whose name ends in digits runs them into the count: the account
-// named "-1" holding 2 transactions merges to "-1-12 transactions", whose
-// maximal digit run reads 12. That prefix is fixed for a given account, so two
-// readings whose runs are the SAME LENGTH still differ by exactly the true
-// difference (19 to 120 is impossible; 19 to 110 is a length change). Two runs
-// of different lengths do not, and 9 to 10 would read as 19 to 110, a delta of
-// 91 out of a delta of 1. Keeping the run as text is what lets the predicate
-// see the length change and drop the pair instead of convicting on it.
+//   - a NUMBER when the count came from the card's own AccountTxnCount node.
+//     That node's text is the count label and nothing else, so its digits are
+//     the count and subtracting two readings is exact arithmetic;
+//   - the digit RUN as TEXT when the count had to be recovered from merged card
+//     text. Web merges the AccountCard subtree into one node, and an account
+//     whose name ends in digits runs them into the count: the account named
+//     "-1" holding 2 transactions merges to "-1-12 transactions", whose maximal
+//     digit run reads 12. That prefix is fixed for a given account, so two
+//     readings whose runs are the SAME LENGTH still differ by exactly the true
+//     difference (19 to 120 is impossible; 19 to 110 is a length change), while
+//     two of different lengths do not: 9 to 10 reads as 19 to 110, a delta of
+//     91 out of a delta of 1. Keeping the run as text is what lets
+//     committedTransactionsExceedSubmits see the length change and drop the
+//     pair instead of convicting on it.
 //
-// Android and iOS expose AccountTxnCount as its own node, where the run is just
-// the count and the length rule costs nothing but a window per decade.
-export function cardTxnCountDigits(args: {
+// Carrying the distinction is what keeps that length rule where it belongs.
+// There is no name in front of a dedicated node's digits for it to protect
+// against, so applied there it buys nothing and throws away real evidence every
+// time an account crosses a decade: of the three android seed-9 runs that
+// finished without convicting, two had dropped a window on this rule, one
+// reading 7 against 12 and the other 4 against 10.
+//
+// This is a fact about the reading, not about the platform. A platform that
+// starts exposing the node gets exact counts by exposing it, and one that stops
+// falls back to the text rule on the same step it stops.
+export type TxnCount = number | string;
+
+export function cardTxnCount(args: {
   childText: string | undefined;
   cardText: string | undefined;
-}): string | undefined {
+}): TxnCount | undefined {
   const { childText, cardText } = args;
   const source = childText ?? cardText?.replace(TRAILING_BALANCE, "");
-  return source?.match(TRAILING_TXN_COUNT)?.[1];
+  const digits = source?.match(TRAILING_TXN_COUNT)?.[1];
+  if (digits === undefined) return undefined;
+  return childText === undefined ? digits : parseInt(digits, 10);
 }
 
 export interface Account {
@@ -243,7 +261,7 @@ export interface Account {
 
 // One Home card, already parsed by the three helpers above.
 export interface CardReading extends Account {
-  digits: string | undefined;
+  count: TxnCount | undefined;
 }
 
 // The two readings Home's card list yields, each null when there is nothing in
@@ -262,10 +280,10 @@ export function homeAccountsOf(cards: readonly CardReading[]): Account[] | null 
 // A card whose name or count is unreadable is left out rather than guessed at;
 // committedTransactionsExceedSubmits treats a missing account as no evidence.
 // Every card being unreadable leaves nothing to compare, which is unknown.
-export function homeTxnCountsOf(cards: readonly CardReading[]): Record<string, string> | null {
-  const counts: Record<string, string> = {};
+export function homeTxnCountsOf(cards: readonly CardReading[]): Record<string, TxnCount> | null {
+  const counts: Record<string, TxnCount> = {};
   for (const card of cards) {
-    if (card.name !== "" && card.digits !== undefined) counts[card.name] = card.digits;
+    if (card.name !== "" && card.count !== undefined) counts[card.name] = card.count;
   }
   return Object.keys(counts).length === 0 ? null : counts;
 }
@@ -329,8 +347,8 @@ export function createdAccountHasNonZeroBalance(args: {
 // per-account count only ever rises; the max(0, ...) is defensive, not load
 // bearing.
 export function committedTransactionsExceedSubmits(args: {
-  countsBefore: Record<string, string> | null;
-  countsAfter: Record<string, string> | null;
+  countsBefore: Record<string, TxnCount> | null;
+  countsAfter: Record<string, TxnCount> | null;
   submitsInWindow: number;
 }): boolean {
   const { countsBefore, countsAfter, submitsInWindow } = args;
@@ -341,14 +359,30 @@ export function committedTransactionsExceedSubmits(args: {
     const before = countsBefore[name];
     const after = countsAfter[name];
     if (before === undefined || after === undefined) continue;
-    // Different run lengths are not comparable: see cardTxnCountDigits.
-    if (before.length !== after.length) continue;
-    const from = parseInt(before, 10);
-    const to = parseInt(after, 10);
-    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to)) continue;
-    if (to > from) committed += to - from;
+    const rise = countRise(before, after);
+    if (rise !== null && rise > 0) committed += rise;
   }
   return committed > submitsInWindow;
+}
+
+// How far one account's count rose between two readings, or null when the pair
+// is not comparable. Not comparable is not zero: the account drops out of the
+// sum entirely, which can only cost a detection.
+function countRise(before: TxnCount, after: TxnCount): number | null {
+  if (typeof before === "number" && typeof after === "number") {
+    if (!Number.isSafeInteger(before) || !Number.isSafeInteger(after)) return null;
+    return after - before;
+  }
+  // Recovered from merged card text, where the run may carry an account-name
+  // prefix, so only equal-length runs subtract to the true difference: see
+  // TxnCount. A pair whose two readings came from different sources is one
+  // neither rule can vouch for, and it is dropped with them.
+  if (typeof before !== "string" || typeof after !== "string") return null;
+  if (before.length !== after.length) return null;
+  const from = parseInt(before, 10);
+  const to = parseInt(after, 10);
+  if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to)) return null;
+  return to - from;
 }
 
 // Parses raw user input in the transaction amount field into integer cents.

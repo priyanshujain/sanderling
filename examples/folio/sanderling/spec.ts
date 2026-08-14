@@ -16,7 +16,7 @@ import { defaultActions, doubleTaps } from "@sanderling/spec/defaults";
 import {
   cardAccountName,
   cardBalanceText,
-  cardTxnCountDigits,
+  cardTxnCount,
   committedTransactionsExceedSubmits,
   countSubmitsInWindow,
   createdAccountHasNonZeroBalance,
@@ -29,7 +29,7 @@ import {
   routeOfFrame,
   submitChangesBalanceByTypedAmount,
 } from "./predicates";
-import type { Account, CardReading } from "./predicates";
+import type { Account, CardReading, TxnCount } from "./predicates";
 
 // Screen markers, and the route each one names. Detection is by testTag
 // (resource-id on Android, accessibilityIdentifier on iOS).
@@ -84,7 +84,7 @@ const homeCards = (s: State): CardReading[] =>
         childText: card.find({ testTag: "AccountBalance" })?.text,
         cardText: card.text,
       })),
-    digits: cardTxnCountDigits({
+    count: cardTxnCount({
       childText: card.find({ testTag: "AccountTxnCount" })?.text,
       cardText: card.text,
     }),
@@ -144,8 +144,8 @@ const accounts = extract<Account[] | null>("accounts", s => {
 });
 
 // Transactions committed per account, same carrier rule.
-let lastHomeTxnCounts: Record<string, string> | null = null;
-const homeTxnCounts = extract<Record<string, string> | null>("homeTxnCounts", s => {
+let lastHomeTxnCounts: Record<string, TxnCount> | null = null;
+const homeTxnCounts = extract<Record<string, TxnCount> | null>("homeTxnCounts", s => {
   const reading = readHomeCards({
     route: routeOf(s),
     reading: homeTxnCountsOf(homeCards(s)),

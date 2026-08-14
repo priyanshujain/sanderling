@@ -11,12 +11,13 @@ import {
 import type {
   CardReading,
   HomeCardReading,
+  TxnCount,
 } from "../../../examples/folio/sanderling/predicates.ts";
 
-const card = (name: string, balance: number | null, digits: string | undefined) => ({
+const card = (name: string, balance: number | null, count: TxnCount | undefined) => ({
   name,
   balance,
-  digits,
+  count,
 });
 
 test("a laid-out card list reads as an account list and a count map", () => {
@@ -83,11 +84,11 @@ test("an un-laid-out Home reports unknown but leaves the carrier intact", () => 
 // Home it lands on has not drawn its list yet, and the counting invariant must
 // still be able to see the pair once a real Home comes back.
 function run(steps: { route: string | null; cards: CardReading[]; lastAction: unknown }[]) {
-  let carrier: Record<string, string> | null = null;
+  let carrier: Record<string, TxnCount> | null = null;
   let submits = 0;
-  const out: { counts: Record<string, string> | null; submits: number }[] = [];
+  const out: { counts: Record<string, TxnCount> | null; submits: number }[] = [];
   for (const step of steps) {
-    const reading: HomeCardReading<Record<string, string>> = readHomeCards({
+    const reading: HomeCardReading<Record<string, TxnCount>> = readHomeCards({
       route: step.route,
       reading: homeTxnCountsOf(step.cards),
       previousCarrier: carrier,
