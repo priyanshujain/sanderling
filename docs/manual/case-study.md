@@ -33,6 +33,7 @@ const submitMovesBalanceByTypedAmount = always(
     const action = lastAction.current;
     if (action?.kind !== "Tap" && action?.kind !== "DoubleTap") return true;
     if (!JSON.stringify(action.on ?? "").includes("TxnSubmit")) return true;
+    if (submitsInWindow.current !== 1) return true;
     const typed = parseTypedAmount(txnAmountField.previous?.text);
     if (typed === 0) return true;
     const before = totalBalance.previous;
@@ -44,37 +45,82 @@ const submitMovesBalanceByTypedAmount = always(
 
 `always` checks the formula at every step; `next` lets it compare the step before a submit to the step after. The guards narrow it to the one transition that matters, a submit that lands back on home, and the last line states the rule: the balance moved by exactly the typed amount. Double-submit moves it by twice that, and the formula is false.
 
-The null guard is not defensive clutter, it is the difference between a property and a false alarm. Read a balance you could not parse as `0` and the comparison becomes `0 - 0 === typed`, which is false at every healthy submit. A reading you do not have is not evidence, so the property declines to judge. The real spec guards the same way against a balance too large for exact integer arithmetic.
+The window guard is the difference between a property and a false conviction. `totalBalance.previous` is the last total we read, not the total as of the last transaction, so the two numbers being compared can straddle any number of commits: a real run produced a delta of 13000 against a typed 19600, because the window held a double-submit's two 19600 debits and an unrelated 26200 credit. A delta like that is not evidence about the amount typed into any one submit. Exactly one submit action in the window still catches the bug, because the double tap is a single action.
+
+The null guard is not defensive clutter either. Read a balance you could not parse as `0` and the comparison becomes `0 - 0 === typed`, which is false at every healthy submit. A reading you do not have is not evidence, so the property declines to judge. The real spec guards the same way against a balance too large for exact integer arithmetic.
 
 The values it reads come from extractors, which pull state out of the UI tree once per step:
 
 ```ts
-const route = extract<string | null>("route", s => {
-  if (s.ax.find({ testTag: "AddTransactionScreen" })) return "add-transaction";
-  if (s.ax.find({ testTag: "HomeScreen" })) return "home";
-  // ...other screens
-  return null;
-});
+const SCREENS = {
+  login: "LoginScreen",
+  "add-account": "AddAccountScreen",
+  "add-transaction": "AddTransactionScreen",
+  ledger: "LedgerScreen",
+  home: "HomeScreen",
+} as const;
+type Route = keyof typeof SCREENS;
 
-const totalBalance = extract("totalBalance", s =>
-  s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }])
-    .reduce((sum, c) => sum + parseDollarCents(c.find({ testTag: "AccountBalance" })?.text), 0));
+// The screen this frame shows, or null when it does not show exactly one.
+// Android's hierarchy dump carries the outgoing and the incoming screen
+// together on better than one frame in five, and such a frame is a navigation
+// transition: evidence about neither screen. Ranking the markers and returning
+// the first one found is how a spec convicts itself on a half-drawn screen.
+const routeOf = (s: State): Route | null => {
+  let shown: Route | null = null;
+  for (const [name, tag] of Object.entries(SCREENS) as [Route, string][]) {
+    if (!s.ax.find({ testTag: tag })) continue;
+    if (shown !== null) return null;
+    shown = name;
+  }
+  return shown;
+};
+const route = extract<Route | null>("route", routeOf);
+
+// Home's own TOTAL BALANCE node, which the app computes over every account.
+// Summing the AccountCard balances reads only the cards laid out inside the
+// viewport, and a card clipped at the bottom edge looks exactly like money
+// moving. Off Home there is nothing to read, so the last total we did read is
+// carried forward and `previous` and `current` stay on the same scale.
+let lastHomeTotal: number | null = null;
+const totalBalance = extract<number | null>("totalBalance", s => {
+  if (routeOf(s) !== "home") return lastHomeTotal;
+  const total = parseDollarCents(
+    s.ax.find([{ testTag: "HomeScreen" }, { testTag: "TotalBalance" }])?.text);
+  if (total === null) return null; // unreadable is unknown; the carrier keeps its value
+  lastHomeTotal = total;
+  return total;
+});
 ```
 
-Every Folio screen and control carries a `testTag`. Compose exposes it as the resource-id on Android and the accessibility identifier on iOS, so one selector resolves on both. `extract` runs against the live tree each step; properties and actions read `.current` and `.previous`, never the raw state.
+Every Folio screen and control carries a `testTag`. Compose exposes it as the resource-id on Android and the accessibility identifier on iOS, so one selector resolves on both. `extract` runs against the live tree each step; properties and actions read `.current` and `.previous`, never the raw state. An extractor may not read another extractor's handle, which is why `totalBalance` calls `routeOf` rather than `route.current`.
 
-A second property states what new accounts must look like: a freshly created account starts at zero.
+A second property states what new accounts must look like: a freshly created account starts at zero. The work is in naming the account it judges.
 
 ```ts
 const newAccountBalanceIsZero = always(
   next(() => {
-    const before = new Set((accounts.previous ?? []).map(a => a.name));
-    return accounts.current
-      .filter(a => !before.has(a.name))
-      .every(a => a.balance === 0);
+    if (route.current !== "home") return true;
+    if (!isAddAccountSubmitTap(lastAction.current)) return true;
+    const typed = accountNameField.previous?.text?.trim();
+    const before = accounts.previous ?? null;
+    const after = accounts.current;
+    if (!typed || before === null || after === null) return true;
+    // The only card attributable to a creation is the one named what the fuzzer
+    // typed, on the step its submit landed. Anything else that turned up is a
+    // card that scrolled into view, not an account that came into existence.
+    const matches = after.filter(a => a.name.endsWith(typed));
+    if (matches.length !== 1) return true;
+    const created = matches[0];
+    if (before.some(a => a.name === created.name)) return true;
+    return created.balance === null || created.balance === 0;
   })
 );
 ```
+
+Diffing the two account lists and judging whatever is new is the version that reads better and does not work: Home lists the accounts that fit the viewport, so a card that scrolls in is indistinguishable from an account that was just created. That version convicted this property on android over a Travel account holding $24,112.00.
+
+A third property, `submitCommitsOneTransactionPerAction`, states the same bug without arithmetic: over any window, no more transactions may be committed than there were submit actions. It needs no amount and no float comparison, so it survives a window of any width, and it does most of the detecting in practice.
 
 ## Reaching the screens that matter
 
@@ -129,7 +175,7 @@ export const actionsRoot = weighted(
 );
 ```
 
-That is the whole input. Two invariants, a way in, and a weighted sense of where to spend time. Nothing here names the bug.
+That is the whole input. Three invariants, a way in, and a weighted sense of where to spend time. Nothing here names the bug.
 
 ## What the run does
 

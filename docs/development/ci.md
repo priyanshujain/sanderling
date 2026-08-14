@@ -4,9 +4,9 @@ title: CI
 
 # CI
 
-`ci.yml` runs on every pull request: it builds, unit-tests, and drives two small
-web fixtures through headless Chrome. It never runs sanderling against a real
-app.
+`ci.yml` runs on every pull request: it builds, unit-tests, and drives three
+small web fixtures through headless Chrome (`test/browser/testdata`). It never
+runs sanderling against a real app.
 
 Two other workflows do, and both are `workflow_dispatch` only. They boot devices,
 build apps and take minutes, which is not what you want on every push, and
@@ -15,33 +15,51 @@ neither is a merge gate.
 ## folio
 
 Actions -> folio -> Run workflow. Inputs pick the legs (`all`, `android`, `ios`,
-`web`), and override the seed, the wall-clock budget, and the step budget; `0`
-means "use the calibrated value in the workflow".
+`web`), and override the seed, the step budget and the wall-clock budget. Seed
+and step budget take `0` to mean "use the calibrated value in the workflow"; the
+wall-clock budget has no such sentinel and is passed through as written, so
+every leg gets whatever you type there.
 
 Each leg builds `examples/folio` for its platform, builds the CLI with only the
 tags that platform needs (`make sanderling-android` and friends), and runs
 `examples/folio/sanderling/spec.ts` through `.github/scripts/folio-run.sh`. That
-script is plain bash so you can reproduce a job locally:
+script is plain bash so you can reproduce a job locally, with that leg's pinned
+numbers:
 
 ```
-SEED=3 MAX_STEPS=240 .github/scripts/folio-run.sh android
+SEED=9 MAX_STEPS=200 .github/scripts/folio-run.sh android
 ```
 
 **web and ios expect the bug.** Folio double-submits a transaction when the
 submit button is double-tapped, and two properties catch it:
-`submitMovesBalanceByTypedAmount`, which needs the balance to move by exactly
-twice the typed amount, and `submitCommitsOneTransactionPerAction`, which needs
-more transactions committed than there were submit actions. The runs pass
-`--exit-on-violation`, so:
+`submitMovesBalanceByTypedAmount`, which demands the total balance move by
+exactly the amount typed, and `submitCommitsOneTransactionPerAction`, which
+demands no more transactions committed over a window than there were submit
+actions in it. A double tap is one action committing two transactions, so it
+breaks both.
 
-| exit | meaning | job |
-|---|---|---|
-| 2 | the run found a violation | green |
-| 0 | the run finished clean | red: the fuzzer stopped finding a bug that is still there |
-| 1 | something went wrong | red: the harness broke |
+The runs pass `--exit-on-violation`, which exits 2 when the run recorded a
+violation and 1 when something went wrong. Telling those apart is the whole
+point of the exit code: a job that only knew "non-zero" could not tell a working
+fuzzer from a broken emulator.
 
-Distinguishing 0 from 1 is the whole point of the exit code: a job that only
-knew "non-zero" could not tell a working fuzzer from a broken emulator.
+Exit 2 on its own is not a conviction, though, so the script reads the trace
+before it decides:
+
+| what the trace says | job |
+|---|---|
+| a violation of one of the two properties above, with no `is_error` on its witness | green |
+| a violation whose witness carries `is_error` | red: a predicate threw, and a thrown predicate is recorded as a violation like any other |
+| a violation of any other property (`newAccountBalanceIsZero` fires on one android seed) | red: a real finding, but not the one this leg gates on |
+| no violation and exit 0 | red: the fuzzer stopped finding a bug that is still there |
+| exit 1, or any other code | red: the harness broke, and the code propagates |
+
+The first two rows are why the check is worth the code it takes. A `TypeError`
+in `predicates.ts` and a fuzzer that no longer reaches the bug both used to
+print "found the submit bug" and exit 0, and they need opposite responses: one
+is a spec to fix, the other is a seed to recalibrate. A thrown predicate fails
+android as well, where a conviction is otherwise only a bonus, because a spec
+that stopped running is not evidence about the app.
 
 The balance property only judges a window holding exactly one submit action.
 Without that rule the recorded delta covers every transaction since the last Home
@@ -111,9 +129,11 @@ from `test/browser/testdata/throwing` (violations and uncaught exceptions, so
 every panel has something to render), serves it with `sanderling replay`, and
 fuzzes that UI with `replay-ui/sanderling/spec.ts`.
 
-Every property there is a cross-panel agreement - two panels deriving the same
-fact by different paths have to say the same thing - so it holds for any trace
-and needs no recalibrating when the fixture changes. Any violation fails the job.
+Six of the seven properties there are cross-panel agreements - two panels
+deriving the same fact by different paths have to say the same thing - so they
+hold for any trace and need no recalibrating when the fixture changes. The
+seventh is the stock `noUncaughtExceptions`, which asks nothing of the panels
+and only fails if the UI throws. Any violation fails the job.
 
 ## Reading a failure
 
@@ -133,7 +153,8 @@ the extractor values at the step that caused it.
 
 Expecting a violation from a single seed is timing-sensitive, most of all on an
 emulator. Calibration reduces that; it does not remove it. If a platform starts
-failing across repeated dispatches with exit 0, do not raise the step budget
-blindly - run a seed sweep with the campaign tool
+failing across repeated dispatches with "the double-submit bug was NOT found",
+do not raise the step budget blindly - run a seed sweep with the campaign tool
 (`cmd/internal-tools/campaign`), which exists for exactly this, and pin a seed
-that finds the bug with room to spare.
+that finds the bug with room to spare. A leg failing with "a predicate threw" is
+a different problem entirely and no seed will fix it.
