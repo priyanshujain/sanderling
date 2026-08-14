@@ -80,19 +80,29 @@ export function cardAccountName(args: {
 }
 
 // Parses raw user input in the transaction amount field into integer cents.
-// Mirrors the Folio app's parseCents: whole numbers like "50" become 5000
-// cents, decimals like "5.50" become 550, more than 2 decimals or non-numeric
-// input return 0. Leading +/- signs are tolerated and treated as positive.
+// Mirrors the Folio app's parseCents (app/shared/.../util/Format.kt): whole
+// numbers like "50" become 5000 cents, decimals like "5.50" become 550, more
+// than 2 decimals or non-numeric input return 0. A sign is NOT tolerated,
+// because parseCents does not tolerate one either: it rejects "-50" outright,
+// so the app creates no transaction, and reading the field as a real amount
+// would make the property demand a balance move that never happened.
+//
+// 0 also means "an amount this reading cannot represent". parseCents returns
+// null once the whole part no longer fits a Kotlin Long, and its cents fit a
+// Long where ours are float64 doubles, exact only to Number.MAX_SAFE_INTEGER.
+// Past that the digits we compute are not the digits the app applied, so the
+// reading is unknown rather than large, and 0 routes it to the property's
+// vacuous branch.
 export function parseTypedAmount(text: string | undefined | null): number {
   if (!text) return 0;
-  let trimmed = text.trim().replace(/,/g, "");
-  if (trimmed.startsWith("+") || trimmed.startsWith("-")) trimmed = trimmed.slice(1);
+  const trimmed = text.trim().replace(/,/g, "");
   if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return 0;
   const dot = trimmed.indexOf(".");
   const whole = dot < 0 ? trimmed : trimmed.slice(0, dot);
   const frac = dot < 0 ? "" : trimmed.slice(dot + 1);
   const fracPadded = (frac + "00").slice(0, 2);
-  return parseInt(whole, 10) * 100 + parseInt(fracPadded, 10);
+  const cents = parseInt(whole, 10) * 100 + parseInt(fracPadded, 10);
+  return Number.isSafeInteger(cents) ? cents : 0;
 }
 
 // When the last action is a tap (or double-tap) on the transaction Submit
@@ -120,5 +130,25 @@ export function submitChangesBalanceByTypedAmount(args: {
   // An unknown total on either side is not evidence of anything. Comparing one
   // would turn every unreadable Home into a violation.
   if (prevTotalBalance === null || currTotalBalance === null) return true;
+  // Same rule for a total we cannot hold exactly. These are integer cents in
+  // float64, exact only up to Number.MAX_SAFE_INTEGER. The app caps a
+  // transaction at whatever fits a Kotlin Long, so a balance of ~1e18 cents is
+  // one accepted amount away, and up there the gap between representable
+  // values is 128 cents: a real 1600-cent move reads back as something else
+  // entirely. The equality below is then false for a healthy single submit
+  // exactly as readily as for a double one, and a check that cannot pass is not
+  // a check that failed.
+  //
+  // The three guarded quantities are the ones that lose precision on their own:
+  // each balance, because the number parsed out of the card text stops being
+  // the number the card shows, and the typed amount, because parseTypedAmount
+  // multiplies by 100. Their difference needs no guard of its own: IEEE
+  // subtraction of two exact integers is correctly rounded, so if the real
+  // difference equals a safe typedAmount it is itself safe and comes out exact,
+  // and if it does not, it cannot round INTO a safe typedAmount either. Adding
+  // a magnitude check there would only silence honest mismatches.
+  if (!Number.isSafeInteger(prevTotalBalance)) return true;
+  if (!Number.isSafeInteger(currTotalBalance)) return true;
+  if (!Number.isSafeInteger(typedAmount)) return true;
   return Math.abs(currTotalBalance - prevTotalBalance) === typedAmount;
 }
