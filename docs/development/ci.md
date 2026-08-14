@@ -57,11 +57,15 @@ cross-origin isolation. Served without them the app loads a blank canvas and
 every step observes an empty accessibility tree.
 
 The seeds in the workflow are calibrated, not guessed. On an M-series mac,
-android seed 3 finds the bug at step 110-116 (seeds 1, 2 and 4 run 120 steps
-clean), ios seed 1 finds it at step 129-134, and web seed 1 finds it at step 109,
-reproducing 3 runs out of 3. All three run against a 240-step budget. Keep the
+android seed 3 finds the bug at step 95-116 (seeds 1, 2 and 4 run 120 steps
+clean), ios seed 1 finds it at step 130-134, and web seed 1 finds it at step
+105-109, each reproducing 3 runs out of 3. All three run against a 240-step budget. Keep the
 web seed pinned: 9 of 12 random seeds found the bug within 200 steps, so an
 unpinned one would flake.
+
+Repeating the ios leg by hand is not the same as running it in CI: with
+`--clear-data=false` a second local run inherits the first one's accounts, so
+`simctl uninstall` before each repeat or the numbers drift.
 
 The ios leg passes `--clear-data=false`, because the job installs a fresh build
 immediately before the run and a freshly installed app is already clear state.
