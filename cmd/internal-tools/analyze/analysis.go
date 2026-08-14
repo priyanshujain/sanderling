@@ -150,7 +150,7 @@ func summarize(current arm) armSummary {
 		// steps whose action was never dispatched. Only dispatched actions
 		// exercised the app, so only they belong in a per-action rate.
 		summary.TotalActions += item.Actions
-		summary.TotalRunHours += float64(item.DurationMillis) / float64(time.Hour/time.Millisecond)
+		summary.TotalRunHours += float64(item.MonotonicMillis) / float64(time.Hour/time.Millisecond)
 		if item.ClampedToBudget {
 			summary.EventsHeldAtBudget++
 		}

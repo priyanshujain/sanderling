@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -11,7 +12,7 @@ func violatingRun(seed int64, steps, origin int, properties ...string) classifie
 		Seed:               seed,
 		Steps:              steps,
 		Actions:            steps,
-		DurationMillis:     60_000,
+		MonotonicMillis:    60_000,
 		OriginStep:         origin,
 		Violated:           true,
 		ViolatedProperties: properties,
@@ -19,7 +20,7 @@ func violatingRun(seed int64, steps, origin int, properties ...string) classifie
 }
 
 func cleanRun(seed int64, steps int) classifiedRun {
-	return classifiedRun{Seed: seed, Steps: steps, Actions: steps, DurationMillis: 60_000}
+	return classifiedRun{Seed: seed, Steps: steps, Actions: steps, MonotonicMillis: 60_000}
 }
 
 func TestSummarize_ArmWhereNoRunViolated(t *testing.T) {
@@ -85,9 +86,9 @@ func TestSummarize_CountsDispatchedActionsNotSteps(t *testing.T) {
 		Name:   "declines",
 		Budget: 40,
 		Runs: []classifiedRun{
-			{Seed: 1, Steps: 40, Actions: 10, DurationMillis: 3_600_000,
+			{Seed: 1, Steps: 40, Actions: 10, MonotonicMillis: 3_600_000,
 				Violated: true, OriginStep: 12, ViolatedProperties: []string{"cartTotal"}},
-			{Seed: 2, Steps: 40, Actions: 6, DurationMillis: 3_600_000},
+			{Seed: 2, Steps: 40, Actions: 6, MonotonicMillis: 3_600_000},
 		},
 	})
 	if summary.TotalSteps != 80 {
@@ -110,7 +111,7 @@ func TestSummarize_ArmThatDispatchedNothingHasNoPerActionRate(t *testing.T) {
 		Name:   "inert",
 		Budget: 20,
 		Runs: []classifiedRun{
-			{Seed: 1, Steps: 20, Actions: 0, DurationMillis: 3_600_000,
+			{Seed: 1, Steps: 20, Actions: 0, MonotonicMillis: 3_600_000,
 				Violated: true, OriginStep: 3, ViolatedProperties: []string{"cartTotal"}},
 		},
 	})
@@ -122,6 +123,43 @@ func TestSummarize_ArmThatDispatchedNothingHasNoPerActionRate(t *testing.T) {
 	}
 	if summary.DefectsPerHour == nil || *summary.DefectsPerHour != 1 {
 		t.Errorf("defects per hour %v, want 1: the run still consumed an hour", summary.DefectsPerHour)
+	}
+}
+
+func runHoursFor(t *testing.T, record map[string]any) float64 {
+	t.Helper()
+	directory := filepath.Join(t.TempDir(), "campaign")
+	record["seed"] = 1
+	writeCampaign(t, directory,
+		map[string]any{"arm": "seeded", "max_steps": 50, "seeds": []int{1}},
+		[]map[string]any{record})
+	arms, err := groupArms([]string{directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return summarize(arms[0]).TotalRunHours
+}
+
+// A host asleep mid-run advanced the wall clock while testing nothing, so the
+// sleep has no place in the denominator of a per-hour rate.
+func TestSummarize_RunHoursCountTheTimeWorkedNotTheTimeThatPassed(t *testing.T) {
+	hours := runHoursFor(t, map[string]any{
+		"exit_code": 0, "steps": 50, "actions": 50,
+		"monotonic_millis": 3_600_000, "wall_clock_millis": 5_400_000,
+	})
+	if hours != 1 {
+		t.Errorf("run hours %v, want the 1 hour worked rather than the 1.5 hours that passed", hours)
+	}
+}
+
+// Campaigns recorded before the two clocks were split gave the same monotonic
+// reading the name duration_millis, and their hours still have to count.
+func TestSummarize_RunHoursReadCampaignsWrittenBeforeTheClocksWereSplit(t *testing.T) {
+	hours := runHoursFor(t, map[string]any{
+		"exit_code": 0, "steps": 50, "actions": 50, "duration_millis": 3_600_000,
+	})
+	if hours != 1 {
+		t.Errorf("run hours %v, want 1 from the older duration_millis field", hours)
 	}
 }
 

@@ -30,10 +30,18 @@ type manifest struct {
 
 // runRecord mirrors the fields analyze reads from one line of runs.jsonl.
 type runRecord struct {
-	Seed                     int64    `json:"seed"`
-	ExitCode                 int      `json:"exit_code"`
-	LaunchError              string   `json:"launch_error"`
-	TimedOut                 bool     `json:"timed_out"`
+	Seed        int64  `json:"seed"`
+	ExitCode    int    `json:"exit_code"`
+	LaunchError string `json:"launch_error"`
+	TimedOut    bool   `json:"timed_out"`
+	// MonotonicMillis is how long the run worked, and it is what every
+	// per-hour rate here divides by: a host asleep mid-run tested nothing, so
+	// charging that time to the arm would report it as slower for a reason
+	// that has nothing to do with the arm. The wall clock the campaign also
+	// records answers the other question, how much time passed.
+	MonotonicMillis int64 `json:"monotonic_millis"`
+	// DurationMillis is the name campaigns written before the two clocks were
+	// split gave the same monotonic reading, so those files still read.
 	DurationMillis           int64    `json:"duration_millis"`
 	TraceError               string   `json:"trace_error"`
 	Steps                    int      `json:"steps"`
@@ -61,7 +69,7 @@ type classifiedRun struct {
 	Seed               int64
 	Steps              int
 	Actions            int
-	DurationMillis     int64
+	MonotonicMillis    int64
 	OriginStep         int
 	Violated           bool
 	ClampedToBudget    bool
@@ -130,13 +138,20 @@ func loadCampaign(directory string) (manifest, []runRecord, error) {
 	return declared, records, nil
 }
 
+func (r runRecord) workingMillis() int64 {
+	if r.MonotonicMillis != 0 {
+		return r.MonotonicMillis
+	}
+	return r.DurationMillis
+}
+
 // classify turns one record into the run the analysis works with, deciding
 // whether it is usable and, if it is, whether it is an event or censored.
 func classify(record runRecord, budget int) classifiedRun {
 	item := classifiedRun{
 		Seed:               record.Seed,
 		Steps:              record.Steps,
-		DurationMillis:     record.DurationMillis,
+		MonotonicMillis:    record.workingMillis(),
 		ViolatedProperties: slices.Clone(record.ViolatedProperties),
 	}
 	if record.Actions != nil {
