@@ -27,9 +27,12 @@ script is plain bash so you can reproduce a job locally:
 SEED=3 MAX_STEPS=240 .github/scripts/folio-run.sh android
 ```
 
-**Every leg expects the bug.** Folio double-submits a transaction when the
-submit button is double-tapped, and `submitMovesBalanceByTypedAmount` is the
-property that catches it. The runs pass `--exit-on-violation`, so:
+**web and ios expect the bug.** Folio double-submits a transaction when the
+submit button is double-tapped, and two properties catch it:
+`submitMovesBalanceByTypedAmount`, which needs the balance to move by exactly
+twice the typed amount, and `submitCommitsOneTransactionPerAction`, which needs
+more transactions committed than there were submit actions. The runs pass
+`--exit-on-violation`, so:
 
 | exit | meaning | job |
 |---|---|---|
@@ -40,28 +43,38 @@ property that catches it. The runs pass `--exit-on-violation`, so:
 Distinguishing 0 from 1 is the whole point of the exit code: a job that only
 knew "non-zero" could not tell a working fuzzer from a broken emulator.
 
-On web the property fires for a structural reason worth knowing when you read a
-witness. `AddTransactionViewModel.submit()` inserts the transaction and pops one
-level, so a submit tap lands on Ledger; reaching Home takes two pops, which takes
-two inserts. A submit tap that lands on Home therefore is the double submit. Over
-451 single taps on the submit button, none reached Home.
+The balance property only judges a window holding exactly one submit action.
+Without that rule the recorded delta covers every transaction since the last Home
+visit, and the property convicts on arithmetic it cannot attribute: an early
+version of this gate went green on a witness whose delta was 3.16x the typed
+amount. Honest windows are rare, so the counting invariant carries most of the
+detection: it needs no amount and survives a wide window.
 
-The witness's arithmetic is noisier than that reasoning. `totalBalance` only
-refreshes on a Home step, so the recorded delta covers every transaction since
-the last Home visit, and only some witnesses read as a clean 2x the typed amount.
-The violation is still real; the number beside it just needs that context.
+**android is a health gate**, not a conviction gate. A run there is not a
+function of its seed. The hierarchy dump can show two screens at once during a
+Compose cross-fade, such a step applies no action, and the count of those frames
+varies run to run, so the same seed walks a different trajectory each time. The
+bug turns up in about two runs in five, which is not a gate: the failure message
+"the double-submit bug was NOT found" would be indistinguishable from the
+regression it exists to catch. The leg asserts instead that the run stayed
+healthy and reached the transaction screen, and reports a conviction as a bonus
+when it gets one. Fixing this means suppressing transitional frames in the
+android driver, the way the ios companion and the chrome driver already do.
 
 The wasmJs app is served with `Cross-Origin-Opener-Policy` and
 `Cross-Origin-Embedder-Policy` headers, because its sqlite worker needs
 cross-origin isolation. Served without them the app loads a blank canvas and
 every step observes an empty accessibility tree.
 
-The seeds in the workflow are calibrated, not guessed. On an M-series mac,
-android seed 3 finds the bug at step 95-116 (seeds 1, 2 and 4 run 120 steps
-clean), ios seed 1 finds it at step 130-134, and web seed 1 finds it at step
-105-109, each reproducing 3 runs out of 3. All three run against a 240-step budget. Keep the
-web seed pinned: 9 of 12 random seeds found the bug within 200 steps, so an
-unpinned one would flake.
+The seeds are calibrated, not guessed. On an M-series mac, web seed 3 convicts at
+step 185-187 and ios seed 7 at step 97-101, each 3 runs out of 3 and each with a
+delta of exactly twice the typed amount. Both run a 240-step budget. Keep them
+pinned: honest evidence is rare, and across 2261 ios steps only one submit tap
+landing on Home had a single-submit window.
+
+Android runs seed 9 over 120 steps, but as a health gate the seed is not load
+bearing; the budget is, since a run that finds nothing walks the whole thing and
+costs seven minutes against ninety seconds for one that convicts.
 
 Repeating the ios leg by hand is not the same as running it in CI: with
 `--clear-data=false` a second local run inherits the first one's accounts, so
