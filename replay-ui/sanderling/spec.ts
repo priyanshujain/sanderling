@@ -1,8 +1,9 @@
 // Sanderling fuzzing sanderling's own replay UI.
 //
-// The properties here are cross-panel agreements: two panels that derive the
-// same fact by different paths have to say the same thing. That holds for any
-// trace, so this spec never needs recalibrating when the fixture run changes.
+// Six of the seven properties here are cross-panel agreements: two panels that
+// derive the same fact by different paths have to say the same thing. That
+// holds for any trace, so this spec never needs recalibrating when the fixture
+// run changes. The seventh is the stock noUncaughtExceptions.
 //
 // The hooks it drives (data-testid, data-step, ...) were added to the UI for
 // this spec. Needing them is the lesson: a UI with no stable handles is a UI
