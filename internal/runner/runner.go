@@ -732,15 +732,18 @@ func inputReplacesText(drv driver.DeviceDriver) bool {
 // whatever holds focus, so a tap the target never received (a keyboard overlay
 // window covering it, a target that cannot take focus) would stream the
 // characters into a different field, corrupting it and every property that
-// reads it. Hierarchies that carry no focus at all (iOS) leave nothing to
-// compare against, so those platforms are not charged the extra read.
+// reads it. Only a field that already holds focus can receive that text, so
+// the confirming read is charged only when the pre-tap hierarchy shows focus
+// somewhere other than the target: a target that already holds focus, a screen
+// with nothing focused, and platforms that never report focus (iOS) all skip
+// it and keep the round-trip.
 func confirmFocus(
 	ctx context.Context,
 	drv driver.DeviceDriver,
 	selector string,
 	tree *hierarchy.Tree,
 ) error {
-	if selector == "" || !reportsFocus(tree) {
+	if selector == "" || !otherElementHoldsFocus(tree, selector) {
 		return nil
 	}
 	dump, err := drv.Hierarchy(ctx)
@@ -751,31 +754,24 @@ func confirmFocus(
 	if err != nil {
 		return fmt.Errorf("focus check for %s: %w", selector, err)
 	}
-	focused := focusedElement(current)
-	if focused == nil {
-		return nil
-	}
-	if target := current.FindNode(selector); target != nil && holdsFocus(target) {
+	if !otherElementHoldsFocus(current, selector) {
 		return nil
 	}
 	return fmt.Errorf(
 		"focus tap on %s did not focus it: %s holds focus, so the text would land there",
-		selector, elementName(focused),
+		selector, elementName(focusedElement(current)),
 	)
 }
 
-// reportsFocus reports whether the platform describes focus at all, which is
-// what makes a post-tap focus check meaningful.
-func reportsFocus(tree *hierarchy.Tree) bool {
-	if tree == nil {
+// otherElementHoldsFocus reports whether the hierarchy shows focus on
+// something outside the selector's subtree, which is the state that sends
+// typed text to the wrong field.
+func otherElementHoldsFocus(tree *hierarchy.Tree, selector string) bool {
+	if tree == nil || focusedElement(tree) == nil {
 		return false
 	}
-	for _, element := range tree.Elements {
-		if _, ok := element.Attributes["focused"]; ok {
-			return true
-		}
-	}
-	return false
+	target := tree.FindNode(selector)
+	return target == nil || !holdsFocus(target)
 }
 
 func focusedElement(tree *hierarchy.Tree) *hierarchy.Element {

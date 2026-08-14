@@ -910,6 +910,70 @@ func TestApplyAction_InputTextSkipsFocusCheckWhenHierarchyOmitsFocus(t *testing.
 	}
 }
 
+const loginFocusOnNothing = `{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+	{"attributes":{"resource-id":"LoginEmail","bounds":"[94,240,986,372]"},"focused":false,"children":[]},
+	{"attributes":{"resource-id":"LoginPassword","bounds":"[94,461,986,593]"},"focused":false,"children":[]}
+]}`
+
+// Typed text can only be corrupted into a field that already holds focus, so
+// a pre-tap hierarchy showing focus elsewhere is the one class worth the
+// confirming read.
+func TestApplyAction_InputTextConfirmsFocusWhenAnotherFieldHeldItBeforeTheTap(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(loginFocusOnEmail)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.HierarchyJSON = loginFocusOnPassword
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "id:LoginPassword",
+		Text: "ledger123",
+	}
+
+	mustDispatch(t, driverMock, action, tree)
+	if !containsAction(driverMock.Actions(), mockdriver.ActionHierarchy, "") {
+		t.Errorf("another field held focus before the tap: expected the confirming read, got %v", driverMock.Actions())
+	}
+	if !typedText(driverMock.Actions(), "ledger123") {
+		t.Errorf("expected InputText once the target took focus, got %v", driverMock.Actions())
+	}
+}
+
+// The confirming read is a device round-trip on every InputText step. Where no
+// other element holds focus before the tap there is no field for the text to
+// be corrupted into, so the read buys nothing and must not be paid for.
+func TestApplyAction_InputTextSkipsFocusCheckWhenNoOtherFieldHoldsFocus(t *testing.T) {
+	fastFocusSettle(t)
+	for name, beforeTap := range map[string]string{
+		"target already holds focus": loginFocusOnPassword,
+		"nothing holds focus":        loginFocusOnNothing,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tree, err := hierarchy.Parse(beforeTap)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			driverMock := mockdriver.New()
+			driverMock.HierarchyJSON = loginFocusOnEmail
+			action := verifier.Action{
+				Kind: verifier.ActionKindInputText,
+				On:   "id:LoginPassword",
+				Text: "ledger123",
+			}
+
+			mustDispatch(t, driverMock, action, tree)
+			if containsAction(driverMock.Actions(), mockdriver.ActionHierarchy, "") {
+				t.Errorf("no other field held focus: expected no confirming read, got %v", driverMock.Actions())
+			}
+			if !typedText(driverMock.Actions(), "ledger123") {
+				t.Errorf("expected InputText, got %v", driverMock.Actions())
+			}
+		})
+	}
+}
+
 func typedText(actions []mockdriver.Action, text string) bool {
 	for _, action := range actions {
 		if action.Kind == mockdriver.ActionInputText && action.Text == text {
