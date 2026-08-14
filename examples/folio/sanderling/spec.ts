@@ -11,13 +11,17 @@ import {
   weighted,
   whenRoute,
 } from "@sanderling/spec";
+import type { State } from "@sanderling/spec";
 import { defaultActions, doubleTaps } from "@sanderling/spec/defaults";
 import {
   cardAccountName,
   cardBalanceText,
-  computeHomeTotalBalance,
+  cardTxnCountDigits,
+  committedTransactionsExceedSubmits,
+  countSubmitsInWindow,
   parseDollarCents,
   parseTypedAmount,
+  readHomeTotalBalance,
   submitChangesBalanceByTypedAmount,
 } from "./predicates";
 
@@ -50,18 +54,70 @@ const accounts = extract<Account[]>("accounts", s =>
       cardBalanceText({ childText: card.find({ testTag: "AccountBalance" })?.text, cardText: card.text })),
   })));
 
-// Total balance: sum of AccountCard balances visible on Home. The carrier
-// deliberately tracks only the Home multi-account total. Ledger's
+// Total balance: Home's own TOTAL BALANCE node, which the app computes over
+// every account rather than over the cards that happen to be laid out inside
+// the viewport. The carrier deliberately tracks only that Home total. Ledger's
 // LedgerBalance is a single-account number on a different scale and would
 // corrupt cross-screen comparisons if mixed in. Off-Home steps carry forward
-// the last-seen Home sum so `previous` and `current` stay on the same scale.
-let lastHomeTotal: number | null = 0;
+// the last-read Home total so `previous` and `current` stay on the same scale.
+const homeTotalText = (s: State) =>
+  s.ax.find([{ testTag: "HomeScreen" }, { testTag: "TotalBalance" }])?.text;
+const onHome = (s: State) => s.ax.find({ testTag: "HomeScreen" }) != null;
+
+let lastHomeTotal: number | null = null;
 const totalBalance = extract<number | null>("totalBalance", s => {
-  const cards = s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }]);
-  const cardBalanceTexts = cards.map(c =>
-    cardBalanceText({ childText: c.find({ testTag: "AccountBalance" })?.text, cardText: c.text }));
-  lastHomeTotal = computeHomeTotalBalance({ cardBalanceTexts, previousCarrier: lastHomeTotal });
-  return lastHomeTotal;
+  const reading = readHomeTotalBalance({
+    onHome: onHome(s),
+    totalText: homeTotalText(s),
+    previousCarrier: lastHomeTotal,
+  });
+  lastHomeTotal = reading.carrier;
+  return reading.value;
+});
+
+// Submit actions inside the window `totalBalance.previous` and
+// `totalBalance.current` span. Recomputed rather than shared with the extractor
+// above because extractor getters may not read one another; both derive
+// freshness from the same reading, so they reset on the same step.
+let submitsSinceHomeTotal = 0;
+const submitsInWindow = extract("submitsInWindow", s => {
+  const fresh = readHomeTotalBalance({
+    onHome: onHome(s),
+    totalText: homeTotalText(s),
+    previousCarrier: null,
+  }).fresh;
+  const window = countSubmitsInWindow({
+    previousCount: submitsSinceHomeTotal,
+    lastAction: s.lastAction,
+    fresh,
+  });
+  submitsSinceHomeTotal = window.next;
+  return window.reported;
+});
+
+// Transactions committed per account, read off the Home cards. Carried across
+// off-Home steps exactly like totalBalance, and for the same reason: the pair
+// the property compares has to be two Home readings, not a Home reading and
+// whatever happened to be on screen. A card whose count is unreadable is left
+// out of the map rather than guessed at; the predicate treats a missing account
+// as no evidence.
+let lastHomeTxnCounts: Record<string, string> | null = null;
+const homeTxnCounts = extract<Record<string, string> | null>("homeTxnCounts", s => {
+  if (!onHome(s)) return lastHomeTxnCounts;
+  const counts: Record<string, string> = {};
+  for (const card of s.ax.findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }])) {
+    const name = cardAccountName({
+      childText: card.find({ testTag: "AccountName" })?.text,
+      cardText: card.text,
+    });
+    const digits = cardTxnCountDigits({
+      childText: card.find({ testTag: "AccountTxnCount" })?.text,
+      cardText: card.text,
+    });
+    if (name !== "" && digits !== undefined) counts[name] = digits;
+  }
+  lastHomeTxnCounts = counts;
+  return counts;
 });
 
 const lastAction = extract("lastAction", s => s.lastAction);
@@ -111,9 +167,25 @@ const submitMovesBalanceByTypedAmount = always(
     submitChangesBalanceByTypedAmount({
       route: route.current,
       lastAction: lastAction.current,
+      submitsInWindow: submitsInWindow.current,
       typedAmount: parseTypedAmount(txnAmountField.previous?.text),
       prevTotalBalance: totalBalance.previous ?? null,
       currTotalBalance: totalBalance.current,
+    }),
+  ),
+);
+
+// Property 3: one submit action commits at most one transaction. Counting
+// actions against transactions needs no amounts and no float arithmetic, and it
+// stays sound however wide the window between two Home readings gets, because
+// both sides of the comparison accumulate over the same window. It is the
+// double-submit stated directly: one tap, two rows.
+const submitCommitsOneTransactionPerAction = always(
+  next(() =>
+    !committedTransactionsExceedSubmits({
+      countsBefore: homeTxnCounts.previous ?? null,
+      countsAfter: homeTxnCounts.current,
+      submitsInWindow: submitsInWindow.current,
     }),
   ),
 );
@@ -175,6 +247,7 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
 export const properties = {
   newAccountBalanceIsZero,
   submitMovesBalanceByTypedAmount,
+  submitCommitsOneTransactionPerAction,
 };
 
 export const setup = login;
