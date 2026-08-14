@@ -21,23 +21,28 @@ class StabilityPollTest {
         // begun must reset the clock: the post-transition stable window has
         // to start over and meet MIN_STABLE_STREAK_MILLIS from scratch.
         var calls = 0
-        val start = System.currentTimeMillis()
-        // First 4 samples are "calm", then 1 transient change, then "stable"
-        // forever - the calm prefix is meaningless because of the transition.
+        var transientAt = 0L
+        // A short "calm" prefix, one transient change, then "stable" forever.
+        // The prefix is meaningless because of the transition: only the streak
+        // that starts after it can end the wait.
         pollUntilStable(3000L) {
             calls++
             when {
-                calls <= 4 -> "calm"
-                calls == 5 -> "transient"
+                calls <= 2 -> "calm"
+                calls == 3 -> {
+                    transientAt = System.currentTimeMillis()
+                    "transient"
+                }
                 else -> "stable"
             }
         }
-        val elapsed = System.currentTimeMillis() - start
+        val sinceTransition = System.currentTimeMillis() - transientAt
+        assertTrue(calls > 3, "must keep sampling past the transition, got $calls")
         assertTrue(
-            elapsed >= MIN_STABLE_STREAK_MILLIS,
-            "post-transition streak must reach ${MIN_STABLE_STREAK_MILLIS}ms, elapsed=${elapsed}ms",
+            sinceTransition >= MIN_STABLE_STREAK_MILLIS,
+            "the calm prefix must not count: a full ${MIN_STABLE_STREAK_MILLIS}ms streak has to " +
+                "start over after the transition, returned ${sinceTransition}ms after it",
         )
-        assertTrue(calls >= 10, "expected enough samples to span calm + transient + stable streak, got $calls")
     }
 
     @Test fun transitionalNullsForceLoopToKeepWaiting() {

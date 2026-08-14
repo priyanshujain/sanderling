@@ -63,35 +63,97 @@ internal const val STABILITY_POLL_CAP_MILLIS = 2000L
 // missed.
 internal const val MIN_STABLE_STREAK_MILLIS = 750L
 
+// TRANSITION_* bound the wait a snapshot pays when the tree it read shows two
+// routes at once, which on Compose means a NavHost cross-fade is in flight.
+// They are shorter than the constants above because this wait has one job,
+// outlasting the fade, where the poll above must also catch an async effect
+// that fires late.
+//
+// The streak matches the iOS companion's 300ms for the same reason: what this
+// wait is for is the cross-fade, and the cross-fade is caught by the
+// route-screen check rather than by streak length, so the streak only has to
+// be long enough that the reads spanning it are not all inside one frame.
+// MIN_STABLE_STREAK's 750ms is sized for a poll that must also catch an async
+// effect firing late, and at ~160ms per read-and-interval it costs three or
+// four more reads than this does.
+internal const val TRANSITION_STABLE_STREAK_MILLIS = 300L
+
+// The interval is the iOS companion's rather than STABILITY_POLL_INTERVAL's
+// 250ms: the wide interval exists to stop a per-step poll hammering
+// UiAutomation, and this one runs only on the frames that show two routes,
+// about a quarter of steps on folio. The read itself paces the loop.
+internal const val TRANSITION_POLL_INTERVAL_MILLIS = 100L
+
+// The cap is the iOS companion's 1500ms, and it has to be at least this: the
+// NavHost cross-fade is a 700ms tween (Compose navigation's default enter and
+// exit), it starts when the action lands rather than when the snapshot begins,
+// and the streak above has to fit after it. Measured on the emulator, a 600ms
+// cap left about a third of fades unfinished. A layout that holds two routes at
+// rest costs the full cap once per step and no more.
+internal const val TRANSITION_POLL_CAP_MILLIS = 1500L
+
+// awaitSettledTree reads the hierarchy and, while the tree it gets back holds
+// more than one route, keeps reading until the cross-fade lands or the cap
+// expires. It returns the last tree read, so the caller gets the settled one
+// rather than paying for another read.
+//
+// Two nodes carrying the SAME route id are one destination, not a transition;
+// countRouteScreens counts distinct tags, so a screen that nests a repeat of
+// its own id does not pay this wait at all.
+internal fun awaitSettledTree(read: () -> String): String {
+    var json = read()
+    if (countRouteScreens(json) <= 1) return json
+    pollUntilStable(
+        TRANSITION_POLL_CAP_MILLIS,
+        TRANSITION_STABLE_STREAK_MILLIS,
+        TRANSITION_POLL_INTERVAL_MILLIS,
+    ) {
+        json = read()
+        stabilitySnapshot(json)
+    }
+    return json
+}
+
 // pollUntilStable returns when the snapshot has been non-null and equal to
-// itself for an uninterrupted stretch of at least MIN_STABLE_STREAK_MILLIS,
-// capped at timeoutMillis. snapshot must omit transient attributes (e.g.
-// measure-pass bounds) so layout-only flicker doesn't extend the wait, and
-// must return null when the snapshot looks transitional (e.g. mid NavHost
-// cross-fade) so the streak resets and the loop keeps polling instead of
-// declaring a partial state stable.
-internal fun pollUntilStable(timeoutMillis: Long, snapshot: () -> String?) {
+// itself for an uninterrupted stretch of at least streakMillis, capped at
+// timeoutMillis. snapshot must omit transient attributes (e.g. measure-pass
+// bounds) so layout-only flicker doesn't extend the wait, and must return null
+// when the snapshot looks transitional (e.g. mid NavHost cross-fade) so the
+// streak resets and the loop keeps polling instead of declaring a partial
+// state stable.
+//
+// The streak is measured from the start of the read that opened the current
+// run of identical snapshots, not from when that read returned: a hierarchy
+// fetch is not instantaneous, and the UI changing mid-fetch would have changed
+// the snapshot, so the fetch's own duration is evidence of stability. On
+// Android a fetch costs more than the poll interval, so charging it to the
+// streak is the difference between two reads and four.
+internal fun pollUntilStable(
+    timeoutMillis: Long,
+    streakMillis: Long = MIN_STABLE_STREAK_MILLIS,
+    intervalMillis: Long = STABILITY_POLL_INTERVAL_MILLIS,
+    snapshot: () -> String?,
+) {
     if (timeoutMillis <= 0) return
     val deadline = System.currentTimeMillis() + timeoutMillis
+    var runStart = System.currentTimeMillis()
     var prior = try {
         snapshot()
     } catch (_: Exception) {
         null
     }
-    var streakStart = 0L
     while (System.currentTimeMillis() < deadline) {
-        Thread.sleep(STABILITY_POLL_INTERVAL_MILLIS)
+        Thread.sleep(intervalMillis)
+        val currentStart = System.currentTimeMillis()
         val current = try {
             snapshot()
         } catch (_: Exception) {
             null
         }
-        val now = System.currentTimeMillis()
         if (prior != null && current != null && prior == current) {
-            if (streakStart == 0L) streakStart = now
-            if (now - streakStart >= MIN_STABLE_STREAK_MILLIS) return
+            if (System.currentTimeMillis() - runStart >= streakMillis) return
         } else {
-            streakStart = 0L
+            runStart = currentStart
         }
         prior = current
     }
@@ -119,36 +181,43 @@ private val ROUTE_TAG_KEYS = setOf(
 
 private val jsonMapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
 
+// countRouteScreens counts DISTINCT route-level destination tags, not the nodes
+// carrying them. A screen that nests a node repeating its own route id puts two
+// tagged nodes in the tree while only one destination is on screen; counting
+// nodes would read that as a cross-fade that never ends, and the caller would
+// pay its full poll budget on every step of that screen and never settle.
 internal fun countRouteScreens(treeJson: String): Int {
     if (treeJson.isBlank()) return 0
     return try {
         val root = jsonMapper.readTree(treeJson)
-        countRouteScreens(root)
+        val tags = mutableSetOf<String>()
+        collectRouteScreens(root, tags)
+        tags.size
     } catch (_: Exception) {
         0
     }
 }
 
-private fun countRouteScreens(
+private fun collectRouteScreens(
     node: com.fasterxml.jackson.databind.JsonNode,
-): Int {
-    var count = 0
+    into: MutableSet<String>,
+) {
     val attributes = node.get("attributes")
     if (attributes != null && attributes.isObject) {
         for (key in ROUTE_TAG_KEYS) {
             val value = attributes.get(key) ?: continue
             if (value.isNull) continue
-            if (value.asText().endsWith("Screen")) {
-                count++
+            val text = value.asText()
+            if (text.endsWith("Screen")) {
+                into.add(text)
                 break
             }
         }
     }
     val children = node.get("children")
     if (children != null && children.isArray) {
-        for (child in children) count += countRouteScreens(child)
+        for (child in children) collectRouteScreens(child, into)
     }
-    return count
 }
 
 // structuralHash hashes a Maestro TreeNode-shaped JSON string by walking it
@@ -873,13 +942,29 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String) =
         readLogcat(serial, sinceUnixMillis, minLevel)
 
+    // snapshot waits out a NavHost cross-fade before it reads, so the runner is
+    // never handed a tree holding two routes at once. It belongs here rather
+    // than in waitForIdle: the runner gives waitForIdle a one-second deadline
+    // and abandons the RPC when it expires, which is not enough room for a
+    // 700ms fade that began before the settle did, and a wait that outlives the
+    // deadline just races the runner's own fetch on the device-side server.
+    // The snapshot RPC carries the step's deadline instead, so the wait can run
+    // to a bound that actually covers the animation.
+    //
+    // The predicate costs nothing on a settled frame: the read it needs is the
+    // read the snapshot was going to do anyway. That is what makes this
+    // affordable, where the structural poll that used to run in waitForIdle was
+    // not: it fetched the hierarchy ~4 more times on every mutating step.
+    override fun snapshot(): SnapshotSample =
+        SnapshotSample(awaitSettledTree { hierarchy() }, screenshot())
+
     override fun waitForIdle(durationMillis: Long) {
         // waitForAppToSettle blocks on the View-system animation and maestro's
-        // own structural settle, which is enough on its own. A follow-up
-        // structural-hash poll used to run here, but each hierarchy fetch is
-        // ~500ms on a physical device, so it cost ~2.8s per mutating step for
-        // marginal benefit; the runner already re-fetches while a frame still
-        // looks transitional.
+        // own structural settle. It cannot see a Compose cross-fade: the fade
+        // keeps both routes alive with the tree byte-identical, so a settle
+        // that watches for change returns in the middle of one. That is what
+        // snapshot above waits out; a structural poll here used to try, cost
+        // ~2.8s per mutating step, and was removed.
         driver.waitForAppToSettle(null, null, durationMillis.toInt())
     }
 
