@@ -4,12 +4,31 @@
 - Always write tests for new features and bug fixes.
 - Do not dismiss bug as a pre-existing" issue even if it was present before your change. It does not matter, it's still your responsibility to fix it. When you see a bug, fix it. Don't ignore it.
 - Always build a feature in a new branch. Do not push directly to the main branch. Always check current branch before pushing.
+- Delete every temporary file, scratch script, probe, backup copy and build artifact you created
+  before committing. Check `git status` for strays that are yours.
 
 ## Coding Guidelines
 
-  - Keep code simple and easy to read.
-  - Avoid excessive comments. Only comment when absolutely necessary.
+  - Make the smallest change that achieves the goal. Do not refactor, rename, or restructure
+    code you were not asked to touch, and do not add abstraction for a second caller that does
+    not exist yet.
+  - Keep code simple and easy to read. Code should read without commentary: name things so the
+    intent is obvious rather than explaining an unclear name in a comment.
+  - Write zero comments first. Add one only where the code genuinely cannot carry the intent,
+    and then say WHY, never WHAT. A comment restating the line below it is noise.
   - Create WIP pull requests when you start working on a feature, and update the PR as you make progress
+
+## Testing Guidelines
+
+  - Tests are first-class code and are held to the same standard as the code they cover, or
+    higher. A weak test is worse than no test: it reports safety that does not exist.
+  - A regression test must fail against the bug it covers. Confirm it fails before the fix,
+    and say so. If a test cannot produce a red, say that plainly instead of implying it did.
+  - Assert the real outcome, not a proxy for it. Prefer asserting what reached the driver, the
+    file, or the wire over asserting an intermediate struct.
+  - Never weaken an assertion to make a test pass, and never change what a test is testing in
+    order to accommodate a signature change. Its original subject must survive.
+  - Carry intent through test names and assertions rather than through prose comments.
 
 ## Git Branch Rules
 
@@ -17,6 +36,9 @@
 
 ## PR Rules
 
+  - Never merge a pull request. I merge, nobody else. That covers `gh pr merge`, enabling
+    auto-merge, squash, rebase, fast-forward, and merging the branch into anything locally.
+    Push the branch, say it is ready, and stop there.
   - Simple PR title, few-line description. Never write a wall of text. Nobody reads it.
   - Everything lowercase in PR titles, descriptions, and comments.
 
