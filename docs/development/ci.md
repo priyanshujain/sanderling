@@ -150,8 +150,16 @@ walk visits far more often than Home, so a count that does not depend on Home is
 available; it needs per-account attribution, since the ledger shows one account
 where Home shows all of them.
 
-Android runs seed 9 over 200 steps: its conviction lands at step 178, so a
+Android runs seed 9 over 200 steps. Its conviction lands around step 178, and a
 shorter budget would never see the bonus. A full run costs about five minutes.
+
+That step number was measured on a local emulator with animations ON, and the CI
+job sets `disable-animations: true`, so it does not describe the CI leg. The
+worry that follows is that zeroing the 700ms Compose fade would stop the leg
+exercising the cross-fade wait entirely. The first real dispatch says otherwise:
+its 200-step trace carries 4 `transitional` steps, so the wait still fires, just
+far less often than it does locally. Treat the android number as an order of
+magnitude, not a pin. It is a health gate, so nothing keys on it.
 
 Repeating the ios leg by hand needs nothing special now, because the run clears
 the app's state itself. It used to: `just ios` installs over the top without
