@@ -408,15 +408,15 @@ jobs:
           path: runs/
           retention-days: 14
 
-  # On a tag this publishes @sanderling/spec at the tag's version and the CLI to
-  # GitHub Releases. On master it publishes @sanderling/spec only, and only when
-  # pkg/spec/package.json carries a version npm does not have yet.
-  release:
-    name: Release
+  # On master this publishes @sanderling/spec, and only when
+  # pkg/spec/package.json carries a version npm does not have yet. On a tag it
+  # publishes the version the tag names.
+  release-npm:
+    name: Release (npm)
     if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       # A refname is attacker-controlled text and git permits backtick, `$`,
       # `(`, `;`, `&` and `|` in it, so it goes through env: a `${{ }}` is
@@ -424,6 +424,8 @@ jobs:
       # outputs rather than the refname, and nothing reaches a shell before it
       # has matched the pattern. The pattern is anchored and admits no newline,
       # which is what stops the value below forging a second $GITHUB_OUTPUT key.
+      # Release (cli) validates the same way, from its own copy: the two jobs
+      # hold different permissions and neither should wait on the other.
       - name: Validate the tag
         id: tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -444,8 +446,6 @@ jobs:
           # Empty on master, where the commit that triggered the run is the one
           # to publish and master may have moved on since.
           ref: ${{ steps.tag.outputs.tag || github.sha }}
-          # GoReleaser reads the tag history for its changelog.
-          fetch-depth: 0
           # `npm ci` below runs dependency lifecycle scripts, and no step in
           # this job needs the git credential afterwards.
           persist-credentials: false
@@ -515,26 +515,53 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+  # Tags only: there is no CLI to cut on a merge. This is the job that holds
+  # contents: write, and it holds no publish credential of its own.
+  release-cli:
+    name: Release (cli)
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # The same validation Release (npm) runs, on the same pattern, for the
+      # same reason. Both copies must stay identical.
+      - name: Validate the tag
+        id: tag
+        run: |
+          pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
+          if [[ ! "$TAG" =~ $pattern ]]; then
+            echo "release: refusing to publish from '$TAG'" >&2
+            echo "release: a release tag is vMAJOR.MINOR.PATCH with an optional -prerelease, e.g. v0.1.0 or v0.0.1-rc1" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ github.ref_name }}
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          # GoReleaser reads the tag history for its changelog.
+          fetch-depth: 0
+
       - name: Set up Go
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up JDK 17
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Android SDK
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
 
       - name: Cache Gradle
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/cache@v6
         with:
           path: |
@@ -545,11 +572,9 @@ jobs:
             gradle-${{ runner.os }}-
 
       - name: Build sidecar JAR
-        if: startsWith(github.ref, 'refs/tags/v')
         run: make sidecar
 
       - name: Publish the sanderling CLI to GitHub Releases
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: "~> v2"
@@ -611,7 +636,8 @@ jobs:
       - folio-ios
       - folio-web
       - replay-ui
-      - release
+      - release-npm
+      - release-cli
       - docs
     runs-on: ubuntu-latest
     steps:
