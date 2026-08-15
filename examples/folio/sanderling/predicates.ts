@@ -417,13 +417,26 @@ export function homeAccountsOf(cards: readonly CardReading[]): Account[] | null 
 //
 // A name carried by more than one card is left out for the same reason, the
 // rule createdAccountHasNonZeroBalance applies with `matches.length === 1`:
-// nothing here can say which of them a count came from. Folio accepts the same
-// account name twice and Home lists whatever fits the viewport, so a reading
-// that saw one Travel card and a later one that saw two would otherwise
-// subtract two DIFFERENT accounts' counts and convict a healthy app of
-// double-submitting. The twin does not have to be readable to spoil the
-// identity, so duplicates are counted over every card, not just the usable
-// ones. Dropping a card can only ever cost a detection.
+// nothing here can say which of them a count came from. Two accounts never
+// share a NAME (Accounts.name is UNIQUE and Repository.createAccount rejects
+// one already taken, NOCASE), but they can share a KEY, because web's key is
+// the card text in front of the digit run, which is the name with any trailing
+// digits shaved off it: "Travel1" holding 25 transactions and "Travel12"
+// holding 6 both key to "TRTravel" and both read a three-digit run, so
+// subtracting one from the other subtracts two unrelated counting series. The
+// twin does not have to be readable to spoil the identity, so duplicates are
+// counted over every card, not just the usable ones. Dropping a card can only
+// ever cost a detection.
+//
+// What this cannot see is a twin that never shares a reading with its pair, and
+// Home lists only what fits the viewport. Nothing computed from the card text
+// can: the two cards' text is identical character for character ("TRTravel1"
+// followed by "25 transactions" and "TRTravel12" followed by "6 transactions"
+// are one string), so no key derived from it separates them. Refusing every run
+// that could hide a name's own digits would, at the price of the evidence web
+// convicts on today, whose measured witness is a count of 12 rising to 14.
+// Separating them needs something the tree does not carry: the account's id on
+// the card, or a separator in front of the count.
 export function homeTxnCountsOf(cards: readonly CardReading[]): Record<string, TxnCount> | null {
   const cardsPerName = new Map<string, number>();
   for (const card of cards) cardsPerName.set(card.name, (cardsPerName.get(card.name) ?? 0) + 1);
