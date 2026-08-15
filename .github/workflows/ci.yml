@@ -17,7 +17,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  check-tests:
+    name: Check (tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -109,7 +110,8 @@ jobs:
       - name: Run folio's unit tests
         run: make test-folio
 
-  browser:
+  check-browser:
+    name: Check (browser)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -126,9 +128,8 @@ jobs:
       - name: Drive web fixtures through headless Chrome
         run: make test-browser
 
-  # The folio jobs and the release job never run on a pull request, so a bad
-  # expression or a missing action in them would land before anything caught it.
-  workflows:
+  check-workflows:
+    name: Check (workflows)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -136,18 +137,20 @@ jobs:
       # Pinned so a new actionlint release cannot change what CI enforces,
       # for the same reason the buf version above is spelled out. shellcheck
       # runs over every run: block by default.
-      - name: Lint the workflows
+      - name: Lint the workflow
         uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
         with:
           version: 1.7.12
 
       # actionlint reads a local action's inputs but never checks that its path
       # exists: `uses: ./.github/actions/typo` lints clean and fails only when
-      # the job runs.
+      # the job runs, and the folio jobs and the release job never run on a
+      # pull request.
       - name: Check that the workflow references resolve
         run: .github/scripts/workflow-refs.sh
 
   folio-android:
+    name: Folio (android)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -196,6 +199,7 @@ jobs:
           retention-days: 14
 
   folio-ios:
+    name: Folio (ios)
     if: github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 90
@@ -252,6 +256,7 @@ jobs:
           retention-days: 14
 
   folio-web:
+    name: Folio (web)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -296,6 +301,7 @@ jobs:
           retention-days: 14
 
   replay-ui:
+    name: Replay UI
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -387,8 +393,8 @@ jobs:
       # property was ever evaluated against real content: they all decline to
       # judge when the elements they read are absent, so a run that never
       # rendered the step page is green and worthless. This step is what tells
-      # the two apart, and it fails the job when nothing was judged. folio's
-      # jobs make the same call inside folio-run.sh, where the exit code it is
+      # the two apart, and it fails the job when nothing was judged. folio
+      # makes the same call inside folio-run.sh, where the exit code it is
       # judging is in scope.
       - name: Classify the run
         if: always()
@@ -406,7 +412,8 @@ jobs:
   # GitHub Releases. On master it publishes @sanderling/spec only, and only when
   # pkg/spec/package.json carries a version npm does not have yet.
   release:
-    if: github.ref == 'refs/heads/master' || github.ref_type == 'tag'
+    name: Release
+    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -419,7 +426,7 @@ jobs:
       # which is what stops the value below forging a second $GITHUB_OUTPUT key.
       - name: Validate the tag
         id: tag
-        if: github.ref_type == 'tag'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
           if [[ ! "$TAG" =~ $pattern ]]; then
@@ -456,7 +463,7 @@ jobs:
         run: npm ci
 
       - name: Stamp version
-        if: github.ref_type == 'tag'
+        if: startsWith(github.ref, 'refs/tags/v')
         working-directory: pkg/spec
         run: npm version "$VERSION" --no-git-tag-version --allow-same-version
         env:
@@ -509,25 +516,25 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Set up Go
-        if: github.ref_type == 'tag'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up JDK 17
-        if: github.ref_type == 'tag'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Android SDK
-        if: github.ref_type == 'tag'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
 
       - name: Cache Gradle
-        if: github.ref_type == 'tag'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/cache@v6
         with:
           path: |
@@ -538,11 +545,11 @@ jobs:
             gradle-${{ runner.os }}-
 
       - name: Build sidecar JAR
-        if: github.ref_type == 'tag'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: make sidecar
 
       - name: Publish the sanderling CLI to GitHub Releases
-        if: github.ref_type == 'tag'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: "~> v2"
@@ -555,7 +562,8 @@ jobs:
   # on every merge instead: it is pandoc over a few pages, and a deploy of bytes
   # that did not change is a no-op.
   docs:
-    if: github.ref == 'refs/heads/master' || github.ref_type == 'tag'
+    name: Docs
+    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -588,3 +596,25 @@ jobs:
 
       - uses: actions/deploy-pages@v5
         id: deployment
+
+  # The one status check to point branch protection at. Without `if: always()`
+  # this would be skipped along with anything that skipped, and a skipped
+  # required check reads as a pass.
+  all-checks-passed:
+    name: All checks passed
+    if: always()
+    needs:
+      - check-tests
+      - check-browser
+      - check-workflows
+      - folio-android
+      - folio-ios
+      - folio-web
+      - replay-ui
+      - release
+      - docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
