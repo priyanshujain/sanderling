@@ -35,6 +35,10 @@ kotlin {
             api(libs.sqldelight.coroutines.extensions)
             api(libs.sqldelight.async.extensions)
         }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
+        }
         androidMain.dependencies {
             implementation(libs.sqldelight.android.driver)
         }
