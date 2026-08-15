@@ -937,6 +937,83 @@ internal fun treeWithoutKeyboard(
     return current
 }
 
+// SELECT_ALL_COMMAND selects the focused field's whole content with
+// CTRL+A (keycodes 113 and 29) and DELETE_KEY_COMMAND then deletes the
+// selection (keycode 67). Two key events, whatever the field holds.
+internal const val SELECT_ALL_COMMAND = "input keycombination 113 29"
+internal const val DELETE_KEY_COMMAND = "input keyevent 67"
+
+// DELETE_BATCH_KEYS bounds how many deletes ride in one `input keyevent`
+// invocation on the fallback path. `input` takes a list of keycodes, so the
+// round trip is paid per batch rather than per character: measured 2.3 ms/char
+// against the 29.6 ms/char of one round trip each.
+internal const val DELETE_BATCH_KEYS = 200
+
+internal fun deleteKeyCommands(count: Int, batch: Int): List<String> {
+    if (count <= 0) return emptyList()
+    val size = batch.coerceAtLeast(1)
+    return (0 until count).chunked(size).map { chunk ->
+        chunk.joinToString(" ", prefix = "input keyevent ") { "67" }
+    }
+}
+
+// focusedEditableTextLength reports how much text the focused editable node
+// holds, or null when the tree names no focused editable node. Null is
+// "cannot tell", which is not the same as empty and must not be read as it.
+internal fun focusedEditableTextLength(treeJson: String): Int? {
+    if (treeJson.isBlank()) return null
+    return try {
+        focusedEditableLength(jsonMapper.readTree(treeJson))
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun focusedEditableLength(
+    node: com.fasterxml.jackson.databind.JsonNode,
+): Int? {
+    val attributes = node.get("attributes")
+    if (attributes != null && attributes.isObject &&
+        attributes.get("focused")?.asText() == "true" &&
+        attributes.get("editable")?.asText() == "true"
+    ) {
+        return attributes.get("text")?.asText().orEmpty().length
+    }
+    val children = node.get("children") ?: return null
+    if (!children.isArray) return null
+    for (child in children) focusedEditableLength(child)?.let { return it }
+    return null
+}
+
+// eraseFocusedField clears the field the runner just tapped.
+//
+// maestro's eraseText sends one delete per character through its own
+// instrumentation, which measured 29.6 ms/char on the API 34 emulator: the
+// 4096-character string the corpus types cost ~121s to clear, a fifth of a 20
+// minute budget spent on one step. Selecting the content and deleting the
+// selection costs the same two key events at any length, measured 0.15s to
+// 1.16s for 4096 characters across API 34, 35 and 36.
+//
+// A fast erase that leaves characters behind would be far worse than a slow
+// one, because the next InputText appends to the residue and nothing
+// downstream detects it. So the result is read back off the tree, and a field
+// that is not empty, or that the tree cannot report on at all, is finished off
+// per character. Those deletes ride in batches, so even that path costs one
+// round trip per batch rather than the one per character this replaces.
+internal fun eraseFocusedField(
+    characterCount: Int,
+    shell: (String) -> Unit,
+    focusedTextLength: () -> Int?,
+) {
+    if (characterCount <= 0) return
+    shell(SELECT_ALL_COMMAND)
+    shell(DELETE_KEY_COMMAND)
+    if (focusedTextLength() == 0) return
+    for (command in deleteKeyCommands(characterCount, DELETE_BATCH_KEYS)) {
+        shell(command)
+    }
+}
+
 // typingOwner picks what the mid-type foreground guard holds later reads
 // against. A dumpsys it could read names the resumed package, and that is the
 // answer.
@@ -1131,8 +1208,11 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     private fun foregroundPackage(): String? =
         parseResumedPackage(foregroundDumpsys())
 
-    override fun eraseText(characterCount: Int) =
-        driver.eraseText(characterCount)
+    override fun eraseText(characterCount: Int) = eraseFocusedField(
+        characterCount,
+        shell = { dadb.shell(it) },
+        focusedTextLength = { focusedEditableTextLength(hierarchy()) },
+    )
 
     override fun swipe(
         fromX: Int,
