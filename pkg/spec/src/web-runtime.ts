@@ -445,6 +445,15 @@ if (typeof globalThis.addEventListener === "function") {
 // that reads state.lastAction vacuously true on web.
 let lastAction: unknown = null;
 
+// logs is what the driver captured between the previous step and this one,
+// pushed in by the Go runner (via __sanderlingSetLogs__) before each extractor
+// evaluation, in the shape internal/verifier/marshal.go builds for goja. The
+// page cannot derive it: console output reaches the runner over CDP and nothing
+// in the page reads it back. Hardcoding [] here, as this file used to, makes
+// every spec property that reads state.logs vacuously true on web, the default
+// noLogcatErrors included, because the page's reading is the one that wins.
+let logs: unknown[] = [];
+
 function buildState(): unknown {
   return {
     snapshots: {},
@@ -453,7 +462,7 @@ function buildState(): unknown {
     window,
     lastAction,
     time: 0,
-    logs: [],
+    logs,
     exceptions: capturedExceptions.slice(),
   };
 }
@@ -500,6 +509,11 @@ defineLockedGlobal("__sanderling__", runtime);
 // The host calls this once per step, before __sanderlingExtractors__.
 defineLockedGlobal("__sanderlingSetLastAction__", (value: unknown) => {
   lastAction = value ?? null;
+});
+
+// The host calls this once per step too, alongside __sanderlingSetLastAction__.
+defineLockedGlobal("__sanderlingSetLogs__", (value: unknown) => {
+  logs = Array.isArray(value) ? value : [];
 });
 
 // writable:false stops a page script from shadowing the runtime via plain
