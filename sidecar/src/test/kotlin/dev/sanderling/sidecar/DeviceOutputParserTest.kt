@@ -24,7 +24,8 @@ class DeviceOutputParserTest {
         assertEquals("FATAL EXCEPTION: main", lines[0].message)
 
         val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = lines[0].unixMillis }
+        val cal = java.util.Calendar.getInstance()
+            .apply { timeInMillis = lines[0].unixMillis }
         assertEquals(year, cal.get(java.util.Calendar.YEAR))
         assertEquals(56, cal.get(java.util.Calendar.SECOND))
         assertEquals(789, cal.get(java.util.Calendar.MILLISECOND))
@@ -51,7 +52,9 @@ class DeviceOutputParserTest {
 
     @Test fun parseCpuTicksReturnsNullOnTruncatedOrNonNumericStat() {
         assertNull(parseCpuTicks("1234 (app) S 1 2 3"))
-        assertNull(parseCpuTicks("1234 (app) S " + (1..12).joinToString(" ") { "x" }))
+        assertNull(
+            parseCpuTicks("1234 (app) S " + (1..12).joinToString(" ") { "x" }),
+        )
         assertNull(parseCpuTicks(""))
     }
 
@@ -79,8 +82,14 @@ class DeviceOutputParserTest {
     }
 
     @Test fun parseBoundsAcceptsWellFormedAndRejectsMalformed() {
-        assertEquals(listOf(0, 0, 1080, 2340), parseBounds("[0,0,1080,2340]")?.toList())
-        assertEquals(listOf(-5, -10, 20, 30), parseBounds("[-5,-10,20,30]")?.toList())
+        assertEquals(
+            listOf(0, 0, 1080, 2340),
+            parseBounds("[0,0,1080,2340]")?.toList(),
+        )
+        assertEquals(
+            listOf(-5, -10, 20, 30),
+            parseBounds("[-5,-10,20,30]")?.toList(),
+        )
         assertNull(parseBounds("[0,0,1080]"))
         assertNull(parseBounds("0,0,1,1"))
         assertNull(parseBounds("[0, 0, 1, 1]"))
@@ -92,10 +101,14 @@ class DeviceOutputParserTest {
             "resource-id" to "com.example:id/loginButton",
             "bounds" to "[10,20,110,80]",
         )
-        assertEquals(listOf(10, 20, 110, 80), findBoundsBySelector(tree, "id:loginButton")?.toList())
         assertEquals(
             listOf(10, 20, 110, 80),
-            findBoundsBySelector(tree, "id:com.example:id/loginButton")?.toList(),
+            findBoundsBySelector(tree, "id:loginButton")?.toList(),
+        )
+        assertEquals(
+            listOf(10, 20, 110, 80),
+            findBoundsBySelector(tree, "id:com.example:id/loginButton")
+                ?.toList(),
         )
     }
 
@@ -104,21 +117,36 @@ class DeviceOutputParserTest {
             "resource-id" to "root",
             children = listOf(
                 node("text" to "Sign in", "bounds" to "[1,2,3,4]"),
-                node("content-desc" to "AccountCardRow-7", "bounds" to "[5,6,7,8]"),
+                node(
+                    "content-desc" to "AccountCardRow-7",
+                    "bounds" to "[5,6,7,8]",
+                ),
             ),
         )
-        assertEquals(listOf(1, 2, 3, 4), findBoundsBySelector(tree, "text:Sign in")?.toList())
-        assertEquals(listOf(5, 6, 7, 8), findBoundsBySelector(tree, "descPrefix:AccountCard")?.toList())
+        assertEquals(
+            listOf(1, 2, 3, 4),
+            findBoundsBySelector(tree, "text:Sign in")?.toList(),
+        )
+        assertEquals(
+            listOf(5, 6, 7, 8),
+            findBoundsBySelector(tree, "descPrefix:AccountCard")?.toList(),
+        )
     }
 
     @Test fun findBoundsBySelectorReturnsNullForBadSelectorOrNoMatch() {
-        val tree = node("resource-id" to "com.example:id/x", "bounds" to "[0,0,1,1]")
+        val tree = node(
+            "resource-id" to "com.example:id/x",
+            "bounds" to "[0,0,1,1]",
+        )
         assertNull(findBoundsBySelector(tree, "id"))
         assertNull(findBoundsBySelector(tree, "id:missing"))
     }
 
     @Test fun findBoundsBySelectorReturnsNullWhenMatchHasMalformedBounds() {
-        val tree = node("resource-id" to "com.example:id/x", "bounds" to "not-bounds")
+        val tree = node(
+            "resource-id" to "com.example:id/x",
+            "bounds" to "not-bounds",
+        )
         assertNull(findBoundsBySelector(tree, "id:x"))
     }
 
@@ -132,17 +160,26 @@ class DeviceOutputParserTest {
     private fun ihdr(width: Int, height: Int): ByteArray {
         val b = ByteArray(33)
         for (i in 0 until 8) b[8 + i] = 0
-        b[12] = 'I'.code.toByte(); b[13] = 'H'.code.toByte()
-        b[14] = 'D'.code.toByte(); b[15] = 'R'.code.toByte()
-        b[16] = (width ushr 24).toByte(); b[17] = (width ushr 16).toByte()
-        b[18] = (width ushr 8).toByte(); b[19] = width.toByte()
-        b[20] = (height ushr 24).toByte(); b[21] = (height ushr 16).toByte()
-        b[22] = (height ushr 8).toByte(); b[23] = height.toByte()
+        b[12] = 'I'.code.toByte()
+        b[13] = 'H'.code.toByte()
+        b[14] = 'D'.code.toByte()
+        b[15] = 'R'.code.toByte()
+        b[16] = (width ushr 24).toByte()
+        b[17] = (width ushr 16).toByte()
+        b[18] = (width ushr 8).toByte()
+        b[19] = width.toByte()
+        b[20] = (height ushr 24).toByte()
+        b[21] = (height ushr 16).toByte()
+        b[22] = (height ushr 8).toByte()
+        b[23] = height.toByte()
         return b
     }
 
     private fun node(
         vararg attrs: Pair<String, String>,
         children: List<maestro.TreeNode> = emptyList(),
-    ): maestro.TreeNode = maestro.TreeNode(attributes = attrs.toMap().toMutableMap(), children = children)
+    ): maestro.TreeNode = maestro.TreeNode(
+        attributes = attrs.toMap().toMutableMap(),
+        children = children,
+    )
 }

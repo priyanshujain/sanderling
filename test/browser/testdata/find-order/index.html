@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+  <body>
+    <!-- Two elements share the id, one inside a shadow root on the mount and
+         one later in the light DOM. The hierarchy dump orders a host's shadow
+         children before its light ones, so a pre-order search there reaches the
+         shadow one first; a light-DOM sweep that only descends afterwards
+         reaches the other. The page exists to make the two walks disagree. -->
+    <div id="mount" style="width: 200px; height: 80px"></div>
+    <span id="x">light</span>
+    <script>
+      document.getElementById("mount").attachShadow({ mode: "open" }).innerHTML =
+        '<span id="x">shadow</span>';
+    </script>
+  </body>
+</html>

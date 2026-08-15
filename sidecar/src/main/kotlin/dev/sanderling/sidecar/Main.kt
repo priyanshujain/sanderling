@@ -13,14 +13,17 @@ class SidecarServer(
     private val shutdownLatch = CountDownLatch(1)
 
     fun start(): Int {
-        val server = NettyServerBuilder.forAddress(InetSocketAddress("127.0.0.1", port))
+        val server = NettyServerBuilder
+            .forAddress(InetSocketAddress("127.0.0.1", port))
             .addService(service)
             .build()
         server.start()
         grpcServer = server
-        Runtime.getRuntime().addShutdownHook(Thread {
-            stop()
-        })
+        Runtime.getRuntime().addShutdownHook(
+            Thread {
+                stop()
+            },
+        )
         return server.port
     }
 
@@ -48,23 +51,41 @@ class SidecarServer(
 // lost from run output.
 private fun quietExpectedDriverNoise() {
     org.apache.logging.log4j.core.config.Configurator.setLevel(
-        "util.CommandLineUtils", org.apache.logging.log4j.Level.OFF)
+        "util.CommandLineUtils",
+        org.apache.logging.log4j.Level.OFF,
+    )
     org.apache.logging.log4j.core.config.Configurator.setLevel(
-        "xcuitest.XCTestDriverClient", org.apache.logging.log4j.Level.OFF)
+        "xcuitest.XCTestDriverClient",
+        org.apache.logging.log4j.Level.OFF,
+    )
     org.apache.logging.log4j.core.config.Configurator.setLevel(
-        "maestro.drivers.AndroidDriver", org.apache.logging.log4j.Level.OFF)
+        "maestro.drivers.AndroidDriver",
+        org.apache.logging.log4j.Level.OFF,
+    )
 }
 
 fun main(arguments: Array<String>) {
     quietExpectedDriverNoise()
     val port = arguments.indexOf("--port").let { index ->
-        if (index >= 0 && index + 1 < arguments.size) arguments[index + 1].toInt() else 0
+        if (index >= 0 && index + 1 < arguments.size) {
+            arguments[index + 1].toInt()
+        } else {
+            0
+        }
     }
     val platform = arguments.indexOf("--platform").let { index ->
-        if (index >= 0 && index + 1 < arguments.size) arguments[index + 1] else "android"
+        if (index >= 0 && index + 1 < arguments.size) {
+            arguments[index + 1]
+        } else {
+            "android"
+        }
     }
     val serial = arguments.indexOf("--serial").let { index ->
-        if (index >= 0 && index + 1 < arguments.size) arguments[index + 1] else null
+        if (index >= 0 && index + 1 < arguments.size) {
+            arguments[index + 1]
+        } else {
+            null
+        }
     }
 
     val backend: DriverBackend = when (platform) {
@@ -74,7 +95,9 @@ fun main(arguments: Array<String>) {
     val service = DriverService(platform = platform, backend = backend)
     val server = SidecarServer(port, service)
     val boundPort = server.start()
-    println("sanderling-sidecar listening on 127.0.0.1:$boundPort platform=$platform")
+    println(
+        "sanderling-sidecar listening on 127.0.0.1:$boundPort platform=$platform",
+    )
     System.out.flush()
     server.awaitTermination()
 }
