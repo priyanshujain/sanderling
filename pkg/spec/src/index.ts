@@ -13,6 +13,7 @@ export type {
   InputTextAction,
   Key,
   KnownAttrSelectors,
+  LastAction,
   LogEntry,
   LongPressAction,
   Point,

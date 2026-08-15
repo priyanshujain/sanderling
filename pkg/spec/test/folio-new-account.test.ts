@@ -3,8 +3,12 @@ import { test } from "node:test";
 
 import { createdAccountHasNonZeroBalance } from "../../../examples/folio/sanderling/predicates.ts";
 
-const created = { kind: "Tap", on: "testTag:AddAccountScreen > testTag:AddAccountSubmit" };
-const idle = { kind: "Tap", on: "testTag:HomeScreen > testTag:AccountCard" };
+const created = {
+  kind: "Tap",
+  on: "testTag:AddAccountScreen > testTag:AddAccountSubmit",
+  applied: true as const,
+};
+const idle = { kind: "Tap", on: "testTag:HomeScreen > testTag:AccountCard", applied: true as const };
 
 const account = (name: string, balance: number | null) => ({ name, balance });
 
@@ -27,7 +31,7 @@ test("a double-tapped create is judged the same way", () => {
   assert.equal(
     createdAccountHasNonZeroBalance({
       route: "home",
-      lastAction: { kind: "DoubleTap", on: "id:AddAccountSubmit" },
+      lastAction: { kind: "DoubleTap", on: "id:AddAccountSubmit", applied: true },
       typedName: "Travel",
       before: [account("Checking", 0)],
       after: [account("Checking", 0), account("Travel", 5000)],
@@ -229,6 +233,23 @@ test("a card that was already there is not a card that was just created", () => 
       typedName: "Travel",
       before: [account("Checking", 0), account("Travel", 2411200)],
       after: [account("Checking", 0), account("Travel", 2411200)],
+    }),
+    false,
+  );
+});
+
+// The apply call failed with the gesture possibly already delivered, so nobody
+// knows whether that account was created. The card carrying the typed name may
+// be an older one that scrolled into view, and attributing it to a creation
+// that may never have happened is a conviction built on a guess.
+test("a create the runner could not confirm attributes nothing", () => {
+  assert.equal(
+    createdAccountHasNonZeroBalance({
+      route: "home",
+      lastAction: { ...created, applied: null },
+      typedName: "Travel",
+      before: [account("Checking", 0)],
+      after: [account("Checking", 0), account("Travel", 5000)],
     }),
     false,
   );
