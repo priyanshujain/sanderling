@@ -115,7 +115,11 @@ every reading take its answer from there. `routeOfFrame` in folio's
 to the next, which is how you state "this action had that effect". `now(f)`
 evaluates at the current step inside a formula body.
 `eventually(f).within(n, "steps" | "seconds" | "milliseconds")` requires `f`
-before the window closes; unbounded, it never fails a finite run. At the top
+before the window closes and convicts at the step it does not. Unbounded, it
+does not stop being a liveness obligation: one that never fires is violated when
+the run ends, with the reason `eventually never satisfied`. So an `eventually`
+over a state your run may not reach fires on every run that does not reach it,
+and that is the usual way a first spec ends up red for no reason. At the top
 level an `eventually` is one goal for the whole run, armed once and discharged
 for good the first time it holds; written inside `always` it re-arms at every
 step, which asks for the window to be met from everywhere. Every formula has
