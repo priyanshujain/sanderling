@@ -29,7 +29,7 @@ WEB_DIST := replay-ui/dist
 
 GOLINES := $(shell $(GO) env GOPATH)/bin/golines
 
-.PHONY: bootstrap proto sidecar sanderling sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-spec-api spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
+.PHONY: bootstrap proto sidecar sidecar-embed sanderling sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-spec-api spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
 
 bootstrap:
 	$(GO) mod download
@@ -41,6 +41,10 @@ proto:
 	$(BUF) generate
 
 sidecar: $(SIDECAR_JAR)
+
+# Stages the JAR where //go:embed expects it. Release tooling calls this rather
+# than copying the JAR itself, so the embed path is spelled out in one place.
+sidecar-embed: $(SIDECAR_EMBED)
 
 sanderling: $(SANDERLING_BIN)
 
