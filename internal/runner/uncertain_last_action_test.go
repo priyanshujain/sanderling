@@ -22,7 +22,7 @@ import (
 //
 // The spec below is the real folio predicate pair, imported from the example,
 // so what this asserts is the verdict the shipped property reaches.
-const uncertainApplySpecTemplate = `
+const submitCountingSpecTemplate = `
 import { actions, always, extract, next, Tap } from "@sanderling/spec";
 import {
   committedTransactionsExceedSubmits,
@@ -95,7 +95,7 @@ func TestRunner_ApplyErrorAfterDispatchDoesNotConvictTheSubmitCountingProperty(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := fmt.Sprintf(uncertainApplySpecTemplate, predicates)
+	spec := fmt.Sprintf(submitCountingSpecTemplate, predicates)
 
 	run := func(t *testing.T, commitsPerTap int64) []ViolationRecord {
 		t.Helper()
