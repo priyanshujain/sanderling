@@ -70,13 +70,21 @@ func New() *Driver {
 		}
 		var parts []string
 		for _, arg := range e.Args {
-			if arg.Value != nil {
-				var s string
-				if err := json.Unmarshal(arg.Value, &s); err == nil {
-					parts = append(parts, s)
-				} else {
-					parts = append(parts, string(arg.Value))
+			// An object argument, which is what console.error(err) passes,
+			// carries no value at all: CDP sends a description instead. Reading
+			// only the value logged those calls with an empty message, so the
+			// entry named a level and nothing a reader could act on.
+			if arg.Value == nil {
+				if arg.Description != "" {
+					parts = append(parts, arg.Description)
 				}
+				continue
+			}
+			var s string
+			if err := json.Unmarshal(arg.Value, &s); err == nil {
+				parts = append(parts, s)
+			} else {
+				parts = append(parts, string(arg.Value))
 			}
 		}
 		d.logsMu.Lock()
