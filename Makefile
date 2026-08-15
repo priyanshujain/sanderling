@@ -171,7 +171,7 @@ $(PAGE_OUT): build/site/%/index.html: docs/%.md $(DOCS_TEMPLATE)
 
 clean:
 	$(GO) clean
-	rm -rf bin dist pkg/spec-api/dist build/site
+	rm -rf bin dist pkg/spec/dist build/site
 	$(GRADLE) clean
 
 # Local release dry-runs. None of these touch remote registries.
