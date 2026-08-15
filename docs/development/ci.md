@@ -113,42 +113,32 @@ exactly once: dirty container, clear-state off, where the app opens already
 signed in on the previous run's accounts and the walk diverges at step 1. The leg
 therefore clears state for itself rather than relying on how it was called.
 
-Do not read a mac number as a statement about CI. **The ios leg does not
-currently convict on the runner at all**, and no seed fixes that. Seed 7 and seed
-28 were both dispatched against macos-15 and both ran 240 steps clean, from the
-state the mac convicts from.
+Do not read a mac number as a statement about CI, but the ios leg does now
+convict there. It had never done so before 2026-08-16, through every dispatch,
+and no seed was ever the reason. `submitCommitsOneTransactionPerAction` counted
+every tap on TxnSubmit toward its window, including taps the app refuses because
+the amount field is empty, and more than half of a typical window was those.
+Measured on recorded android runs: 35 taps against a real budget of 16, and 42
+against 17. A window that wide cannot attribute anything, which is why seed 28
+reached the bug at the step it convicts at locally and was still not judged.
 
-Seed 7 diverges: the two walks agree action for action through step 48, where a
-double-tapped submit lands, and there the mac's next snapshot showed Home while
-the runner's still showed the transaction screen. Past that they are unrelated
-walks.
+`submitCouldCommit` stopped counting them, and the numbers moved a long way:
 
-Seed 28 is the informative one, because it did not diverge. It double-tapped
-Submit on the runner at step 32, which is exactly where it convicts on the mac 8
-runs out of 8. The counting invariant still could not judge it, and the trace
-says why. `submitCommitsOneTransactionPerAction` only evaluates when a Home
-reading arrives, and that run went from step 19 to step 136 without once
-returning Home:
+    leg      before                          after (run 31898888205)
+    ios      240 steps clean, every time     convicts step 59, detected 60
+    web      step 192 on the ubuntu runner   convicts step 185, detected 186
+    android  never reached AddTransaction    healthy over 200 steps, reached it
 
-    step  19  null             -> {Checking: 0}              submits 0
-    step 136  {Checking: 0}    -> {Checking: 15}             submits 37
-    step 164  {Checking: 15}   -> {Checking: 19}             submits 7
-    step 222  {..., Travel: 0} -> {Checking: 25, Travel: 0}  submits 13
-    step 239  {Checking: 25}   -> {Checking: 26, Travel: 0}  submits 1
+The ios witness at that conviction reads one account's transaction count rising
+from 0 to 7 against a window holding 6 submits, with `applied: true` on the
+action and `is_error` unset. Seven transactions from six submits is one double
+submit, which is the bug the leg exists to find.
 
-A rise of 15 against a window of 37 is not a violation, and neither is 4 against
-7, 6 against 13, or 1 against 1. The property is sound; it needs a window holding
-roughly one submit before it can convict, and whether the walk closes the window
-soon after a double tap is timing dependent.
-
-So reaching the bug is necessary and not sufficient. Across 2411 swept steps only
-14 double-tapped Submit at all, and only one of those landed in a window the
-counting invariant could judge. Until the property can attribute a submit without
-waiting for Home, treat an ios pass as evidence and an ios failure as unproven.
-The transaction rows carry a `LedgerRow` test tag on the ledger screen, which the
-walk visits far more often than Home, so a count that does not depend on Home is
-available; it needs per-account attribution, since the ledger shows one account
-where Home shows all of them.
+On the calibration mac the same seed now convicts around step 48, twice in a row,
+where it used to convict at 97-101. Treat both as approximate: the point is that
+the window is now tight enough to attribute a submit, not that any particular
+step number is pinned. A run that fails is worth reading before it is worth
+recalibrating.
 
 Android runs seed 9 over 200 steps. Its conviction lands around step 178, and a
 shorter budget would never see the bonus. A full run costs about five minutes.
