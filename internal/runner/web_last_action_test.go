@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 )
 
@@ -81,6 +82,42 @@ func TestRunner_WebInstallsLastActionInThePage(t *testing.T) {
 	const want = `{"kind":"Tap","applied":true,"relaunched":null,"on":"id:TxnSubmit"}`
 	if web.installed[1] != want {
 		t.Errorf("step 2 installed %s, want %s", web.installed[1], want)
+	}
+}
+
+// The same hole on the other channel: state.logs was hardcoded [] in
+// pkg/spec/src/web-runtime.ts, and because the page's reading of an extractor
+// replaces the host's on web, the driver's error-level entries never reached a
+// property. The default noLogcatErrors counted an empty array on every run.
+func TestRunner_WebInstallsTheStepsLogsInThePage(t *testing.T) {
+	state := newHarnessWithSpec(t, lastActionSpec)
+	state.mock.LogEntries = []driver.LogEntry{
+		{UnixMillis: 1700000000123, Level: "E", Tag: "console", Message: "boom from the page"},
+	}
+	web := &tappingWebDriver{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    2,
+		Driver:      web,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(web.installedLogs) == 0 {
+		t.Fatal("the page was never handed the step's logs; every property reading " +
+			"state.logs evaluated against the empty array the page starts with")
+	}
+	// The shape is the goja host's (internal/verifier/marshal.go logFields),
+	// pinned against it by TestLogs_WebJSONMatchesTheGojaObject.
+	const want = `[{"unixMillis":1700000000123,"level":"E","tag":"console","message":"boom from the page"}]`
+	if web.installedLogs[0] != want {
+		t.Errorf("step 1 installed %s, want %s", web.installedLogs[0], want)
 	}
 }
 

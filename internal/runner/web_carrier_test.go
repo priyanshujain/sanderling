@@ -204,3 +204,49 @@ func TestRunner_LastActionInstallFailureFailsTheRun(t *testing.T) {
 		t.Errorf("Run error = %v, want it to name the failed lastAction install", err)
 	}
 }
+
+// logInstallFailsWebDriver takes lastAction and refuses the logs, the shape a
+// page carrying an older published @sanderling/spec runtime has: it knows the
+// action setter and not the log one.
+type logInstallFailsWebDriver struct {
+	*installFailsWebDriver
+}
+
+func (d *logInstallFailsWebDriver) SetLastAction(context.Context, json.RawMessage) error {
+	return nil
+}
+
+func (d *logInstallFailsWebDriver) SetLogs(context.Context, json.RawMessage) error {
+	return errors.New("__sanderlingSetLogs__ is not a function")
+}
+
+// TestRunner_LogInstallFailureFailsTheRun holds the log channel to the same
+// standard as the action one. The driver having the console errors decides
+// nothing on web: the page's reading of every extractor replaces the host's, so
+// a run that cannot put the entries back into the page evaluates noLogcatErrors
+// against an empty array and reports green on a console full of errors.
+// Continuing past this is the vacuity the whole install exists to prevent.
+func TestRunner_LogInstallFailureFailsTheRun(t *testing.T) {
+	state := newHarnessWithSpec(t, carrierSpec)
+	web := &logInstallFailsWebDriver{
+		installFailsWebDriver: &installFailsWebDriver{Driver: state.mock},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := Run(ctx, Options{
+		Duration:    2 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      web,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err == nil {
+		t.Fatal("Run succeeded with a page that cannot take the step's logs; " +
+			"every property reading the log stream ran against an empty array")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("install logs")) {
+		t.Errorf("Run error = %v, want it to name the failed log install", err)
+	}
+}
