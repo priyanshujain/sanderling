@@ -17,6 +17,7 @@ import {
   cardAccountName,
   cardBalanceText,
   cardTxnCount,
+  committedAmountExceedsOneSubmit,
   committedTransactionsExceedSubmits,
   countSubmitsInWindow,
   createdAccountHasNonZeroBalance,
@@ -25,6 +26,7 @@ import {
   oncePerFrame,
   parseDollarCents,
   parseTypedAmount,
+  readAccountBalance,
   readHomeCards,
   readHomeTotalBalance,
   routeOfFrame,
@@ -181,6 +183,44 @@ const submitsSinceCounts = extract("submitsSinceCounts", s => {
   return window.reported;
 });
 
+// The account's own balance, off whichever of its two screens is up. The routes
+// are exclusive, so at most one of these resolves and the reading is always one
+// account's number. Its carrier is dropped on every other route, which is what
+// keeps two readings from spanning two accounts: see readAccountBalance.
+const accountBalanceText = (s: State) =>
+  on("ledger", "LedgerBalance")(s)?.text ?? on("add-transaction", "TxnCurrentBalance")(s)?.text;
+
+let lastAccountBalance: number | null = null;
+const accountBalance = extract<number | null>("accountBalance", s => {
+  const reading = readAccountBalance({
+    route: routeOf(s),
+    balanceText: accountBalanceText(s),
+    previousCarrier: lastAccountBalance,
+  });
+  lastAccountBalance = reading.carrier;
+  return reading.value;
+});
+
+// A third window, for the same reason the counting invariant has its own: it
+// closes on this reading's freshness, which is a different event again. The
+// transaction flow redraws this balance on nearly every frame, so this window
+// is the narrow one, usually a single action wide.
+let submitsSinceAccountBalance = 0;
+const submitsSinceBalance = extract("submitsSinceAccountBalance", s => {
+  const fresh = readAccountBalance({
+    route: routeOf(s),
+    balanceText: accountBalanceText(s),
+    previousCarrier: null,
+  }).fresh;
+  const window = countSubmitsInWindow({
+    previousCount: submitsSinceAccountBalance,
+    lastAction: s.lastAction,
+    fresh,
+  });
+  submitsSinceAccountBalance = window.next;
+  return window.reported;
+});
+
 const lastAction = extract("lastAction", s => s.lastAction);
 
 const loginEmailField = extract("loginEmailField", on("login", "LoginEmail"));
@@ -232,13 +272,29 @@ const submitMovesBalanceByTypedAmount = always(
 // stays sound however wide the window between two Home readings gets, because
 // both sides of the comparison accumulate over the same window. It is the
 // double-submit stated directly: one tap, two rows.
+//
+// One rule, two windows. The counting form can only compare two Home readings,
+// and a walk that stays inside the transaction flow gives it a window hundreds
+// of steps and dozens of submits wide, which is sound and says nothing. The
+// second form says the same thing in money about the one account whose screen
+// the walk is on, and that window is usually a single action, so it can still
+// tell one commit from two: see committedAmountExceedsOneSubmit.
 const submitCommitsOneTransactionPerAction = always(
-  next(() =>
-    !committedTransactionsExceedSubmits({
-      countsBefore: homeTxnCounts.previous ?? null,
-      countsAfter: homeTxnCounts.current,
-      submitsInWindow: submitsSinceCounts.current,
-    }),
+  next(
+    () =>
+      !committedTransactionsExceedSubmits({
+        countsBefore: homeTxnCounts.previous ?? null,
+        countsAfter: homeTxnCounts.current,
+        submitsInWindow: submitsSinceCounts.current,
+      }) &&
+      !committedAmountExceedsOneSubmit({
+        route: route.current,
+        lastAction: lastAction.current,
+        submitsInWindow: submitsSinceBalance.current,
+        typedAmount: parseTypedAmount(txnAmountField.previous?.text),
+        prevAccountBalance: accountBalance.previous ?? null,
+        currAccountBalance: accountBalance.current,
+      }),
   ),
 );
 
