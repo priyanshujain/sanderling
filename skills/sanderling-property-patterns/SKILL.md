@@ -320,8 +320,9 @@ export const properties = { noUncaughtExceptions, /* yours */ };
 ```
 
 Both read a field the driver fills, and each field is filled on one platform, so
-check which one is yours before counting either as coverage. Folio's spec
-exports neither, and that is the tell: folio's primary target is Android and iOS.
+check which one is yours before counting either as coverage. Folio's spec exports
+neither, and that is the tell: one spec drives its Android, iOS and web builds,
+and neither of these holds anything on all three.
 
 `noUncaughtExceptions` fails when `state.exceptions` is non-empty. Only the web
 runtime fills it, from `error` and `unhandledrejection` listeners installed in
@@ -347,9 +348,9 @@ values that turn a property into one that fires on healthy runs: folio's
 balances once parsed as `0` on web, so the check, an equality at the time,
 became `|0 - 0| === typed` and was false at every healthy submit. Under today's
 bound the same `0` reads as `|0 - 0| <= typed` and passes at every submit
-instead, which is the same defect wearing green. An empty list has the same problem in the
-other direction, and it is worse because it looks reasonable. Android renders
-Home's own node a frame or two before its list, so `findAll` over the cards
+instead, which is the same defect wearing green. An empty list has the same
+problem in the other direction, and it is worse because it looks reasonable.
+Android renders Home's own node a frame or two before its list, so `findAll` over the cards
 comes back empty while the screen already claims to be Home. That is unknown,
 not "no accounts", and reading it as zero accounts killed folio's counting
 invariant outright: `countsBefore` was `{}` at every evaluation point of all 17
