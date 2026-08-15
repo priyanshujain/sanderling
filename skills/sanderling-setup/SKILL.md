@@ -10,10 +10,9 @@ believe. Two things decide that, and both are usually treated as chores: the
 handles the app exposes, and the state the app starts in. Everything else here
 is plumbing.
 
-Every flag below is one the binary accepts. `sanderling test -h` is the
-authority, not this file and not the manual: the manual currently documents
-`--launcher-activity`, which the binary answers with `flag provided but not
-defined`. Check before you use a flag you have not seen work.
+Every flag below is one the binary accepts, checked against `sanderling test -h`
+on this revision. That command is the authority, not this file and not the
+manual. Check before you use a flag you have not seen work.
 
 ## 1. Install, then check the host
 
@@ -28,31 +27,34 @@ Both come from the same release tag and the CLI bundles the package's TypeScript
 when it evaluates your spec, so they move together.
 
 `sanderling doctor` reports the host's readiness per platform and exits non-zero
-if anything is missing. On a Mac with no Android SDK it says:
+if anything is missing. Each line names the check and, on a failure, what to do
+about it. On a Mac with the Android SDK installed but a CLI built by a plain
+`go build`, `sanderling doctor --platform android` says:
 
 ```
-OK    adb on PATH
-FAIL  emulator on PATH or under ANDROID_HOME: not on PATH and ANDROID_HOME is unset
+OK    adb on PATH or under the Android SDK
+OK    emulator on PATH or under the Android SDK
 OK    java 17+ on PATH
 FAIL  sidecar JAR is real (not placeholder): placeholder JAR embedded; run `make sidecar && make sanderling` to embed the real fat JAR
-error: 2 check(s) failed
+error: 1 check(s) failed
 ```
 
 Scope it with `--platform web|android|ios|ios-device|all` (default `all`). Web
-needs a Chromium that launches headless. Android needs `adb`, an emulator on
-PATH or under `ANDROID_HOME`, Java 17 or newer, and the embedded sidecar JAR.
-iOS needs `xcrun` and `simctl`; `ios-device` adds `devicectl`, the macOS usbmuxd
-socket, a connected paired device, and App Store Connect signing credentials.
+needs a Chromium that launches headless. Android needs `adb`, an emulator, Java
+17 or newer, and the embedded sidecar JAR. iOS needs `xcrun` and `simctl`;
+`ios-device` adds `devicectl`, the macOS usbmuxd socket, a connected paired
+device, and App Store Connect signing credentials.
 
-Read the doctor's Android result as advisory rather than final: its emulator
-check today looks only at PATH, `ANDROID_HOME` and `ANDROID_SDK_ROOT`, while a
-run also searches `~/Library/Android/sdk`, `~/Android/Sdk` and the Homebrew
-command-line-tools paths. The run's own error names every location it tried, so
-that is the one to trust. In the other direction, a missing SDK can surface
-during a run as `sidecar health check: context deadline exceeded` about thirty
-seconds in, which names the symptom and not the cause (issue #69). If you see
-it, go back to `sanderling doctor --platform android` before believing anything
-about the sidecar.
+The `adb` and `emulator` checks resolve through the same helpers a run uses, so
+they search PATH, then `ANDROID_HOME` and `ANDROID_SDK_ROOT`, then
+`~/Library/Android/sdk`, `~/Android/Sdk` and the Homebrew command-line-tools
+paths. A host the doctor passes is a host a run can drive, and a failure names
+every location it tried. What the doctor cannot tell you is the reverse: a
+missing SDK can also surface during a run as `sidecar health check: context
+deadline exceeded` about thirty seconds in, which names the symptom and not the
+cause (issue #69). If you see it, go back to
+`sanderling doctor --platform android` before believing anything about the
+sidecar.
 
 Two traps if you build from source rather than installing a release. A plain
 `go build ./cmd/sanderling` embeds a placeholder sidecar JAR, so every Android
