@@ -319,6 +319,25 @@ func TestLaunchRefusesClearStateTheDriverWasNotBuiltFor(t *testing.T) {
 	}
 }
 
+// TestLaunchRefusesClearStateForABundleItDidNotClear holds the guard to the
+// fact it is guarding. A driver built to clear one bundle has cleared nothing
+// for another, so reporting that launch as a clear-state launch is a reset the
+// caller was told happened and did not.
+func TestLaunchRefusesClearStateForABundleItDidNotClear(t *testing.T) {
+	companion := &fakeCompanion{accessibilityJSON: "[]"}
+	d := newTestDriver(companion)
+	d.clearedBundleID = "com.example.app"
+
+	err := d.Launch(context.Background(), "com.other.app", true, nil)
+
+	if err == nil || !strings.Contains(err.Error(), "clear-state") {
+		t.Fatalf("Launch err = %v, want a refusal naming clear-state: com.other.app was never cleared", err)
+	}
+	if indexOf(companion.recorded(), "launch") >= 0 {
+		t.Fatalf("a launch reporting a clear that never happened must not reach the companion; got %v", companion.recorded())
+	}
+}
+
 func TestNewRejectsClearStateWithoutBundleID(t *testing.T) {
 	probe := &clearStateProbe{}
 	options := clearStateOptions(t, probe, "NO-BUNDLE-UDID", true)
