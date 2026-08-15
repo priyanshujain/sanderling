@@ -951,6 +951,131 @@ func TestLaunchLeavesATighterCallerDeadlineAlone(t *testing.T) {
 	}
 }
 
+// wedgedUntilRestartCompanion models the session a refused launch leaves
+// behind: the refusal is never reported, and no later launch is answered until
+// the session itself is replaced.
+type wedgedUntilRestartCompanion struct {
+	fakeCompanion
+	mutex     sync.Mutex
+	replaced  bool
+	attempted int
+}
+
+func (w *wedgedUntilRestartCompanion) replaceSession() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.replaced = true
+}
+
+func (w *wedgedUntilRestartCompanion) launchAttempts() int {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	return w.attempted
+}
+
+func (w *wedgedUntilRestartCompanion) Launch(ctx context.Context, _ string, _ bool) error {
+	w.mutex.Lock()
+	w.attempted++
+	replaced := w.replaced
+	w.mutex.Unlock()
+	if replaced {
+		return nil
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestLaunchReplacesTheSessionAfterALaunchBlowsItsBound covers the FrontBoard
+// race: a clear-state reinstall the simulator has not finished registering
+// makes the session refuse the launch, and XCTest answers that refusal with
+// minutes of diagnostics instead of an error, so the bound expires and every
+// later call queues behind the same wedge. Calling launch again on that session
+// cannot work; the run only recovers if the session is replaced first.
+func TestLaunchReplacesTheSessionAfterALaunchBlowsItsBound(t *testing.T) {
+	previous := launchTimeout
+	launchTimeout = 100 * time.Millisecond
+	defer func() { launchTimeout = previous }()
+
+	companion := &wedgedUntilRestartCompanion{}
+	output := &bytes.Buffer{}
+	d := newTestDriver(companion)
+	d.output = output
+	restarts := 0
+	d.restart = func(context.Context) error {
+		restarts++
+		companion.replaceSession()
+		return nil
+	}
+
+	if err := d.Launch(context.Background(), "", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if restarts != 1 {
+		t.Fatalf("session restarts = %d, want exactly 1", restarts)
+	}
+	if attempts := companion.launchAttempts(); attempts != 2 {
+		t.Fatalf("launch attempts = %d, want 2: one that wedged and one on the replaced session", attempts)
+	}
+	if !strings.Contains(output.String(), "restarting the session") {
+		t.Fatalf("the recovery was silent, so a run that needed it never says so; output was %q", output.String())
+	}
+}
+
+// TestLaunchBoundsTheSessionRestartItTriggers keeps the recovery inside a
+// budget of its own. The restart deliberately runs on the driver's lifetime
+// context rather than the caller's, so without a deadline a session that never
+// comes back would hang the launch path exactly the way #73 stopped it hanging.
+func TestLaunchBoundsTheSessionRestartItTriggers(t *testing.T) {
+	previousLaunch, previousRecovery := launchTimeout, launchRecoveryTimeout
+	launchTimeout = 100 * time.Millisecond
+	launchRecoveryTimeout = 200 * time.Millisecond
+	defer func() { launchTimeout, launchRecoveryTimeout = previousLaunch, previousRecovery }()
+
+	d := newTestDriver(&wedgedUntilRestartCompanion{})
+	d.restart = func(restartCtx context.Context) error {
+		<-restartCtx.Done()
+		return restartCtx.Err()
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- d.Launch(context.Background(), "", false, nil) }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "session restart failed") {
+			t.Fatalf("err = %v, want the failed restart named", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Launch never returned: a session that never comes back hangs the launch path")
+	}
+}
+
+// TestLaunchKeepsTheSessionWhenTheCallersOwnDeadlineExpires holds the recovery
+// to the driver's own bound. Spending a session restart on a caller that has
+// already run out of budget cannot produce a launch, only a later failure.
+func TestLaunchKeepsTheSessionWhenTheCallersOwnDeadlineExpires(t *testing.T) {
+	previous := launchTimeout
+	launchTimeout = 30 * time.Second
+	defer func() { launchTimeout = previous }()
+
+	companion := &wedgedUntilRestartCompanion{}
+	d := newTestDriver(companion)
+	restarts := 0
+	d.restart = func(context.Context) error {
+		restarts++
+		companion.replaceSession()
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := d.Launch(ctx, "", false, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a deadline-exceeded error", err)
+	}
+	if restarts != 0 {
+		t.Fatalf("session restarts = %d, want 0", restarts)
+	}
+}
+
 // newLockTestOptions builds New options that dial a seamed companion, so the
 // device-lock tests exercise New without spawning anything.
 func newLockTestOptions(t *testing.T, udid string) Options {

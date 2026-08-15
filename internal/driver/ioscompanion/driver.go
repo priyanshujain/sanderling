@@ -53,6 +53,14 @@ var shutdownGrace = 15 * time.Second
 // A variable so the timeout test can shrink it.
 var launchTimeout = 90 * time.Second
 
+// launchRecoveryTimeout bounds the whole recovery a blown launch bound
+// triggers, the session restart and the second attempt together. It keeps the
+// launch path inside the three minutes testrun allows it, so what a user sees
+// when the app really cannot be launched stays the driver's error rather than
+// that backstop firing over the top of it. A variable so the bound test can
+// shrink it.
+var launchRecoveryTimeout = 60 * time.Second
+
 // longPressHoldMilliseconds is how long LongPress holds the finger down.
 const longPressHoldMilliseconds = 600
 
@@ -477,12 +485,53 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 		}
 	}
 
-	if err := d.lifecycleCall(ctx, func(callCtx context.Context, companion transport.Companion) error {
-		return companion.Launch(callCtx, d.bundleID, true)
-	}); err != nil {
+	if err := d.launchWithSessionRecovery(ctx); err != nil {
 		return fmt.Errorf("launch %s: %w", d.bundleID, err)
 	}
 	return nil
+}
+
+// launchWithSessionRecovery runs the launch RPC and, when it blows its own
+// bound, replaces the session and launches again.
+//
+// A launch the simulator refuses, which is what a clear-state reinstall racing
+// FrontBoard's registration produces, never comes back as an error: XCTest
+// records the refusal as a test failure the runner cannot observe, then holds
+// the session's main thread for about four minutes walking a diagnostic chain
+// (a 120s accessibility wait, a spindump, an idle wait). So there is no error
+// text to key a retry on, only the expired bound, and every later call queues
+// behind the same wedge. Only a session that never served the refused launch
+// can serve the retry, which is why this restarts rather than calls again.
+func (d *Driver) launchWithSessionRecovery(ctx context.Context) error {
+	launch := func(callCtx context.Context, companion transport.Companion) error {
+		return companion.Launch(callCtx, d.bundleID, true)
+	}
+	err := d.lifecycleCall(ctx, launch)
+	// A caller whose own budget ran out gets no restart: the bound that expired
+	// was the caller's to spend, and the second attempt would inherit it dead.
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil || d.restart == nil {
+		return err
+	}
+	fmt.Fprintf(d.output, "launch %s blew its %v bound (%v); restarting the session and launching once more\n",
+		d.bundleID, launchTimeout, err)
+
+	// The restart runs under the driver's own lifetime context for the same
+	// reason withRecovery's does, while the second attempt stays on the
+	// caller's. Both end at one deadline, so a launch that already spent
+	// launchTimeout cannot then wait out a session cold start on top of it.
+	recoveryDeadline := time.Now().Add(launchRecoveryTimeout)
+	restartCtx := d.processContext
+	if restartCtx == nil {
+		restartCtx = ctx
+	}
+	restartCtx, cancelRestart := context.WithDeadline(restartCtx, recoveryDeadline)
+	defer cancelRestart()
+	if restartErr := d.restart(restartCtx); restartErr != nil {
+		return fmt.Errorf("session restart failed: %w (original: %v)", restartErr, err)
+	}
+	relaunchCtx, cancelRelaunch := context.WithDeadline(ctx, recoveryDeadline)
+	defer cancelRelaunch()
+	return d.lifecycleCall(relaunchCtx, launch)
 }
 
 // lifecycleCall runs an app lifecycle RPC against lifecycleCompanion under a
