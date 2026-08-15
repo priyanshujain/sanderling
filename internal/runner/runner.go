@@ -100,6 +100,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	deadline := summary.StartTime.Add(options.Duration)
 	stepIndex := 0
 	consecutiveApplyFailures := 0
+	heldSteps := 0
 	var lastAction *verifier.Action
 	var lastLogTime time.Time
 	for time.Now().Before(deadline) {
@@ -277,13 +278,38 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
 
-		nextAction, nextErr := actionSource.NextAction(ctx)
+		// A frame the verifier would not look at is not one to act on either.
+		// #75 is the fuzzer tapping into a screen that is still filling in, and
+		// holding the action back is also what keeps the spec's view of the run
+		// continuous: the action a step applies is reported on the NEXT step the
+		// verifier accepts, so acting here would leave the action applied last
+		// step unreported for good, and a property counting actions against
+		// their effects would then see an effect whose cause the runner
+		// swallowed. See TestRunner_ASkippedStepDoesNotSwallowTheActionBeforeIt.
+		//
+		// Bounded, because a screen that never settles must not stall the whole
+		// run: past the bound the runner acts anyway, which is where it was
+		// before this held anything back.
+		held := skippedVerification && heldSteps < maxHeldSteps
+		if held {
+			heldSteps++
+			logger.Warn("screen still moving; holding this step's action back",
+				"step", stepIndex, "held", heldSteps)
+		} else {
+			heldSteps = 0
+		}
+
+		var nextAction verifier.Action
+		nextErr := verifier.ErrNoAction
 		var traceAction *trace.Action
-		if nextErr == nil {
-			traceAction = traceActionFor(nextAction, tree)
-			stampActionSource(traceAction, actionSource)
-		} else if !errors.Is(nextErr, verifier.ErrNoAction) {
-			return summary, fmt.Errorf("step %d next action: %w", stepIndex, nextErr)
+		if !held {
+			nextAction, nextErr = actionSource.NextAction(ctx)
+			if nextErr == nil {
+				traceAction = traceActionFor(nextAction, tree)
+				stampActionSource(traceAction, actionSource)
+			} else if !errors.Is(nextErr, verifier.ErrNoAction) {
+				return summary, fmt.Errorf("step %d next action: %w", stepIndex, nextErr)
+			}
 		}
 
 		residuals, residualErr := encodeResiduals(options.Verifier.Residuals())
@@ -291,8 +317,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			logger.Warn("residual encode failed", "step", stepIndex, "err", residualErr)
 		}
 
-		applySkipped := false
-		if nextErr == nil && !appIsForeground(ctx, options) {
+		applySkipped := held
+		if held {
+			// lastAction is left exactly as it is: it is still the action the
+			// next verified step has to be told about.
+		} else if nextErr == nil && !appIsForeground(ctx, options) {
 			// The app left the foreground between observe and apply (a prior
 			// action's gesture settling late, or an async navigation). The
 			// chosen action's coordinates reference a tree that no longer
@@ -1286,6 +1315,14 @@ func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessa
 // an unbroken streak means the device is wedged and the rest of the budget
 // would be spent doing nothing.
 const maxConsecutiveApplyFailures = 3
+
+// maxHeldSteps bounds how many steps in a row the runner will decline to act on
+// because their screen was still moving. It is a livelock bound, not a settle
+// budget: a screen that changes shape under every pair of reads (a live list, a
+// spinner that mounts and unmounts) would otherwise take the whole run without
+// the fuzzer ever touching it. Two is what the measured cases need, which came
+// one step at a time and never twice in a row.
+const maxHeldSteps = 2
 
 // isWDADrop reports that the sidecar could not restart the iOS XCTest
 // runner: the channel is gone for good and the run must abort. Transient
