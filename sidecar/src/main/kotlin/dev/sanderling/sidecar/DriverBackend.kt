@@ -329,11 +329,12 @@ internal fun readLogcat(
         arguments.add(since)
     }
     return try {
-        val process = ProcessBuilder(
-            adbCmd(serial) + arguments,
-        ).redirectErrorStream(false).start()
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor()
+        val command = adbCmd(serial) + arguments
+        val output = readProcessOutput(
+            ProcessBuilder(command).redirectErrorStream(false).start(),
+            ADB_OUTPUT_TIMEOUT_MILLIS,
+            describe = { command.joinToString(" ") },
+        )
         StubDriverBackend.parseLogcatOutput(output)
     } catch (cause: Exception) {
         println("adb logcat failed: $cause")
@@ -359,13 +360,76 @@ internal fun readProcMetrics(serial: String?, bundleId: String): MetricsSample {
 private fun adbCmd(serial: String?): List<String> =
     if (serial == null) listOf("adb") else listOf("adb", "-s", serial)
 
+// ADB_OUTPUT_TIMEOUT_MILLIS bounds the diagnostic adb reads: dumpsys, logcat,
+// `settings get`, /proc stats. None of them is the driver's data path, so the
+// bound wants to be generous enough that it cannot fire on a link that works,
+// and it is: a hierarchy fetch, far heavier than any of these, measures at a
+// 76ms median and a 168ms p90 over the same remote adb link. What it caps is
+// the other end, where a wedged adb once held a step ~100s.
+internal const val ADB_OUTPUT_TIMEOUT_MILLIS = 10_000L
+
+private val adbReaders: java.util.concurrent.ExecutorService =
+    java.util.concurrent.Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "adb-output").apply { isDaemon = true }
+    }
+
+// readProcessOutput returns a process's stdout, or "" when it does not arrive
+// inside timeoutMillis.
+//
+// The bound belongs on the READ, not on waitFor. readText ends at EOF, and a
+// wedged adb neither writes nor exits, so EOF never comes and a waitFor with a
+// timeout after it is a line that never runs. Waiting first and reading after
+// is worse still: a process with more to say than a pipe buffer holds, which
+// logcat and dumpsys both are, blocks writing while the waiter waits for it to
+// finish, and neither ever moves.
+//
+// So the read runs on a daemon thread and killing the process is what releases
+// it: destroy closes the pipe, the reader sees EOF, the thread ends. Returning
+// "" hands every caller the answer it already treats as "adb said nothing",
+// which is the safe direction for all of them.
+internal fun readProcessOutput(
+    process: Process,
+    timeoutMillis: Long,
+    describe: () -> String,
+    log: (String) -> Unit = { System.err.println(it) },
+): String {
+    val reader = adbReaders.submit<String> {
+        process.inputStream.bufferedReader().readText()
+    }
+    return try {
+        val output = reader.get(
+            timeoutMillis,
+            java.util.concurrent.TimeUnit.MILLISECONDS,
+        )
+        if (!process.waitFor(
+                timeoutMillis,
+                java.util.concurrent.TimeUnit.MILLISECONDS,
+            )
+        ) {
+            process.destroyForcibly()
+        }
+        output
+    } catch (cause: java.util.concurrent.TimeoutException) {
+        process.destroyForcibly()
+        reader.cancel(true)
+        log(
+            "warn: ${describe()} gave nothing in ${timeoutMillis}ms; " +
+                "killed it and read no answer",
+        )
+        ""
+    } catch (cause: Exception) {
+        process.destroyForcibly()
+        ""
+    }
+}
+
 private fun adbOutput(serial: String?, arguments: List<String>): String = try {
-    val process = ProcessBuilder(
-        adbCmd(serial) + arguments,
-    ).redirectErrorStream(false).start()
-    val output = process.inputStream.bufferedReader().readText()
-    process.waitFor()
-    output
+    val command = adbCmd(serial) + arguments
+    readProcessOutput(
+        ProcessBuilder(command).redirectErrorStream(false).start(),
+        ADB_OUTPUT_TIMEOUT_MILLIS,
+        describe = { command.joinToString(" ") },
+    )
 } catch (cause: Exception) {
     ""
 }
@@ -474,8 +538,14 @@ class StubDriverBackend(
     companion object {
         private const val IDLE_POLL_INTERVAL_MILLIS = 50L
 
+        // A count we could not read is not a count of zero. Defaulting it to
+        // zero made an unreadable dumpsys mean "nothing is animating, go
+        // ahead", which is the one answer the caller cannot check: it breaks
+        // out of the settle and snapshots whatever frame is on screen. Unknown
+        // keeps it waiting instead, inside the deadline waitForIdle already
+        // holds, and it agrees with the probe's own exception path.
         internal fun isAnimationCountIdle(grepOutput: String): Boolean =
-            (grepOutput.trim().toIntOrNull() ?: 0) == 0
+            grepOutput.trim().toIntOrNull() == 0
 
         internal fun parseResolvedActivity(
             bundleId: String,
@@ -799,9 +869,105 @@ internal fun typeChunks(
 // every InputText, which raises the IME again long before this probe runs. A
 // caller that dismissed twice in a row, or typed without focusing first, would
 // lose that margin.
+//
+// treeWithoutKeyboard closes a keyboard too, on the snapshot path, and does not
+// cost this one its margin: it reads no flag, and the two are a waitForIdle and
+// a hierarchy fetch apart, several times the window in which this one is stale.
 internal fun dismissSoftKeyboard(shell: (String) -> String) {
     if (!shell("dumpsys input_method").contains("mInputShown=true")) return
     shell("input keyevent 4")
+}
+
+// KEYBOARD_DISMISS_READS bounds the re-reads a snapshot spends waiting for the
+// IME window to leave the tree after BACK. The window leaves over an
+// animation, so the first read back can still carry it. A hierarchy read
+// measures at a 76ms median and a 168ms p90 on the API 34 emulator, so with
+// the interval these four reads watch most of a second: several retractions
+// over, without turning a keyboard the app keeps re-raising into a wait with
+// no end.
+internal const val KEYBOARD_DISMISS_READS = 4
+internal const val KEYBOARD_DISMISS_INTERVAL_MILLIS = 100L
+
+// imePackageOf takes the package half of an input-method component id
+// ("pkg/.Service"), the form both `settings get secure default_input_method`
+// and dumpsys' mCurMethodId use. Anything that is not a package name reads as
+// "no IME known", which disables the dismissal rather than guessing.
+internal fun imePackageOf(component: String): String? =
+    component.trim().substringBefore('/')
+        .takeIf { it.isNotEmpty() && it.contains('.') }
+
+// treeShowsIme reports whether the keyboard window is in the tree, by the view
+// ids the IME's own resources give it ("pkg:id/name").
+internal fun treeShowsIme(treeJson: String, imePackage: String): Boolean =
+    treeJson.contains("$imePackage:id/")
+
+// treeWithoutKeyboard closes a keyboard standing in the snapshot and returns a
+// tree read after it has gone, or the tree it was given when none is open.
+//
+// It belongs here, before the read the picker chooses from, rather than after
+// the tap that raised the keyboard. Two reasons. The picker only ever sees
+// snapshots, so a dismissal anywhere later leaves this step choosing between
+// the handful of targets an open keyboard left in the tree, which is the
+// budget the fuzzer was losing. And the state it has to judge is settled here:
+// the action landed a waitForIdle ago, where straight after the tap the
+// keyboard is still on its way up and nothing it could read would say so yet.
+//
+// The tree is also a better guard than mInputShown. BACK closes an open
+// keyboard and navigates when none is open, so pressing it is only safe on a
+// true reading; mInputShown trails the keyboard by up to 0.6s, while a tree
+// carrying the IME's own view ids is the keyboard being on screen, read a
+// moment ago. Once dismissed, the re-reads confirm it went rather than pressing
+// BACK again, so a keyboard the app puts straight back costs re-reads and never
+// a second back press.
+internal fun treeWithoutKeyboard(
+    tree: String,
+    imePackage: String?,
+    dismiss: () -> Unit,
+    reread: () -> String,
+    sleep: (Long) -> Unit = { Thread.sleep(it) },
+): String {
+    if (imePackage == null || !treeShowsIme(tree, imePackage)) return tree
+    dismiss()
+    var current = tree
+    repeat(KEYBOARD_DISMISS_READS) {
+        sleep(KEYBOARD_DISMISS_INTERVAL_MILLIS)
+        current = reread()
+        if (!treeShowsIme(current, imePackage)) return current
+    }
+    return current
+}
+
+// typingOwner picks what the mid-type foreground guard holds later reads
+// against. A dumpsys it could read names the resumed package, and that is the
+// answer.
+//
+// A read that failed is the interesting case, and neither obvious answer is
+// right. Passing null hands typeChunks "no owner", which switches the guard off
+// altogether and lets the rest of the string spray into whatever holds the
+// foreground: an unreadable probe must never read as focus being fine. But
+// refusing to type is worse in practice. The failure is a degraded link, which
+// lasts, so every InputText in the run becomes a no-op, the budget goes on
+// typing nothing, and the run ends green having tested nothing.
+//
+// So it falls back to the bundle the run launched, which leaves the guard armed
+// against the app the keystrokes were meant for. That reference is better than
+// the resumed package anyway: a foreground already stolen before typing began
+// reads as its own owner, and the guard then matches it happily chunk after
+// chunk.
+internal fun typingOwner(
+    dumpsys: String,
+    launchedBundleId: String?,
+    warn: (String) -> Unit,
+): String? {
+    parseResumedPackage(dumpsys)?.let { return it }
+    warn(
+        "warn: could not read the foreground app; guarding typing with " +
+            (
+                launchedBundleId?.let { "the launched bundle $it" }
+                    ?: "nothing, no launch was recorded"
+                ),
+    )
+    return launchedBundleId
 }
 
 // resumedActivityPackage matches a "package/activity" component, mirroring the
@@ -856,6 +1022,14 @@ internal fun <T> retryOpen(
 class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     private val dadb: dadb.Dadb = buildDadb(serial)
 
+    private val imePackage: String? by lazy {
+        imePackageOf(
+            runCatching {
+                dadb.shell("settings get secure default_input_method").allOutput
+            }.getOrDefault(""),
+        )
+    }
+
     // A fresh AndroidDriver per open attempt. Its gRPC channel is built once in
     // the constructor and permanently shut down by close(), so reopening a
     // closed instance would reuse a dead channel; rebuild it each try instead.
@@ -872,6 +1046,9 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
             }
         }
 
+    @Volatile
+    private var launchedBundleId: String? = null
+
     override fun launch(
         bundleId: String,
         clearState: Boolean,
@@ -879,6 +1056,7 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     ) {
         if (clearState) driver.clearAppState(bundleId)
         driver.launchApp(bundleId, env)
+        launchedBundleId = bundleId
     }
 
     override fun terminate(bundleId: String) = driver.stopApp(bundleId)
@@ -922,8 +1100,14 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     // started in has lost the foreground, the remaining keystrokes would spray
     // into whatever window stole it (the launcher search box, in practice), so
     // typing stops instead of leaking out of the app under test.
+    //
+    // typingOwner decides what "the app the type started in" means when the
+    // read that would name it fails: the launched bundle, so a link that cannot
+    // answer degrades the guard rather than switching it off.
     private fun typeShellSafe(text: String) {
-        val owner = foregroundPackage()
+        val owner = typingOwner(foregroundDumpsys(), launchedBundleId) {
+            System.err.println(it)
+        }
         val typed =
             typeChunks(chunkForInput(text, INPUT_CHUNK_CHARS), owner, {
                 foregroundPackage()
@@ -937,14 +1121,15 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         }
     }
 
+    private fun foregroundDumpsys(): String = adbOutput(
+        serial,
+        listOf("shell", "dumpsys", "activity", "activities"),
+    )
+
     // foregroundPackage returns the package of the top resumed activity, or null
     // if it cannot be read. Used to detect mid-type focus escapes.
-    private fun foregroundPackage(): String? = parseResumedPackage(
-        adbOutput(
-            serial,
-            listOf("shell", "dumpsys", "activity", "activities"),
-        ),
-    )
+    private fun foregroundPackage(): String? =
+        parseResumedPackage(foregroundDumpsys())
 
     override fun eraseText(characterCount: Int) =
         driver.eraseText(characterCount)
@@ -991,8 +1176,15 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     // read the snapshot was going to do anyway. That is what makes this
     // affordable, where the structural poll that used to run in waitForIdle was
     // not: it fetched the hierarchy ~4 more times on every mutating step.
-    override fun snapshot(): SnapshotSample =
-        SnapshotSample(awaitSettledTree { hierarchy() }, screenshot())
+    override fun snapshot(): SnapshotSample {
+        val tree = treeWithoutKeyboard(
+            awaitSettledTree { hierarchy() },
+            imePackage,
+            dismiss = { runCatching { dadb.shell("input keyevent 4") } },
+            reread = { awaitSettledTree { hierarchy() } },
+        )
+        return SnapshotSample(tree, screenshot())
+    }
 
     override fun waitForIdle(durationMillis: Long) {
         // waitForAppToSettle blocks on the View-system animation and maestro's
@@ -1044,15 +1236,75 @@ internal fun dadbTargetFor(serial: String?): DadbTarget {
     }
 }
 
+internal data class AdbServerEndpoint(val host: String, val port: Int)
+
+private const val ADB_SERVER_HOST = "localhost"
+private const val ADB_SERVER_PORT = 5037
+
+// adbServerEndpoint reads where the adb server listens the way the adb CLI
+// reads it: ADB_SERVER_SOCKET ("tcp:host:port", or "tcp:port" for a server on
+// this machine) outranks the older ANDROID_ADB_SERVER_ADDRESS /
+// ANDROID_ADB_SERVER_PORT pair, and unset means the loopback default.
+//
+// A value it cannot read throws instead of falling back to loopback. The
+// fallback is the dangerous answer: emulator serials are numbered per server,
+// so a run aimed at a remote emulator-5554 would quietly drive whatever this
+// machine calls emulator-5554 and report the results as the remote device's.
+internal fun adbServerEndpoint(
+    env: (String) -> String? = System::getenv,
+): AdbServerEndpoint {
+    val socket = env("ADB_SERVER_SOCKET")?.trim().orEmpty()
+    if (socket.isNotEmpty()) return parseAdbServerSocket(socket)
+    val host = env("ANDROID_ADB_SERVER_ADDRESS")?.trim().orEmpty()
+    val port = env("ANDROID_ADB_SERVER_PORT")?.trim().orEmpty()
+    return AdbServerEndpoint(
+        host.ifEmpty { ADB_SERVER_HOST },
+        if (port.isEmpty()) {
+            ADB_SERVER_PORT
+        } else {
+            adbServerPort(port, "ANDROID_ADB_SERVER_PORT=\"$port\"")
+        },
+    )
+}
+
+private fun parseAdbServerSocket(value: String): AdbServerEndpoint {
+    val named = "ADB_SERVER_SOCKET=\"$value\""
+    val address = value.removePrefix("tcp:")
+    if (address == value) rejectAdbServerSocket(named)
+    val colon = address.lastIndexOf(':')
+    if (colon < 0) {
+        return AdbServerEndpoint(
+            ADB_SERVER_HOST,
+            adbServerPort(address, named),
+        )
+    }
+    val host = address.substring(0, colon)
+    if (host.isEmpty()) rejectAdbServerSocket(named)
+    return AdbServerEndpoint(
+        host,
+        adbServerPort(address.substring(colon + 1), named),
+    )
+}
+
+private fun rejectAdbServerSocket(named: String): Nothing =
+    throw IllegalArgumentException("$named is not tcp:host:port")
+
+private fun adbServerPort(text: String, named: String): Int =
+    text.toIntOrNull()?.takeIf { it in 1..65535 }
+        ?: throw IllegalArgumentException("$named has no usable port")
+
 private fun buildDadb(serial: String?): dadb.Dadb =
     when (val target = dadbTargetFor(serial)) {
         is DadbTarget.Tcp -> dadb.Dadb.create(target.host, target.port)
 
-        is DadbTarget.Server -> dadb.adbserver.AdbServer.createDadb(
-            "localhost",
-            5037,
-            "host:transport:${target.serial}",
-        )
+        is DadbTarget.Server -> {
+            val server = adbServerEndpoint()
+            dadb.adbserver.AdbServer.createDadb(
+                server.host,
+                server.port,
+                "host:transport:${target.serial}",
+            )
+        }
     }
 
 internal fun findBoundsBySelector(

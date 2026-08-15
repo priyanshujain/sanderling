@@ -95,6 +95,19 @@ jobs:
       - name: Run tests
         run: make test
 
+      # folio is its own gradle build, and the metro plugin it compiles with
+      # needs a 21 runtime where the sidecar toolchain pins 17. Switching
+      # JAVA_HOME after `make test` rather than installing both up front
+      # leaves every step above this one on exactly the JDK it ran on before.
+      - name: Set up JDK 21 for folio
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Run folio's unit tests
+        run: make test-folio
+
   browser:
     runs-on: ubuntu-latest
     steps:

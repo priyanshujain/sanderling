@@ -207,6 +207,77 @@ class InputTextTest {
         )
     }
 
+    @Test fun aReadableDumpsysNamesTheResumedPackage() {
+        val warnings = mutableListOf<String>()
+        assertEquals(
+            "app.folio",
+            typingOwner(RESUMED_DUMPSYS, "app.folio") { warnings.add(it) },
+        )
+        assertTrue(warnings.isEmpty(), "nothing to report when the read worked")
+    }
+
+    // A dumpsys that said nothing is not evidence that focus is fine. Handing
+    // typeChunks a null owner turns the guard off outright, and the keystrokes
+    // then go wherever the foreground happens to be.
+    @Test fun anUnreadableDumpsysGuardsWithTheLaunchedBundle() {
+        val warnings = mutableListOf<String>()
+        assertEquals(
+            "app.folio",
+            typingOwner("", "app.folio") { warnings.add(it) },
+        )
+        assertEquals(1, warnings.size, "a degraded guard must not be silent")
+        assertTrue(warnings.single().contains("app.folio"), warnings.single())
+    }
+
+    // Wording no marker matches is the same "we do not know" as an empty read.
+    @Test fun dumpsysWithNoResumedMarkerGuardsWithTheLaunchedBundle() {
+        assertEquals(
+            "app.folio",
+            typingOwner("  mFocusedApp=null\n  nothing here\n", "app.folio") {},
+        )
+    }
+
+    // The whole point of the fallback: on a link that cannot answer, typing is
+    // still guarded, so a foreground that was stolen stops it after the first
+    // chunk instead of spraying the rest into whatever took focus.
+    @Test fun unreadableLinkStillStopsTypingWhenFocusWasStolen() {
+        val owner = typingOwner("", "app.folio") {}
+        val sent = mutableListOf<String>()
+
+        typeChunks(listOf("aaa", "bbb", "ccc"), owner, {
+            "com.android.launcher"
+        }) { sent.add(it) }
+
+        assertEquals(
+            listOf("aaa"),
+            sent,
+            "an unguarded type would have sent every chunk to the launcher",
+        )
+    }
+
+    // And the other half of the trade: the fallback must not turn a degraded
+    // link into a run that types nothing. A no-op InputText on every step is a
+    // green run that tested nothing, which is worse than the spray it avoids.
+    @Test fun unreadableLinkStillTypesWhenTheAppKeepsFocus() {
+        val owner = typingOwner("", "app.folio") {}
+        val sent = mutableListOf<String>()
+
+        val typed = typeChunks(listOf("aaa", "bbb", "cc"), owner, {
+            "app.folio"
+        }) { sent.add(it) }
+
+        assertEquals(listOf("aaa", "bbb", "cc"), sent)
+        assertEquals(8, typed)
+    }
+
+    // With no launch recorded there is nothing to guard against, and the honest
+    // answer is to say the guard is off rather than imply it ran.
+    @Test fun noLaunchedBundleLeavesTheGuardOffAndSaysSo() {
+        val warnings = mutableListOf<String>()
+        assertEquals(null, typingOwner("", null) { warnings.add(it) })
+        assertEquals(1, warnings.size)
+    }
+
     @Test fun maestroKeyForResolvesAndRejects() {
         assertEquals(maestro.KeyCode.BACK, maestroKeyFor("back"))
         assertEquals(maestro.KeyCode.BACK, maestroKeyFor("BACK"))
@@ -241,7 +312,133 @@ class InputTextTest {
         }
         assertEquals(listOf("dumpsys input_method"), commands)
     }
+
+    // Typing is not the only thing that raises the keyboard: tapping a field
+    // raises it too, and nothing was closing that one. The snapshot the picker
+    // chooses from is missing every app node the keyboard covers, so the step
+    // spends its budget choosing between the few targets left. Closing it
+    // before the tree is read is what gives the step its targets back.
+    @Test fun aKeyboardInTheTreeIsClosedBeforeTheTreeIsReturned() {
+        var backs = 0
+        val reads = mutableListOf<String>()
+        val settled = treeWithoutKeyboard(
+            IME_TREE,
+            IME_PACKAGE,
+            dismiss = { backs++ },
+            reread = { APP_TREE.also { reads.add(it) } },
+            sleep = {},
+        )
+        assertEquals(APP_TREE, settled)
+        assertEquals(1, backs, "one BACK closes the keyboard")
+        assertEquals(1, reads.size, "the tree is re-read once it is gone")
+    }
+
+    // The guard has to be the tree itself. BACK with no keyboard open
+    // navigates out of the screen, so a snapshot that pressed it on every read
+    // would walk the fuzzer backwards out of the app a step at a time.
+    @Test fun aTreeWithNoKeyboardIsReturnedUntouched() {
+        var backs = 0
+        var reads = 0
+        val settled = treeWithoutKeyboard(
+            APP_TREE,
+            IME_PACKAGE,
+            dismiss = { backs++ },
+            reread = {
+                reads++
+                APP_TREE
+            },
+            sleep = {},
+        )
+        assertEquals(APP_TREE, settled)
+        assertEquals(0, backs, "no keyboard in the tree means no BACK")
+        assertEquals(0, reads, "and no second hierarchy read to pay for")
+    }
+
+    // An unknown IME package is the honest "cannot tell", and the safe way to
+    // be wrong is to leave the keyboard up rather than press BACK blind.
+    @Test fun anUnknownImePackageSendsNoBack() {
+        var backs = 0
+        assertEquals(
+            IME_TREE,
+            treeWithoutKeyboard(
+                IME_TREE,
+                null,
+                dismiss = { backs++ },
+                reread = { APP_TREE },
+                sleep = {},
+            ),
+        )
+        assertEquals(0, backs)
+    }
+
+    // A keyboard the app puts straight back gets ONE back press, not one per
+    // re-read. The flag behind the older dismissal lags a BACK by up to 0.6s,
+    // and a burst of them inside that window is how a dismissal turns into
+    // navigation.
+    @Test fun aKeyboardThatStaysUpIsNotBackPressedRepeatedly() {
+        var backs = 0
+        var reads = 0
+        val settled = treeWithoutKeyboard(
+            IME_TREE,
+            IME_PACKAGE,
+            dismiss = { backs++ },
+            reread = {
+                reads++
+                IME_TREE
+            },
+            sleep = {},
+        )
+        assertEquals(IME_TREE, settled, "the caller still gets a tree")
+        assertEquals(1, backs)
+        assertTrue(
+            reads in 1..KEYBOARD_DISMISS_READS,
+            "bounded re-reads, got $reads",
+        )
+    }
+
+    @Test fun imePackageOfReadsTheComponentAndRejectsNonsense() {
+        assertEquals(
+            "com.google.android.inputmethod.latin",
+            imePackageOf(
+                "com.google.android.inputmethod.latin/.LatinIME\n",
+            ),
+        )
+        assertEquals(null, imePackageOf("null"))
+        assertEquals(null, imePackageOf(""))
+        assertEquals(null, imePackageOf("  \n"))
+    }
+
+    @Test fun treeShowsImeMatchesTheImesOwnViewIdsOnly() {
+        assertTrue(treeShowsIme(IME_TREE, IME_PACKAGE))
+        assertTrue(!treeShowsIme(APP_TREE, IME_PACKAGE))
+    }
 }
+
+private val RESUMED_DUMPSYS =
+    """
+      mFocusedApp=ActivityRecord{1a u0 app.folio/.MainActivity t14}
+      topResumedActivity=ActivityRecord{f3 u0 app.folio/.MainActivity t14}
+    """.trimIndent()
+
+private const val IME_PACKAGE = "com.google.android.inputmethod.latin"
+
+private val APP_TREE =
+    """
+    {"attributes":{"resource-id":"AddAccountScreen"},"children":[
+      {"attributes":{"resource-id":"AccountNameField"},"children":[]},
+      {"attributes":{"resource-id":"AddAccountSubmit"},"children":[]}]}
+    """.trimIndent()
+
+// The submit control is gone: an open keyboard does not merely cover the node,
+// it takes it out of the tree the picker enumerates.
+private val IME_TREE =
+    """
+    {"attributes":{"resource-id":"AddAccountScreen"},"children":[
+      {"attributes":{"resource-id":"AccountNameField"},"children":[]},
+      {"attributes":{
+        "resource-id":"com.google.android.inputmethod.latin:id/keyboard_holder"
+      },"children":[]}]}
+    """.trimIndent()
 
 private val IME_OPEN_DUMPSYS =
     """
