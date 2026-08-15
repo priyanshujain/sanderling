@@ -142,10 +142,10 @@ func ReinstallApp(ctx context.Context, serial, bundleID, apkPath string, stdout 
 }
 
 // clearDataUninstallLeftBehind reaches first-launch state after `adb uninstall`
-// failed. The failure text cannot say whether it failed: an API 34 emulator
-// answers "Failure [DELETE_FAILED_INTERNAL_ERROR]" both for a package that was
-// never installed and for one it refuses to remove. So ask the package manager
-// which happened. Nothing installed means nothing to clear. Still installed
+// failed. The failure text cannot say why: an API 34 emulator answers
+// "Failure [DELETE_FAILED_INTERNAL_ERROR]" both for a package that was never
+// installed and for one it refuses to remove. So ask the package manager which
+// happened. Nothing installed means nothing to clear. Still installed
 // means the data survives the reinstall, and `pm clear` is the one remaining
 // way to reach first-launch state; when that fails too, so does clear-state.
 func clearDataUninstallLeftBehind(ctx context.Context, adb, serial, bundleID, uninstallOutput string, stdout io.Writer) error {
