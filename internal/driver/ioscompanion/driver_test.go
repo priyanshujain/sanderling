@@ -1021,6 +1021,34 @@ func TestLaunchReplacesTheSessionAfterALaunchBlowsItsBound(t *testing.T) {
 	}
 }
 
+// TestLaunchBoundsTheSessionRestartItTriggers keeps the recovery inside a
+// budget of its own. The restart deliberately runs on the driver's lifetime
+// context rather than the caller's, so without a deadline a session that never
+// comes back would hang the launch path exactly the way #73 stopped it hanging.
+func TestLaunchBoundsTheSessionRestartItTriggers(t *testing.T) {
+	previousLaunch, previousRecovery := launchTimeout, launchRecoveryTimeout
+	launchTimeout = 100 * time.Millisecond
+	launchRecoveryTimeout = 200 * time.Millisecond
+	defer func() { launchTimeout, launchRecoveryTimeout = previousLaunch, previousRecovery }()
+
+	d := newTestDriver(&wedgedUntilRestartCompanion{})
+	d.restart = func(restartCtx context.Context) error {
+		<-restartCtx.Done()
+		return restartCtx.Err()
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- d.Launch(context.Background(), "", false, nil) }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "session restart failed") {
+			t.Fatalf("err = %v, want the failed restart named", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Launch never returned: a session that never comes back hangs the launch path")
+	}
+}
+
 // TestLaunchKeepsTheSessionWhenTheCallersOwnDeadlineExpires holds the recovery
 // to the driver's own bound. Spending a session restart on a caller that has
 // already run out of budget cannot produce a launch, only a later failure.
