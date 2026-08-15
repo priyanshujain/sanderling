@@ -569,7 +569,22 @@ function sanitizeAt(value: unknown, depth: number, seen: WeakSet<object>): unkno
 // only how the DOM answers "is this clickable" / "is this editable", the two
 // facts with no direct DOM equivalent of the accessibility attributes native
 // platforms expose.
-const TAPPABLE_SELECTOR = 'a, button, input, select, textarea, [role="button"], [onclick]';
+//
+// TAPPABLE_ROLES are the ARIA roles whose whole contract is that a user
+// activates the element. Covering only role="button" left every other one
+// invisible to the enumeration, however plain the control looked: the replay UI
+// builds its step rows as <li role="option">, and the spec dogfooding it had to
+// hand-write an action to reach them because no default verb could see a single
+// row. internal/driver/chrome/driver.go resolves the same set for the hierarchy
+// dump the goja host reads, and the two are compared element by element by
+// TestHierarchy_DerivesTheSameFactsAsTheWebRuntime.
+const TAPPABLE_ROLES = [
+  "button", "link", "checkbox", "radio", "switch", "tab", "option",
+  "menuitem", "menuitemcheckbox", "menuitemradio", "treeitem",
+];
+const TAPPABLE_SELECTOR = `a, button, input, select, textarea, ${
+  TAPPABLE_ROLES.map((role) => `[role="${role}"]`).join(", ")
+}, [onclick]`;
 const EDITABLE_SELECTOR = "input, textarea, [contenteditable]";
 
 const NON_TEXT_INPUT_TYPES = [

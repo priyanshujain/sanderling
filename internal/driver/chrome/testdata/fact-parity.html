@@ -56,6 +56,22 @@
     <textarea id="notes"></textarea>
     <div id="bio" contenteditable="true">bio</div>
     <div id="menu" role="button">menu</div>
+    <!-- One element per ARIA role both producers resolve as clickable. A role
+         covered on one side only makes that control reachable for one host,
+         which is how the whole set is kept honest: role="option" is the shape
+         the replay UI gives its step rows. -->
+    <div id="role-link" role="link">link</div>
+    <div id="role-checkbox" role="checkbox">checkbox</div>
+    <div id="role-radio" role="radio">radio</div>
+    <div id="role-switch" role="switch">switch</div>
+    <div id="role-tab" role="tab">tab</div>
+    <div id="role-menuitem" role="menuitem">menu item</div>
+    <div id="role-menuitemcheckbox" role="menuitemcheckbox">menu item checkbox</div>
+    <div id="role-menuitemradio" role="menuitemradio">menu item radio</div>
+    <div id="role-treeitem" role="treeitem">tree item</div>
+    <ul id="role-listbox" role="listbox">
+      <li id="role-option" role="option">option</li>
+    </ul>
     <div id="attribute-click" onclick="void 0">attribute click</div>
     <div id="delegating-root">delegating root</div>
     <div id="plain">plain</div>

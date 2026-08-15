@@ -413,8 +413,13 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     visit(document);
     return out;
   }
+  const TAPPABLE_ROLES = [
+    'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'option',
+    'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem'];
   const clickableSet = new Set(deepQuery(
-    'a, button, input, select, textarea, [role="button"], [onclick]'));
+    'a, button, input, select, textarea, ' +
+    TAPPABLE_ROLES.map(role => '[role="' + role + '"]').join(', ') +
+    ', [onclick]'));
   const editableSet = new Set(deepQuery(
     'input, textarea, [contenteditable]').filter(isEditableElement));
   function buildTree(el, isRoot) {
