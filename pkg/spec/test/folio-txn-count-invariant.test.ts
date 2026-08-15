@@ -360,3 +360,93 @@ test("the merged-text card list drops the same pair", () => {
     false,
   );
 });
+
+// Home lists whatever fits the viewport, and Folio lets two accounts share a
+// name, so one name can arrive on two cards. Keying counts by name collapsed
+// them onto the last card, and the two readings a window compares then came off
+// DIFFERENT cards: the probe below is a healthy app, one submit, and a scroll.
+test("two cards sharing a name do not become one count", () => {
+  const before = homeTxnCountsOf([{ name: "Travel", balance: 0, count: 0 }]);
+  const after = homeTxnCountsOf([
+    { name: "Travel", balance: 0, count: 0 },
+    { name: "Travel", balance: 500, count: 8 },
+  ]);
+  assert.equal(
+    committedTransactionsExceedSubmits({
+      countsBefore: before,
+      countsAfter: after,
+      submitsInWindow: 1,
+    }),
+    false,
+  );
+  assert.deepEqual(after, null);
+});
+
+test("a name on two cards is dropped from both readings", () => {
+  const before = homeTxnCountsOf([
+    { name: "Travel", balance: 0, count: "3" },
+    { name: "Travel", balance: 0, count: "9" },
+    { name: "Checking", balance: 0, count: "2" },
+  ]);
+  const after = homeTxnCountsOf([
+    { name: "Travel", balance: 0, count: "3" },
+    { name: "Travel", balance: 0, count: "11" },
+    { name: "Checking", balance: 0, count: "2" },
+  ]);
+  assert.deepEqual(before, { Checking: "2" });
+  assert.deepEqual(after, { Checking: "2" });
+  assert.equal(
+    committedTransactionsExceedSubmits({
+      countsBefore: before,
+      countsAfter: after,
+      submitsInWindow: 0,
+    }),
+    false,
+  );
+});
+
+// The other card need not be readable to spoil the identity: an unreadable
+// count still means the name on the map may not be the card that was read.
+test("a duplicate name is dropped even when the twin has no count", () => {
+  assert.deepEqual(
+    homeTxnCountsOf([
+      { name: "Travel", balance: 0, count: 4 },
+      { name: "Travel", balance: 0, count: undefined },
+      { name: "Savings", balance: 0, count: 1 },
+    ]),
+    { Savings: 1 },
+  );
+});
+
+// Dropping the ambiguous name must not disable the property for the rest.
+test("a unique name is still counted beside a dropped duplicate", () => {
+  const before = homeTxnCountsOf([
+    { name: "Travel", balance: 0, count: 3 },
+    { name: "Travel", balance: 0, count: 1 },
+    { name: "Checking", balance: 0, count: 4 },
+  ]);
+  const after = homeTxnCountsOf([
+    { name: "Travel", balance: 0, count: 3 },
+    { name: "Travel", balance: 0, count: 1 },
+    { name: "Checking", balance: 0, count: 6 },
+  ]);
+  assert.deepEqual(before, { Checking: 4 });
+  assert.equal(
+    committedTransactionsExceedSubmits({
+      countsBefore: before,
+      countsAfter: after,
+      submitsInWindow: 1,
+    }),
+    true,
+  );
+});
+
+test("distinct names are all counted", () => {
+  assert.deepEqual(
+    homeTxnCountsOf([
+      { name: "Checking", balance: 0, count: "3" },
+      { name: "Savings", balance: 0, count: "1" },
+    ]),
+    { Checking: "3", Savings: "1" },
+  );
+});

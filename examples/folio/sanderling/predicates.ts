@@ -280,10 +280,24 @@ export function homeAccountsOf(cards: readonly CardReading[]): Account[] | null 
 // A card whose name or count is unreadable is left out rather than guessed at;
 // committedTransactionsExceedSubmits treats a missing account as no evidence.
 // Every card being unreadable leaves nothing to compare, which is unknown.
+//
+// A name carried by more than one card is left out for the same reason, the
+// rule createdAccountHasNonZeroBalance applies with `matches.length === 1`:
+// nothing here can say which of them a count came from. Folio accepts the same
+// account name twice and Home lists whatever fits the viewport, so a reading
+// that saw one Travel card and a later one that saw two would otherwise
+// subtract two DIFFERENT accounts' counts and convict a healthy app of
+// double-submitting. The twin does not have to be readable to spoil the
+// identity, so duplicates are counted over every card, not just the usable
+// ones. Dropping a card can only ever cost a detection.
 export function homeTxnCountsOf(cards: readonly CardReading[]): Record<string, TxnCount> | null {
+  const cardsPerName = new Map<string, number>();
+  for (const card of cards) cardsPerName.set(card.name, (cardsPerName.get(card.name) ?? 0) + 1);
   const counts: Record<string, TxnCount> = {};
   for (const card of cards) {
-    if (card.name !== "" && card.count !== undefined) counts[card.name] = card.count;
+    if (card.name === "" || card.count === undefined) continue;
+    if (cardsPerName.get(card.name) !== 1) continue;
+    counts[card.name] = card.count;
   }
   return Object.keys(counts).length === 0 ? null : counts;
 }
