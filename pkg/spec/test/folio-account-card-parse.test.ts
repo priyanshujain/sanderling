@@ -65,6 +65,18 @@ test("name ending in digits does not leak into the balance", () => {
   assert.equal(balanceOf(card("20", "2024", 3, "-$1,234.56")), -123456);
 });
 
+// The limit of a key read off merged text, and the reason homeTxnCountsOf
+// guards the ambiguity rather than resolving it: two DIFFERENT accounts render
+// the same card, character for character. Names are unique (Accounts.name is
+// UNIQUE, checked NOCASE) but the count runs straight into a name that ends in
+// digits, so nothing computed from this string can say which account it is.
+test("two accounts can render one card, so no key off it can be injective", () => {
+  const travel1 = card("TR", "Travel1", 25, "$120.00");
+  const travel12 = card("TR", "Travel12", 5, "$120.00");
+  assert.equal(travel1, travel12);
+  assert.equal(cardAccountName({ childText: undefined, cardText: travel1 }), "TRTravel");
+});
+
 // The account key only has to be stable and per-account. newAccountBalanceIsZero
 // reads it as a set member: a key that drifted as an account's transaction
 // count grew would make an existing account look brand new, and the property
