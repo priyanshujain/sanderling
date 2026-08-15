@@ -258,10 +258,15 @@ const newAccountBalanceIsZero = always(
   ),
 );
 
-// Property 2: a tap on TxnSubmit must move the total balance by exactly the
-// typed amount. A double-submit lands two transactions, so the balance shifts
-// by twice the typed amount and the check fires. The route gate inside the
+// Property 2: a tap on TxnSubmit cannot move the total balance by more than the
+// typed amount. A double-submit lands two transactions, so the balance shifts by
+// twice the typed amount and the check fires. The route gate inside the
 // predicate skips off-Home landings where totalBalance.current is the carrier.
+//
+// The name is the property's, and the gate keys on it, so it stays; what it
+// demands is the bound, for the reason submitChangesBalanceByTypedAmount gives:
+// a total that has not re-rendered yet has not moved, and an equality convicts a
+// healthy app for a frame that has not caught up.
 const submitMovesBalanceByTypedAmount = always(
   next(() =>
     submitChangesBalanceByTypedAmount({
