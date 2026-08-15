@@ -125,12 +125,20 @@ for good the first time it holds; written inside `always` it re-arms at every
 step, which asks for the window to be met from everywhere. Every formula has
 `.implies`, `.and`, `.or`, `.not`.
 
-The stock properties are in `@sanderling/spec/defaults`. Put
-`noUncaughtExceptions` in every spec: it fails when the run captures an uncaught
-throwable or a `Sanderling.reportError` call, it needs no hooks and no
-calibration, and it is free. `noLogcatErrors` (also exported from
-`@sanderling/spec/defaults/properties`) fails on any error-level logcat line and
-is Android-only, holding vacuously elsewhere.
+The stock properties are in `@sanderling/spec/defaults`. Both are cheap and both
+are narrower than their names suggest, so know which platform yours runs on.
+
+`noUncaughtExceptions` fails when `state.exceptions` is non-empty, and today only
+the web runtime fills it: `pkg/spec/src/web-runtime.ts` installs `error` and
+`unhandledrejection` listeners in the page. On Android and iOS nothing populates
+the field, so it holds at every step whatever the app does. Export it on web,
+where it is free and real; on native, understand that a green run says nothing
+about crashes.
+
+`noLogcatErrors` fails on any log line the driver reports at level `E`, which is
+where an uncaught Java or Kotlin throwable lands, so on Android it is the closest
+thing to `noUncaughtExceptions`. It holds vacuously on web and iOS. Neither
+platform has an equivalent today: an iOS crash is invisible to both properties.
 
 ## What makes a good first property
 
