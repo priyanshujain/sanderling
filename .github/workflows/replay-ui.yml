@@ -19,6 +19,9 @@ on:
         description: step budget for the dogfood run
         default: "80"
 
+permissions:
+  contents: read
+
 jobs:
   dogfood:
     timeout-minutes: 45

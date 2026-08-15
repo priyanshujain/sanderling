@@ -32,6 +32,9 @@ on:
         description: step budget override (0 = each job's calibrated budget)
         default: "0"
 
+permissions:
+  contents: read
+
 jobs:
   android:
     timeout-minutes: 90
