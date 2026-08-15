@@ -475,18 +475,18 @@ func adbCalls(t *testing.T, log string) []string {
 }
 
 const (
-	uninstallRefused      = `"uninstall "*) echo "Failure [DELETE_FAILED_INTERNAL_ERROR]"; exit 1;;`
-	stillInstalled        = `"shell pm path "*) echo "package:/data/app/app.example-1/base.apk";;`
-	notInstalled          = `"shell pm path "*) exit 1;;`
-	installedSuccessfully = `"install "*) echo "Success";;`
+	uninstallFails  = `"uninstall "*) echo "Failure [DELETE_FAILED_INTERNAL_ERROR]"; exit 1;;`
+	stillInstalled  = `"shell pm path "*) echo "package:/data/app/app.example-1/base.apk";;`
+	notInstalled    = `"shell pm path "*) exit 1;;`
+	installSucceeds = `"install "*) echo "Success";;`
 )
 
 func TestReinstallApp_RefusedUninstallClearsTheDataItLeftBehind(t *testing.T) {
 	log := scriptedAdb(t, strings.Join([]string{
-		uninstallRefused,
+		uninstallFails,
 		stillInstalled,
 		`"shell pm clear "*) echo "Success";;`,
-		installedSuccessfully,
+		installSucceeds,
 	}, "\n"))
 	output := &strings.Builder{}
 
@@ -510,10 +510,10 @@ func TestReinstallApp_RefusedUninstallClearsTheDataItLeftBehind(t *testing.T) {
 
 func TestReinstallApp_RefusedUninstallThatCannotBeClearedIsFatal(t *testing.T) {
 	log := scriptedAdb(t, strings.Join([]string{
-		uninstallRefused,
+		uninstallFails,
 		stillInstalled,
 		`"shell pm clear "*) echo "Failed"; exit 1;;`,
-		installedSuccessfully,
+		installSucceeds,
 	}, "\n"))
 
 	err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", &strings.Builder{})
@@ -533,9 +533,9 @@ func TestReinstallApp_RefusedUninstallThatCannotBeClearedIsFatal(t *testing.T) {
 
 func TestReinstallApp_UninstallFailureWithNothingInstalledIsQuiet(t *testing.T) {
 	log := scriptedAdb(t, strings.Join([]string{
-		uninstallRefused,
+		uninstallFails,
 		notInstalled,
-		installedSuccessfully,
+		installSucceeds,
 	}, "\n"))
 	output := &strings.Builder{}
 
@@ -560,7 +560,7 @@ func TestReinstallApp_SuccessfulUninstallNeedsNoFallback(t *testing.T) {
 		`"uninstall "*) echo "Success";;`,
 		stillInstalled,
 		`"shell pm clear "*) echo "Success";;`,
-		installedSuccessfully,
+		installSucceeds,
 	}, "\n"))
 
 	if err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", &strings.Builder{}); err != nil {
