@@ -520,3 +520,41 @@ test("a submit the runner could not confirm demands no balance move", () => {
     true,
   );
 });
+
+// relaunched: true is the runner saying its foreground guard restarted the app
+// after this action. The tap landed, so the window still counts it, but nobody
+// can promise the process lived long enough for the write to reach sqlite. A
+// balance still sitting where it was is exactly what a healthy app looks like
+// across a relaunch, and demanding the typed amount of movement convicts it for
+// the runner's own restart.
+test("a submit the runner relaunched across demands no balance move", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn, applied: true, relaunched: true },
+      submitsInWindow: 1,
+      typedAmount: 500,
+      prevTotalBalance: 1000,
+      currTotalBalance: 1000,
+    }),
+    true,
+  );
+});
+
+// The guard must not become a way of switching the property off. No relaunch
+// reported is the ordinary case, and web and iOS cannot report one at all.
+test("no relaunch reported still convicts a double submit", () => {
+  for (const relaunched of [null, undefined]) {
+    assert.equal(
+      submitChangesBalanceByTypedAmount({
+        route: "home",
+        lastAction: { kind: "DoubleTap", on: submitOn, applied: true, relaunched },
+        submitsInWindow: 1,
+        typedAmount: 500,
+        prevTotalBalance: 1000,
+        currTotalBalance: 2000,
+      }),
+      false,
+    );
+  }
+});
