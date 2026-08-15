@@ -4,11 +4,11 @@ import { always, extract, taps } from "@sanderling/spec";
 // compared between the two hosts by TestBrowserAxFindAgreesAcrossHosts, which
 // drives each host's production path and never asks one what the other said.
 //
-// Written in the "k:v" string grammar because that is the one form both hosts
-// resolve the same way: the object form {id: "x"} reaches the goja host as a
-// plain attribute filter, and a web hierarchy dump carries the id under
-// resource-id, so it matches nothing there.
-const found = extract((s) => s.ax.find("id:x")?.text).named("found");
+// Written in the object form on purpose. It used to reach the goja host as a
+// plain attribute filter looking for an `id` attribute a dump never carries
+// (the web dump files the DOM id under resource-id), so it resolved nothing
+// there while the V8 host resolved it against the live DOM.
+const found = extract((s) => s.ax.find({ id: "x" })?.text).named("found");
 
 const findsTheShadowMatch = always(() => found.current === "shadow");
 

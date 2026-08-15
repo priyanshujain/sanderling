@@ -281,11 +281,17 @@ func TestBrowserAxFindAgreesAcrossHosts(t *testing.T) {
 	if err := verifierInstance.PushSnapshot(verifier.SnapshotInput{Tree: tree}); err != nil {
 		t.Fatalf("push snapshot: %v", err)
 	}
-	change, ok := verifierInstance.ChangedExtractors()["found"]
-	if !ok {
-		t.Fatal("the goja host recorded no reading for the found extractor")
+	if count := verifierInstance.ExtractorCount(); count != 1 {
+		t.Fatalf("the goja host registered %d extractors, want the fixture's 1", count)
 	}
-	fromGoja := string(change.Curr)
+	// ChangedExtractors omits an extractor whose reading is null and unchanged,
+	// which is exactly what a selector resolving nothing produces. With the
+	// count checked above, an absent entry is a null reading and not a missing
+	// extractor, so reporting it as null names the real failure.
+	fromGoja := "null"
+	if change, ok := verifierInstance.ChangedExtractors()["found"]; ok {
+		fromGoja = string(change.Curr)
+	}
 
 	// Pinned, not just compared: two hosts that both resolved nothing would
 	// agree on undefined and prove nothing about the walk.
