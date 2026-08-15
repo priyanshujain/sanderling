@@ -102,11 +102,12 @@ type Driver struct {
 	appPath   string
 	output    io.Writer
 
-	// clearStateAtStartup records that New (or NewDevice) reset the app to
-	// first-launch state before attaching, which is the only point in a run
-	// where clearing is safe. Launch refuses a clear-state request the driver
-	// was not built for rather than reinstalling under a live session.
-	clearStateAtStartup bool
+	// clearedBundleID names the app New (or NewDevice) reset to first-launch
+	// state before attaching, which is the only point in a run where clearing
+	// is safe. Launch refuses a clear-state request for anything else rather
+	// than reinstalling under a live session or reporting a reset that only
+	// ever reached another bundle.
+	clearedBundleID string
 
 	screenWidth  int
 	screenHeight int
@@ -233,7 +234,6 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 		udid:                     options.UniqueDeviceIdentifier,
 		bundleID:                 options.BundleID,
 		appPath:                  options.AppPath,
-		clearStateAtStartup:      options.ClearState,
 		output:                   output,
 		doubleTapGapMilliseconds: gap,
 		spawnChild:               options.spawnChild,
@@ -295,6 +295,7 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 			driverInstance.Close()
 			return nil, err
 		}
+		driverInstance.clearedBundleID = options.BundleID
 	}
 
 	if err := driverInstance.bringUp(ctx); err != nil {
@@ -524,12 +525,13 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 		// loudly rather than silently dropping the request.
 		return errors.New("ios companion: launch with environment variables is unsupported on this backend")
 	}
-	if clearState && !d.clearStateAtStartup {
+	if clearState && (d.clearedBundleID == "" || d.clearedBundleID != d.bundleID) {
 		// Clearing here would uninstall and reinstall the app underneath a live
 		// automation session, which is what races FrontBoard's registration and
 		// leaves the session launching a bundle FrontBoard has not registered.
-		return errors.New("ios companion: clear-state must be requested when the driver is created (Options.ClearState); " +
-			"this backend clears the app before its automation session exists")
+		return fmt.Errorf("ios companion: clear-state must be requested when the driver is created (Options.ClearState) "+
+			"for the bundle being launched; this backend cleared %q before its automation session existed, not %q",
+			d.clearedBundleID, d.bundleID)
 	}
 
 	// Terminate first so the launch is a clean cold start regardless of the

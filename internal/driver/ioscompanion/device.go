@@ -83,7 +83,6 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 		coreDeviceID:             options.CoreDeviceID,
 		bundleID:                 options.BundleID,
 		appPath:                  options.AppPath,
-		clearStateAtStartup:      options.ClearState,
 		output:                   output,
 		doubleTapGapMilliseconds: gap,
 		deviceMode:               true,
@@ -137,6 +136,7 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 			d.Close()
 			return nil, err
 		}
+		d.clearedBundleID = options.BundleID
 	}
 
 	if err := d.bringUpDevice(ctx); err != nil {
