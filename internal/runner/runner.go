@@ -407,9 +407,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// measured over (an action and a settle); looping straight back into it
 		// would compare two reads of a composing screen closer together still,
 		// so the screen that most needs to settle is the one given least room.
-		applied := nextErr == nil && !applySkipped &&
+		mutated := nextErr == nil && !applySkipped &&
 			nextAction.Kind != verifier.ActionKindWait
-		if held || applied {
+		if held || mutated {
 			idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
 			idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
 			if idleErr != nil && idleCtx.Err() == nil {
