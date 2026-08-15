@@ -8,9 +8,10 @@
 
 /* Wrapping is what keeps the last tabs reachable. In a narrow column the five
    tabs are wider than the panel, and the overflow scrolls .detail-panel-body,
-   which carries the tab's own panel out of the column with it: at an 800x600
-   window Properties and Violations sit under the neighbouring panel, where
-   neither a person nor the fuzzer can click them. */
+   which carries that tab's own panel out of the column with it. In a 756px
+   viewport (what a headless run gets) Properties and Violations then sit under
+   the neighbouring panel, where neither a person nor the fuzzer can click
+   them. */
 .tabs-header {
   display: flex;
   flex-wrap: wrap;
