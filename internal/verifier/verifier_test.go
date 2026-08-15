@@ -1382,3 +1382,54 @@ func TestWithPlatform_IOSReachesPicker(t *testing.T) {
 		t.Errorf("key = %q, want back (native press-key pool)", action.Key)
 	}
 }
+
+// TestOverrideExtractorValues_EmptyPayloadIsUndefined pins the cross-host
+// meaning of a page reading with no value. JSON has no undefined, so the web
+// runtime wraps every reading in a {value} envelope and the chrome driver hands
+// an absent value through as an empty payload. It has to land here as undefined,
+// because that is what PushSnapshot records for a getter that returned undefined
+// on native: decoding it as null instead would make `x.current === undefined`
+// answer one thing on the native host and another on web, for one spec.
+func TestOverrideExtractorValues_EmptyPayloadIsUndefined(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, helloSpec)
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{"ledger.balance": json.RawMessage(`42`)}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifier.OverrideExtractorValues(map[int]json.RawMessage{
+		0: nil,
+		1: json.RawMessage(`null`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []struct {
+		expression string
+		result     bool
+	}{
+		{"screen.current === undefined", true},
+		{"screen.current === null", false},
+		{"balance.current === null", true},
+		{"balance.current === undefined", false},
+	} {
+		value, err := verifier.runtime.RunString(want.expression)
+		if err != nil {
+			t.Fatalf("evaluate %s: %v", want.expression, err)
+		}
+		if value.ToBoolean() != want.result {
+			t.Errorf("a spec reading %s gets %v, want %v", want.expression, value, want.result)
+		}
+	}
+}
+
+// TestExtractorCount_ReportsEveryRegisteredExtractor keeps the web path's
+// completeness check honest: it compares the page's reading count against this
+// number, so a count that ignored an extractor would let a partial table
+// through.
+func TestExtractorCount_ReportsEveryRegisteredExtractor(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, helloSpec)
+	if got := verifier.ExtractorCount(); got != 2 {
+		t.Errorf("ExtractorCount() = %d, want 2 (helloSpec registers screen and balance)", got)
+	}
+}
