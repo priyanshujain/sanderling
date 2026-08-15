@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -2462,4 +2463,68 @@ func traceStepIndices(t *testing.T, directory string) []int {
 		t.Fatalf("scan trace: %v", err)
 	}
 	return steps
+}
+
+// siblingCardsSpec is the shape folio's Home screen authors: every account card
+// carries the same testTag, and each one is its own tap target.
+const siblingCardsSpec = `
+import { actions, always, extract, Tap } from "@sanderling/spec";
+const cards = extract(state => state.ax.findAll({ testTag: "AccountCard" }));
+globalThis.properties = {
+  alwaysHolds: always(() => true),
+};
+globalThis.actions = actions(() => cards.current.map(card => Tap({ on: card })));
+`
+
+const siblingCardsTree = `{
+  "attributes": {"resource-id": "root", "bounds": "[0,0,100,300]"},
+  "children": [
+    {"attributes": {"testTag": "AccountCard", "text": "Alpha", "bounds": "[0,0,100,100]"}, "clickable": true, "children": []},
+    {"attributes": {"testTag": "AccountCard", "text": "Beta", "bounds": "[0,100,100,200]"}, "clickable": true, "children": []},
+    {"attributes": {"testTag": "AccountCard", "text": "Gamma", "bounds": "[0,200,100,300]"}, "clickable": true, "children": []}
+  ]
+}`
+
+// TestRunner_SiblingTapsReachTheDriverAtTheirOwnCoordinates is the check the
+// whole selector-uniqueness rule exists for. Three cards sharing one testTag
+// each produce their own tap; if they reach the driver naming a selector all
+// three answer to, resolveCoordinates re-resolves every one of them onto the
+// first card and the fuzzer can never open the other two.
+func TestRunner_SiblingTapsReachTheDriverAtTheirOwnCoordinates(t *testing.T) {
+	state := newHarnessWithSpec(t, siblingCardsSpec)
+	tree, err := hierarchy.Parse(siblingCardsTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.verifier.PushSnapshot(verifier.SnapshotInput{Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 40 {
+		action, err := state.verifier.NextAction()
+		if err != nil {
+			t.Fatalf("NextAction: %v", err)
+		}
+		if action.Kind != verifier.ActionKindTap {
+			t.Fatalf("spec offers taps only, got %q", action.Kind)
+		}
+		mustDispatch(t, state.mock, action, tree)
+	}
+
+	tapped := map[string]bool{}
+	for _, dispatched := range state.mock.Actions() {
+		if dispatched.Kind != mockdriver.ActionTap {
+			t.Fatalf("expected coordinate taps only, got %v", dispatched)
+		}
+		tapped[fmt.Sprintf("%d,%d", dispatched.X, dispatched.Y)] = true
+	}
+	want := []string{"50,50", "50,150", "50,250"}
+	for _, center := range want {
+		if !tapped[center] {
+			t.Errorf("no tap reached the driver at (%s); the driver saw %v", center, slices.Sorted(maps.Keys(tapped)))
+		}
+	}
+	if len(tapped) != len(want) {
+		t.Errorf("driver saw %d distinct tap points, want %d: %v", len(tapped), len(want), slices.Sorted(maps.Keys(tapped)))
+	}
 }
