@@ -78,9 +78,17 @@ class EraseTextTest {
     }
 
     // The erase targets the field the runner just tapped, so the length that
-    // decides whether it worked is the focused editable node's, not some other
-    // field that legitimately still holds text.
-    @Test fun focusedEditableTextLengthReadsTheFocusedFieldOnly() {
+    // decides whether it worked is that field's, not some other field that
+    // legitimately still holds text.
+    //
+    // The tree these fixtures copy is the one the device really returns, and
+    // it holds the trap: an open keyboard puts a SECOND focused node in the
+    // tree, one of the IME's own keys, and it carries no text. Reading the
+    // first focused node would call a field that still holds 4096 characters
+    // empty, which is the one wrong answer that matters here. maestro's tree
+    // also carries no "editable" attribute at all, so the text field has to be
+    // recognised by its class.
+    @Test fun theFocusedFieldIsReadPastTheKeyboardsOwnFocusedKey() {
         assertEquals(4096, focusedEditableTextLength(TREE_WITH_FULL_FIELD))
         assertEquals(0, focusedEditableTextLength(TREE_WITH_EMPTY_FIELD))
     }
@@ -92,16 +100,26 @@ class EraseTextTest {
     }
 }
 
+// The keyboard's own focused key, exactly as the device reports it: focused,
+// no text, and not a text field.
+private val IME_FOCUSED_KEY =
+    """
+    {"attributes":{"text":"","resource-id":
+     "com.google.android.inputmethod.latin:id/key_pos_header_access",
+     "focused":"true","class":"android.widget.FrameLayout"},"children":[]}
+    """.trimIndent()
+
 private fun tree(focusedText: String?, otherText: String): String {
-    val focused = focusedText?.let {
-        """{"attributes":{"resource-id":"AccountNameField",
-           "editable":"true","focused":"true","text":"$it"},"children":[]},"""
+    val field = focusedText?.let {
+        """,{"attributes":{"resource-id":"AccountNameField","focused":"true",
+           "class":"android.widget.EditText","text":"$it"},"children":[]}"""
     } ?: ""
     return """
     {"attributes":{"resource-id":"AddAccountScreen"},"children":[
-      $focused
-      {"attributes":{"resource-id":"OtherField","editable":"true",
-       "focused":"false","text":"$otherText"},"children":[]}]}
+      $IME_FOCUSED_KEY $field,
+      {"attributes":{"resource-id":"OtherField","focused":"false",
+       "class":"android.widget.EditText","text":"$otherText"},
+       "children":[]}]}
     """.trimIndent()
 }
 
