@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>aria roles</title>
+  </head>
+  <body>
+    <!-- Shaped like the replay UI's step list: the rows are the only controls on
+         the page, and they are plain <li> elements carrying role="option". A tap
+         target set that reads element names and role="button" alone sees nothing
+         here at all. -->
+    <ol id="steps" role="listbox" aria-label="Steps">
+      <li id="step-1" role="option">step 1</li>
+      <li id="step-2" role="option">step 2</li>
+      <li id="step-3" role="option">step 3</li>
+    </ol>
+    <div id="selected">0</div>
+    <script>
+      let selections = 0;
+      const display = document.getElementById("selected");
+      for (const row of document.querySelectorAll('[role="option"]')) {
+        row.addEventListener("click", function () {
+          selections += 1;
+          display.textContent = String(selections);
+        });
+      }
+    </script>
+  </body>
+</html>

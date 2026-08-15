@@ -65,6 +65,18 @@ func TestBrowserShadowDOMIsReachable(t *testing.T) {
 	}
 }
 
+// TestBrowserAriaRoleIsTappable drives a page whose only controls are
+// <li role="option"> rows, the shape the replay UI gives its step list. The
+// tappable set covered role="button" and nothing else, so a spec had to
+// hand-write an action to reach a row; with the standard interactive roles
+// covered, the default tap enumeration finds them and the counter moves.
+func TestBrowserAriaRoleIsTappable(t *testing.T) {
+	violations := runFixture(t, "aria-roles")
+	if !slices.Contains(violations, "noRowWasEverSelected") {
+		t.Fatalf("no role=\"option\" row was ever tapped; violations=%v", violations)
+	}
+}
+
 // runFixture serves the named testdata case over an in-process file server,
 // drives it through headless Chrome with a fixed seed and a bounded step count,
 // and returns every property name that was ever reported violated.
