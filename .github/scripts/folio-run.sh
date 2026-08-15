@@ -138,7 +138,10 @@ for line in lines:
 for names in (convictions, thrown, other):
     print(", ".join(names))
 PY
-)
+) || {
+  echo "folio/$platform: could not classify $trace, so exit $code cannot be read as a verdict" >&2
+  exit 1
+}
 convicted=$(printf '%s\n' "$classified" | sed -n '1p')
 thrown=$(printf '%s\n' "$classified" | sed -n '2p')
 other=$(printf '%s\n' "$classified" | sed -n '3p')
@@ -164,6 +167,14 @@ if [ -n "$thrown" ]; then
   exit 1
 fi
 
+# Only 0 and 2, the two codes that claim the run completed: any other code is a
+# harness failure, which the branches below already report as one. Without this,
+# a missing trace is judged as an empty trace and reported as a verdict on folio.
+if [ ! -f "$trace" ] && { [ "$code" = 0 ] || [ "$code" = 2 ]; }; then
+  echo "folio/$platform: the run exited $code but wrote no trace under $output/, so there is nothing to judge" >&2
+  exit 1
+fi
+
 if [ "$platform" = "android" ]; then
   # A health gate, not a conviction gate: android convicts in four runs out of
   # five, and a gate that fails the fifth would report a regression it had not
@@ -180,7 +191,7 @@ if [ "$platform" = "android" ]; then
       ;;
     *) echo "folio/android: the harness failed with exit $code" >&2; exit "$code" ;;
   esac
-  if ! grep -q '"AddTransactionScreen"' "$trace" 2>/dev/null; then
+  if ! grep -q '"AddTransactionScreen"' "$trace"; then
     echo "folio/android: the run never reached AddTransactionScreen, so it never got past login" >&2
     exit 1
   fi

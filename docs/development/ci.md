@@ -52,6 +52,7 @@ before it decides:
 | a violation whose witness carries `is_error` | red: a predicate threw, and a thrown predicate is recorded as a violation like any other |
 | a violation of any other property (`newAccountBalanceIsZero` fires on one android seed) | red: a real finding, but not the one this leg gates on |
 | no violation and exit 0 | red: the fuzzer stopped finding a bug that is still there |
+| no trace at all, on exit 0 or 2 | red: the run recorded nothing, so there is no verdict to read |
 | exit 1, or any other code | red: the harness broke, and the code propagates |
 
 The first two rows are why the check is worth the code it takes. A `TypeError`
