@@ -393,11 +393,19 @@ An action the runner cannot fully vouch for **still counts toward a bound on
 what the app could have done**, and it **never licenses attributing an effect to
 it**. So a bound counts it and a property demanding an effect has to decline on
 it. That is why `committedAmountExceedsOneSubmit`, which only bounds how far the
-balance could have moved, needs no `confirmedApplied` guard and no
-`acrossRelaunch` guard, while `createdAccountHasNonZeroBalance`, which demands
-that a card appear, needs both. Demanding the effect of an action that may never
-have run, or that a restart may have swallowed, convicts the app of the runner's
-own uncertainty.
+balance could have moved, needs no `confirmedApplied` guard, while
+`createdAccountHasNonZeroBalance`, which demands that a card appear, does.
+Demanding the effect of an action that may never have run convicts the app of
+the runner's own uncertainty.
+
+A relaunch is not symmetric with that, and folio is a good illustration of why a
+bound can still need the guard. `SqlLedgerStore` starts its flows on
+`stateIn(Eagerly, emptyList())` and Home composes the total unconditionally, so
+a restarted app draws `$0.00` until sqlite answers. That is not a commit the
+restart swallowed, it is a reading of the wrong process, and its size is
+arbitrary. A bound cannot absorb it, so the balance properties keep
+`acrossRelaunch` even though they are bounds. Work out what a restart does to
+the reading, not just to the effect.
 
 `relaunched` is the same shape of fact as `applied`, applied to app state rather
 than to dispatch. The action itself did happen. What nobody can promise across
