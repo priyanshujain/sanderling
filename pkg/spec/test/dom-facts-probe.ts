@@ -11,11 +11,23 @@
 
 import { __testing__ } from "../src/web-runtime.ts";
 
-const { collectTargets, targetElements } = __testing__;
+const { collectTargets, targetElements, buildAx } = __testing__;
+
+// The handle facts are read back off the shipped ax element, the way a spec
+// reaches them and the way internal/verifier/llm.go handleLabel reads them, so
+// the comparison runs over what the model is actually shown rather than over a
+// recomputation of it.
+type AxHandle = { attrs?: Record<string, string>; clickable?: boolean };
+type Ax = { find(selector: unknown): AxHandle | undefined };
+
+function handleOf(ax: Ax, id: string): AxHandle | undefined {
+  return id ? ax.find({ id }) : undefined;
+}
 
 function domFacts(): unknown[] {
   const elements = targetElements();
   const facts = collectTargets();
+  const ax = buildAx() as Ax;
   if (elements.length !== facts.length) {
     throw new Error(
       `collectTargets reported ${facts.length} targets over ${elements.length} elements`,
@@ -23,6 +35,7 @@ function domFacts(): unknown[] {
   }
   return elements.map((element, index) => {
     const target = facts[index]!;
+    const handle = handleOf(ax, element.id);
     return {
       id: element.id,
       tag: element.tagName.toLowerCase(),
@@ -30,6 +43,8 @@ function domFacts(): unknown[] {
       enabled: target.enabled,
       editable: target.editable,
       scrollable: target.scrollable,
+      hintText: handle?.attrs?.hintText ?? "",
+      handleClickable: handle?.clickable ?? false,
       width: target.width ?? 0,
       height: target.height ?? 0,
     };

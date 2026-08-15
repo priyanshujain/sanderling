@@ -555,8 +555,26 @@ function domElement(spec: {
     attributes: Object.entries(attributes).map(([name, value]) => ({ name, value })),
     labels: (spec.labels ?? []).map((textContent) => ({ textContent })),
     getAttribute: (name: string) => attributes[name] ?? null,
+    matches: (selector: string) => matchesAnyPart(selector, spec.tag, attributes),
     getBoundingClientRect: () => ({ left: 0, top: 0, right: 40, bottom: 20, width: 40, height: 20 }),
   };
+}
+
+// matchesAnyPart answers a comma-joined list of tag and attribute selectors over
+// the fake's own tag and attributes, so the production selector string is what
+// gets evaluated here and a role added to it is covered without teaching this
+// harness about it.
+function matchesAnyPart(
+  selector: string,
+  tag: string,
+  attributes: Record<string, string>,
+): boolean {
+  return selector.split(",").some((part) => {
+    const attribute = /^\[([^\]=]+)(?:="([^"]*)")?\]$/.exec(part.trim());
+    if (!attribute) return part.trim() === tag;
+    const value = attributes[attribute[1]!];
+    return value !== undefined && (attribute[2] === undefined || value === attribute[2]);
+  });
 }
 
 function handleOf(element: unknown): Record<string, unknown> {
@@ -627,6 +645,28 @@ test("an unlabelled field's hintText falls back to aria-label, placeholder, then
   assert.equal(attrsOf(domElement({ tag: "input", attributes: { name: "note" } })).hintText, "note");
 });
 
+// clickable was hardcoded true here while the enumeration and the hierarchy dump
+// both resolved it through TAPPABLE_SELECTOR, so every text node and container a
+// spec reached through state.ax claimed to be a tap target on one host only.
+test("an element reached through ax reports the tappable selector's clickability", () => {
+  const clickabilityOf = (element: unknown) => handleOf(element).clickable;
+  assert.equal(clickabilityOf(domElement({ tag: "button", attributes: { id: "submit" } })), true);
+  assert.equal(clickabilityOf(domElement({ tag: "input", attributes: { id: "amount" } })), true);
+  assert.equal(
+    clickabilityOf(domElement({ tag: "div", attributes: { id: "row", role: "option" } })),
+    true,
+  );
+  assert.equal(
+    clickabilityOf(domElement({ tag: "div", attributes: { id: "click", onclick: "void 0" } })),
+    true,
+  );
+  assert.equal(clickabilityOf(domElement({ tag: "div", attributes: { id: "balance" } })), false);
+  assert.equal(
+    clickabilityOf(domElement({ tag: "span", attributes: { id: "note", role: "presentation" } })),
+    false,
+  );
+});
+
 test("a non-editable element carries no hintText", () => {
   const element = domElement({ tag: "button", attributes: { id: "txn-submit" }, text: "Add credit" });
   assert.equal(attrsOf(element).hintText, undefined);
@@ -664,6 +704,7 @@ test("ax.findAll resolves a selector path segment by segment", () => {
     textContent: id,
     dataset: {},
     getAttribute: () => null,
+    matches: (selector: string) => matchesAnyPart(selector, "div", {}),
     getBoundingClientRect: () => rect,
     querySelectorAll: (selector: string) => answers[selector] ?? [],
   });
@@ -704,6 +745,7 @@ test("ax.find and ax.findAll label the element with its selector", () => {
     textContent: "Submit",
     dataset: {},
     getAttribute: () => null,
+    matches: (selector: string) => matchesAnyPart(selector, "div", {}),
     getBoundingClientRect: () => rect,
   };
   const matches = `:is([data-testid="TxnSubmit"], [id="TxnSubmit"])`;

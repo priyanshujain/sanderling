@@ -45,12 +45,17 @@ import (
 // elementFacts is one element as a producer reports it: the tag, for readable
 // failures, and every fact acceptsTarget consults.
 type elementFacts struct {
-	tag            string
-	clickable      bool
-	enabled        bool
-	editable       bool
-	scrollable     bool
-	positiveBounds bool
+	tag        string
+	clickable  bool
+	enabled    bool
+	editable   bool
+	scrollable bool
+	hintText   string
+	// handleClickable is the clickability of the ax element a spec reaches
+	// through state.ax.find, a third place the fact is computed and the one that
+	// answered a hardcoded true while the other two resolved a selector.
+	handleClickable bool
+	positiveBounds  bool
 }
 
 // factRow pairs an element's facts with the id both producers key on, kept in
@@ -91,6 +96,7 @@ func TestHierarchy_DerivesTheSameFactsAsTheWebRuntime(t *testing.T) {
 			requireEveryElementNamed(t, "the hierarchy dump", fromDump)
 			requireEveryElementNamed(t, "the web runtime", fromWebRuntime)
 			requireBothPolarities(t, fromWebRuntime)
+			requireTheHandleAgreesWithTheEnumeration(t, fromWebRuntime)
 			compareEnumeratedElements(t, fromDump, fromWebRuntime)
 			compareDerivedFacts(t, fromDump, fromWebRuntime)
 		})
@@ -116,6 +122,7 @@ func factsFromHierarchyDump(t *testing.T, dump string) []factRow {
 				enabled:    element.Enabled,
 				editable:   element.Editable,
 				scrollable: element.Attributes["scrollable"] == "true",
+				hintText:   element.Attributes["hintText"],
 				positiveBounds: hasPositiveBounds(
 					element.Bounds.Width(),
 					element.Bounds.Height(),
@@ -155,14 +162,16 @@ func factsFromWebRuntime(
 		t.Fatalf("read web runtime facts: %v", err)
 	}
 	var wire []struct {
-		ID         string `json:"id"`
-		Tag        string `json:"tag"`
-		Clickable  bool   `json:"clickable"`
-		Enabled    bool   `json:"enabled"`
-		Editable   bool   `json:"editable"`
-		Scrollable bool   `json:"scrollable"`
-		Width      int    `json:"width"`
-		Height     int    `json:"height"`
+		ID              string `json:"id"`
+		Tag             string `json:"tag"`
+		Clickable       bool   `json:"clickable"`
+		Enabled         bool   `json:"enabled"`
+		Editable        bool   `json:"editable"`
+		Scrollable      bool   `json:"scrollable"`
+		HintText        string `json:"hintText"`
+		HandleClickable bool   `json:"handleClickable"`
+		Width           int    `json:"width"`
+		Height          int    `json:"height"`
 	}
 	if err := json.Unmarshal([]byte(encoded), &wire); err != nil {
 		t.Fatalf("decode web runtime facts: %v", err)
@@ -172,12 +181,14 @@ func factsFromWebRuntime(
 		rows = append(rows, factRow{
 			id: item.ID,
 			facts: elementFacts{
-				tag:            item.Tag,
-				clickable:      item.Clickable,
-				enabled:        item.Enabled,
-				editable:       item.Editable,
-				scrollable:     item.Scrollable,
-				positiveBounds: hasPositiveBounds(item.Width, item.Height),
+				tag:             item.Tag,
+				clickable:       item.Clickable,
+				enabled:         item.Enabled,
+				editable:        item.Editable,
+				scrollable:      item.Scrollable,
+				hintText:        item.HintText,
+				handleClickable: item.HandleClickable,
+				positiveBounds:  hasPositiveBounds(item.Width, item.Height),
 			},
 		})
 	}
@@ -222,6 +233,7 @@ func requireBothPolarities(t *testing.T, rows []factRow) {
 		{"enabled", func(f elementFacts) bool { return f.enabled }},
 		{"editable", func(f elementFacts) bool { return f.editable }},
 		{"scrollable", func(f elementFacts) bool { return f.scrollable }},
+		{"hintText", func(f elementFacts) bool { return f.hintText != "" }},
 		{"positiveBounds", func(f elementFacts) bool { return f.positiveBounds }},
 	} {
 		var sawTrue, sawFalse bool
@@ -239,6 +251,30 @@ func requireBothPolarities(t *testing.T, rows []factRow) {
 				fact.name,
 				sawTrue,
 				sawFalse,
+			)
+		}
+	}
+}
+
+// requireTheHandleAgreesWithTheEnumeration compares the V8 host against itself.
+// An element a spec reaches through state.ax and the same element in the
+// enumeration must be clickable to the same degree, or a spec taps a container
+// the picker calls inert. The handle resolved the fact by element.matches over
+// the tappable selector while the enumeration resolved it by membership of the
+// set that selector queried, and this is where those two answers are held
+// together over a real page: an [onclick] attribute, an onclick property that is
+// not one, elements inside a shadow root.
+func requireTheHandleAgreesWithTheEnumeration(t *testing.T, rows []factRow) {
+	t.Helper()
+	for _, row := range rows {
+		if row.facts.handleClickable != row.facts.clickable {
+			t.Errorf(
+				"%q (<%s>): the ax handle reports clickable=%v, the enumeration "+
+					"reports clickable=%v",
+				row.id,
+				row.facts.tag,
+				row.facts.handleClickable,
+				row.facts.clickable,
 			)
 		}
 	}
@@ -305,6 +341,16 @@ func compareDerivedFacts(t *testing.T, fromDump, fromWebRuntime []factRow) {
 				row.id,
 				dump.tag,
 				web.tag,
+			)
+		}
+		if dump.hintText != web.hintText {
+			t.Errorf(
+				"%q (<%s>): the hierarchy dump names the field %q, the web runtime "+
+					"names it %q; the model is shown a different control on each host",
+				row.id,
+				dump.tag,
+				dump.hintText,
+				web.hintText,
 			)
 		}
 		for _, fact := range []struct {

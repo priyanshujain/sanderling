@@ -488,7 +488,10 @@ function elementHandle(element: Element, selector: unknown): Record<string, unkn
     text,
     desc: ariaLabel,
     class: (element as HTMLElement).className ?? "",
-    clickable: true,
+    // The selector collectTargets and the hierarchy dump (driver.go) both
+    // resolve clickable through. Hardcoded true here, every text node and
+    // container a spec reached through state.ax claimed to be a tap target.
+    clickable: element.matches(TAPPABLE_SELECTOR),
     enabled: isEnabled(element),
     editable: isEditableElement(element as HTMLElement),
     focused: document.activeElement === element,
