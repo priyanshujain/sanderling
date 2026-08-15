@@ -259,6 +259,24 @@ export function cardAccountName(args: {
   return head.slice(0, label.index).trim();
 }
 
+// The avatar text that opens a merged card's identity key, mirroring Folio's
+// initialsOf (app/shared/.../util/Format.kt).
+//
+// A mirror because the alternative is a suffix test, and a suffix test cannot
+// say which card a name belongs to. Drift can only cost a detection: the result
+// is compared whole against a card's key, so initials that stop matching the
+// app match no card rather than the wrong one.
+export function initialsOf(name: string): string {
+  // Java's \s, which is what Kotlin's Regex("\\s+") compiles to. JS's \s also
+  // matches the unicode spaces, and would split names the app keeps whole.
+  const parts = name.trim().split(/[ \t\n\v\f\r]+/).filter(part => part !== "");
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  if (first === undefined || last === undefined) return "?";
+  if (parts.length === 1) return first.slice(0, 2).toUpperCase();
+  return (first.slice(0, 1) + last.slice(0, 1)).toUpperCase();
+}
+
 // One card's transaction count, in the strongest form its SOURCE supports. The
 // two forms are the whole reason this is not just a number:
 //
@@ -386,10 +404,21 @@ export function createdAccountHasNonZeroBalance(args: {
   if (typed === "") return false;
   // Web merges the card into one node whose text opens with the avatar
   // initials, so the identity key is "INInvestments" where android and iOS give
-  // "Investments"; endsWith covers both. Two cards answering to the same typed
-  // name (a second "Travel", or a card the tree exposed twice) leave the
-  // appearance unattributable, so nothing is judged.
-  const matches = after.filter(account => account.name.endsWith(typed));
+  // "Investments". Both forms are built from the name that was typed and
+  // compared whole. A suffix test covered both too, and it also let any OTHER
+  // account ending in those letters answer for the created one: type "Fund"
+  // next to an existing "Emergency Fund", have the new card clipped out of the
+  // reading the way Home clips any card, and the old account is convicted for
+  // money it has held all along. It cost detections as well, because a typed
+  // name that two cards end with is judged as unattributable rather than as the
+  // one card that carries it.
+  //
+  // Two cards answering to one key stay unattributable: Accounts.name is UNIQUE
+  // and Repository.createAccount rejects a name already taken, so that pair is
+  // a card the tree exposed twice, or two names the merged key cannot tell
+  // apart.
+  const mergedKey = initialsOf(typed) + typed;
+  const matches = after.filter(account => account.name === typed || account.name === mergedKey);
   const created = matches.length === 1 ? matches[0] : undefined;
   if (created === undefined) return false;
   if (before.some(account => account.name === created.name)) return false;
