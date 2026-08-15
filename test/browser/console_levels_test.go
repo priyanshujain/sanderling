@@ -81,6 +81,33 @@ func TestBrowserConsoleErrorReachesTheSpec(t *testing.T) {
 	}
 }
 
+// TestBrowserConsoleErrorFiresTheLogProperty drives the same page through the
+// whole bundle -> run -> verify pipeline instead of hand-assembling a snapshot.
+// The driver holding the entry is not enough on web: every extractor reading is
+// replaced by the one the page computed, so state.logs is whatever the page
+// says it is, and a page that answers "no logs" leaves noLogcatErrors green on
+// a run whose console was full of errors.
+func TestBrowserConsoleErrorFiresTheLogProperty(t *testing.T) {
+	violations := runFixture(t, "console-levels")
+	if !slices.Contains(violations, "noLogcatErrors") {
+		t.Fatalf("a page calling console.error ran a whole run without noLogcatErrors firing; violations=%v", violations)
+	}
+}
+
+// TestBrowserQuietPageKeepsTheLogPropertySatisfied is the other half: a page
+// whose console never reaches the error level must leave noLogcatErrors alone,
+// so the property is reporting what the page logged rather than being on
+// whenever the run is web.
+func TestBrowserQuietPageKeepsTheLogPropertySatisfied(t *testing.T) {
+	violations := runFixture(t, "console-quiet")
+	if slices.Contains(violations, "noLogcatErrors") {
+		t.Errorf("noLogcatErrors fired on a page that logged nothing at error level; violations=%v", violations)
+	}
+	if !slices.Contains(violations, "counterNeverMoves") {
+		t.Fatalf("nothing was ever pressed, so the run proves nothing about a property that can fire; violations=%v", violations)
+	}
+}
+
 // TestBrowserConsoleLevelsMapToTheLogcatScale pins what each console verb
 // becomes once it crosses the driver. driver.LogEntry.Level is the single-letter
 // logcat scale on every platform, so a spec asking for warnings or debug lines
