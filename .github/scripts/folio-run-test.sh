@@ -13,6 +13,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script="$here/folio-run.sh"
 spec="$here/../../examples/folio/sanderling/spec.ts"
+testdata="$here/testdata"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -25,6 +26,9 @@ run() { # <case> <platform> <stub exit code> [none] ; trace lines on stdin
   local name="$1" platform="$2" code="$3" trace_mode="${4:-file}"
   case_dir="$work/$name"
   mkdir -p "$case_dir"
+  # the web leg serves this directory and waits for index.html before it runs
+  mkdir -p "$case_dir/examples/folio/app/webApp/build/dist/wasmJs/developmentExecutable"
+  echo ok > "$case_dir/examples/folio/app/webApp/build/dist/wasmJs/developmentExecutable/index.html"
   cat > "$case_dir/trace.jsonl"
   printf '#!/usr/bin/env bash\n' > "$case_dir/sanderling"
   cat >> "$case_dir/sanderling" <<'STUB'
@@ -46,7 +50,7 @@ STUB
   STUB_ARGV="$case_dir/argv" STUB_TRACE="$case_dir/trace.jsonl" \
   STUB_TRACE_MODE="$trace_mode" STUB_CODE="$code" \
   SANDERLING="$case_dir/sanderling" SPEC="${spec_override:-$spec}" \
-  GITHUB_STEP_SUMMARY="$case_dir/summary.md" \
+  GITHUB_STEP_SUMMARY="$case_dir/summary.md" PORT=8796 \
   SEED=7 MAX_STEPS=240 DURATION=20m \
     bash -eo pipefail -c "'$script' '$platform'" \
     > "$case_dir/out" 2> "$case_dir/err" || status=$?
@@ -80,8 +84,11 @@ expect_argv() { # <text> <case>
   grep -qxF -- "$1" "$case_dir/argv" || fail "$2: '$1' never reached the binary"
 }
 
-convicting='{"violations":["submitCommitsOneTransactionPerAction"],"witnesses":{"submitCommitsOneTransactionPerAction":{"is_error":false,"reason":"one tap, two rows"}}}'
-unrelated='{"violations":["newAccountBalanceIsZero"],"witnesses":{"newAccountBalanceIsZero":{"is_error":false,"reason":"opened at 4.00"}}}'
+# is_error is absent, not false: internal/trace/writer.go tags it omitempty, so a
+# predicate that simply returned false never writes the key. The real traces
+# pinned under testdata/ carry exactly this shape.
+convicting='{"violations":["submitCommitsOneTransactionPerAction"],"witnesses":{"submitCommitsOneTransactionPerAction":{"reason":"predicate false"}}}'
+unrelated='{"violations":["newAccountBalanceIsZero"],"witnesses":{"newAccountBalanceIsZero":{"reason":"predicate false"}}}'
 threw='{"violations":["submitMovesBalanceByAtMostTypedAmount"],"witnesses":{"submitMovesBalanceByAtMostTypedAmount":{"is_error":true,"reason":"TypeError: cannot read text of undefined"}}}'
 on_txn='{"route":"AddTransactionScreen","violations":[]}'
 off_txn='{"route":"HomeScreen","violations":[]}'
@@ -277,6 +284,46 @@ $convicting
 TRACE
 expect_status 0 gate-matches-spec
 expect_silent "no longer declares" gate-matches-spec
+
+# --- real traces, from actions run 31902501859 on this branch's code ---------
+
+# The cases above are hand-written, so they only prove the classifier agrees
+# with what this file assumes a trace looks like. These are what the binary
+# actually wrote. Every step is kept; of each step only step, violations,
+# witnesses and residuals survive, and hierarchy is replaced by the "...Screen"
+# resource ids it held, in order, because that dump is 95% of the bytes and the
+# only place the route gate's grep can match. Running the classifier over the
+# originals and over these produced byte-identical verdicts.
+
+run ios-real ios 2 file < "$testdata/folio-ios-convicted.jsonl"
+expect_status 0 ios-real
+expect_says "folio/ios: found the submit bug in 49 steps (submitCommitsOneTransactionPerAction)" ios-real
+expect_summary "- 49 steps recorded, exit 2" ios-real
+# a real conviction carries no is_error, so reading it as a thrown predicate is
+# the mistake this asserts against
+expect_silent "a predicate threw" ios-real
+
+# Both gated properties fired on the same step, and both are named.
+run web-real web 2 file < "$testdata/folio-web-convicted.jsonl"
+expect_status 0 web-real
+expect_says "folio/web: found the submit bug in 184 steps (submitCommitsOneTransactionPerAction, submitMovesBalanceByAtMostTypedAmount)" web-real
+expect_summary "- convicted on: submitCommitsOneTransactionPerAction, submitMovesBalanceByAtMostTypedAmount" web-real
+
+# 200 steps, no violation, and it reached the transaction screen: the health
+# gate's passing case on real data.
+run android-real android 0 file < "$testdata/folio-android-healthy.jsonl"
+expect_status 0 android-real
+expect_says "folio/android: healthy run over 200 steps, reached the transaction screen" android-real
+expect_silent "never reached" android-real
+
+# The same real trace cut to before it first reached the transaction screen.
+# The route gate reads the accessibility hierarchy, so this is the one case that
+# proves it reads real hierarchy dumps and not just the shape assumed above.
+head -10 "$testdata/folio-android-healthy.jsonl" > "$work/android-early.jsonl"
+run android-real-stalled android 0 file < "$work/android-early.jsonl"
+expect_status 1 android-real-stalled
+expect_says "never reached AddTransactionScreen over 10 steps" android-real-stalled
+expect_says "routes the trace does record: LoginScreen,HomeScreen,AddAccountScreen,LedgerScreen" android-real-stalled
 
 if [ "$failed" = 0 ]; then
   echo "folio-run.sh: ok"
