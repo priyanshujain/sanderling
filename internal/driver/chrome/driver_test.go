@@ -306,6 +306,79 @@ func TestHierarchy_ScrollableAttribute(t *testing.T) {
 	}
 }
 
+// TestHierarchy_HintTextNamesAnEditableField covers the attribute visibleLabel
+// (internal/verifier/llm.go) reads FIRST for an editable element. Without it a
+// web field reached the model named by its CSS class, an identifier no user can
+// read, on exactly the channel the label-source experiment varies. The ladder is
+// fieldHint's in pkg/spec/src/web-runtime.ts, rung for rung.
+func TestHierarchy_HintTextNamesAnEditableField(t *testing.T) {
+	const html = `<body>` +
+		`<label id="amount-label" for="amount">Amount</label>` +
+		`<input id="amount" placeholder="0.00" name="amount-field">` +
+		`<input id="search" aria-label="Search" placeholder="Type here" name="q">` +
+		`<label id="note-label" for="note"> </label>` +
+		`<input id="note" placeholder="What's this for?" name="note-field">` +
+		`<input id="reference" name="reference-field">` +
+		`<input id="unnamed">` +
+		`<input id="agree" type="checkbox" placeholder="ignored">` +
+		`<button id="go" placeholder="ignored">go</button>` +
+		`</body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(html))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+
+	type node struct {
+		Attributes map[string]string `json:"attributes"`
+		Children   []node            `json:"children"`
+	}
+	var root node
+	if err := json.Unmarshal([]byte(dump), &root); err != nil {
+		t.Fatalf("unmarshal hierarchy: %v", err)
+	}
+	hintByID := map[string]string{}
+	var walk func(n node)
+	walk = func(n node) {
+		if id := n.Attributes["resource-id"]; id != "" {
+			hintByID[id] = n.Attributes["hintText"]
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+
+	for _, tc := range []struct {
+		id   string
+		want string
+	}{
+		{"search", "Search"},
+		{"amount", "Amount"},
+		{"note", "What's this for?"},
+		{"reference", "reference-field"},
+		{"unnamed", ""},
+		{"agree", ""},
+		{"go", ""},
+	} {
+		if hintByID[tc.id] != tc.want {
+			t.Errorf("%q: hintText = %q, want %q", tc.id, hintByID[tc.id], tc.want)
+		}
+	}
+}
+
 // TestRunCtx_CallerCancelPropagates confirms that cancelling the caller's
 // context cancels the chromedp-bound context returned by runCtx. This is the
 // channel by which step deadlines and Ctrl-C reach in-flight CDP calls.

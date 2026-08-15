@@ -408,6 +408,23 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     if (tag === 'input') return !NON_TEXT_INPUT_TYPES.includes((el.type || '').toLowerCase());
     return false;
   }
+  // An editable field's own text is the transient typed value; its hint names
+  // its purpose, which is the rung visibleLabel (internal/verifier/llm.go) reads
+  // first for such an element. Without it a web field reached the model named by
+  // its CSS class, an identifier no user can read. Same ladder as fieldHint in
+  // pkg/spec/src/web-runtime.ts, so one field is named one way on both hosts.
+  function fieldHint(el) {
+    if (!isEditableElement(el)) return '';
+    const ariaLabel = el.getAttribute('aria-label');
+    if (ariaLabel) return ariaLabel;
+    for (const label of el.labels || []) {
+      const text = (label.textContent || '').trim();
+      if (text) return text;
+    }
+    const placeholder = el.getAttribute('placeholder');
+    if (placeholder) return placeholder;
+    return el.getAttribute('name') || '';
+  }
   // Shadow roots are part of the page a user sees, so they are part of the page
   // we enumerate. Compose for Web mounts its canvas AND its accessibility tree
   // inside a shadow root on the mount element, so a light-DOM-only walk reports
@@ -446,6 +463,8 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     if (el.className && typeof el.className === 'string' && el.className.trim()) {
       attrs['class'] = el.className.trim();
     }
+    const hint = fieldHint(el);
+    if (hint) attrs['hintText'] = hint;
     // The goja host reads scrollable off this attribute (internal/verifier
     // worker.go targets). Without it every web element looks unscrollable there,
     // so the goja-side enumeration offers no scroll while the V8 picker, which
