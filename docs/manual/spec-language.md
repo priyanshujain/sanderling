@@ -169,6 +169,8 @@ loggedIn.previous   // T | undefined - value from the previous step, undefined o
 
 Extractors are evaluated before properties and action generators. Use `.previous` to detect transitions between steps. Named extractors appear by name in the replay UI and trace.
 
+An extractor may return elements. The trace records their data (id, text, desc, class, the flags, bounds, attrs) and not their `find`/`findAll` methods; a cycle, a NaN or a branch nested deeper than 32 levels is recorded as null. A value with no JSON form at all fails the step and names the extractor, so nothing goes unrecorded without the author hearing about it.
+
 ## LTL operators
 
 | Function | Meaning |
