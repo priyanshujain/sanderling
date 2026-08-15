@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -134,6 +135,60 @@ func TestAwaitSidecarHealthyReturnsNil(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("expected a healthy sidecar to pass, got %v", err)
+	}
+}
+
+func TestStopSidecarTerminatesARunningSidecar(t *testing.T) {
+	command := exec.Command("sleep", "60")
+	if err := command.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	exited := watchSidecar(command)
+
+	stopped := make(chan struct{})
+	go func() {
+		stopSidecar(command, exited)
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stopSidecar never returned for a running sidecar")
+	}
+	if got := command.ProcessState.String(); got != "signal: terminated" {
+		t.Errorf("sidecar ended as %q, want the SIGTERM its shutdown hook needs", got)
+	}
+}
+
+// The startup path takes the exit status to report it, so the shutdown path
+// that follows must not sit waiting for a status nobody will send again.
+func TestStopSidecarAfterTheStartupPathTookTheExitStatus(t *testing.T) {
+	command := exec.Command("sh", "-c", "exit 3")
+	if err := command.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	exited := watchSidecar(command)
+
+	err := awaitSidecar(
+		context.Background(),
+		"127.0.0.1:54321",
+		30*time.Second,
+		func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+		exited,
+	)
+	if err == nil || !strings.Contains(err.Error(), "exit status 3") {
+		t.Fatalf("expected the sidecar's real exit status, got %v", err)
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		stopSidecar(command, exited)
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stopSidecar blocked on an exit status the startup path had already taken")
 	}
 }
 

@@ -166,13 +166,7 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	if err := sidecarCommand.Start(); err != nil {
 		return nil, nil, fmt.Errorf("spawn sidecar: %w", err)
 	}
-	// The close after the send lets the cleanup path receive again once the
-	// startup path has already taken the exit status.
-	sidecarExited := make(chan error, 1)
-	go func() {
-		sidecarExited <- sidecarCommand.Wait()
-		close(sidecarExited)
-	}()
+	sidecarExited := watchSidecar(sidecarCommand)
 	address := fmt.Sprintf("127.0.0.1:%d", sidecarPort)
 	fmt.Fprintf(stdout, "sidecar pid=%d listening on %s (adb: %s)\n", sidecarCommand.Process.Pid, address, adbPath)
 
@@ -203,6 +197,18 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 		stopSidecar(sidecarCommand, sidecarExited)
 	}
 	return driverClient, cleanup, nil
+}
+
+// watchSidecar reaps the sidecar and publishes its exit status. The channel is
+// closed after the send so the shutdown path can still receive once the startup
+// path has taken the status.
+func watchSidecar(sidecarCommand *exec.Cmd) <-chan error {
+	exited := make(chan error, 1)
+	go func() {
+		exited <- sidecarCommand.Wait()
+		close(exited)
+	}()
+	return exited
 }
 
 // awaitSidecar waits for the sidecar to answer a health check, racing that
