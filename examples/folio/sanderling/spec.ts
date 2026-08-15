@@ -286,12 +286,22 @@ const submitMovesBalanceByAtMostTypedAmount = always(
 // both sides of the comparison accumulate over the same window. It is the
 // double-submit stated directly: one tap, two rows.
 //
-// One rule, two windows. The counting form can only compare two Home readings,
-// and a walk that stays inside the transaction flow gives it a window hundreds
-// of steps and dozens of submits wide, which is sound and says nothing. The
-// second form says the same thing in money about the one account whose screen
-// the walk is on, and that window is usually a single action, so it can still
-// tell one commit from two: see committedAmountExceedsOneSubmit.
+// One rule, two windows, and they judge different frames rather than the same
+// frame twice. The counting form compares two Home readings, which is where a
+// double tap lands: submit() pops one entry per commit, so two commits walk the
+// stack back past the ledger to Home. What used to defeat it there was the
+// width of the window, not the window's screen, and what fixed it is
+// submitCouldCommit refusing to count submits the app cannot have accepted.
+// Replaying the iOS run at runs/folio-ios/20260815-102711 through this file
+// measures it: the three double taps sit in windows of 2, 1 and 2 submits with
+// that rule and 5, 4 and 7 without, and the run convicts 4 times with it and 0
+// times without.
+//
+// The second form says the same thing in money about the one account whose
+// screen the walk is on, and that window is usually a single action. It judges
+// the frames the counting form cannot see between two Home visits, and catches
+// the double submit whose second pop never ran: see
+// committedAmountExceedsOneSubmit.
 const submitCommitsOneTransactionPerAction = always(
   next(
     () =>

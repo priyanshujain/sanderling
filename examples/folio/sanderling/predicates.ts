@@ -283,6 +283,9 @@ export function countSubmitsInWindow(args: {
   return { reported, next: fresh ? 0 : reported };
 }
 
+// Folio's own cap, in cents (core/data/Repository.kt).
+const MAX_TRANSACTION_AMOUNT_CENTS = 100_000_000;
+
 // Could the app have committed anything for that submit? The amount field as
 // the LANDING frame shows it is the form state the tap read: the tap changes
 // nothing about it, and one action runs per step, so nothing else could have.
@@ -302,14 +305,19 @@ export function countSubmitsInWindow(args: {
 // nothing to say. Measured over four recorded android runs, 19, 11, 25 and 25
 // of 35, 26, 42 and 42 submit taps landed with the amount field empty.
 //
-// An amount too large for a Kotlin Long is refused by the app too, and still
-// counts here: over-counting can only cost a detection, and the reading that
-// would have to prove the overflow is a float that cannot hold the number.
+// An amount over Folio's cap is refused before any coroutine starts
+// (MAX_TRANSACTION_AMOUNT_CENTS, checked in both AddTransactionViewModel.submit
+// and Repository.createTransaction), and the fuzzer's corpus reaches the button
+// with one: "999999999999999999999" passes AMOUNT_REGEX, so the field takes it.
+// Float is precise enough to say which side of the cap an amount is on. The cap
+// is 1e8, every integer cent up to 2^53 is exact, and an amount far enough above
+// it to be inexact is far enough above it to be refused.
 export function submitCouldCommit(amountText: string | undefined): boolean {
   if (amountText === undefined) return true;
   const trimmed = amountText.trim().replace(/,/g, "");
   if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return false;
-  return /[1-9]/.test(trimmed);
+  if (!/[1-9]/.test(trimmed)) return false;
+  return Number(trimmed) * 100 <= MAX_TRANSACTION_AMOUNT_CENTS;
 }
 
 // Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to
@@ -602,20 +610,36 @@ export function committedTransactionsExceedSubmits(args: {
 // submit action can commit one transaction, so the account's balance cannot
 // move by more than the amount that submit typed.
 //
-// An UPPER BOUND, not the equality submitChangesBalanceByAtMostTypedAmount uses, and
-// that is what makes a one-action window safe. A balance that has not moved is
-// a commit still in flight (createTransaction runs in a coroutine), a submit
-// the app rejected, or a tap that never landed, and none of those is evidence
-// of anything; an equality would convict all three. Moving by MORE than one
-// submit's worth is not something a correct app can do: only createTransaction
-// moves this number, only a TxnSubmit tap reaches it, and the window holds
-// exactly one such tap. A double tap is one action committing two transactions,
-// so it moves the balance by twice what was typed and lands here.
+// An UPPER BOUND, the same one submitChangesBalanceByAtMostTypedAmount applies
+// to Home's total, and that is what makes a one-action window safe. A balance
+// that has not moved is a commit still in flight (createTransaction runs in a
+// coroutine), a submit the app rejected, or a tap that never landed, and none
+// of those is evidence of anything; an equality would convict all three. Moving
+// by MORE than one submit's worth is not something a correct app can do: only
+// createTransaction moves this number, only a TxnSubmit tap reaches it, and the
+// window holds exactly one such tap.
 //
-// A submit the runner could not confirm needs no case of its own for the same
-// reason: if it never landed the balance did not move, which is under the
-// bound. countSubmitsInWindow counts it either way, so it cannot smuggle a
-// second commit into a window that looks like one.
+// What it can convict, and what it cannot. The double tap sends two Submit
+// events, and where they land decides who judges them. Two commits and two pops
+// reach Home, where this reads no balance at all and
+// committedTransactionsExceedSubmits does the convicting: that is the shape the
+// recorded iOS run at runs/folio-ios/20260815-102711 produced, three double taps
+// out of three, all on Home. Two commits with the second pop cancelled by the
+// first stop on the account's own ledger, and only this sees them. So this is
+// not the check that fixed #78, and widening its route gate would not make it
+// one: readAccountBalance drops the carrier off these two screens, so a Home
+// landing has nothing to compare.
+//
+// It is not idle either. Over that same run it judged 18 of 240 steps against
+// real readings, every one a submit landing back on the ledger with the balance
+// moved by exactly what was typed. A commit for more than the amount typed, on
+// any of those 18, had nowhere else to be caught: the total-balance form got
+// past its own gates on one step in the whole run.
+//
+// A submit the runner could not confirm needs no case of its own: if it never
+// landed the balance did not move, which is under the bound.
+// countSubmitsInWindow counts it either way, so it cannot smuggle a second
+// commit into a window that looks like one.
 //
 // typedAmount is the amount the app parsed for THIS submit (parseTypedAmount
 // mirrors parseCents), so every rejected amount and every amount too large to
@@ -736,13 +760,19 @@ export function submitChangesBalanceByAtMostTypedAmount(args: {
 
   if (route !== "home") return true;
   if (!isTxnSubmitTap(lastAction)) return true;
-  // The whole rule is that the delta belongs to THIS submit. A submit the
-  // runner could not confirm may have committed nothing, and a balance that
-  // did not move is then exactly what a healthy app looks like.
-  if (!confirmedApplied(lastAction)) return true;
-  // The runner restarted the app after this tap, so the process may have died
-  // between the commit and the sqlite write. A balance that did not move is
-  // then a healthy app, exactly as it is for a submit that may not have landed.
+  // The two totals were read from two different processes. SqlLedgerStore
+  // starts each one on stateIn(Eagerly, emptyList()) and HomeScreen composes
+  // formatCents(total) off whatever the flow holds, so a restarted app draws
+  // $0.00 into TotalBalance until sqlite answers, and that number is as far
+  // from the last one as the accounts are rich. There is no submit anywhere
+  // that explains it.
+  //
+  // A submit the runner could not confirm needs no guard of its own: it may
+  // have committed nothing, and a balance that did not move is under any bound.
+  // countSubmitsInWindow counts it exactly like a confirmed one, so a total
+  // that moved by more than one typed amount is the same double commit either
+  // way. Under the equality this used to be, that case had to be excused; a
+  // guard for it here now only drops the convictions it exists to make.
   if (acrossRelaunch(lastAction)) return true;
   if (submitsInWindow !== 1) return true;
   if (typedAmount === 0) return true;

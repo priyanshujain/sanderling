@@ -145,6 +145,37 @@ test("one submit moving the balance by exactly the typed amount is the app worki
   }
 });
 
+// The frames this bound is actually driven down, replayed off the recorded iOS
+// run at runs/folio-ios/20260815-102711 (seed 7, 240 steps). It judged 18 of
+// them and fired on none: every one was a single Tap on TxnSubmit landing back
+// on the account's own ledger with the balance moved by exactly what was typed,
+// which is the app working. Three of those readings are below, with the same
+// frame as it looks when the one action commits twice.
+//
+// A double tap is nowhere in that list, and the run took three of them: all
+// three landed on Home, where this conjunct has no balance to read and
+// committedTransactionsExceedSubmits convicted instead. What reaches here is
+// the interleaving where the second commit's pop does not run.
+test("the ledger landings a real run produces are judged, and a doubled one fires", () => {
+  for (const [prev, typed] of [
+    [357900, 25100],
+    [455800, 7900],
+    [682500, 19300],
+  ]) {
+    const judge = (currAccountBalance: number) =>
+      committedAmountExceedsOneSubmit({
+        route: "ledger",
+        lastAction: submit,
+        submitsInWindow: 1,
+        typedAmount: typed!,
+        prevAccountBalance: prev!,
+        currAccountBalance,
+      });
+    assert.equal(judge(prev! + typed!), false, `the recorded ${prev} -> ${prev! + typed!} was convicted`);
+    assert.equal(judge(prev! + 2 * typed!), true, `a second commit on ${prev} went unjudged`);
+  }
+});
+
 // A balance that has not moved is a commit still in flight (createTransaction
 // runs in a coroutine), a submit the app rejected, or a tap that never landed.
 // None of those is evidence, and an equality would convict all three.
@@ -286,8 +317,11 @@ test("Home shows every account's money, so it is not this comparison's scale", (
 });
 
 // A step of the walk: the frame it landed on, the balance node that frame
-// carried, what was in the amount field the step before, and the action that
-// got there. Driven through the same carrier and window the spec holds.
+// carried, the amount field as that frame shows it, and the action that got
+// there. Driven through the same carrier and window the spec holds, `typed`
+// included: the spec hands the landing frame's field to countSubmitsInWindow
+// and the previous frame's to the property, and a walk that skips the first
+// half drives a composition the spec never runs.
 interface Frame {
   route: string | null;
   balanceText?: string;
@@ -311,6 +345,7 @@ function walk(frames: readonly Frame[]) {
     const window = countSubmitsInWindow({
       previousCount: submits,
       lastAction: frame.lastAction,
+      amountText: frame.route === "add-transaction" ? (frame.typed ?? "") : undefined,
       fresh: reading.fresh,
     });
     submits = window.next;
@@ -358,9 +393,34 @@ test("the Home window cannot judge a walk that never goes Home", () => {
   }
 });
 
-// The same trajectory, judged where the app actually is. The frame the double
-// tap lands on is the account's own ledger, so the window that closes there
-// holds exactly the one action.
+// The trajectory the recorded iOS run took to the frames this property judges,
+// with the taps that reach TxnSubmit over an empty field: 40 of its 61 submit
+// taps landed back on the transaction screen, and the field they read is the
+// one the landing frame shows. Counting those as submits is what the run
+// measures as the difference between 4 convictions and 0. Here the balance node
+// is off the viewport while they happen, so nothing resets the window and the
+// slack survives to the frame that matters.
+test("submits the app must have refused do not buy a double tap an alibi", () => {
+  const verdicts = walk([
+    { route: "ledger", balanceText: "$100.00", lastAction: openLedger },
+    { route: "add-transaction", lastAction: openAddTxn },
+    { route: "add-transaction", lastAction: submit },
+    { route: "add-transaction", lastAction: submit },
+    { route: "add-transaction", typed: "196", lastAction: typeAmount },
+    { route: "ledger", balanceText: "$492.00", lastAction: doubleSubmit },
+  ]);
+  assert.equal(verdicts[5]?.submits, 1);
+  assert.equal(verdicts[5]?.violated, true);
+});
+
+// The same trajectory, judged where the app actually is. The double tap sends
+// two Submit events, and the frame it lands on says which of the two shapes
+// they took: two commits and two pops reach Home, where the counting invariant
+// judges them, and two commits with the second pop cancelled by the first stop
+// on the account's own ledger, which is this one. The recorded iOS run took
+// three double taps and all three landed on Home, so this frame is reasoned
+// from the app's code (AddTransactionViewModel.submit commits inside
+// viewModelScope, then pops) rather than measured.
 test("the double tap is convicted on the frame it lands on", () => {
   const verdicts = walk([
     { route: "ledger", balanceText: "$100.00", lastAction: openLedger },
