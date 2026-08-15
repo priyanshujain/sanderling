@@ -779,6 +779,22 @@ internal fun typeChunks(
     return typed
 }
 
+// dismissSoftKeyboard closes an open IME, and issues nothing when none is open.
+//
+// The keyboard is its own window over the bottom of the app, and the hierarchy
+// carries only what is visible to the user, so every app node under it is
+// absent from the tree the picker enumerates targets from. Typing raises it, so
+// an IME left open hides a form's submit control for as long as the fuzzer
+// keeps typing into that form, which is a state it cannot type its way out of.
+//
+// The mInputShown guard is load-bearing rather than an optimisation: BACK is
+// what closes an open IME, and BACK with no IME open navigates out of the
+// screen, so an unguarded dismissal would make every InputText a back press.
+internal fun dismissSoftKeyboard(shell: (String) -> String) {
+    if (!shell("dumpsys input_method").contains("mInputShown=true")) return
+    shell("input keyevent 4")
+}
+
 // resumedActivityPackage matches a "package/activity" component, mirroring the
 // Go scope guard's regex so both read the same dumpsys wording.
 private val resumedActivityPackage =
@@ -884,6 +900,11 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
             typeShellSafe(text)
         } else {
             driver.inputText(text)
+        }
+        // A probe that fails reads as "no IME open", which is the safe way to be
+        // wrong: it skips the dismissal rather than sending a stray BACK.
+        dismissSoftKeyboard {
+            runCatching { dadb.shell(it).allOutput }.getOrDefault("")
         }
     }
 
