@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -525,6 +527,106 @@ func exceptionsArray(runtime *goja.Runtime, exceptions []Exception) *goja.Object
 		_ = array.Set(fmt.Sprintf("%d", index), item)
 	}
 	return array
+}
+
+// traceValueMaxDepth bounds how far recordableValue walks. It mirrors
+// SANITIZE_MAX_DEPTH in pkg/spec/src/web-runtime.ts, whose sanitize does this
+// same job for the values the page reports, so both hosts record the same JSON
+// for the same extractor.
+const traceValueMaxDepth = 32
+
+// recordableValue rewrites an exported goja value into one json.Marshal
+// accepts. An accessibility element is a plain object carrying two host
+// functions (find/findAll); marshalling it fails on those alone, so the whole
+// element used to go unrecorded. Dropping them leaves the element's data (id,
+// text, desc, class, the flags, bounds, attrs), which is what a trace reader
+// wants and is a subset of the hierarchy the same step already records.
+//
+// ok is false for a value with no JSON form at all: callers drop that key from
+// its object, matching the web host, where a function-valued property is
+// skipped and a function inside an array stringifies to null.
+func recordableValue(value any, depth int, seen map[uintptr]bool) (any, bool) {
+	if value == nil {
+		return nil, true
+	}
+	switch typed := value.(type) {
+	case float64:
+		return finiteOrNull(typed), true
+	case float32:
+		return finiteOrNull(float64(typed)), true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Func:
+		return nil, false
+	case reflect.Map:
+		if reflected.Type().Key().Kind() != reflect.String || !holdsAny(reflected.Type().Elem()) {
+			return value, true
+		}
+		if depth >= traceValueMaxDepth || !firstVisit(reflected, seen) {
+			return nil, true
+		}
+		out := make(map[string]any, reflected.Len())
+		iterator := reflected.MapRange()
+		for iterator.Next() {
+			entry, ok := recordableValue(iterator.Value().Interface(), depth+1, seen)
+			if !ok {
+				continue
+			}
+			out[iterator.Key().String()] = entry
+		}
+		return out, true
+	case reflect.Slice, reflect.Array:
+		if !holdsAny(reflected.Type().Elem()) {
+			return value, true
+		}
+		if depth >= traceValueMaxDepth || !firstVisit(reflected, seen) {
+			return nil, true
+		}
+		out := make([]any, reflected.Len())
+		for index := range out {
+			entry, ok := recordableValue(reflected.Index(index).Interface(), depth+1, seen)
+			if !ok {
+				entry = nil
+			}
+			out[index] = entry
+		}
+		return out, true
+	default:
+		return value, true
+	}
+}
+
+// holdsAny reports whether a container's elements can hide a host function or
+// a cycle. Concretely typed containers ([]string, []byte, map[string]string)
+// can hold neither, and walking them would rewrite shapes json.Marshal already
+// handles, such as []byte's base64 form.
+func holdsAny(elem reflect.Type) bool {
+	return elem.Kind() == reflect.Interface
+}
+
+// firstVisit reports whether a container has not been walked yet, so a cyclic
+// value terminates. Empty containers are never recorded: they cannot close a
+// cycle, and Go may hand every one of them the same address.
+func firstVisit(container reflect.Value, seen map[uintptr]bool) bool {
+	if container.Kind() == reflect.Array || container.Len() == 0 {
+		return true
+	}
+	address := container.Pointer()
+	if seen[address] {
+		return false
+	}
+	seen[address] = true
+	return true
+}
+
+// finiteOrNull maps NaN and the infinities to JSON null, which is what
+// JSON.stringify does with them on the web host.
+func finiteOrNull(value float64) any {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil
+	}
+	return value
 }
 
 func jsonToJSValue(runtime *goja.Runtime, raw json.RawMessage) (goja.Value, error) {

@@ -353,8 +353,14 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 			return fmt.Errorf("extractor %d: %w", index, err)
 		}
 		extractor.currentValue = newValue
+		encoded, err := encodeExtractorValue(newValue)
+		if err != nil {
+			return fmt.Errorf(
+				"extractor %q: the value cannot be recorded in the trace: %w; return plain data instead",
+				extractor.name, err)
+		}
 		extractor.prev = extractor.curr
-		extractor.curr = encodeExtractorValue(newValue)
+		extractor.curr = encoded
 	}
 	return nil
 }
@@ -369,19 +375,23 @@ func (v *Verifier) runExtractor(extractor *extractorState, state goja.Value) (go
 }
 
 // encodeExtractorValue produces a stable JSON encoding of an extractor's
-// current value for diff comparison. goja values that don't survive Export
-// (e.g. wrapped host functions) yield nil; callers treat nil as "unknown" and
-// emit no diff entry.
-func encodeExtractorValue(value goja.Value) []byte {
+// current value for diff comparison. Host functions, cycles and non-finite
+// numbers are projected away by recordableValue; anything still beyond JSON is
+// an error, never a silently dropped value, because an extractor missing from
+// the trace reads exactly like an extractor that never changed.
+func encodeExtractorValue(value goja.Value) ([]byte, error) {
 	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
-		return []byte("null")
+		return []byte("null"), nil
 	}
-	exported := value.Export()
-	body, err := json.Marshal(exported)
+	recordable, ok := recordableValue(value.Export(), 0, map[uintptr]bool{})
+	if !ok {
+		return []byte("null"), nil
+	}
+	body, err := json.Marshal(recordable)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return body
+	return body, nil
 }
 
 // ChangedExtractors returns the named extractors whose value changed between
@@ -393,6 +403,8 @@ func encodeExtractorValue(value goja.Value) []byte {
 func (v *Verifier) ChangedExtractors() map[string]ExtractorChange {
 	changes := map[string]ExtractorChange{}
 	for _, extractor := range v.extractors {
+		// nil curr now means only that no snapshot has been pushed yet: an
+		// encoding that cannot be recorded fails PushSnapshot instead.
 		if extractor.curr == nil {
 			continue
 		}
@@ -453,7 +465,13 @@ func (v *Verifier) OverrideExtractorValues(overrides map[int]json.RawMessage) (s
 			return skipped, fmt.Errorf("extractor override %d: %w", index, conversionErr)
 		}
 		v.extractors[index].currentValue = value
-		v.extractors[index].curr = encodeExtractorValue(value)
+		encoded, encodeErr := encodeExtractorValue(value)
+		if encodeErr != nil {
+			return skipped, fmt.Errorf(
+				"extractor override %d (%q): the value cannot be recorded in the trace: %w",
+				index, v.extractors[index].name, encodeErr)
+		}
+		v.extractors[index].curr = encoded
 	}
 	return skipped, nil
 }
@@ -559,9 +577,8 @@ func (v *Verifier) captureWitness(name string) {
 	}
 }
 
-// extractorSnapshot encodes every named extractor's current value as JSON. A
-// nil value (extractor never advanced or its value did not survive Export)
-// is recorded as JSON null.
+// extractorSnapshot encodes every named extractor's current value as JSON. An
+// extractor that never advanced is recorded as JSON null.
 func (v *Verifier) extractorSnapshot() map[string]json.RawMessage {
 	if len(v.extractors) == 0 {
 		return nil
