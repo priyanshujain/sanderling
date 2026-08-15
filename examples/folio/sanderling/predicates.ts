@@ -283,6 +283,9 @@ export function countSubmitsInWindow(args: {
   return { reported, next: fresh ? 0 : reported };
 }
 
+// Folio's own cap, in cents (core/data/Repository.kt).
+const MAX_TRANSACTION_AMOUNT_CENTS = 100_000_000;
+
 // Could the app have committed anything for that submit? The amount field as
 // the LANDING frame shows it is the form state the tap read: the tap changes
 // nothing about it, and one action runs per step, so nothing else could have.
@@ -302,14 +305,19 @@ export function countSubmitsInWindow(args: {
 // nothing to say. Measured over four recorded android runs, 19, 11, 25 and 25
 // of 35, 26, 42 and 42 submit taps landed with the amount field empty.
 //
-// An amount too large for a Kotlin Long is refused by the app too, and still
-// counts here: over-counting can only cost a detection, and the reading that
-// would have to prove the overflow is a float that cannot hold the number.
+// An amount over Folio's cap is refused before any coroutine starts
+// (MAX_TRANSACTION_AMOUNT_CENTS, checked in both AddTransactionViewModel.submit
+// and Repository.createTransaction), and the fuzzer's corpus reaches the button
+// with one: "999999999999999999999" passes AMOUNT_REGEX, so the field takes it.
+// Float is precise enough to say which side of the cap an amount is on. The cap
+// is 1e8, every integer cent up to 2^53 is exact, and an amount far enough above
+// it to be inexact is far enough above it to be refused.
 export function submitCouldCommit(amountText: string | undefined): boolean {
   if (amountText === undefined) return true;
   const trimmed = amountText.trim().replace(/,/g, "");
   if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return false;
-  return /[1-9]/.test(trimmed);
+  if (!/[1-9]/.test(trimmed)) return false;
+  return Number(trimmed) * 100 <= MAX_TRANSACTION_AMOUNT_CENTS;
 }
 
 // Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to

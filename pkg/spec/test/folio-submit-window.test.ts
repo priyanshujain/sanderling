@@ -89,11 +89,32 @@ test("a submit the app must have refused does not spend the window's budget", ()
   }
 });
 
+// Folio caps a transaction at $1,000,000.00 (MAX_TRANSACTION_AMOUNT_CENTS, in
+// core/data/Repository.kt), and AddTransactionViewModel.submit refuses anything
+// over it before a coroutine starts. The fuzzer's corpus carries
+// "999999999999999999999", AMOUNT_REGEX lets it into the field and it reaches
+// the button, so this is a refusal the window used to pay for.
+test("an amount over the app's cap cannot commit", () => {
+  for (const amountText of ["1000000.01", "1,000,001", "999999999999999999999"]) {
+    assert.deepEqual(
+      countSubmitsInWindow({
+        previousCount: 0,
+        lastAction: { kind: "Tap", on: submitOn },
+        amountText,
+        fresh: false,
+      }),
+      { reported: 0, next: 0 },
+      `amount ${JSON.stringify(amountText)} was counted as a possible commit`,
+    );
+  }
+});
+
 // The field as the landing frame shows it, which is the form state the tap read:
 // nothing between the two changes it. Anywhere but the transaction screen there
-// is no field to read, and unknown has to count.
+// is no field to read, and unknown has to count. The cap itself is an amount the
+// app takes, so it counts too.
 test("an amount that could commit, or that nobody could read, spends the budget", () => {
-  for (const amountText of ["5", "0.01", "1,000", "999999999999999999999", undefined]) {
+  for (const amountText of ["5", "0.01", "1,000", "1000000.00", "999999.99", undefined]) {
     assert.deepEqual(
       countSubmitsInWindow({
         previousCount: 0,
