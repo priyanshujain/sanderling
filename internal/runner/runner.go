@@ -115,7 +115,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// because dropping that action says "nothing ran between these two
 		// readings" and the runner has no business saying that: the action ran,
 		// and a property told otherwise convicts the app of an effect with no
-		// cause. See relaunch_last_action_test.go.
+		// cause. See foreground_guard_last_action_test.go.
 		guard := ensureForeground(ctx, options, logger, stepIndex)
 		if lastAction != nil {
 			switch guard {
