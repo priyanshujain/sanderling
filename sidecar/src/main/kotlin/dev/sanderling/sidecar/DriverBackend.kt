@@ -329,11 +329,12 @@ internal fun readLogcat(
         arguments.add(since)
     }
     return try {
-        val process = ProcessBuilder(
-            adbCmd(serial) + arguments,
-        ).redirectErrorStream(false).start()
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor()
+        val command = adbCmd(serial) + arguments
+        val output = readProcessOutput(
+            ProcessBuilder(command).redirectErrorStream(false).start(),
+            ADB_OUTPUT_TIMEOUT_MILLIS,
+            describe = { command.joinToString(" ") },
+        )
         StubDriverBackend.parseLogcatOutput(output)
     } catch (cause: Exception) {
         println("adb logcat failed: $cause")
@@ -359,13 +360,76 @@ internal fun readProcMetrics(serial: String?, bundleId: String): MetricsSample {
 private fun adbCmd(serial: String?): List<String> =
     if (serial == null) listOf("adb") else listOf("adb", "-s", serial)
 
+// ADB_OUTPUT_TIMEOUT_MILLIS bounds the diagnostic adb reads: dumpsys, logcat,
+// `settings get`, /proc stats. None of them is the driver's data path, so the
+// bound wants to be generous enough that it cannot fire on a link that works,
+// and it is: a hierarchy fetch, far heavier than any of these, measures at a
+// 76ms median and a 168ms p90 over the same remote adb link. What it caps is
+// the other end, where a wedged adb once held a step ~100s.
+internal const val ADB_OUTPUT_TIMEOUT_MILLIS = 10_000L
+
+private val adbReaders: java.util.concurrent.ExecutorService =
+    java.util.concurrent.Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "adb-output").apply { isDaemon = true }
+    }
+
+// readProcessOutput returns a process's stdout, or "" when it does not arrive
+// inside timeoutMillis.
+//
+// The bound belongs on the READ, not on waitFor. readText ends at EOF, and a
+// wedged adb neither writes nor exits, so EOF never comes and a waitFor with a
+// timeout after it is a line that never runs. Waiting first and reading after
+// is worse still: a process with more to say than a pipe buffer holds, which
+// logcat and dumpsys both are, blocks writing while the waiter waits for it to
+// finish, and neither ever moves.
+//
+// So the read runs on a daemon thread and killing the process is what releases
+// it: destroy closes the pipe, the reader sees EOF, the thread ends. Returning
+// "" hands every caller the answer it already treats as "adb said nothing",
+// which is the safe direction for all of them.
+internal fun readProcessOutput(
+    process: Process,
+    timeoutMillis: Long,
+    describe: () -> String,
+    log: (String) -> Unit = { System.err.println(it) },
+): String {
+    val reader = adbReaders.submit<String> {
+        process.inputStream.bufferedReader().readText()
+    }
+    return try {
+        val output = reader.get(
+            timeoutMillis,
+            java.util.concurrent.TimeUnit.MILLISECONDS,
+        )
+        if (!process.waitFor(
+                timeoutMillis,
+                java.util.concurrent.TimeUnit.MILLISECONDS,
+            )
+        ) {
+            process.destroyForcibly()
+        }
+        output
+    } catch (cause: java.util.concurrent.TimeoutException) {
+        process.destroyForcibly()
+        reader.cancel(true)
+        log(
+            "warn: ${describe()} gave nothing in ${timeoutMillis}ms; " +
+                "killed it and read no answer",
+        )
+        ""
+    } catch (cause: Exception) {
+        process.destroyForcibly()
+        ""
+    }
+}
+
 private fun adbOutput(serial: String?, arguments: List<String>): String = try {
-    val process = ProcessBuilder(
-        adbCmd(serial) + arguments,
-    ).redirectErrorStream(false).start()
-    val output = process.inputStream.bufferedReader().readText()
-    process.waitFor()
-    output
+    val command = adbCmd(serial) + arguments
+    readProcessOutput(
+        ProcessBuilder(command).redirectErrorStream(false).start(),
+        ADB_OUTPUT_TIMEOUT_MILLIS,
+        describe = { command.joinToString(" ") },
+    )
 } catch (cause: Exception) {
     ""
 }
