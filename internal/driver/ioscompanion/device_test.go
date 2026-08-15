@@ -83,11 +83,11 @@ func TestNewDeviceWiresRunnerOnlyMode(t *testing.T) {
 	}
 }
 
-// TestNewDeviceWiresEveryBringUpsAddressPicker keeps the device driver whole.
-// bringUpRunner reads its picker from a field rather than calling the package
-// function, and NewDevice left that field nil, so the only thing standing
-// between a device run and a nil call was which restart path happened to run.
-func TestNewDeviceWiresEveryBringUpsAddressPicker(t *testing.T) {
+// TestNewDeviceWiresTheAddressPickerEveryBringUpUses keeps the device driver
+// whole. bringUpRunner reads its picker from a field rather than calling the
+// package function, and NewDevice left that field nil, so the only thing
+// standing between a device run and a nil call was which restart path ran.
+func TestNewDeviceWiresTheAddressPickerEveryBringUpUses(t *testing.T) {
 	address := startLoopbackListener(t)
 	options := testDeviceOptions(address, newDeviceCompanion())
 	options.HardwareUDID = "00008140-PICKER"
