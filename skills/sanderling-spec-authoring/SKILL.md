@@ -171,8 +171,11 @@ on. If you cannot, it is decoration.
 picker chooses one. The verbs are `Tap`, `DoubleTap`, `LongPress`, `InputText`,
 `Scroll`, `Swipe`, `PressKey`, and `Wait`. The built-in generators are `taps`,
 `doubleTaps`, `longPresses`, `typing`, `scrolls`, `swipes`, `pressKeys`, and
-`waitOnce`; `defaultActions` bundles them at taps and typing 100, scrolls 50,
-swipes 25, double taps 10.
+`waitOnce`. `defaultActions` bundles five of them: taps and typing at 100,
+scrolls 50, swipes 25, double taps 10. `longPresses`, `pressKeys` and `waitOnce`
+are not in it, so a spec that only exports `defaultActions` never presses android
+back, never long-presses, and never waits. Weight those in yourself if the app
+has behaviour behind them.
 
 `weighted([n, generator], ...)` composes them with relative weights.
 `whenRoute(routeExtractor, routes, body)` runs `body` only on the named screens.
