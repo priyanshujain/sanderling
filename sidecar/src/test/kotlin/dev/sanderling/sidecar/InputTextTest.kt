@@ -32,7 +32,8 @@ class InputTextTest {
         val fallback = listOf(
             "Emergency Fund", "🙂🔥💸", "  ", "\t\n", "'; DROP TABLE--",
             "<script>alert(1)</script>", "../../etc/passwd", "%s%n", "",
-            "-1", "-rf", // a leading dash could be read as an option by `input text`
+            // a leading dash could be read as an option by `input text`
+            "-1", "-rf",
         )
         for (text in fallback) {
             assertTrue(
@@ -190,12 +191,12 @@ class InputTextTest {
 
     @Test fun parseResumedPackageReadsEachResumedActivityWording() {
         val cases = mapOf(
-            "    topResumedActivity=ActivityRecord{8b u0 app.folio/.MainActivity t42}" to
-                "app.folio",
-            "  mResumedActivity: ActivityRecord{1c u0 com.example.app/.Home t9}" to
-                "com.example.app",
-            "  ResumedActivity: ActivityRecord{2d u0 app.folio/com.folio.Detail t9}" to
-                "app.folio",
+            "    topResumedActivity=ActivityRecord{8b u0 " +
+                "app.folio/.MainActivity t42}" to "app.folio",
+            "  mResumedActivity: ActivityRecord{1c u0 " +
+                "com.example.app/.Home t9}" to "com.example.app",
+            "  ResumedActivity: ActivityRecord{2d u0 " +
+                "app.folio/com.folio.Detail t9}" to "app.folio",
         )
         for ((line, want) in cases) {
             assertEquals(want, parseResumedPackage(line), line)

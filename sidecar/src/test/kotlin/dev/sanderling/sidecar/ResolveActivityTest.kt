@@ -12,28 +12,40 @@ class ResolveActivityTest {
             com.example.app/.MainActivity
         """.trimIndent()
 
-        val activity = StubDriverBackend.parseResolvedActivity("com.example.app", output)
+        val activity = StubDriverBackend.parseResolvedActivity(
+            "com.example.app",
+            output,
+        )
         assertEquals(".MainActivity", activity)
     }
 
     @Test fun extractsFullyQualifiedActivity() {
         val output = "com.example.app/com.example.app.ui.LaunchActivity"
 
-        val activity = StubDriverBackend.parseResolvedActivity("com.example.app", output)
+        val activity = StubDriverBackend.parseResolvedActivity(
+            "com.example.app",
+            output,
+        )
         assertEquals("com.example.app.ui.LaunchActivity", activity)
     }
 
     @Test fun returnsNullWhenPackageNotFound() {
         val output = "No activity found"
 
-        val activity = StubDriverBackend.parseResolvedActivity("com.example.app", output)
+        val activity = StubDriverBackend.parseResolvedActivity(
+            "com.example.app",
+            output,
+        )
         assertNull(activity)
     }
 
     @Test fun doesNotMatchDifferentPackagePrefix() {
         val output = "other.pkg/.MainActivity"
 
-        val activity = StubDriverBackend.parseResolvedActivity("com.example.app", output)
+        val activity = StubDriverBackend.parseResolvedActivity(
+            "com.example.app",
+            output,
+        )
         assertNull(activity)
     }
 }
