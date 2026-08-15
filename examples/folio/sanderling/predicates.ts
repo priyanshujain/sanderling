@@ -678,12 +678,27 @@ export function parseTypedAmount(text: string | undefined | null): number {
 }
 
 // When the last action is a tap (or double-tap) on the transaction Submit
-// button, the absolute change in total balance must equal the amount the
-// user typed. A double-submit lands two transactions and shifts the balance
-// by 2x the typed amount, tripping this check. The route gate skips steps
-// whose landing screen is not Home: totalBalance is only freshly read from
-// Home's own TOTAL BALANCE node, so off-Home comparisons would read a stale
-// carrier value and false-fire.
+// button, the absolute change in total balance cannot EXCEED the amount the
+// user typed. A double-submit lands two transactions and shifts the balance by
+// 2x the typed amount, tripping this check. The route gate skips steps whose
+// landing screen is not Home: totalBalance is only freshly read from Home's own
+// TOTAL BALANCE node, so off-Home comparisons would read a stale carrier value
+// and false-fire.
+//
+// A bound rather than the equality this used to be, and the same bound
+// committedAmountExceedsOneSubmit applies to the account's own balance. The
+// write finishes before AddTransactionViewModel navigates, but nothing
+// establishes that Home's total has re-rendered before the frame is read: the
+// store's flow re-emits on its own schedule. A total that has not caught up has
+// not moved at all, and an equality convicts a healthy app for it.
+//
+// The cost is real and is not covered anywhere else in this spec: a balance
+// that moves by LESS than the amount typed, a transaction silently dropped or
+// committed for the wrong amount, is a bug this no longer judges. It cannot be
+// told apart from a total one frame behind, and a check that fires on both is
+// evidence about neither. What it keeps is the bug it exists for: every one of
+// the four recorded android convictions is a 6400 move against 3200 typed, and
+// 2x still exceeds x.
 //
 // submitsInWindow is what keeps the comparison honest. prevTotalBalance is the
 // last total we READ, not the total as of the previous transaction, so the two
@@ -724,7 +739,7 @@ export function submitChangesBalanceByTypedAmount(args: {
   // transaction at whatever fits a Kotlin Long, so a balance of ~1e18 cents is
   // one accepted amount away, and up there the gap between representable
   // values is 128 cents: a real 1600-cent move reads back as something else
-  // entirely. The equality below is then false for a healthy single submit
+  // entirely. The comparison below is then false for a healthy single submit
   // exactly as readily as for a double one, and a check that cannot pass is not
   // a check that failed.
   //
@@ -739,5 +754,5 @@ export function submitChangesBalanceByTypedAmount(args: {
   if (!Number.isSafeInteger(prevTotalBalance)) return true;
   if (!Number.isSafeInteger(currTotalBalance)) return true;
   if (!Number.isSafeInteger(typedAmount)) return true;
-  return Math.abs(currTotalBalance - prevTotalBalance) === typedAmount;
+  return Math.abs(currTotalBalance - prevTotalBalance) <= typedAmount;
 }

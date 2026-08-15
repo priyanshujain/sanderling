@@ -521,6 +521,67 @@ test("a submit the runner could not confirm demands no balance move", () => {
   );
 });
 
+// The write finishes before AddTransactionViewModel navigates, but nothing
+// establishes that Home's total has re-rendered by the time the frame is read:
+// the store's flow re-emits on its own schedule and the destination composes off
+// whatever value it has. A total that has not caught up has not moved at all,
+// and an equality reads that as the app having ignored the amount.
+test("a commit the Home total has not caught up with is not a violation", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
+      submitsInWindow: 1,
+      typedAmount: 19600,
+      prevTotalBalance: 220900,
+      currTotalBalance: 220900,
+    }),
+    true,
+  );
+});
+
+// What the bound gives up, and it is a real bug class: an app that moves the
+// balance by LESS than the amount typed. Nothing in this spec judges that any
+// more. It cannot be told apart from a total that has not caught up, and a check
+// that fires on both is not evidence about either.
+test("an under-move is no longer judged, which is the trade", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
+      submitsInWindow: 1,
+      typedAmount: 19600,
+      prevTotalBalance: 0,
+      currTotalBalance: 10000,
+    }),
+    true,
+  );
+});
+
+// The witness measured on four recorded android runs, all four of which convict
+// here and nowhere else: the double tap moved the total by 6400 against 3200
+// typed. The bound has to keep every one of them.
+test("the measured double submit still fires under the bound", () => {
+  for (const [prev, curr] of [
+    [17952800, 17959200],
+    [19796100, 19802500],
+    [200000032904800, 200000032911200],
+  ]) {
+    assert.equal(
+      submitChangesBalanceByTypedAmount({
+        route: "home",
+        lastAction: { kind: "DoubleTap", on: submitOn, applied: true },
+        submitsInWindow: 1,
+        typedAmount: 3200,
+        prevTotalBalance: prev ?? null,
+        currTotalBalance: curr ?? null,
+      }),
+      false,
+      `the double submit at ${prev} -> ${curr} stopped firing`,
+    );
+  }
+});
+
 // relaunched: true is the runner saying its foreground guard restarted the app
 // after this action. The tap landed, so the window still counts it, but nobody
 // can promise the process lived long enough for the write to reach sqlite. A
