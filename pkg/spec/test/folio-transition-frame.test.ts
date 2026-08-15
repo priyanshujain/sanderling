@@ -94,7 +94,7 @@ test("the measured android transition chain no longer convicts at delta 0", () =
   const step = (
     tags: string[],
     totalText: string | undefined,
-    lastAction: { kind: string; on: string } | null,
+    lastAction: { kind: string; on: string; applied: true } | null,
   ) => {
     const route = routeOfFrame(SCREENS, frame(...tags));
     const reading = readHomeTotalBalance({ route, totalText, previousCarrier: carrier });
@@ -104,8 +104,12 @@ test("the measured android transition chain no longer convicts at delta 0", () =
     return { route, total: reading.value, submits: window.reported };
   };
 
-  const back = { kind: "DoubleTap", on: "id:BackButton" };
-  const phantomSubmit = { kind: "Tap", on: "testTag:AddTransactionScreen > testTag:TxnSubmit" };
+  const back = { kind: "DoubleTap", on: "id:BackButton", applied: true as const };
+  const phantomSubmit = {
+    kind: "Tap",
+    on: "testTag:AddTransactionScreen > testTag:TxnSubmit",
+    applied: true as const,
+  };
 
   const transition = step(["AddTransactionScreen", "HomeScreen"], "$86,911.00", back);
   assert.equal(transition.route, null);
