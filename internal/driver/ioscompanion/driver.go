@@ -484,6 +484,26 @@ func isConnectionError(err error) bool {
 	return false
 }
 
+// isBudgetExpiry reports whether err is a call that outlived its bound rather
+// than a failure the transport can name. Each transport says so differently:
+// the runner wraps the context's error when cancellation has landed and the
+// connection's i/o timeout when the deadline it armed from that context fires
+// first, and the legacy companion returns a gRPC status. Only an expiry earns
+// a session restart; an error the runner reports has already said what a fresh
+// session would say.
+func isBudgetExpiry(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	if statusValue, ok := status.FromError(err); ok {
+		return statusValue.Code() == codes.DeadlineExceeded
+	}
+	return false
+}
+
 func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, env map[string]string) error {
 	if bundleID != "" {
 		d.bundleID = bundleID
@@ -545,7 +565,7 @@ func (d *Driver) launchWithSessionRecovery(ctx context.Context) error {
 	err := d.lifecycleCall(ctx, launch)
 	// A caller whose own budget ran out gets no restart: the bound that expired
 	// was the caller's to spend, and the second attempt would inherit it dead.
-	if err == nil || !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil || d.restart == nil {
+	if !isBudgetExpiry(err) || ctx.Err() != nil || d.restart == nil {
 		return err
 	}
 	fmt.Fprintf(d.output, "launch %s blew its %v bound (%v); restarting the session and launching once more\n",
