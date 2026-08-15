@@ -117,7 +117,7 @@ fmt-ts:
 fmt-swift:
 	xcrun swift-format format -i -r companion/Sources
 
-test: test-go spec-typecheck test-spec-api web-typecheck web-test
+test: test-go test-kotlin spec-typecheck test-spec-api web-typecheck web-test
 
 test-go:
 	$(GO) test $(GO_PACKAGES)
