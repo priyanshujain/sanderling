@@ -799,9 +799,70 @@ internal fun typeChunks(
 // every InputText, which raises the IME again long before this probe runs. A
 // caller that dismissed twice in a row, or typed without focusing first, would
 // lose that margin.
+//
+// treeWithoutKeyboard closes a keyboard too, on the snapshot path, and does not
+// cost this one its margin: it reads no flag, and the two are a waitForIdle and
+// a hierarchy fetch apart, several times the window in which this one is stale.
 internal fun dismissSoftKeyboard(shell: (String) -> String) {
     if (!shell("dumpsys input_method").contains("mInputShown=true")) return
     shell("input keyevent 4")
+}
+
+// KEYBOARD_DISMISS_READS bounds the re-reads a snapshot spends waiting for the
+// IME window to leave the tree after BACK. The window goes over an animation,
+// so the first read back can still carry it; a hierarchy read plus the interval
+// costs ~250ms on the emulator, which covers a retraction several times over
+// without turning a keyboard the app keeps re-raising into an unbounded wait.
+internal const val KEYBOARD_DISMISS_READS = 4
+internal const val KEYBOARD_DISMISS_INTERVAL_MILLIS = 100L
+
+// imePackageOf takes the package half of an input-method component id
+// ("pkg/.Service"), the form both `settings get secure default_input_method`
+// and dumpsys' mCurMethodId use. Anything that is not a package name reads as
+// "no IME known", which disables the dismissal rather than guessing.
+internal fun imePackageOf(component: String): String? =
+    component.trim().substringBefore('/')
+        .takeIf { it.isNotEmpty() && it.contains('.') }
+
+// treeShowsIme reports whether the keyboard window is in the tree, by the view
+// ids the IME's own resources give it ("pkg:id/name").
+internal fun treeShowsIme(treeJson: String, imePackage: String): Boolean =
+    treeJson.contains("$imePackage:id/")
+
+// treeWithoutKeyboard closes a keyboard standing in the snapshot and returns a
+// tree read after it has gone, or the tree it was given when none is open.
+//
+// It belongs here, before the read the picker chooses from, rather than after
+// the tap that raised the keyboard. Two reasons. The picker only ever sees
+// snapshots, so a dismissal anywhere later leaves this step choosing between
+// the handful of targets an open keyboard left in the tree, which is the
+// budget the fuzzer was losing. And the state it has to judge is settled here:
+// the action landed a waitForIdle ago, where straight after the tap the
+// keyboard is still on its way up and nothing it could read would say so yet.
+//
+// The tree is also a better guard than mInputShown. BACK closes an open
+// keyboard and navigates when none is open, so pressing it is only safe on a
+// true reading; mInputShown trails the keyboard by up to 0.6s, while a tree
+// carrying the IME's own view ids is the keyboard being on screen, read a
+// moment ago. Once dismissed, the re-reads confirm it went rather than pressing
+// BACK again, so a keyboard the app puts straight back costs re-reads and never
+// a second back press.
+internal fun treeWithoutKeyboard(
+    tree: String,
+    imePackage: String?,
+    dismiss: () -> Unit,
+    reread: () -> String,
+    sleep: (Long) -> Unit = { Thread.sleep(it) },
+): String {
+    if (imePackage == null || !treeShowsIme(tree, imePackage)) return tree
+    dismiss()
+    var current = tree
+    repeat(KEYBOARD_DISMISS_READS) {
+        sleep(KEYBOARD_DISMISS_INTERVAL_MILLIS)
+        current = reread()
+        if (!treeShowsIme(current, imePackage)) return current
+    }
+    return current
 }
 
 // resumedActivityPackage matches a "package/activity" component, mirroring the
@@ -855,6 +916,14 @@ internal fun <T> retryOpen(
 
 class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     private val dadb: dadb.Dadb = buildDadb(serial)
+
+    private val imePackage: String? by lazy {
+        imePackageOf(
+            runCatching {
+                dadb.shell("settings get secure default_input_method").allOutput
+            }.getOrDefault(""),
+        )
+    }
 
     // A fresh AndroidDriver per open attempt. Its gRPC channel is built once in
     // the constructor and permanently shut down by close(), so reopening a
@@ -991,8 +1060,15 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     // read the snapshot was going to do anyway. That is what makes this
     // affordable, where the structural poll that used to run in waitForIdle was
     // not: it fetched the hierarchy ~4 more times on every mutating step.
-    override fun snapshot(): SnapshotSample =
-        SnapshotSample(awaitSettledTree { hierarchy() }, screenshot())
+    override fun snapshot(): SnapshotSample {
+        val tree = treeWithoutKeyboard(
+            awaitSettledTree { hierarchy() },
+            imePackage,
+            dismiss = { runCatching { dadb.shell("input keyevent 4") } },
+            reread = { awaitSettledTree { hierarchy() } },
+        )
+        return SnapshotSample(tree, screenshot())
+    }
 
     override fun waitForIdle(durationMillis: Long) {
         // waitForAppToSettle blocks on the View-system animation and maestro's
