@@ -292,7 +292,7 @@ case "$code" in
     ;;
   0)
     echo "folio/$platform: the run finished clean; the double-submit bug was NOT found in $steps steps (seed $seed)" >&2
-    echo "folio/$platform: the spec ran without throwing, so this is the fuzzer no longer reaching the bug, not a broken spec" >&2
+    echo "folio/$platform: the spec ran without throwing, so this is the run no longer reaching the bug, not a broken spec" >&2
     exit 1
     ;;
   *) echo "folio/$platform: the harness failed with exit $code" >&2; exit "$code" ;;
