@@ -30,9 +30,9 @@ sanderling doctor
 
 `doctor` reports what the target platform needs and what is missing:
 
-- **Android**: `adb` on your PATH, and an emulator (API 30 or newer) or a connected device.
-- **iOS**: Xcode 16 or newer, with a simulator. For a connected iPhone, run `sanderling doctor --platform ios-device`.
-- **Web**: Chrome.
+- **Android**: `adb` and `emulator`, on your PATH or under the Android SDK; Java 17 or newer; a real (not placeholder) sidecar JAR in the binary.
+- **iOS**: `xcrun` and `simctl`. For a connected iPhone, run `sanderling doctor --platform ios-device`, which also wants `devicectl`, a paired device, and signing credentials.
+- **Web**: a Chromium that launches headless.
 
 ## Write a spec
 
@@ -46,7 +46,7 @@ export const properties = { noUncaughtExceptions };
 export const actionsRoot = defaultActions;
 ```
 
-This taps, types, scrolls, and swipes at random, and fails the moment your app throws an uncaught exception. From here you add extractors to read your screens, properties that state what your app guarantees, and actions that drive its real flows. The [case study](../case-study/) walks a complete spec, and the [spec language reference](../spec-language/) lists every primitive.
+This taps, types, double-taps, scrolls, and swipes at random. Check the property matches your platform before you trust a green run: `noUncaughtExceptions` reads exceptions the web runtime captures in the page, so it fires on `--platform web` and holds unconditionally on Android and iOS. On Android use `noLogcatErrors` instead, which fails on any error-level log line and so catches an uncaught throwable. iOS has neither today, so an iOS run is only worth as much as the properties you write yourself. From here you add extractors to read your screens, properties that state what your app guarantees, and actions that drive its real flows. The [case study](../case-study/) walks a complete spec, and the [spec language reference](../spec-language/) lists every primitive.
 
 ## Run it
 
