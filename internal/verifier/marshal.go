@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -358,47 +359,116 @@ func selectorObjectToString(runtime *goja.Runtime, arg goja.Value) string {
 	return strings.Join(parts, " ")
 }
 
+// actionField is one property of the lastAction object, in the order the
+// object is built. Value is a string, an int, or a nested []actionField for
+// the from/to points.
+type actionField struct {
+	key   string
+	value any
+}
+
+// lastActionFields is the ONE description of the lastAction shape. The goja
+// host turns it into a JS object (lastActionObject); the web host receives the
+// same fields as JSON (EncodeLastAction) and installs them as state.lastAction
+// in the page. Both hosts therefore expose identical field names, casing,
+// presence and order, so a property reading state.lastAction cannot mean one
+// thing on native and another on web.
+func lastActionFields(action *Action) []actionField {
+	point := func(x, y int) []actionField {
+		return []actionField{{key: "x", value: x}, {key: "y", value: y}}
+	}
+	fields := []actionField{{key: "kind", value: string(action.Kind)}}
+	if action.On != "" {
+		fields = append(fields, actionField{key: "on", value: action.On})
+	}
+	if action.Text != "" {
+		fields = append(fields, actionField{key: "text", value: action.Text})
+	}
+	switch action.Kind {
+	case ActionKindSwipe:
+		fields = append(fields,
+			actionField{key: "from", value: point(action.FromX, action.FromY)},
+			actionField{key: "to", value: point(action.ToX, action.ToY)})
+		if action.DurationMillis > 0 {
+			fields = append(fields,
+				actionField{key: "durationMillis", value: action.DurationMillis})
+		}
+	case ActionKindScroll:
+		fields = append(fields,
+			actionField{key: "direction", value: action.Direction},
+			actionField{key: "from", value: point(action.FromX, action.FromY)},
+			actionField{key: "to", value: point(action.ToX, action.ToY)})
+	case ActionKindPressKey:
+		fields = append(fields, actionField{key: "key", value: action.Key})
+	case ActionKindWait:
+		fields = append(fields,
+			actionField{key: "durationMillis", value: action.DurationMillis})
+	}
+	return fields
+}
+
 func lastActionObject(runtime *goja.Runtime, action *Action) goja.Value {
 	if action == nil {
 		return goja.Null()
 	}
+	return objectFromFields(runtime, lastActionFields(action))
+}
+
+func objectFromFields(runtime *goja.Runtime, fields []actionField) *goja.Object {
 	object := runtime.NewObject()
-	_ = object.Set("kind", string(action.Kind))
-	if action.On != "" {
-		_ = object.Set("on", action.On)
-	}
-	if action.Text != "" {
-		_ = object.Set("text", action.Text)
-	}
-	switch action.Kind {
-	case ActionKindSwipe:
-		from := runtime.NewObject()
-		_ = from.Set("x", action.FromX)
-		_ = from.Set("y", action.FromY)
-		to := runtime.NewObject()
-		_ = to.Set("x", action.ToX)
-		_ = to.Set("y", action.ToY)
-		_ = object.Set("from", from)
-		_ = object.Set("to", to)
-		if action.DurationMillis > 0 {
-			_ = object.Set("durationMillis", action.DurationMillis)
+	for _, field := range fields {
+		if nested, ok := field.value.([]actionField); ok {
+			_ = object.Set(field.key, objectFromFields(runtime, nested))
+			continue
 		}
-	case ActionKindScroll:
-		_ = object.Set("direction", action.Direction)
-		from := runtime.NewObject()
-		_ = from.Set("x", action.FromX)
-		_ = from.Set("y", action.FromY)
-		to := runtime.NewObject()
-		_ = to.Set("x", action.ToX)
-		_ = to.Set("y", action.ToY)
-		_ = object.Set("from", from)
-		_ = object.Set("to", to)
-	case ActionKindPressKey:
-		_ = object.Set("key", action.Key)
-	case ActionKindWait:
-		_ = object.Set("durationMillis", action.DurationMillis)
+		_ = object.Set(field.key, field.value)
 	}
 	return object
+}
+
+// EncodeLastAction renders the previous step's action for the web host, which
+// has no Go-side state object to read: the runner pushes this JSON into the
+// page before each extractor evaluation. A nil action encodes as JSON null,
+// the same value the goja host reports on the first step of a run and after a
+// step whose action was never applied.
+func EncodeLastAction(action *Action) json.RawMessage {
+	if action == nil {
+		return json.RawMessage("null")
+	}
+	return encodeFields(lastActionFields(action))
+}
+
+func encodeFields(fields []actionField) json.RawMessage {
+	var buffer bytes.Buffer
+	buffer.WriteByte('{')
+	for index, field := range fields {
+		if index > 0 {
+			buffer.WriteByte(',')
+		}
+		buffer.Write(encodeJSValue(field.key))
+		buffer.WriteByte(':')
+		if nested, ok := field.value.([]actionField); ok {
+			buffer.Write(encodeFields(nested))
+			continue
+		}
+		buffer.Write(encodeJSValue(field.value))
+	}
+	buffer.WriteByte('}')
+	return buffer.Bytes()
+}
+
+// encodeJSValue encodes one value the way JS JSON.stringify would, so the JSON
+// the web host parses is byte-identical to what the goja object stringifies to.
+// Go escapes <, > and & by default, which JSON.stringify does not, and that
+// alone would make the two hosts encode the same selector differently.
+func encodeJSValue(value any) []byte {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return []byte("null")
+	}
+	return bytes.TrimRight(buffer.Bytes(), "\n")
 }
 
 func runtimeMillis(stepTime, runStart time.Time) int64 {

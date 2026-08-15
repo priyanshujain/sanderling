@@ -128,6 +128,53 @@ test("queryTargets reports a disabled control rather than dropping it", () => {
   });
 });
 
+// A target with no selector is a target no property can name. The action the
+// picker builds from it carries coordinates only, so `lastAction.on` is empty
+// and any property matching on WHICH control was acted upon cannot fire.
+test("queryTargets names a uniquely identified target", () => {
+  const submit = fakeElement({
+    tag: "button", x: 0, y: 0, width: 40, height: 20, clickable: true, id: "TxnSubmit",
+  });
+  const byTestid = fakeElement({
+    tag: "button", x: 0, y: 40, width: 40, height: 20, clickable: true, testid: "cancel",
+  });
+  const byLabel = fakeElement({
+    tag: "button", x: 0, y: 80, width: 40, height: 20, clickable: true, label: "Close",
+  });
+  // alt and title are the fallbacks the hierarchy dump folds into content-desc,
+  // so the host has to fall back to them in the same order or a name it calls
+  // unique resolves to a different element on the Go side.
+  const byAlt = fakeElement({ tag: "img", x: 0, y: 120, width: 40, height: 20, alt: "Logo" });
+  const byTitle = fakeElement({ tag: "div", x: 0, y: 160, width: 40, height: 20, title: "Help" });
+  const anonymous = fakeElement({ tag: "div", x: 0, y: 200, width: 10, height: 10 });
+  withFakeDocument([submit, byTestid, byLabel, byAlt, byTitle, anonymous], () => {
+    const targets = host.queryTargets();
+    assert.equal(targets[0]!.selector, "id:TxnSubmit");
+    assert.equal(targets[1]!.selector, "data-testid:cancel");
+    assert.equal(targets[2]!.selector, "desc:Close");
+    assert.equal(targets[3]!.selector, "desc:Logo");
+    assert.equal(targets[4]!.selector, "desc:Help");
+    assert.equal(targets[5]!.selector, undefined);
+  });
+});
+
+// A repeated id (folio's Home screen renders one AccountCard testTag per
+// account) names no single element, so the runner would re-resolve the action
+// onto whichever sibling it found first. Better unnamed than mis-aimed.
+test("queryTargets leaves duplicated identities unnamed", () => {
+  const first = fakeElement({
+    tag: "div", x: 0, y: 0, width: 40, height: 20, clickable: true, id: "AccountCard",
+  });
+  const second = fakeElement({
+    tag: "div", x: 0, y: 40, width: 40, height: 20, clickable: true, id: "AccountCard",
+  });
+  withFakeDocument([first, second], () => {
+    const targets = host.queryTargets();
+    assert.equal(targets[0]!.selector, undefined);
+    assert.equal(targets[1]!.selector, undefined);
+  });
+});
+
 test("queryTargets caches within a tick until reset", () => {
   const button = fakeElement({ tag: "button", x: 0, y: 0, width: 10, height: 10, clickable: true });
   withFakeDocument([button], () => {
@@ -157,6 +204,13 @@ function withState(run: () => void) {
     g.document = originalDocument;
     g.window = originalWindow;
   }
+}
+
+// Every reading leaves the runtime inside a {value} envelope, so an extractor
+// whose getter returned undefined keeps its index instead of being dropped by
+// JSON.stringify.
+function readingOf(values: Record<number, { value?: unknown }>, index: number): unknown {
+  return values[index]!.value;
 }
 
 test("named() sets the extractor's display name", () => {
@@ -204,6 +258,63 @@ test("an uncaught cross-extractor read aborts evaluateExtractors", () => {
   );
 });
 
+// JSON.stringify drops an undefined-valued key, so a reading written straight
+// into the table took the extractor's whole INDEX with it when the getter
+// returned undefined - folio's on(route, tag) off its own screen, which is most
+// of its extractors on most steps. The host then kept goja's dump-derived value
+// for those and the page's for the rest, and a property comparing previous to
+// current across that split convicts an app that did nothing wrong.
+test("an extractor that returned undefined keeps its index through JSON", () => {
+  __testing__.extractors.length = 0;
+  __testing__.runtime.extract(() => undefined);
+  __testing__.runtime.extract(() => null);
+  __testing__.runtime.extract(() => 5);
+  let table: Record<number, { value?: unknown }> = {};
+  withState(() => {
+    table = __testing__.evaluateExtractors();
+  });
+
+  const overTheWire = JSON.parse(JSON.stringify(table)) as Record<string, { value?: unknown }>;
+  assert.deepEqual(Object.keys(overTheWire), ["0", "1", "2"]);
+  // undefined and null have to stay distinguishable across the wire: the goja
+  // host records undefined for a getter that returned undefined, so reporting
+  // null instead would make `x.current === undefined` answer one thing on
+  // native and another on web.
+  assert.equal("value" in overTheWire["0"]!, false);
+  assert.equal(overTheWire["1"]!.value, null);
+  assert.equal(overTheWire["2"]!.value, 5);
+});
+
+// state.lastAction is the one piece of state the page cannot observe for
+// itself: only the runner knows which action it actually applied. While the web
+// runtime hardcoded null there, a spec property gated on the last action (e.g.
+// folio's submitMovesBalanceByTypedAmount, which only looks at taps on
+// TxnSubmit) was vacuously true on web forever, and the run went green having
+// checked nothing.
+function lastActionSeenByASpec(pushed: unknown): unknown {
+  const setLastAction = (globalThis as Record<string, unknown>)
+    .__sanderlingSetLastAction__ as (value: unknown) => void;
+  __testing__.extractors.length = 0;
+  __testing__.runtime.extract((state) => (state as { lastAction: unknown }).lastAction);
+  let out: Record<number, { value?: unknown }> = {};
+  withState(() => {
+    setLastAction(pushed);
+    out = __testing__.evaluateExtractors();
+  });
+  return readingOf(out, 0);
+}
+
+test("state.lastAction carries the action the host pushed", () => {
+  const action = { kind: "Tap", on: "id:TxnSubmit" };
+  assert.deepEqual(lastActionSeenByASpec(action), action);
+});
+
+test("state.lastAction is null when the host pushed nothing", () => {
+  // The first step of a run, and any step whose action was never applied: the
+  // goja host reports null there, so the web host must too.
+  assert.equal(lastActionSeenByASpec(null), null);
+});
+
 // sanitize runs over every extractor's return value before it leaves the
 // runtime. A user extractor that returns a page object reachable from
 // document/window can be self-referential, carry functions, or nest deeply;
@@ -212,11 +323,11 @@ test("an uncaught cross-extractor read aborts evaluateExtractors", () => {
 function sanitizeViaExtract(value: unknown): unknown {
   __testing__.extractors.length = 0;
   __testing__.runtime.extract(() => value);
-  let out: Record<number, unknown> = {};
+  let out: Record<number, { value?: unknown }> = {};
   withState(() => {
     out = __testing__.evaluateExtractors();
   });
-  return out[0];
+  return readingOf(out, 0);
 }
 
 test("sanitize breaks a self-referential cycle instead of overflowing", () => {
@@ -520,4 +631,106 @@ test("a non-editable element carries no hintText", () => {
   const element = domElement({ tag: "button", attributes: { id: "txn-submit" }, text: "Add credit" });
   assert.equal(attrsOf(element).hintText, undefined);
   assert.equal(handleOf(element).editable, false);
+});
+
+// An ax element is labelled with the selector it was found by, in the same
+// canonical grammar selectorStringFromJS emits in internal/verifier/marshal.go.
+// The label is what a spec's own Tap({ on: state.ax.find(...) }) carries to the
+// runner: with no label the action is coordinates only, `lastAction.on` is
+// empty, and a property matching on WHICH control was tapped cannot fire.
+const { selectorTag } = __testing__;
+
+test("selectorTag renders the selector shapes the goja host renders", () => {
+  assert.equal(selectorTag("testTag:TxnSubmit"), "testTag:TxnSubmit");
+  assert.equal(selectorTag({ testTag: "TxnSubmit" }), "testTag:TxnSubmit");
+  assert.equal(
+    selectorTag([{ testTag: "AddTransactionScreen" }, { testTag: "TxnSubmit" }]),
+    "testTag:AddTransactionScreen > testTag:TxnSubmit",
+  );
+  assert.equal(selectorTag({ testTag: "Row", "aria-label": "first" }), "testTag:Row aria-label:first");
+  assert.equal(selectorTag(undefined), "");
+});
+
+// A selector path scopes the second segment to each match of the first. It
+// returned nothing at all on web while returning matches on native, so folio's
+// accounts/totalBalance extractors (findAll([{HomeScreen}, {AccountCard}]))
+// were empty on every web step and the properties over them checked nothing.
+test("ax.findAll resolves a selector path segment by segment", () => {
+  const rect = { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 };
+  const node = (id: string, answers: Record<string, unknown[]> = {}) => ({
+    id,
+    tagName: "DIV",
+    className: "",
+    textContent: id,
+    dataset: {},
+    getAttribute: () => null,
+    getBoundingClientRect: () => rect,
+    querySelectorAll: (selector: string) => answers[selector] ?? [],
+  });
+  const cardCss = `:is([data-testid="AccountCard"], [id="AccountCard"])`;
+  const screenCss = `:is([data-testid="HomeScreen"], [id="HomeScreen"])`;
+  const cards = [node("first"), node("second")];
+  const home = node("HomeScreen", { [cardCss]: cards });
+
+  const g = globalThis as Record<string, unknown>;
+  const originalDocument = g.document;
+  const originalWindow = g.window;
+  g.document = { querySelectorAll: (selector: string) => (selector === screenCss ? [home] : []) };
+  g.window = {};
+  try {
+    __testing__.extractors.length = 0;
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
+      return ax
+        .findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }])
+        .map((card) => card.text);
+    });
+    const values = __testing__.evaluateExtractors();
+    // Scoped to the head match: the cards come from the HomeScreen node, not
+    // from a document-wide sweep for AccountCard.
+    assert.deepEqual(readingOf(values, 0), ["first", "second"]);
+  } finally {
+    g.document = originalDocument;
+    g.window = originalWindow;
+  }
+});
+
+test("ax.find and ax.findAll label the element with its selector", () => {
+  const rect = { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 };
+  const submit = {
+    id: "TxnSubmit",
+    tagName: "DIV",
+    className: "",
+    textContent: "Submit",
+    dataset: {},
+    getAttribute: () => null,
+    getBoundingClientRect: () => rect,
+  };
+  const matches = `:is([data-testid="TxnSubmit"], [id="TxnSubmit"])`;
+  const g = globalThis as Record<string, unknown>;
+  const originalDocument = g.document;
+  const originalWindow = g.window;
+  g.document = { querySelectorAll: (selector: string) => (selector === matches ? [submit] : []) };
+  g.window = {};
+  try {
+    __testing__.extractors.length = 0;
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
+      return ax.find({ testTag: "TxnSubmit" });
+    });
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
+      return ax.findAll({ testTag: "TxnSubmit" });
+    });
+    const values = __testing__.evaluateExtractors();
+    const found = readingOf(values, 0) as Record<string, unknown>;
+    assert.equal(found.__sanderlingSelector, "testTag:TxnSubmit");
+    // findAll passes each element through map(); passing the callback by
+    // reference would hand the array INDEX to the runtime as the selector.
+    const all = readingOf(values, 1) as Record<string, unknown>[];
+    assert.equal(all[0]!.__sanderlingSelector, "testTag:TxnSubmit");
+  } finally {
+    g.document = originalDocument;
+    g.window = originalWindow;
+  }
 });

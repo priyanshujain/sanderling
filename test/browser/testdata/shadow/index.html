@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>shadow</title>
+  </head>
+  <body>
+    <!-- Shaped like Compose for Web: the app mounts a shadow root holding a
+         canvas plus an accessibility overlay. The overlay is pointer-events:
+         none, so a tap aimed at the button lands on the canvas, which routes it
+         by coordinates the way a canvas app does. -->
+    <div id="app"></div>
+    <script>
+      const root = document.getElementById("app").attachShadow({ mode: "open" });
+      root.innerHTML = `
+        <style>
+          #surface { position: absolute; left: 0; top: 0; }
+          #a11y { position: absolute; left: 0; top: 0; pointer-events: none; }
+          #bump { margin: 20px; }
+        </style>
+        <canvas id="surface" width="360" height="240"></canvas>
+        <div id="a11y">
+          <button id="bump">bump</button>
+          <div id="count">0</div>
+        </div>`;
+      const surface = root.getElementById("surface");
+      const bump = root.getElementById("bump");
+      const count = root.getElementById("count");
+      let value = 0;
+      surface.addEventListener("click", function (event) {
+        const rect = bump.getBoundingClientRect();
+        const hit =
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom;
+        if (!hit) return;
+        value += 1;
+        count.textContent = String(value);
+      });
+    </script>
+  </body>
+</html>

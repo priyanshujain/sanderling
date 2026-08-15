@@ -411,6 +411,15 @@ func (v *Verifier) ChangedExtractors() map[string]ExtractorChange {
 	return changes
 }
 
+// ExtractorCount reports how many extractors the spec registered. The web path
+// compares it against the number of readings the page sent: a page reporting
+// fewer leaves the rest holding goja's dump-derived value while the others hold
+// the page's, and a property comparing previous to current across that split
+// fires on a healthy app.
+func (v *Verifier) ExtractorCount() int {
+	return len(v.extractors)
+}
+
 // OverrideExtractorValues replaces each extractor's `current` slot with a
 // caller-supplied value, keyed by registration index. Used by the web tick
 // path so extractor bodies that ran in V8 (against the real DOM) drive the

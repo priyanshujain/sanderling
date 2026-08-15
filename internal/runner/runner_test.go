@@ -2343,3 +2343,99 @@ func TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime(t *testing.T) {
 		t.Errorf("no step recorded action_skipped=%q, so the undispatched action looks executed", actionSkippedForeground)
 	}
 }
+
+// TestRunner_StopOnViolationEndsAtTheFirstViolation pins the gate CI runs on:
+// a step budget of 8 against a spec that only violates on the third step must
+// end on step 3 and write nothing after it, so the trace's last state is the
+// one that produced the violation.
+func TestRunner_StopOnViolationEndsAtTheFirstViolation(t *testing.T) {
+	const thirdStepViolationSpec = `
+import { actions, always, extract } from "@sanderling/spec";
+let observed = 0;
+const tick = extract(() => ++observed);
+globalThis.properties = {
+  staysUnderThree: always(() => tick.current < 3),
+};
+globalThis.actions = actions(() => []);
+`
+	state := newHarnessWithSpec(t, thirdStepViolationSpec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:        time.Hour,
+		IdleTimeout:     20 * time.Millisecond,
+		MaxSteps:        8,
+		StopOnViolation: true,
+		Driver:          state.mock,
+		Verifier:        state.verifier,
+		TraceWriter:     state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !containsProperty(summary.Violations, "staysUnderThree") {
+		t.Fatalf("expected staysUnderThree to fire, got %v", summary.Violations)
+	}
+	if summary.Steps != 3 {
+		t.Errorf("steps: got %d, want 3 (the run must stop at the violating step, not run the 8-step budget)",
+			summary.Steps)
+	}
+	for _, step := range traceStepIndices(t, state.writer.Directory()) {
+		if step > summary.Steps {
+			t.Errorf("trace kept stepping after the violation: found step %d past step %d",
+				step, summary.Steps)
+		}
+	}
+}
+
+// TestRunner_WithoutStopOnViolationRunsTheWholeBudget is the other half: the
+// default must stay a full-budget fuzz run, so turning the flag on is the only
+// thing that shortens a run.
+func TestRunner_WithoutStopOnViolationRunsTheWholeBudget(t *testing.T) {
+	state := newHarnessWithSpec(t, violationSpec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    4,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps != 4 {
+		t.Errorf("steps: got %d, want 4; a violation must not shorten a default run", summary.Steps)
+	}
+}
+
+// traceStepIndices reads every step index the trace recorded, so a test can
+// assert on what the run actually wrote rather than on the summary alone.
+func traceStepIndices(t *testing.T, directory string) []int {
+	t.Helper()
+	file, err := os.Open(filepath.Join(directory, "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	var steps []int
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var line struct {
+			Step int `json:"step"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			t.Fatalf("trace line decode: %v", err)
+		}
+		steps = append(steps, line.Step)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan trace: %v", err)
+	}
+	return steps
+}

@@ -282,13 +282,32 @@ function selectorFromString(selector: string): { css?: string; xpath?: string } 
   return { css: cssPart(kind, value) };
 }
 
+// deepQueryAll resolves a CSS selector against a root AND every shadow root
+// beneath it. querySelectorAll stops dead at a shadow boundary, and a canvas app
+// (Compose for Web mounts its canvas and its whole accessibility tree inside a
+// shadow root on the mount element) keeps its entire UI on the far side of one:
+// without this a spec sees four nodes and can neither enumerate a target nor
+// resolve a testTag. Light-DOM matches come first, then shadow content in walk
+// order. XPath has no equivalent, so `text:` selectors stop at the boundary.
+function deepQueryAll(selector: string, root: ParentNode): Element[] {
+  const found: Element[] = [];
+  const visit = (scope: ParentNode): void => {
+    for (const element of Array.from(scope.querySelectorAll(selector))) found.push(element);
+    for (const element of Array.from(scope.querySelectorAll<HTMLElement>("*"))) {
+      if (element.shadowRoot) visit(element.shadowRoot);
+    }
+  };
+  visit(root);
+  return found;
+}
+
 function queryElement(
   root: ParentNode,
   selector: unknown,
 ): Element | null {
   if (typeof selector === "string") {
     const { css, xpath } = selectorFromString(selector);
-    if (css) return root.querySelector(css);
+    if (css) return deepQueryAll(css, root)[0] ?? null;
     if (xpath) {
       const result = document.evaluate(
         xpath,
@@ -313,7 +332,7 @@ function queryElement(
   }
   if (selector && typeof selector === "object") {
     const { css, xpath } = selectorFromObject(selector as Record<string, string | boolean | undefined>);
-    if (css) return root.querySelector(css);
+    if (css) return deepQueryAll(css, root)[0] ?? null;
     if (xpath) {
       const result = document.evaluate(
         xpath,
@@ -331,13 +350,27 @@ function queryElement(
 function queryAllElements(root: ParentNode, selector: unknown): Element[] {
   if (typeof selector === "string") {
     const { css, xpath } = selectorFromString(selector);
-    if (css) return Array.from(root.querySelectorAll(css));
+    if (css) return deepQueryAll(css, root);
     if (xpath) return evaluateXPathAll(xpath, root as Node);
     return [];
   }
+  // A selector path: every match of the first segment is searched for the rest,
+  // concatenated in walk order, mirroring FindAllBySelectorPath in
+  // internal/hierarchy. Falling through to the object branch (as this did)
+  // returned NOTHING for a path on web while native returned matches, so a spec
+  // reading state.ax.findAll([{screen}, {row}]) saw an empty list on web and
+  // every property over it passed by having nothing to check.
+  if (Array.isArray(selector)) {
+    const head = selector[0];
+    if (head === undefined) return [];
+    const heads = queryAllElements(root, head);
+    if (selector.length === 1) return heads;
+    const rest = selector.slice(1);
+    return heads.flatMap((element) => queryAllElements(element, rest));
+  }
   if (selector && typeof selector === "object" && !Array.isArray(selector)) {
     const { css, xpath } = selectorFromObject(selector as Record<string, string | boolean | undefined>);
-    if (css) return Array.from(root.querySelectorAll(css));
+    if (css) return deepQueryAll(css, root);
     if (xpath) return evaluateXPathAll(xpath, root as Node);
   }
   return [];
@@ -391,7 +424,47 @@ function fieldHint(element: Element): string {
   return element.getAttribute("name") ?? "";
 }
 
-function elementHandle(element: Element): Record<string, unknown> {
+// SELECTOR_TAG is the key an ax element carries the selector it was found by,
+// the same key the goja host writes (internal/verifier/bindings.go tagSelector).
+// The shared serializer (runtime-entry.ts pointOf) reads it off an author
+// target, so a spec's Tap({ on: state.ax.find(...) }) reaches the runner naming
+// the control it acted on instead of a bare pair of coordinates. Without it
+// `lastAction.on` is empty on web for exactly the actions a spec authored.
+const SELECTOR_TAG = "__sanderlingSelector";
+
+// selectorTag renders a selector argument in the canonical "k:v" grammar the
+// hierarchy package parses, chains joined by " > ". It mirrors
+// selectorStringFromJS in internal/verifier/marshal.go, so an element found by
+// the same selector is labelled with the SAME string on both hosts.
+function selectorTag(selector: unknown): string {
+  if (typeof selector === "string") return selector;
+  if (Array.isArray(selector)) {
+    return selector
+      .map(selectorTag)
+      .filter((segment) => segment !== "")
+      .join(" > ");
+  }
+  if (selector && typeof selector === "object") {
+    const source = selector as Record<string, unknown>;
+    return Object.keys(source)
+      .filter((key) => key !== SELECTOR_TAG && source[key] !== undefined && source[key] !== null)
+      .map((key) => `${key}:${String(source[key])}`)
+      .join(" ");
+  }
+  return "";
+}
+
+// isEnabled answers the `enabled` fact. `.disabled` is a property only real form
+// controls have, so it reads undefined on the role-based controls the tappable
+// set now covers, and every one of them looked enabled however plainly it was
+// marked otherwise. internal/driver/chrome/driver.go answers the same two ways
+// for the dump the goja host reads.
+function isEnabled(element: Element): boolean {
+  if ((element as HTMLButtonElement).disabled) return false;
+  return element.getAttribute("aria-disabled") !== "true";
+}
+
+function elementHandle(element: Element, selector: unknown): Record<string, unknown> {
   const rect = element.getBoundingClientRect();
   const x = Math.round(rect.left + rect.width / 2);
   const y = Math.round(rect.top + rect.height / 2);
@@ -416,7 +489,7 @@ function elementHandle(element: Element): Record<string, unknown> {
     desc: ariaLabel,
     class: (element as HTMLElement).className ?? "",
     clickable: true,
-    enabled: !(element as HTMLButtonElement).disabled,
+    enabled: isEnabled(element),
     editable: isEditableElement(element as HTMLElement),
     focused: document.activeElement === element,
     x,
@@ -429,12 +502,15 @@ function elementHandle(element: Element): Record<string, unknown> {
     },
     attrs,
     dataset: datasetCopy,
-    find(selector: unknown): unknown {
-      const child = queryElement(element, selector);
-      return child ? elementHandle(child) : undefined;
+    [SELECTOR_TAG]: selectorTag(selector),
+    find(childSelector: unknown): unknown {
+      const child = queryElement(element, childSelector);
+      return child ? elementHandle(child, childSelector) : undefined;
     },
-    findAll(selector: unknown): unknown[] {
-      return queryAllElements(element, selector).map(elementHandle);
+    findAll(childSelector: unknown): unknown[] {
+      return queryAllElements(element, childSelector).map((child) =>
+        elementHandle(child, childSelector),
+      );
     },
   };
 }
@@ -443,10 +519,12 @@ function buildAx(): unknown {
   return {
     find(selector: unknown): unknown {
       const element = queryElement(document, selector);
-      return element ? elementHandle(element) : undefined;
+      return element ? elementHandle(element, selector) : undefined;
     },
     findAll(selector: unknown): unknown[] {
-      return queryAllElements(document, selector).map(elementHandle);
+      return queryAllElements(document, selector).map((element) =>
+        elementHandle(element, selector),
+      );
     },
   };
 }
@@ -483,13 +561,22 @@ if (typeof globalThis.addEventListener === "function") {
   });
 }
 
+// lastAction is what the previous step actually did, pushed in by the Go runner
+// (internal/runner, via __sanderlingSetLastAction__) before each extractor
+// evaluation, in the shape internal/verifier/marshal.go builds for goja. The
+// page cannot derive it: only the runner knows whether the action it picked was
+// really applied, and under --generator llm the action is not picked here at
+// all. Hardcoding null here, as this file used to, makes every spec property
+// that reads state.lastAction vacuously true on web.
+let lastAction: unknown = null;
+
 function buildState(): unknown {
   return {
     snapshots: {},
     ax: buildAx(),
     document,
     window,
-    lastAction: null,
+    lastAction,
     time: 0,
     logs: [],
     exceptions: capturedExceptions.slice(),
@@ -535,6 +622,11 @@ const runtime = {
 // the host invoking the extractor/next-action callbacks.
 defineLockedGlobal("__sanderling__", runtime);
 
+// The host calls this once per step, before __sanderlingExtractors__.
+defineLockedGlobal("__sanderlingSetLastAction__", (value: unknown) => {
+  lastAction = value ?? null;
+});
+
 // writable:false stops a page script from shadowing the runtime via plain
 // assignment (the realistic in-page threat). configurable:true is required so
 // unit tests sharing one process can reinstall a fake via defineProperty; a
@@ -549,9 +641,18 @@ function defineLockedGlobal(name: string, value: unknown): void {
   });
 }
 
-function evaluateExtractors(): Record<number, unknown> {
+// Each reading is wrapped in a {value} envelope because JSON has no undefined.
+// Written straight into the map, an extractor whose getter returned undefined
+// (folio's on(route, tag) off its own screen, which is most extractors on most
+// steps) had its whole INDEX dropped by JSON.stringify, and the host kept goja's
+// dump-derived reading for it while the rest held the page's. Inside the
+// envelope the same drop means "this getter returned undefined", which is what
+// the goja host records for the same getter; a JSON null would instead claim it
+// returned null, and `x.current === undefined` would answer differently on the
+// two hosts.
+function evaluateExtractors(): Record<number, { value?: unknown }> {
   const state = buildState();
-  const result: Record<number, unknown> = {};
+  const result: Record<number, { value?: unknown }> = {};
   for (let i = 0; i < extractors.length; i++) {
     const entry = extractors[i];
     if (!entry) continue;
@@ -568,7 +669,7 @@ function evaluateExtractors(): Record<number, unknown> {
       extracting = false;
     }
     entry.currentValue = value;
-    result[i] = sanitize(value);
+    result[i] = { value: sanitize(value) };
   }
   return result;
 }
@@ -608,7 +709,22 @@ function sanitizeAt(value: unknown, depth: number, seen: WeakSet<object>): unkno
 // only how the DOM answers "is this clickable" / "is this editable", the two
 // facts with no direct DOM equivalent of the accessibility attributes native
 // platforms expose.
-const TAPPABLE_SELECTOR = 'a, button, input, select, textarea, [role="button"], [onclick]';
+//
+// TAPPABLE_ROLES are the ARIA roles whose whole contract is that a user
+// activates the element. Covering only role="button" left every other one
+// invisible to the enumeration, however plain the control looked: the replay UI
+// builds its step rows as <li role="option">, and the spec dogfooding it had to
+// hand-write an action to reach them because no default verb could see a single
+// row. internal/driver/chrome/driver.go resolves the same set for the hierarchy
+// dump the goja host reads, and the two are compared element by element by
+// TestHierarchy_DerivesTheSameFactsAsTheWebRuntime.
+const TAPPABLE_ROLES = [
+  "button", "link", "checkbox", "radio", "switch", "tab", "option",
+  "menuitem", "menuitemcheckbox", "menuitemradio", "treeitem",
+];
+const TAPPABLE_SELECTOR = `a, button, input, select, textarea, ${
+  TAPPABLE_ROLES.map((role) => `[role="${role}"]`).join(", ")
+}, [onclick]`;
 const EDITABLE_SELECTOR = "input, textarea, [contenteditable]";
 
 const NON_TEXT_INPUT_TYPES = [
@@ -651,12 +767,78 @@ function pointOf(element: Element): Candidate {
 const HEAD_SELECTOR = "head, head *";
 
 // targetElements is the walk the target list is built from: the document in
-// pre-order, minus the head subtree.
+// pre-order, minus the head subtree, with each shadow host's content spliced in
+// directly after the host. That is buildTree's order in
+// internal/driver/chrome/driver.go, and the two producers are compared element
+// by element in enumeration order.
 function targetElements(): HTMLElement[] {
   const inHead = new Set<Element>(Array.from(document.querySelectorAll(HEAD_SELECTOR)));
-  return Array.from(document.querySelectorAll<HTMLElement>("*")).filter(
-    (element) => !inHead.has(element),
+  const walked: HTMLElement[] = [];
+  expandShadowContent(
+    Array.from(document.querySelectorAll<HTMLElement>("*")).filter(
+      (element) => !inHead.has(element),
+    ),
+    walked,
   );
+  return walked;
+}
+
+// expandShadowContent copies a tree-ordered element list into `into`, following
+// each host into its shadow root (and into nested hosts) as it goes.
+function expandShadowContent(elements: HTMLElement[], into: HTMLElement[]): void {
+  for (const element of elements) {
+    into.push(element);
+    const shadow = element.shadowRoot;
+    if (!shadow) continue;
+    expandShadowContent(Array.from(shadow.querySelectorAll<HTMLElement>("*")), into);
+  }
+}
+
+// IDENTITY_KEYS is the ladder a target's selector is built from, mirroring
+// selectorForElement in internal/verifier/worker.go: the id first (where
+// Compose for Web lands a testTag), then data-testid, then the description.
+// Every key here is one the goja host's selector grammar already understands,
+// so the runner can re-resolve the target it names. `desc` reads the same three
+// attributes, in the same order, that the hierarchy dump folds into
+// content-desc (internal/driver/chrome/driver.go); reading fewer of them would
+// let a selector this side calls unique resolve to a different element on the
+// Go side, which re-routes the action to whatever the dump matched first.
+const IDENTITY_KEYS: ReadonlyArray<readonly [string, (element: HTMLElement) => string]> = [
+  ["id", (element) => element.id],
+  ["data-testid", (element) => element.dataset.testid ?? ""],
+  [
+    "desc",
+    (element) =>
+      element.getAttribute("aria-label") ||
+      element.getAttribute("alt") ||
+      element.getAttribute("title") ||
+      "",
+  ],
+];
+
+// selectorsFor names each enumerated element, or leaves it unnamed. A value is
+// only used when it occurs ONCE across the enumeration, so an action carrying
+// the selector can never be re-resolved onto a sibling that shares the value
+// (folio's Home screen has many AccountCards under one testTag). Unnamed
+// elements keep the coordinates-only behaviour the web host always had.
+function selectorsFor(elements: readonly HTMLElement[]): Array<string | undefined> {
+  const counts = IDENTITY_KEYS.map(() => new Map<string, number>());
+  for (const element of elements) {
+    IDENTITY_KEYS.forEach(([, read], index) => {
+      const value = read(element);
+      if (!value) return;
+      const seen = counts[index]!;
+      seen.set(value, (seen.get(value) ?? 0) + 1);
+    });
+  }
+  return elements.map((element) => {
+    for (let index = 0; index < IDENTITY_KEYS.length; index++) {
+      const [key, read] = IDENTITY_KEYS[index]!;
+      const value = read(element);
+      if (value && counts[index]!.get(value) === 1) return `${key}:${value}`;
+    }
+    return undefined;
+  });
 }
 
 // collectTargets walks the document ONCE and reports every element with the facts
@@ -664,16 +846,17 @@ function targetElements(): HTMLElement[] {
 // resolved by selector first so the DOM's answer to "clickable" and "editable"
 // stays expressed in CSS, as it always was.
 function collectTargets(): TargetElement[] {
-  const clickable = new Set<Element>(Array.from(document.querySelectorAll(TAPPABLE_SELECTOR)));
+  const clickable = new Set<Element>(deepQueryAll(TAPPABLE_SELECTOR, document));
   const editable = new Set<Element>(
-    Array.from(document.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR)).filter(
-      isEditableElement,
-    ),
+    (deepQueryAll(EDITABLE_SELECTOR, document) as HTMLElement[]).filter(isEditableElement),
   );
-  return targetElements().map((element) => ({
+  const elements = targetElements();
+  const selectors = selectorsFor(elements);
+  return elements.map((element, index) => ({
     ...pointOf(element),
+    selector: selectors[index],
     clickable: clickable.has(element),
-    enabled: !(element as HTMLButtonElement).disabled,
+    enabled: isEnabled(element),
     editable: editable.has(element),
     scrollable: isScrollable(element),
   }));
@@ -734,6 +917,7 @@ export const __testing__ = {
   selectorFromObject,
   SELECTOR_KEYS,
   unknownSelectorKeyMessage,
+  selectorTag,
   xpathStringLiteral,
 };
 

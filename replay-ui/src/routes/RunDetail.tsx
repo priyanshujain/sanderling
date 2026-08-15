@@ -172,7 +172,7 @@ export default function RunDetail() {
       label: "Violations",
       badge:
         stepViolations.length > 0 ? (
-          <span className="tabs-badge" data-kind="violation">
+          <span className="tabs-badge" data-testid="violations-badge" data-kind="violation">
             {stepViolations.length}
           </span>
         ) : undefined,
@@ -239,7 +239,7 @@ export default function RunDetail() {
       label: "Violations",
       badge:
         stepViolations.length > 0 ? (
-          <span className="tabs-badge" data-kind="violation">
+          <span className="tabs-badge" data-testid="violations-badge" data-kind="violation">
             {stepViolations.length}
           </span>
         ) : undefined,
@@ -267,7 +267,11 @@ export default function RunDetail() {
           <span>
             <strong title={run.spec_path}>{basename(run.spec_path)}</strong> seed={run.seed}
           </span>
-          <span>
+          <span
+            data-testid="step-indicator"
+            data-step={stepIndex}
+            data-step-count={stepCount ?? 0}
+          >
             step {stepIndex} / {stepCount ?? 0}
           </span>
         </div>
@@ -319,14 +323,14 @@ export default function RunDetail() {
           </div>
         </aside>
 
-        <section className="detail-state-before detail-panel">
+        <section className="detail-state-before detail-panel" data-testid="state-before">
           <h2>state before</h2>
           <div className="detail-panel-body">
             <Tabs tabs={beforeTabs} defaultTabId="screenshot" ariaLabel="state before" />
           </div>
         </section>
 
-        <section className="detail-state-after detail-panel">
+        <section className="detail-state-after detail-panel" data-testid="state-after">
           <h2>state after</h2>
           <div className="detail-panel-body">
             <Tabs tabs={afterTabs} defaultTabId="screenshot" ariaLabel="state after" />

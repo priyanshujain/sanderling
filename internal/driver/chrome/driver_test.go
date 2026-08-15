@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -472,5 +473,495 @@ func TestLaunch_KeepsBrowserAliveAfterCallerContextEnds(t *testing.T) {
 	}
 	if err := d.Launch(context.Background(), "data:text/html,<body>again</body>", false, nil); err != nil {
 		t.Fatalf("second Launch after the first caller context ended: %v", err)
+	}
+}
+
+// TestInputText_ReplacesTextInsideAShadowRoot pins ReplacesTextOnInput's promise
+// on the shape a canvas app actually has. Compose for Web draws its text fields
+// on a canvas and routes typing through a hidden <input> INSIDE the shadow root
+// it mounts, and document.activeElement stops at a shadow boundary: it names the
+// host. The select-all therefore ran against a <div> with no select(), every
+// InputText appended to the last, and a fuzzer typing twice into one field built
+// up text it could never clear (observed on the folio wasm build as
+// "0.0000001" -> "0.0000001\t-1").
+func TestInputText_ReplacesTextInsideAShadowRoot(t *testing.T) {
+	const page = `<body><div id="app"></div><script>
+	  const root = document.getElementById("app").attachShadow({mode: "open"});
+	  root.innerHTML = ` + "`" + `
+	    <style>
+	      #surface { position: absolute; left: 0; top: 0; }
+	      #a11y { position: absolute; left: 0; top: 0; pointer-events: none; }
+	      #proxy { position: absolute; left: -9999px; }
+	    </style>
+	    <canvas id="surface" width="300" height="200"></canvas>
+	    <div id="a11y"><div id="field">-</div></div>
+	    <input id="proxy" type="text">` + "`" + `;
+	  const proxy = root.getElementById("proxy");
+	  const field = root.getElementById("field");
+	  // The canvas owns the pointer (the a11y overlay is pointer-events: none)
+	  // and hands focus to the proxy, exactly as a canvas app does.
+	  root.getElementById("surface").addEventListener("click", function () { proxy.focus(); });
+	  proxy.addEventListener("input", function () { field.textContent = proxy.value; });
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.Tap(ctx, 40, 40); err != nil {
+		t.Fatalf("Tap: %v", err)
+	}
+	if err := d.InputText(ctx, "alpha"); err != nil {
+		t.Fatalf("InputText: %v", err)
+	}
+	if err := d.InputText(ctx, "beta"); err != nil {
+		t.Fatalf("InputText: %v", err)
+	}
+
+	var shown string
+	script := `document.getElementById("app").shadowRoot.getElementById("field").textContent`
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &shown)); err != nil {
+		t.Fatalf("read field: %v", err)
+	}
+	if shown != "beta" {
+		t.Errorf("field holds %q, want %q; the second InputText appended instead of replacing", shown, "beta")
+	}
+
+	if err := d.EraseText(ctx, len("beta")); err != nil {
+		t.Fatalf("EraseText: %v", err)
+	}
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &shown)); err != nil {
+		t.Fatalf("read field: %v", err)
+	}
+	if shown != "" {
+		t.Errorf("field holds %q after EraseText, want empty", shown)
+	}
+}
+
+// TestHierarchy_ScreenFallsBackToThePathname pins the route the goja host reads
+// off the dump. Reading location.hash alone reported "/" on every step of a
+// path-routed SPA (react-router's BrowserRouter, which the replay UI itself
+// uses), so every screen looked like the same screen and no route-scoped
+// property or action could tell them apart.
+func TestHierarchy_ScreenFallsBackToThePathname(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<body><div id="app">app</div></body>`))
+	}))
+	defer server.Close()
+
+	for _, testCase := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{"path-routed", "/runs/20260101-120000/steps/7", "/runs/20260101-120000/steps/7"},
+		{"hash wins when present", "/runs/1#/detail", "/detail"},
+		{"root", "/", "/"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			d := New()
+			defer d.Terminate(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := d.Launch(ctx, server.URL+testCase.path, false, nil); err != nil {
+				t.Fatalf("Launch: %v", err)
+			}
+			dump, err := d.Hierarchy(ctx)
+			if err != nil {
+				t.Fatalf("Hierarchy: %v", err)
+			}
+			var root struct {
+				Attributes map[string]string `json:"attributes"`
+			}
+			if err := json.Unmarshal([]byte(dump), &root); err != nil {
+				t.Fatalf("unmarshal hierarchy: %v", err)
+			}
+			if got := root.Attributes["sanderling-screen"]; got != testCase.want {
+				t.Errorf("sanderling-screen: got %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestWaitForIdle_WaitsForWorkTheActionKickedOff pins the settle the runner
+// relies on between acting and observing. WaitForIdle used to return the moment
+// <body> existed, which is true before the app has reacted at all: measured on
+// the folio wasm build, Compose's accessibility DOM lands ~136 ms after an
+// InputText, so the next step read the pre-action text and typed into a field
+// it believed was still empty.
+func TestWaitForIdle_WaitsForWorkTheActionKickedOff(t *testing.T) {
+	const page = `<body><div id="app"></div><script>
+	  const root = document.getElementById("app").attachShadow({mode: "open"});
+	  root.innerHTML = '<button id="go" style="width:200px;height:80px">go</button><div id="out">pending</div>';
+	  root.getElementById("go").addEventListener("click", function () {
+	    setTimeout(function () { root.getElementById("out").textContent = "settled"; }, 100);
+	  });
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.Tap(ctx, 40, 40); err != nil {
+		t.Fatalf("Tap: %v", err)
+	}
+	if err := d.WaitForIdle(ctx, time.Second); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+
+	var shown string
+	script := `document.getElementById("app").shadowRoot.getElementById("out").textContent`
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &shown)); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if shown != "settled" {
+		t.Errorf("observed %q; WaitForIdle returned before the tap's own work landed", shown)
+	}
+}
+
+// TestWaitForIdle_ReturnsOnABusyPage is the other half: a page that never stops
+// mutating (an animation, a polling widget) must not hold the step loop open.
+func TestWaitForIdle_ReturnsOnABusyPage(t *testing.T) {
+	const page = `<body><div id="tick">0</div><script>
+	  let n = 0;
+	  setInterval(function () { document.getElementById("tick").textContent = String(++n); }, 15);
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	start := time.Now()
+	if err := d.WaitForIdle(ctx, time.Second); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("WaitForIdle took %s on a busy page; it must return inside its budget", elapsed)
+	}
+}
+
+// TestWaitForIdle_WaitsOutARouteTransition covers the settle case a mutation
+// observer cannot see. A canvas app splices the incoming screen's
+// accessibility nodes in when its cross-fade STARTS and drops the outgoing
+// screen's when it ends; between those two mutations the DOM is quiet with both
+// routes live. Returning there hands the next step a tree naming the screen the
+// app is leaving, which on the folio wasm build recorded a submit that had
+// landed on Home as still being on the transaction screen: the route gate of an
+// action-gated property then skipped the very step the action landed on.
+//
+// The page keeps mutating for 300 ms after the route splice, and the settle
+// runs on the timeout production hands it (MinIdleTimeout). Both details are
+// load-bearing. A quiet page reaches the transition check immediately, so it
+// passes whether the transition window is anchored at the script start or at
+// the end of the quiet period; churn is what pushes the check past a
+// start-anchored deadline, which then finishes at once with two live screens.
+// And a caller timeout below MinIdleTimeout cuts the whole settle off before
+// the transition window can be spent, which is the same bug from the other end.
+func TestWaitForIdle_WaitsOutARouteTransition(t *testing.T) {
+	const page = `<body><div id="app"></div><script>
+	  const root = document.getElementById("app").attachShadow({mode: "open"});
+	  root.innerHTML = '<button id="go" style="width:200px;height:80px">go</button>' +
+	    '<div id="LedgerScreen">ledger</div><div id="spinner">0</div>';
+	  root.getElementById("go").addEventListener("click", function () {
+	    const incoming = document.createElement("div");
+	    incoming.id = "HomeScreen";
+	    incoming.textContent = "home";
+	    root.appendChild(incoming);
+	    let frame = 0;
+	    const churn = setInterval(function () {
+	      root.getElementById("spinner").textContent = String(++frame);
+	    }, 30);
+	    setTimeout(function () { clearInterval(churn); }, 300);
+	    setTimeout(function () { root.getElementById("LedgerScreen").remove(); }, 1000);
+	  });
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.Tap(ctx, 40, 40); err != nil {
+		t.Fatalf("Tap: %v", err)
+	}
+	if err := d.WaitForIdle(ctx, d.MinIdleTimeout()); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+
+	var live []string
+	script := `Array.from(document.getElementById("app").shadowRoot
+		.querySelectorAll('[id$="Screen"]')).map(e => e.id)`
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &live)); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(live) != 1 || live[0] != "HomeScreen" {
+		t.Errorf("live screens after the settle = %v, want [HomeScreen]; WaitForIdle "+
+			"returned mid-transition, so the next step verifies the outgoing route", live)
+	}
+}
+
+// TestWaitForIdle_BoundsTheTransitionWait is the other half of the transition
+// wait: a page that shows two *Screen ids at rest is not mid-transition, it
+// just matches the heuristic, and it must cost one bounded wait rather than the
+// whole step budget on every step.
+func TestWaitForIdle_BoundsTheTransitionWait(t *testing.T) {
+	const page = `<body><div id="HomeScreen">home</div><div id="LedgerScreen">ledger</div></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	start := time.Now()
+	if err := d.WaitForIdle(ctx, 10*time.Second); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > transitionSettlePeriod+time.Second {
+		t.Errorf("WaitForIdle took %s on a page with two resting screens; the "+
+			"transition wait must be bounded by %s", elapsed, transitionSettlePeriod)
+	}
+}
+
+// TestEvaluateExtractors_WaitsOutARouteTransition covers the other sampler. A
+// step reads the page twice: the hierarchy dump (which re-fetches while the
+// tree looks transitional) and the spec's own extractors in V8. Sampling the
+// extractors mid cross-fade reports the route the app is leaving, and an
+// action-gated property then skips the one step its action can be judged on:
+// on the folio wasm build a double-submit that landed on Home was extracted as
+// still being on the transaction screen.
+func TestEvaluateExtractors_WaitsOutARouteTransition(t *testing.T) {
+	const page = `<body><div id="app"></div><script>
+	  const root = document.getElementById("app").attachShadow({mode: "open"});
+	  root.innerHTML = '<div id="LedgerScreen">ledger</div>';
+	  window.__sanderlingExtractors__ = function () {
+	    return {0: {value: Array.from(root.querySelectorAll('[id$="Screen"]')).map(e => e.id).join(",")}};
+	  };
+	  window.startTransition = function () {
+	    const incoming = document.createElement("div");
+	    incoming.id = "HomeScreen";
+	    root.appendChild(incoming);
+	    setTimeout(function () { root.getElementById("LedgerScreen").remove(); }, 400);
+	  };
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(`window.startTransition()`, nil)); err != nil {
+		t.Fatalf("start transition: %v", err)
+	}
+
+	values, err := d.EvaluateExtractors(ctx)
+	if err != nil {
+		t.Fatalf("EvaluateExtractors: %v", err)
+	}
+	if got := string(values[0]); got != `"HomeScreen"` {
+		t.Errorf("extractor read %s, want \"HomeScreen\"; the extractors sampled "+
+			"mid-transition, so the spec sees the route the app is leaving", got)
+	}
+}
+
+// TestSetLastAction_ReportsAPageThatCannotTakeIt covers the install the whole
+// web path's action-gated properties hang off. A page without the setter is
+// reachable: internal/testrun resolves the web runtime from
+// node_modules/@sanderling/spec when no sibling checkout is present, and an
+// older published runtime does not define it. Guarded as
+// `setter && setter(...)`, that page returns undefined and chromedp reports
+// success, so every step silently no-ops and every property gated on the last
+// action goes vacuously true - a green run that checked nothing.
+func TestSetLastAction_ReportsAPageThatCannotTakeIt(t *testing.T) {
+	const withSetter = `<body><script>
+	  window.__lastActionSeen = null;
+	  window.__sanderlingSetLastAction__ = function (value) { window.__lastActionSeen = value; };
+	</script></body>`
+	const withoutSetter = `<body><div id="app">no sanderling runtime here</div></body>`
+	pages := map[string]string{"/with": withSetter, "/without": withoutSetter}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(pages[r.URL.Path]))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := d.Launch(ctx, server.URL+"/with", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	action := json.RawMessage(`{"kind":"Tap","on":"id:TxnSubmit"}`)
+	if err := d.SetLastAction(ctx, action); err != nil {
+		t.Fatalf("SetLastAction on a page that defines the setter: %v", err)
+	}
+	var seen map[string]string
+	if err := chromedp.Run(d.tabCtx,
+		chromedp.Evaluate(`window.__lastActionSeen`, &seen)); err != nil {
+		t.Fatalf("read installed action: %v", err)
+	}
+	if seen["on"] != "id:TxnSubmit" {
+		t.Errorf("the page received %v, want the action the runner applied", seen)
+	}
+
+	if err := d.Launch(ctx, server.URL+"/without", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.SetLastAction(ctx, action); err == nil {
+		t.Error("SetLastAction reported success on a page with no setter; " +
+			"a runtime that cannot take lastAction is indistinguishable from one that did")
+	}
+}
+
+// TestEvaluateExtractors_ReportsAMissingTable is the same failure on the other
+// sampler. An empty override map is what a spec with no extractors returns, so
+// treating a missing table as {} makes "this page has no sanderling runtime"
+// read as an ordinary step - and the verifier then judges the run on goja's
+// dump-derived values while believing they came from the page.
+func TestEvaluateExtractors_ReportsAMissingTable(t *testing.T) {
+	const page = `<body><div id="app">no sanderling runtime here</div></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	values, err := d.EvaluateExtractors(ctx)
+	if err == nil {
+		t.Errorf("EvaluateExtractors returned %v and no error on a page with no "+
+			"extractor table; a page that cannot be read must not read as empty", values)
+	}
+}
+
+// TestEvaluateExtractors_KeepsUndefinedApartFromNull covers the wire the page's
+// readings cross. JSON has no undefined, so the web runtime wraps each reading
+// in a {value} envelope: written straight into the table, an extractor that
+// returned undefined lost its whole index to JSON.stringify and the host kept
+// goja's dump-derived reading for it while the rest held the page's. An absent
+// value has to arrive as an empty payload, which is what makes the verifier
+// record undefined (the value the native host records for the same getter);
+// arriving as JSON null would claim the getter returned null.
+func TestEvaluateExtractors_KeepsUndefinedApartFromNull(t *testing.T) {
+	const page = `<body><script>
+	  window.__sanderlingExtractors__ = function () {
+	    return {0: {}, 1: {value: null}, 2: {value: {balance: 7}}};
+	  };
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	values, err := d.EvaluateExtractors(ctx)
+	if err != nil {
+		t.Fatalf("EvaluateExtractors: %v", err)
+	}
+	if len(values) != 3 {
+		t.Fatalf("the page reported 3 readings, %d survived the wire: %v", len(values), values)
+	}
+	if got := values[0]; len(got) != 0 {
+		t.Errorf("the undefined reading arrived as %s, want an empty payload; "+
+			"the verifier records anything else as a value the getter never returned", got)
+	}
+	if got := string(values[1]); got != "null" {
+		t.Errorf("the null reading arrived as %s, want null", got)
+	}
+	if got := string(values[2]); got != `{"balance":7}` {
+		t.Errorf("the object reading arrived as %s, want {\"balance\":7}", got)
+	}
+}
+
+// TestEvaluateExtractors_RejectsAnUnenvelopedReading is the loud failure a page
+// running an older @sanderling/spec produces. Its readings are bare values, and
+// a bare value is indistinguishable from a reading whose getter returned that
+// value, so accepting them silently puts the two engines on different bundles.
+func TestEvaluateExtractors_RejectsAnUnenvelopedReading(t *testing.T) {
+	const page = `<body><script>
+	  window.__sanderlingExtractors__ = function () { return {0: "home"}; };
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	values, err := d.EvaluateExtractors(ctx)
+	if err == nil {
+		t.Fatalf("EvaluateExtractors accepted %v from a page whose readings are not "+
+			"enveloped; the page and the host are running different bundles", values)
+	}
+	if !strings.Contains(err.Error(), "different bundles") {
+		t.Errorf("EvaluateExtractors failed with %q, want it to name the bundle mismatch", err)
 	}
 }

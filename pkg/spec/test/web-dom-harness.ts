@@ -14,6 +14,15 @@ export interface FakeElementSpec {
   y: number;
   width: number;
   height: number;
+  // id/testid/label/alt/title are how the host names a target: it builds the
+  // selector an action carries from them, so a fake needs them to exercise that
+  // naming. alt and title are the fallbacks the hierarchy dump folds into
+  // content-desc, which the host has to fall back to in the same order.
+  id?: string;
+  testid?: string;
+  label?: string;
+  alt?: string;
+  title?: string;
   // clickable/editable place the element in the selector sets the host queries;
   // the fake answers those queries directly rather than matching CSS.
   clickable?: boolean;
@@ -28,6 +37,9 @@ export interface FakeElement extends FakeElementSpec {
   tagName: string;
   type: string;
   isContentEditable: boolean;
+  id: string;
+  dataset: Record<string, string | undefined>;
+  getAttribute(name: string): string | null;
   scrollHeight: number;
   clientHeight: number;
   scrollWidth: number;
@@ -49,6 +61,10 @@ export function fakeElement(spec: FakeElementSpec): FakeElement {
     tagName: spec.tag.toUpperCase(),
     type: spec.tag === "input" ? "text" : "",
     isContentEditable: editable && spec.tag !== "input" && spec.tag !== "textarea",
+    id: spec.id ?? "",
+    dataset: { testid: spec.testid },
+    getAttribute: (name: string) =>
+      ({ "aria-label": spec.label, alt: spec.alt, title: spec.title })[name] ?? null,
     scrollHeight: spec.overflows ? spec.height * 2 : spec.height,
     clientHeight: spec.height,
     scrollWidth: spec.width,

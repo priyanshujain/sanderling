@@ -29,7 +29,7 @@ WEB_DIST := replay-ui/dist
 
 GOLINES := $(shell $(GO) env GOPATH)/bin/golines
 
-.PHONY: bootstrap proto sidecar sanderling install test test-go test-browser test-companion test-kotlin test-spec-api spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
+.PHONY: bootstrap proto sidecar sanderling sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-spec-api spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
 
 bootstrap:
 	$(GO) mod download
@@ -48,6 +48,22 @@ $(SANDERLING_BIN): $(SIDECAR_EMBED) $(COMPANION_EMBED) $(RUNNER_EMBED) web-build
 	mkdir -p bin
 	$(GO) build -tags "withsidecar withcompanion" -o $(SANDERLING_BIN) ./cmd/sanderling
 
+# Per-platform builds, each taking only the tags that platform needs. `make
+# sanderling` cannot run on Linux at all: preparing the iOS companion asset
+# shells out to a macOS homebrew path. The CI workflows build through these so
+# a job and a developer produce the same binary.
+sanderling-web: web-build
+	mkdir -p bin
+	$(GO) build -o $(SANDERLING_BIN) ./cmd/sanderling
+
+sanderling-android: $(SIDECAR_EMBED) web-build
+	mkdir -p bin
+	$(GO) build -tags withsidecar -o $(SANDERLING_BIN) ./cmd/sanderling
+
+sanderling-ios: $(COMPANION_EMBED) $(RUNNER_EMBED) web-build
+	mkdir -p bin
+	$(GO) build -tags withcompanion -o $(SANDERLING_BIN) ./cmd/sanderling
+
 # Installs `sanderling` into $GOBIN (or $GOPATH/bin) so it's directly on PATH for
 # anyone with a standard Go toolchain setup.
 install: $(SIDECAR_EMBED) $(COMPANION_EMBED) $(RUNNER_EMBED) web-build
@@ -57,7 +73,7 @@ install: $(SIDECAR_EMBED) $(COMPANION_EMBED) $(RUNNER_EMBED) web-build
 web-build:
 	cd replay-ui && bun install --frozen-lockfile && bun run build
 	mkdir -p $(REPLAY_DIST)
-	rm -rf $(REPLAY_DIST)/assets $(REPLAY_DIST)/fonts
+	rm -rf $(REPLAY_DIST)/assets
 	cp -R $(WEB_DIST)/. $(REPLAY_DIST)/
 
 web-dev:
@@ -101,7 +117,7 @@ fmt-ts:
 fmt-swift:
 	xcrun swift-format format -i -r companion/Sources
 
-test: test-go spec-typecheck test-spec-api web-typecheck web-test
+test: test-go test-kotlin spec-typecheck test-spec-api web-typecheck web-test
 
 test-go:
 	$(GO) test $(GO_PACKAGES)

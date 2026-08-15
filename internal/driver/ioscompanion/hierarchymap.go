@@ -129,6 +129,9 @@ func mapElement(element *rawElement) (treeNode, bool) {
 		attributes["hintText"] = label
 	} else if label != "" {
 		attributes["accessibilityText"] = label
+		if labelIsDisplayedText(element.Type) {
+			attributes["text"] = label
+		}
 	}
 
 	enabled := element.Enabled
@@ -148,6 +151,22 @@ func mapElement(element *rawElement) (treeNode, bool) {
 
 func isEditable(elementType string) bool {
 	return elementType == "TextArea" || elementType == "TextField"
+}
+
+// labelIsDisplayedText reports whether an element type's AXLabel is the string
+// drawn on screen rather than an accessibility annotation about it. Only
+// StaticText qualifies: a text element's label IS what it renders, so it
+// belongs in `text`, matching a TextView on Android and a text node on web.
+//
+// Buttons and images are deliberately excluded even though a titled button's
+// label is also its visible title. The snapshot cannot tell that button apart
+// from an icon-only one whose label exists purely for VoiceOver, nor from a
+// container whose label is a comma-joined reading of its children ("CH,
+// Checking, $0.00, 0 transactions"). Inventing `text` for those would put
+// strings in `text` that no user can read, and would diverge from Android,
+// which leaves `text` empty and reports a contentDescription as `description`.
+func labelIsDisplayedText(elementType string) bool {
+	return elementType == "StaticText"
 }
 
 func stringValue(pointer *string) string {

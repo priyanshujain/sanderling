@@ -80,6 +80,8 @@ The loop runs until the duration you set elapses. Every step is written to a tra
 
 Kotlin Multiplatform apps need nothing special: the Android build is tested through the Android driver and the iOS build through the iOS driver.
 
+Canvas-rendered web apps are the exception. On web, `InputText` types through the DevTools Protocol's `Input.insertText`, which needs a focused DOM element to deliver to, and a bare `<canvas>` is not one: the call produces no events at all and the app sees nothing typed. The driver cannot work around that, because there is no event target. Compose Multiplatform for Web is fine because it keeps a hidden `<input>` IME proxy in its shadow root, a real focusable element that receives the text. A canvas app that exposes no such element is tap-fuzzable but not text-fuzzable.
+
 ## Reading this manual
 
 - [Case study: Folio](../case-study/) follows sanderling finding a real bug in the example app, and shows how its spec is written.

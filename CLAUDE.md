@@ -36,6 +36,9 @@
 
 ## PR Rules
 
+  - Never merge a pull request. I merge, nobody else. That covers `gh pr merge`, enabling
+    auto-merge, squash, rebase, fast-forward, and merging the branch into anything locally.
+    Push the branch, say it is ready, and stop there.
   - Simple PR title, few-line description. Never write a wall of text. Nobody reads it.
   - Everything lowercase in PR titles, descriptions, and comments.
 

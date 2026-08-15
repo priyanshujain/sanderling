@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"flag"
 	"io"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/priyanshujain/sanderling/internal/testrun"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
@@ -368,5 +371,60 @@ func TestParseTestArgs_ArmLabel(t *testing.T) {
 	}
 	if options.arm != "seeded-identifier" {
 		t.Errorf("arm: got %q, want seeded-identifier", options.arm)
+	}
+}
+
+func TestParseTestArgs_ExitOnViolationDefaultsOff(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.exitOnViolation {
+		t.Error("exitOnViolation default: got true, want false")
+	}
+}
+
+func TestParseTestArgs_ExitOnViolation(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--exit-on-violation",
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.exitOnViolation {
+		t.Error("expected exitOnViolation=true")
+	}
+}
+
+// TestExitCode_SeparatesFoundBugsFromBrokenHarnesses pins the three statuses CI
+// reads: 0 clean, 2 the run found violations, 1 everything else. A workflow
+// that asserts "the known bug is still found" is only meaningful while 2 and 1
+// stay distinct.
+func TestExitCode_SeparatesFoundBugsFromBrokenHarnesses(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		err  error
+		want int
+		says string
+	}{
+		{"clean run", nil, 0, ""},
+		{"help", flag.ErrHelp, 0, ""},
+		{"violations found", testrun.ViolationsError{Count: 2}, 2, "violations: 2"},
+		{"broken harness", errors.New("launch app: no device"), 1, "error: launch app"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			if got := exitCode(testCase.err, &stderr); got != testCase.want {
+				t.Errorf("exit code: got %d, want %d", got, testCase.want)
+			}
+			if testCase.says != "" && !strings.Contains(stderr.String(), testCase.says) {
+				t.Errorf("stderr %q does not mention %q", stderr.String(), testCase.says)
+			}
+		})
 	}
 }

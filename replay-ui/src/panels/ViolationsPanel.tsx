@@ -130,13 +130,18 @@ export default function ViolationsPanel({
   }
 
   return (
-    <section className="violations-panel">
+    <section
+      className="violations-panel"
+      data-testid="violations-panel"
+      data-violation-count={rows.filter((row) => row.status === "violated").length}
+    >
       {violationsOnly ? null : (
         <header className="violations-panel-header">
           <h2 className="violations-panel-title">properties</h2>
           <button
             type="button"
             className="violations-panel-jump"
+            data-testid="jump-to-first-violation"
             onClick={onJumpToFirstViolation}
             disabled={!hasFirstViolation}
           >
@@ -149,7 +154,12 @@ export default function ViolationsPanel({
           const residual = residuals?.[name];
           const witness = status === "violated" ? witnesses?.[name] : undefined;
           return (
-            <li key={name} className="violations-panel-row" data-status={status}>
+            <li
+              key={name}
+              className="violations-panel-row"
+              data-testid="property-row"
+              data-status={status}
+            >
               <div className="violations-panel-row-head">
                 <span
                   className="violations-panel-badge"

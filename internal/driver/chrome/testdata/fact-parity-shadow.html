@@ -1,0 +1,34 @@
+<!doctype html>
+<html id="page">
+  <head id="page-head">
+    <meta id="page-charset" charset="utf-8" />
+    <title id="page-title">fact parity: shadow dom</title>
+  </head>
+  <body id="page-body">
+    <!-- Shaped like Compose for Web: one mount element owning a shadow root
+         that holds the canvas plus an accessibility overlay whose nodes are
+         pointer-events: none, so taps fall through to the canvas. A producer
+         that stops at the shadow boundary reports this whole app as one node. -->
+    <div id="host">
+      <div id="host-light-child">light child, no slot to render into</div>
+    </div>
+    <script id="page-script">
+      const root = document.getElementById("host").attachShadow({ mode: "open" });
+      root.innerHTML = `
+        <style id="shadow-style">
+          #shadow-surface { position: absolute; inset: 0; }
+          #shadow-overlay { position: absolute; inset: 0; pointer-events: none; }
+          #shadow-scroller { width: 320px; height: 120px; overflow: auto; }
+          #shadow-scroller-content { height: 600px; }
+        </style>
+        <canvas id="shadow-surface" width="420" height="640"></canvas>
+        <div id="shadow-overlay">
+          <button id="shadow-save">save</button>
+          <button id="shadow-cancel" disabled>cancel</button>
+          <input id="shadow-amount" type="text" value="10" />
+          <div id="shadow-plain">plain</div>
+        </div>
+        <div id="shadow-scroller"><div id="shadow-scroller-content"></div></div>`;
+    </script>
+  </body>
+</html>

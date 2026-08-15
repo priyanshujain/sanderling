@@ -6,6 +6,7 @@ title: Development
 
 - [Design principles](./design-principles/)
 - [Architecture](./architecture/)
+- [CI](./ci/)
 - v0.1.0 scope: [milestone #1](https://github.com/priyanshujain/sanderling/milestone/1)
 
 ## Building the docs site locally

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,8 @@ func (d *webMockDriver) EvaluateExtractors(context.Context) (map[int]json.RawMes
 func (d *webMockDriver) NextActionFromV8(context.Context) (json.RawMessage, error) {
 	return nil, nil
 }
+
+func (d *webMockDriver) SetLastAction(context.Context, json.RawMessage) error { return nil }
 
 // TestRunner_TraceRecordsTheValueTheVerdictUsed fails if the trace and the
 // verdict disagree about an extractor. A witness is only an explanation of a
@@ -114,5 +117,50 @@ func TestRunner_TraceRecordsTheValueTheVerdictUsed(t *testing.T) {
 	}
 	if witnesses == 0 {
 		t.Error("no witness reached the trace; nothing was compared")
+	}
+}
+
+// splitTableSpec registers two extractors whose goja bodies both answer "goja".
+// The page below reports only the first, so index 1 keeps goja's dump-derived
+// reading while index 0 holds the page's.
+const splitTableSpec = `
+import { actions, extract } from "@sanderling/spec";
+extract("first", () => "goja");
+extract("second", () => "goja");
+globalThis.properties = {};
+globalThis.actions = actions(() => []);
+`
+
+// TestRunner_PartialExtractorTableIsFatal pins the failure the runner used to
+// let through. JSON.stringify drops an undefined-valued key, so a page whose
+// extractors are mostly undefined off their own screen reported a table with
+// holes in it, and the run completed with half the extractors reading from V8
+// and half from goja. A delta property spanning that split convicts an app that
+// did nothing wrong, which is worse than a crash: it is a green report of a bug
+// that is not there, or a red one for a bug nobody can reproduce.
+func TestRunner_PartialExtractorTableIsFatal(t *testing.T) {
+	state := newHarnessWithSpec(t, splitTableSpec)
+	web := &webMockDriver{
+		Driver:    state.mock,
+		overrides: map[int]json.RawMessage{0: json.RawMessage(`"v8"`)},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    2,
+		Driver:      web,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err == nil {
+		t.Fatal("the run completed on a page that reported 1 of 2 extractors; " +
+			"the second extractor silently kept goja's value")
+	}
+	const want = "the page reported values for 1 of the spec's 2 extractors"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("Run failed with %q, want it to name the split: %q", err, want)
 	}
 }

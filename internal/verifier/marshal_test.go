@@ -154,3 +154,49 @@ func TestLastActionObject_ExposesKindSpecificFields(t *testing.T) {
 		}
 	})
 }
+
+// TestLastAction_WebJSONMatchesTheGojaObject pins the two hosts to ONE shape.
+// The goja host builds state.lastAction as a JS object; the web host receives
+// EncodeLastAction's JSON and installs the parsed value as state.lastAction in
+// the page. A field this side renames, drops or cases differently would leave a
+// spec reading state.lastAction working on native and silently mismatching on
+// web, which is the failure this whole path exists to prevent. Comparing
+// goja's own JSON.stringify against the encoder is the strongest available
+// statement that the two are the same object.
+func TestLastAction_WebJSONMatchesTheGojaObject(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.last = __sanderling__.extract(state => JSON.stringify(state.lastAction));
+	`)
+
+	for _, testCase := range []struct {
+		name   string
+		action *Action
+	}{
+		{"nil", nil},
+		{"Tap", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", X: 12, Y: 34}},
+		{"TapWithoutSelector", &Action{Kind: ActionKindTap, X: 12, Y: 34}},
+		{"DoubleTap", &Action{Kind: ActionKindDoubleTap, On: `desc:say "hi" <b>`}},
+		{"InputText", &Action{Kind: ActionKindInputText, On: "id:field", Text: "50"}},
+		{"Swipe", &Action{Kind: ActionKindSwipe, FromX: 1, FromY: 2, ToX: 3, ToY: 4, DurationMillis: 250}},
+		{"SwipeNoDuration", &Action{Kind: ActionKindSwipe, FromX: 1, FromY: 2, ToX: 3, ToY: 4}},
+		{"Scroll", &Action{Kind: ActionKindScroll, Direction: "down", FromX: 5, FromY: 6, ToX: 5, ToY: 1}},
+		{"PressKey", &Action{Kind: ActionKindPressKey, Key: "enter"}},
+		{"Wait", &Action{Kind: ActionKindWait, DurationMillis: 500}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := verifier.PushSnapshot(SnapshotInput{
+				Snapshots:  Snapshots{},
+				LastAction: testCase.action,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			handle := verifier.runtime.GlobalObject().Get("last").ToObject(verifier.runtime)
+			goja := handle.Get("current").String()
+			web := string(EncodeLastAction(testCase.action))
+			if goja != web {
+				t.Errorf("the two hosts disagree on state.lastAction\n goja: %s\n  web: %s", goja, web)
+			}
+		})
+	}
+}

@@ -31,6 +31,11 @@ type Options struct {
 	// positive value stops the loop once that many steps have run.
 	MaxSteps int
 
+	// StopOnViolation ends the step loop as soon as a step records a
+	// violation, so a run that exists to find one bug stops at the evidence
+	// instead of spending the rest of its budget past it.
+	StopOnViolation bool
+
 	BundleID    string
 	Driver      driver.DeviceDriver
 	Verifier    *verifier.Verifier
@@ -74,6 +79,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	options.IdleTimeout = resolveIdleTimeout(options)
 
 	// Gate on the app actually being on top before acting, so the first
 	// action never fires against a leftover screen or a system dialog. Done
@@ -87,6 +93,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
+	_, pageExtractors := extractorSource.(webSource)
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -122,9 +129,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var logs []verifier.LogEntry
 
 		// gctx is bound to the errgroup so a returned error (or outer
-		// cancellation) propagates to siblings - notably the V8 extractor
-		// goroutine, whose CDP round-trip can otherwise outrun the step
-		// budget on a hung tab.
+		// cancellation) propagates to every sibling read rather than leaving
+		// one blocked on a hung device.
 		g, gctx := errgroup.WithContext(ctx)
 		si := stepIndex
 		// fetchSyncedState issues a single Snapshot RPC so hierarchy and
@@ -141,16 +147,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		logSince := lastLogTime
 		g.Go(func() error {
 			logs = collectLogs(gctx, options.Driver, logSince)
-			return nil
-		})
-		var v8Overrides map[int]json.RawMessage
-		g.Go(func() error {
-			overrides, err := extractorSource.ExtractorOverrides(gctx)
-			if err != nil {
-				logger.Warn("v8 extractor evaluation failed", "step", si, "err", err)
-				return nil
-			}
-			v8Overrides = overrides
 			return nil
 		})
 		// All goroutines write to local variables and return nil, so the Wait
@@ -195,6 +191,29 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var witnesses map[string]trace.Witness
 		skippedVerification := false
 		if !transitional {
+			// The page-side extractors evaluate only on steps the verifier will
+			// accept, which is why this read waits for the tree instead of
+			// racing it. A spec's extractor getters carry state across steps
+			// (folio's last-seen Home total, its submit counters) and that state
+			// advances every time they run: evaluating them on a step whose
+			// values are then thrown away leaves the page one window ahead of
+			// the verifier, so the next accepted pair brackets two committed
+			// transactions while having counted one submit, and the property
+			// convicts a healthy app. It costs the latency the read used to hide
+			// behind the hierarchy fetch; the fetch is what decides whether this
+			// step counts at all, so it has to go first.
+			//
+			// lastAction is the same value PushSnapshot hands the goja state
+			// below: the two engines evaluate this step against one action.
+			v8Overrides, overridesErr := extractorSource.ExtractorOverrides(ctx, lastAction)
+			if overridesErr != nil {
+				// Not a warning. Without the page's values this step's
+				// extractors keep goja's dump-derived readings while the
+				// previous step holds the page's, and a delta property then
+				// compares two producers and fires on an app that did nothing
+				// wrong.
+				return summary, fmt.Errorf("step %d extractor overrides: %w", stepIndex, overridesErr)
+			}
 			if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
 				Tree:          tree,
 				ScreenshotPNG: screenshotPNG,
@@ -206,13 +225,26 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			}); err != nil {
 				return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 			}
+			// Every failure below leaves some extractors holding the page's
+			// value and the rest holding goja's reading of the dump, and a
+			// property comparing previous to current across that split fires
+			// on a healthy app. Each also means the two engines loaded
+			// different bundles, which nothing downstream can reconcile.
+			if pageExtractors && len(v8Overrides) != options.Verifier.ExtractorCount() {
+				return summary, fmt.Errorf(
+					"step %d: the page reported values for %d of the spec's %d extractors; "+
+						"the page and the host are running different bundles",
+					stepIndex, len(v8Overrides), options.Verifier.ExtractorCount())
+			}
 			skipped, overrideErr := options.Verifier.OverrideExtractorValues(v8Overrides)
 			if overrideErr != nil {
-				logger.Warn("v8 override apply failed", "step", stepIndex, "err", overrideErr)
+				return summary, fmt.Errorf("step %d apply extractor overrides: %w", stepIndex, overrideErr)
 			}
 			if skipped > 0 {
-				logger.Warn("v8 override skipped out-of-range entries",
-					"step", stepIndex, "skipped", skipped, "have", len(v8Overrides))
+				return summary, fmt.Errorf(
+					"step %d: %d of %d extractor overrides fell outside the spec's extractor list; "+
+						"the page and the host are running different bundles",
+					stepIndex, skipped, len(v8Overrides))
 			}
 			options.Verifier.EvaluateProperties()
 			violations = options.Verifier.NewlyViolatedProperties()
@@ -317,6 +349,12 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		summary.Steps = stepIndex
 		if len(violations) > 0 {
 			summary.Violations = append(summary.Violations, violationRecords(violations, witnesses, stepIndex)...)
+			// The step is already written, so the trace ends on the state that
+			// produced the violation. Finalize below still runs, so pending
+			// liveness obligations are reported alongside it.
+			if options.StopOnViolation {
+				break
+			}
 		}
 		// Wait actions are themselves a settling: skip the idle poll. Actions
 		// that mutate the UI fall through to WaitForIdle so the next step's
@@ -391,10 +429,34 @@ func validate(options Options) error {
 	if options.Duration <= 0 {
 		return errors.New("runner: Duration must be positive")
 	}
-	if options.IdleTimeout <= 0 {
-		options.IdleTimeout = 2 * time.Second
-	}
 	return nil
+}
+
+// defaultIdleTimeout is the settle budget a caller that names none gets.
+const defaultIdleTimeout = 2 * time.Second
+
+// idleTimeoutFloor is a driver that knows how long its own settle can take.
+// Declared here rather than in the driver package (like lastActionInstaller in
+// source.go) so the mobile drivers stay untouched.
+type idleTimeoutFloor interface {
+	MinIdleTimeout() time.Duration
+}
+
+// resolveIdleTimeout settles the per-step settle budget: the caller's value,
+// defaulted when unset, and raised to whatever the driver says its own settle
+// needs. The chrome driver's settle waits for the DOM to go quiet and only then
+// opens its route-transition window; handed less than their sum it is cut off
+// mid-transition, and the step samples the screen the app is leaving. A driver
+// that reports no floor keeps the caller's value exactly.
+func resolveIdleTimeout(options Options) time.Duration {
+	timeout := options.IdleTimeout
+	if timeout <= 0 {
+		timeout = defaultIdleTimeout
+	}
+	if floor, ok := options.Driver.(idleTimeoutFloor); ok {
+		timeout = max(timeout, floor.MinIdleTimeout())
+	}
+	return timeout
 }
 
 // ensureForeground keeps the app under test in the foreground. When the driver

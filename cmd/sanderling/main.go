@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/priyanshujain/sanderling/internal/testrun"
 )
 
 // Version is stamped at build time via goreleaser ldflags.
@@ -18,22 +20,23 @@ import (
 var Version = "dev"
 
 type testOptions struct {
-	spec           string
-	bundleID       string
-	platform       string
-	avd            string
-	device         string
-	iosDevice      string
-	iosAppPath     string
-	androidAppPath string
-	duration       time.Duration
-	maxSteps       int
-	arm            string
-	seed           int64
-	output         string
-	clearData      bool
-	generator      string
-	labelSource    string
+	spec            string
+	bundleID        string
+	platform        string
+	avd             string
+	device          string
+	iosDevice       string
+	iosAppPath      string
+	androidAppPath  string
+	duration        time.Duration
+	maxSteps        int
+	arm             string
+	seed            int64
+	output          string
+	clearData       bool
+	generator       string
+	labelSource     string
+	exitOnViolation bool
 }
 
 const topUsage = `sanderling is a property-based UI fuzzer for mobile apps.
@@ -70,6 +73,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.StringVar(&options.arm, "arm", "", "experiment cell label, recorded in meta.json so a directory of runs can be attributed to a cell")
 	flagSet.StringVar(&options.generator, "generator", "seeded", "action generator: seeded (weighted random) or llm (model picks from the same candidate set; requires generator = llm() in the spec)")
 	flagSet.StringVar(&options.labelSource, "label-source", "visible-text", "how candidates are named to the llm generator: visible-text (what a user reads) or resource-id (the identifier the app assigned). The seeded generator picks by index and ignores this")
+	flagSet.BoolVar(&options.exitOnViolation, "exit-on-violation", false, "stop the run at the first property violation and exit 2, so CI can tell a found bug (2) from a broken harness (1)")
 	if err := flagSet.Parse(args); err != nil {
 		return testOptions{}, err
 	}
@@ -151,13 +155,25 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 func main() {
-	if err := run(os.Args, os.Stdout, os.Stderr); err != nil {
-		// flag.ErrHelp means -h/--help was requested; flag already printed
-		// usage to stderr, so exit 0 rather than treating it as a failure.
-		if errors.Is(err, flag.ErrHelp) {
-			return
-		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+	if code := exitCode(run(os.Args, os.Stdout, os.Stderr), os.Stderr); code != 0 {
+		os.Exit(code)
 	}
+}
+
+// exitCode maps a command result to the process status and reports it on
+// stderr. 2 means the run did its job and found violations under
+// --exit-on-violation; 1 stays "something went wrong", so CI can tell a found
+// bug from a broken harness. flag.ErrHelp means -h/--help was requested and
+// flag already printed usage, so it exits 0 rather than reading as a failure.
+func exitCode(err error, stderr io.Writer) int {
+	if err == nil || errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	var violations testrun.ViolationsError
+	if errors.As(err, &violations) {
+		fmt.Fprintf(stderr, "violations: %d\n", violations.Count)
+		return 2
+	}
+	fmt.Fprintf(stderr, "error: %v\n", err)
+	return 1
 }
