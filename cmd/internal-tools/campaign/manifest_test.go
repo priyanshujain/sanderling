@@ -41,6 +41,30 @@ func TestBuildManifest_RecordsIntendedRunsAndTemplate(t *testing.T) {
 	}
 }
 
+func TestWriteManifest_RecordsTheLabelSourceCell(t *testing.T) {
+	configuration, err := parseArguments(append(baseArguments(), "--label-source", "resource-id"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	if err := writeManifest(directory, buildManifest(configuration, "host", "sanderling", "dev", time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(directory, manifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		LabelSource string `json:"label_source"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.LabelSource != "resource-id" {
+		t.Errorf("label_source: got %q, want resource-id", decoded.LabelSource)
+	}
+}
+
 func TestBuildManifest_EmptyDeviceListSerializesAsArray(t *testing.T) {
 	configuration, err := parseArguments(baseArguments(), io.Discard)
 	if err != nil {

@@ -21,6 +21,7 @@ const (
 type manifest struct {
 	Arm               string    `json:"arm"`
 	Generator         string    `json:"generator"`
+	LabelSource       string    `json:"label_source"`
 	Platform          string    `json:"platform"`
 	SpecPath          string    `json:"spec_path"`
 	BundleID          string    `json:"bundle_id"`
@@ -44,6 +45,7 @@ func buildManifest(configuration config, host, binaryPath, version string, start
 	return manifest{
 		Arm:               configuration.arm,
 		Generator:         configuration.generator,
+		LabelSource:       configuration.labelSource,
 		Platform:          configuration.platform,
 		SpecPath:          configuration.specPath,
 		BundleID:          configuration.bundleID,
