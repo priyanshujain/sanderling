@@ -35,8 +35,8 @@ interface DriverBackend {
     // off one pipeline: a backend that waits out a transition or closes a
     // keyboard before reading has to do the same on both, or the two trees
     // differ over what the backend did between them rather than over what the
-    // app did. On this device an IME standing open is a 489-node tree against
-    // the snapshot's 134.
+    // app did. Measured on an API 34 emulator, an IME standing open is a
+    // 489-node bare read against the snapshot's 134.
     fun snapshotTree(): String = hierarchy()
 
     // snapshot captures hierarchy then screenshot back-to-back. The service
