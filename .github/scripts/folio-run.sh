@@ -89,7 +89,11 @@ esac
 code=$?
 
 run_dir="$(ls -d "$output"/*/ 2>/dev/null | tail -1)"
-trace="${run_dir:-.}/trace.jsonl"
+# No run directory means no trace. Defaulting the directory to `.` here reads a
+# stray ./trace.jsonl and reports it as this run's evidence, which is how a run
+# that wrote nothing at all reached "found the submit bug" and exit 0.
+trace=""
+[ -n "$run_dir" ] && trace="${run_dir}trace.jsonl"
 steps=0
 [ -f "$trace" ] && steps=$(wc -l < "$trace" | tr -d ' ')
 
