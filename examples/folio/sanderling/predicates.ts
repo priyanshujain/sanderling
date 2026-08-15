@@ -249,14 +249,52 @@ export function acrossRelaunch(lastAction: ObservedAction | null): boolean {
 // well have landed. Leaving it out is what convicted a healthy app:
 // committedTransactionsExceedSubmits saw a transaction rise of one against a
 // window of zero and called it a double submit.
+//
+// A submit the app must have refused does not count, for the mirror reason: it
+// cannot have committed anything, so the bound it would raise is slack the app
+// can hide a real double submit behind. See submitCouldCommit for what "must
+// have refused" is allowed to mean.
 export function countSubmitsInWindow(args: {
   previousCount: number;
   lastAction: ObservedAction | null;
+  amountText?: string;
   fresh: boolean;
 }): { reported: number; next: number } {
   const { previousCount, lastAction, fresh } = args;
-  const reported = previousCount + (isTxnSubmitTap(lastAction) ? 1 : 0);
+  // A relaunch is the one thing that can put a form state on screen other than
+  // the one the tap read, so the field it draws proves nothing about it.
+  const refused = !acrossRelaunch(lastAction) && !submitCouldCommit(args.amountText);
+  const reported = previousCount + (isTxnSubmitTap(lastAction) && !refused ? 1 : 0);
   return { reported, next: fresh ? 0 : reported };
+}
+
+// Could the app have committed anything for that submit? The amount field as
+// the LANDING frame shows it is the form state the tap read: the tap changes
+// nothing about it, and one action runs per step, so nothing else could have.
+// Off the transaction screen there is no field to read, and undefined is
+// unknown, which counts.
+//
+// False only where Folio's own code must have refused. parseCents takes
+// `^\d+(\.\d{1,2})?$` with commas stripped and refuses everything else, and
+// AddTransactionViewModel refuses a parsed zero on top of that. An empty field
+// never even reaches the parser: TxnSubmit is
+// clickable(enabled = amount.isNotBlank()), so the click does not fire.
+//
+// This is the difference between a bound and a useless one. The window is an
+// upper bound on the transactions the interval could hold, and a bound inflated
+// by taps that commit nothing is a bound the app can never exceed: the iOS run
+// in #78 read a rise of 15 transactions against a window of 37 submits and had
+// nothing to say. Measured over four recorded android runs, 19, 11, 25 and 25
+// of 35, 26, 42 and 42 submit taps landed with the amount field empty.
+//
+// An amount too large for a Kotlin Long is refused by the app too, and still
+// counts here: over-counting can only cost a detection, and the reading that
+// would have to prove the overflow is a float that cannot hold the number.
+export function submitCouldCommit(amountText: string | undefined): boolean {
+  if (amountText === undefined) return true;
+  const trimmed = amountText.trim().replace(/,/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return false;
+  return /[1-9]/.test(trimmed);
 }
 
 // Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to
