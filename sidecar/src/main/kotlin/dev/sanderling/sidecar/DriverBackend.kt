@@ -957,31 +957,38 @@ internal fun deleteKeyCommands(count: Int, batch: Int): List<String> {
     }
 }
 
-// focusedEditableTextLength reports how much text the focused editable node
-// holds, or null when the tree names no focused editable node. Null is
-// "cannot tell", which is not the same as empty and must not be read as it.
+// focusedEditableTextLength reports how much text the focused text field
+// holds, or null when the tree names no focused text field. Null is "cannot
+// tell", which is not the same as empty and must not be read as it.
+//
+// The field is found by class, not by an "editable" attribute: maestro's tree
+// carries no such attribute. Class also settles the trap an open keyboard
+// sets, which is that the IME contributes a focused node of its own. That node
+// holds no text, so taking the first focused node would read a field still
+// holding 4096 characters as empty, and empty is the answer that stops the
+// erase.
 internal fun focusedEditableTextLength(treeJson: String): Int? {
     if (treeJson.isBlank()) return null
     return try {
-        focusedEditableLength(jsonMapper.readTree(treeJson))
+        focusedFieldLength(jsonMapper.readTree(treeJson))
     } catch (_: Exception) {
         null
     }
 }
 
-private fun focusedEditableLength(
+private fun focusedFieldLength(
     node: com.fasterxml.jackson.databind.JsonNode,
 ): Int? {
     val attributes = node.get("attributes")
     if (attributes != null && attributes.isObject &&
         attributes.get("focused")?.asText() == "true" &&
-        attributes.get("editable")?.asText() == "true"
+        attributes.get("class")?.asText().orEmpty().endsWith("EditText")
     ) {
         return attributes.get("text")?.asText().orEmpty().length
     }
     val children = node.get("children") ?: return null
     if (!children.isArray) return null
-    for (child in children) focusedEditableLength(child)?.let { return it }
+    for (child in children) focusedFieldLength(child)?.let { return it }
     return null
 }
 
