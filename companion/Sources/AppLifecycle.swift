@@ -9,6 +9,7 @@ enum AppLifecycle {
     }
 
     static func launch(bundleIdentifier: String, foregroundIfRunning: Bool) throws {
+        var reached = XCUIApplication.State.unknown
         try onMainCatching {
             let application = XCUIApplication(bundleIdentifier: bundleIdentifier)
             if foregroundIfRunning {
@@ -18,6 +19,17 @@ enum AppLifecycle {
             } else {
                 application.launch()
             }
+            reached = application.state
+        }
+        // A refused launch is recorded as a test issue that never throws, so
+        // without this the runner answers ok for an app that is not running
+        // and the host learns nothing until its own bound expires.
+        switch reached {
+        case .runningForeground, .runningBackground, .runningBackgroundSuspended:
+            return
+        default:
+            throw LifecycleError.failed(
+                "\(bundleIdentifier) is \(name(of: reached)) after launch")
         }
     }
 
@@ -52,6 +64,21 @@ enum AppLifecycle {
             DispatchQueue.main.sync(execute: collect)
         }
         return result
+    }
+
+    private static func name(of state: XCUIApplication.State) -> String {
+        switch state {
+        case .runningForeground:
+            return "foreground"
+        case .runningBackground:
+            return "background"
+        case .runningBackgroundSuspended:
+            return "suspended"
+        case .notRunning:
+            return "not running"
+        default:
+            return "unknown"
+        }
     }
 
     // onMainCatching runs automation work on the main thread and converts a
