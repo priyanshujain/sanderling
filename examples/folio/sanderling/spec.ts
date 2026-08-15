@@ -22,6 +22,7 @@ import {
   createdAccountHasNonZeroBalance,
   homeAccountsOf,
   homeTxnCountsOf,
+  oncePerFrame,
   parseDollarCents,
   parseTypedAmount,
   readHomeCards,
@@ -45,9 +46,12 @@ type Route = keyof typeof SCREENS;
 // The screen this frame shows, or null when it does not show exactly one: see
 // routeOfFrame, which owns that rule and the reason for it. Everything below
 // takes its answer from here, so no two readings can disagree about which
-// screen the app is on.
-const routeOf = (s: State): Route | null =>
-  routeOfFrame<Route>(SCREENS, tag => s.ax.find({ testTag: tag }) != null);
+// screen the app is on. Every extractor asks, so the answer is read once per
+// frame: see oncePerFrame for why that stays fresh.
+const routeOf = oncePerFrame(
+  (s: State): Route | null =>
+    routeOfFrame<Route>(SCREENS, tag => s.ax.find({ testTag: tag }) != null),
+);
 
 // An element is a reading, and a target, only when the route says we are on its
 // screen. Scoping a find to the screen's own node is not enough on a transition
@@ -73,7 +77,7 @@ const route = extract<Route | null>("route", routeOf);
 //
 // Everything that comes off the card list shares this parse so the readings
 // cannot disagree with each other about what was on screen.
-const homeCards = (s: State): CardReading[] =>
+const homeCards = oncePerFrame((s: State): CardReading[] =>
   allOn("home", "AccountCard")(s).map(card => ({
     name: cardAccountName({
       childText: card.find({ testTag: "AccountName" })?.text,
@@ -88,7 +92,7 @@ const homeCards = (s: State): CardReading[] =>
       childText: card.find({ testTag: "AccountTxnCount" })?.text,
       cardText: card.text,
     }),
-  }));
+  })));
 
 // Total balance: Home's own TOTAL BALANCE node, which the app computes over
 // every account rather than over the cards that happen to be laid out inside

@@ -33,6 +33,28 @@ export function routeOfFrame<R extends string>(
   return shown;
 }
 
+// A reading taken once per frame, keyed on the identity of the state object the
+// reading came off.
+//
+// Both hosts build a NEW state object per step and hand that one object to
+// every extractor: goja's PushSnapshot builds it through stateObject
+// (internal/verifier/worker.go), the web runtime's evaluateExtractors through
+// buildState (pkg/spec/src/web-runtime.ts). So the object IS the frame, and a
+// value cached against it cannot outlive the frame it was read on. Holding the
+// reference is what keeps that true rather than merely likely: the cached state
+// cannot be collected, so no later step's state can be the same object.
+//
+// Worth having because these readings walk the whole tree. On web every
+// `find` is a querySelectorAll across the document and each shadow root
+// beneath it, and the spec takes a dozen of them per step off one frame.
+export function oncePerFrame<S extends object, T>(read: (frame: S) => T): (frame: S) => T {
+  let last: { frame: S; value: T } | null = null;
+  return frame => {
+    if (last === null || last.frame !== frame) last = { frame, value: read(frame) };
+    return last.value;
+  };
+}
+
 // Reads the Home screen's own TOTAL BALANCE node and advances the carrier the
 // spec holds between Home visits.
 //
