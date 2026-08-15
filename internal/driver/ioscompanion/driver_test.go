@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -182,47 +183,149 @@ func TestLaunchContinuesWhenGrantFails(t *testing.T) {
 	}
 }
 
-func TestLaunchClearStateReinstallsWithAppPath(t *testing.T) {
+// clearStateProbe records, in order, the calls a run makes to reset the app and
+// to bring the runner's automation session up. A reinstall recorded after the
+// session is the ordering that races FrontBoard.
+type clearStateProbe struct {
+	mutex  sync.Mutex
+	events []string
+}
+
+func (p *clearStateProbe) record(event string) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.events = append(p.events, event)
+}
+
+func (p *clearStateProbe) recorded() []string {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	out := make([]string, len(p.events))
+	copy(out, p.events)
+	return out
+}
+
+// clearStateOptions wires every seam a hybrid bring-up needs, so New runs its
+// real sequence against fakes: no simulator, no simctl, no XCTest session.
+func clearStateOptions(t *testing.T, probe *clearStateProbe, udid string, clearState bool) Options {
+	t.Helper()
+	t.Setenv("SANDERLING_SIMULATOR_COMPANION", "")
+	address := startLoopbackListener(t)
+	return Options{
+		UniqueDeviceIdentifier: udid,
+		BundleID:               "com.example.app",
+		ClearState:             clearState,
+		Output:                 &bytes.Buffer{},
+		pickAddress:            func() (string, error) { return address, nil },
+		spawnChild:             func(context.Context, string) (*exec.Cmd, error) { return &exec.Cmd{}, nil },
+		dialCompanion: func(string) (transport.Companion, error) {
+			return &fakeCompanion{accessibilityJSON: "[]"}, nil
+		},
+		spawnRunner: func(context.Context, string) (*exec.Cmd, error) {
+			probe.record("runner session")
+			return &exec.Cmd{}, nil
+		},
+		dialRunner: func(string) (transport.Companion, error) {
+			return &fakeCompanion{accessibilityJSON: "[]"}, nil
+		},
+		reinstallApp:   func(context.Context) error { probe.record("reinstall"); return nil },
+		resetContainer: func(context.Context) error { probe.record("reset container"); return nil },
+	}
+}
+
+func TestClearStateReinstallsOnceBeforeTheRunnerSession(t *testing.T) {
+	probe := &clearStateProbe{}
+	options := clearStateOptions(t, probe, "CLEAR-REINSTALL-UDID", true)
+	options.AppPath = "/tmp/Sample.app"
+
+	d, err := New(context.Background(), options)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer d.Close()
+	if err := d.Launch(context.Background(), "", true, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	want := []string{"reinstall", "runner session"}
+	if got := probe.recorded(); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v: the reinstall must run once, before the automation session attaches", got, want)
+	}
+}
+
+func TestClearStateWithoutAppPathWipesContainerBeforeTheRunnerSession(t *testing.T) {
+	probe := &clearStateProbe{}
+	output := &bytes.Buffer{}
+	options := clearStateOptions(t, probe, "CLEAR-CONTAINER-UDID", true)
+	options.Output = output
+
+	d, err := New(context.Background(), options)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer d.Close()
+	if err := d.Launch(context.Background(), "", true, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	want := []string{"reset container", "runner session"}
+	if got := probe.recorded(); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v: the fallback must wipe the container once, before the session, and never reinstall", got, want)
+	}
+	if warnings := strings.Count(output.String(), "resetting the data container only"); warnings != 1 {
+		t.Fatalf("warning emitted %d times, want once", warnings)
+	}
+}
+
+func TestWithoutClearStateTheAppIsLeftAlone(t *testing.T) {
+	probe := &clearStateProbe{}
+	options := clearStateOptions(t, probe, "NO-CLEAR-UDID", false)
+	options.AppPath = "/tmp/Sample.app"
+
+	d, err := New(context.Background(), options)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer d.Close()
+	if err := d.Launch(context.Background(), "", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	want := []string{"runner session"}
+	if got := probe.recorded(); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v: a run that did not ask for clear state must not touch the install", got, want)
+	}
+}
+
+func TestLaunchRefusesClearStateTheDriverWasNotBuiltFor(t *testing.T) {
 	companion := &fakeCompanion{accessibilityJSON: "[]"}
 	d := newTestDriver(companion)
 	d.appPath = "/tmp/Sample.app"
 	reinstalls := 0
 	d.reinstallApp = func(context.Context) error { reinstalls++; return nil }
-	if err := d.Launch(context.Background(), "", true, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
+
+	err := d.Launch(context.Background(), "", true, nil)
+	if err == nil || !strings.Contains(err.Error(), "clear-state") {
+		t.Fatalf("Launch err = %v, want a refusal naming clear-state", err)
 	}
-	if reinstalls != 1 {
-		t.Fatalf("clear-state with app path must reinstall exactly once; got %d", reinstalls)
+	if reinstalls != 0 {
+		t.Fatalf("reinstalls = %d, want 0: a live session must never have the app reinstalled under it", reinstalls)
 	}
-	if indexOf(companion.calls, "launch") < indexOf(companion.calls, "terminate") {
-		t.Fatalf("launch must still follow terminate; got %v", companion.calls)
+	if indexOf(companion.recorded(), "launch") >= 0 {
+		t.Fatalf("a refused launch must not reach the companion; got %v", companion.recorded())
 	}
 }
 
-func TestLaunchClearStateFallbackWarnsOnce(t *testing.T) {
-	companion := &fakeCompanion{accessibilityJSON: "[]"}
-	output := &bytes.Buffer{}
-	d := newTestDriver(companion)
-	d.output = output
-	resets := 0
-	d.resetContainer = func(context.Context) error { resets++; return nil }
+func TestNewRejectsClearStateWithoutBundleID(t *testing.T) {
+	probe := &clearStateProbe{}
+	options := clearStateOptions(t, probe, "NO-BUNDLE-UDID", true)
+	options.BundleID = ""
 
-	for i := 0; i < 2; i++ {
-		if err := d.Launch(context.Background(), "", true, nil); err != nil {
-			t.Fatalf("Launch %d: %v", i, err)
-		}
+	if _, err := New(context.Background(), options); err == nil || !strings.Contains(err.Error(), "BundleID") {
+		t.Fatalf("New err = %v, want a refusal naming BundleID", err)
 	}
-	if resets != 2 {
-		t.Fatalf("resetContainer called %d times, want 2", resets)
-	}
-	warnings := strings.Count(output.String(), "resetting the data container only")
-	if warnings != 1 {
-		t.Fatalf("warning emitted %d times, want once", warnings)
-	}
-	for _, call := range companion.calls {
-		if call == "install" || call == "uninstall" {
-			t.Fatalf("fallback path must not install/uninstall; got %v", companion.calls)
-		}
+	if got := probe.recorded(); len(got) != 0 {
+		t.Fatalf("calls = %v, want none: clearing an unnamed bundle would reinstall without resetting anything", got)
 	}
 }
 
