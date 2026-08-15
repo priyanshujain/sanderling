@@ -6,6 +6,8 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -110,6 +112,43 @@ func TestDoctorChecksFor_Android_IncludesADB(t *testing.T) {
 	}
 }
 
+// The SDK tools a run invokes are resolved through $ANDROID_HOME and the
+// standard install locations, never PATH alone, so a doctor that turns away a
+// host on a PATH lookup condemns a setup every run on it would drive fine.
+func TestAndroidChecks_AcceptSDKToolsThatAreNotOnPath(t *testing.T) {
+	sdk := t.TempDir()
+	for _, tool := range []string{"platform-tools/adb", "emulator/emulator"} {
+		path := filepath.Join(sdk, filepath.FromSlash(tool))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, nil, 0o755); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("ANDROID_HOME", sdk)
+	t.Setenv("ANDROID_SDK_ROOT", "")
+
+	var sdkChecks []doctorCheck
+	for _, check := range doctorChecksFor("android") {
+		if strings.Contains(check.Name, "adb") || strings.Contains(check.Name, "emulator") {
+			sdkChecks = append(sdkChecks, check)
+		}
+	}
+	if len(sdkChecks) != 2 {
+		t.Fatalf("expected the adb and emulator checks, got %d", len(sdkChecks))
+	}
+
+	var stdout bytes.Buffer
+	if err := runDoctorChecks(context.Background(), sdkChecks, &stdout); err != nil {
+		t.Fatalf("doctor: %v\n%s", err, stdout.String())
+	}
+	if strings.Contains(stdout.String(), "FAIL") {
+		t.Errorf("doctor rejected an SDK it can resolve:\n%s", stdout.String())
+	}
+}
+
 func TestDoctorChecksFor_iOS_IncludesXcrun(t *testing.T) {
 	checks := doctorChecksFor("ios")
 	found := false
@@ -129,7 +168,7 @@ func TestDoctorChecksFor_All_IsUnion(t *testing.T) {
 	for _, c := range all {
 		names[c.Name]++
 	}
-	for _, name := range []string{"adb on PATH", "xcrun on PATH (ios simulator)", "headless chromium can launch"} {
+	for _, name := range []string{"adb on PATH or under the Android SDK", "xcrun on PATH (ios simulator)", "headless chromium can launch"} {
 		if names[name] != 1 {
 			t.Errorf("expected %q in 'all' exactly once, got %d", name, names[name])
 		}
