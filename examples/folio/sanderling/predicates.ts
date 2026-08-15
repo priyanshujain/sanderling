@@ -123,6 +123,51 @@ export function readHomeCards<T>(args: {
   return { value: reading, carrier: reading, fresh: true };
 }
 
+// The balance of the ONE account the ledger and the add-transaction screen are
+// showing, and the window it closes.
+//
+// It exists because the Home readings above close their window only when the
+// walk goes back to Home, and a walk inside the transaction flow does not: a
+// submit pops back to the ledger it came from, so the fuzzer can add
+// transactions all day without Home ever being redrawn. The iOS run in #78 went
+// 117 steps between two Home readings and accumulated 37 submits against a rise
+// of 15 transactions, which is no evidence about any single action. Both
+// screens here carry the account's own balance (LedgerBalance,
+// TxnCurrentBalance), so the window between two readings holds one action.
+//
+// WHICH account is never asked, because inside a run of these two routes it
+// cannot change. Route.Ledger is pushed only by tapping a card on Home,
+// Route.AddTransaction only by the ledger's own button for its own account, and
+// an accepted submit pops back to that same ledger. Reaching another account's
+// ledger means passing through Home, and one action reads one frame, so a frame
+// that is neither of these two routes always sits in between. Dropping the
+// carrier on every such frame, transition frames included, is what makes the
+// two compared numbers two readings of one account.
+export interface AccountBalanceReading {
+  value: number | null;
+  carrier: number | null;
+  fresh: boolean;
+}
+
+function showsOneAccount(route: string | null): boolean {
+  return route === "ledger" || route === "add-transaction";
+}
+
+export function readAccountBalance(args: {
+  route: string | null;
+  balanceText: string | undefined;
+  previousCarrier: number | null;
+}): AccountBalanceReading {
+  const { route, balanceText, previousCarrier } = args;
+  if (!showsOneAccount(route)) return { value: null, carrier: null, fresh: false };
+  const balance = parseAccountBalance(balanceText);
+  // Unreadable is unknown, not a new value: the balance node scrolls off the
+  // viewport like anything else. The account still cannot have changed, so the
+  // last number we read is carried across and the window stays open.
+  if (balance === null) return { value: previousCarrier, carrier: previousCarrier, fresh: false };
+  return { value: balance, carrier: balance, fresh: true };
+}
+
 // state.lastAction as the two hosts build it (internal/verifier/marshal.go
 // lastActionFields), read defensively: every field is what a Go struct decided
 // to emit, not something this file can trust a compile-time shape for.
@@ -136,6 +181,7 @@ export interface ObservedAction {
   kind?: string;
   on?: string | object;
   applied?: true | null;
+  relaunched?: true | null;
 }
 
 function isTapOn(lastAction: ObservedAction | null, target: string): boolean {
@@ -171,6 +217,19 @@ export function confirmedApplied(lastAction: ObservedAction | null): boolean {
   return lastAction != null && lastAction.applied === true;
 }
 
+// The runner reports this when its foreground guard had to relaunch the app
+// after the action. The action still happened, so it still counts toward how
+// many submits a window could hold; what nobody can promise across it is that
+// the process survived long enough to commit, or that Home is showing the same
+// slice of the account list it was.
+//
+// `true | null` for the same reason `applied` is: web and iOS cannot read the
+// foreground at all, so "no relaunch reported" is not "the app never
+// restarted", and only an explicit true licenses declining.
+export function acrossRelaunch(lastAction: ObservedAction | null): boolean {
+  return lastAction != null && lastAction.relaunched === true;
+}
+
 // Counts the submit actions inside the window the balance property compares
 // over: from the last Home total we read to this step, inclusive of this step's
 // action.
@@ -190,14 +249,52 @@ export function confirmedApplied(lastAction: ObservedAction | null): boolean {
 // well have landed. Leaving it out is what convicted a healthy app:
 // committedTransactionsExceedSubmits saw a transaction rise of one against a
 // window of zero and called it a double submit.
+//
+// A submit the app must have refused does not count, for the mirror reason: it
+// cannot have committed anything, so the bound it would raise is slack the app
+// can hide a real double submit behind. See submitCouldCommit for what "must
+// have refused" is allowed to mean.
 export function countSubmitsInWindow(args: {
   previousCount: number;
   lastAction: ObservedAction | null;
+  amountText?: string;
   fresh: boolean;
 }): { reported: number; next: number } {
   const { previousCount, lastAction, fresh } = args;
-  const reported = previousCount + (isTxnSubmitTap(lastAction) ? 1 : 0);
+  // A relaunch is the one thing that can put a form state on screen other than
+  // the one the tap read, so the field it draws proves nothing about it.
+  const refused = !acrossRelaunch(lastAction) && !submitCouldCommit(args.amountText);
+  const reported = previousCount + (isTxnSubmitTap(lastAction) && !refused ? 1 : 0);
   return { reported, next: fresh ? 0 : reported };
+}
+
+// Could the app have committed anything for that submit? The amount field as
+// the LANDING frame shows it is the form state the tap read: the tap changes
+// nothing about it, and one action runs per step, so nothing else could have.
+// Off the transaction screen there is no field to read, and undefined is
+// unknown, which counts.
+//
+// False only where Folio's own code must have refused. parseCents takes
+// `^\d+(\.\d{1,2})?$` with commas stripped and refuses everything else, and
+// AddTransactionViewModel refuses a parsed zero on top of that. An empty field
+// never even reaches the parser: TxnSubmit is
+// clickable(enabled = amount.isNotBlank()), so the click does not fire.
+//
+// This is the difference between a bound and a useless one. The window is an
+// upper bound on the transactions the interval could hold, and a bound inflated
+// by taps that commit nothing is a bound the app can never exceed: the iOS run
+// in #78 read a rise of 15 transactions against a window of 37 submits and had
+// nothing to say. Measured over four recorded android runs, 19, 11, 25 and 25
+// of 35, 26, 42 and 42 submit taps landed with the amount field empty.
+//
+// An amount too large for a Kotlin Long is refused by the app too, and still
+// counts here: over-counting can only cost a detection, and the reading that
+// would have to prove the overflow is a float that cannot hold the number.
+export function submitCouldCommit(amountText: string | undefined): boolean {
+  if (amountText === undefined) return true;
+  const trimmed = amountText.trim().replace(/,/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return false;
+  return /[1-9]/.test(trimmed);
 }
 
 // Parses formatCents output like "$5.00", "-$1,234.56", "+$0.50" back to
@@ -240,6 +337,15 @@ export function cardBalanceText(args: {
   return match ? match[0].trim() : undefined;
 }
 
+// One account's own balance, off the node whose whole text it is: bare on the
+// ledger ("$196.00"), labelled in the add-transaction header
+// ("Balance: $196.00"). Anchored at the end for the same reason as above, so
+// the label cannot be read as part of the amount.
+export function parseAccountBalance(text: string | undefined): number | null {
+  const match = text?.match(TRAILING_BALANCE);
+  return match ? parseDollarCents(match[0].trim()) : null;
+}
+
 // The result is an identity key, not a display name: off web it is the
 // AccountName text, on web it is whatever the merged card text leaves in front
 // of the count label, initials and all ("T2Travel" for "Travel 2024"). Its only
@@ -257,6 +363,24 @@ export function cardAccountName(args: {
   const label = head.match(TRAILING_TXN_COUNT);
   if (!label || label.index === undefined) return head.trim();
   return head.slice(0, label.index).trim();
+}
+
+// The avatar text that opens a merged card's identity key, mirroring Folio's
+// initialsOf (app/shared/.../util/Format.kt).
+//
+// A mirror because the alternative is a suffix test, and a suffix test cannot
+// say which card a name belongs to. Drift can only cost a detection: the result
+// is compared whole against a card's key, so initials that stop matching the
+// app match no card rather than the wrong one.
+export function initialsOf(name: string): string {
+  // Java's \s, which is what Kotlin's Regex("\\s+") compiles to. JS's \s also
+  // matches the unicode spaces, and would split names the app keeps whole.
+  const parts = name.trim().split(/[ \t\n\v\f\r]+/).filter(part => part !== "");
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  if (first === undefined || last === undefined) return "?";
+  if (parts.length === 1) return first.slice(0, 2).toUpperCase();
+  return (first.slice(0, 1) + last.slice(0, 1)).toUpperCase();
 }
 
 // One card's transaction count, in the strongest form its SOURCE supports. The
@@ -331,13 +455,26 @@ export function homeAccountsOf(cards: readonly CardReading[]): Account[] | null 
 //
 // A name carried by more than one card is left out for the same reason, the
 // rule createdAccountHasNonZeroBalance applies with `matches.length === 1`:
-// nothing here can say which of them a count came from. Folio accepts the same
-// account name twice and Home lists whatever fits the viewport, so a reading
-// that saw one Travel card and a later one that saw two would otherwise
-// subtract two DIFFERENT accounts' counts and convict a healthy app of
-// double-submitting. The twin does not have to be readable to spoil the
-// identity, so duplicates are counted over every card, not just the usable
-// ones. Dropping a card can only ever cost a detection.
+// nothing here can say which of them a count came from. Two accounts never
+// share a NAME (Accounts.name is UNIQUE and Repository.createAccount rejects
+// one already taken, NOCASE), but they can share a KEY, because web's key is
+// the card text in front of the digit run, which is the name with any trailing
+// digits shaved off it: "Travel1" holding 25 transactions and "Travel12"
+// holding 6 both key to "TRTravel" and both read a three-digit run, so
+// subtracting one from the other subtracts two unrelated counting series. The
+// twin does not have to be readable to spoil the identity, so duplicates are
+// counted over every card, not just the usable ones. Dropping a card can only
+// ever cost a detection.
+//
+// What this cannot see is a twin that never shares a reading with its pair, and
+// Home lists only what fits the viewport. Nothing computed from the card text
+// can: the two cards' text is identical character for character ("TRTravel1"
+// followed by "25 transactions" and "TRTravel12" followed by "6 transactions"
+// are one string), so no key derived from it separates them. Refusing every run
+// that could hide a name's own digits would, at the price of the evidence web
+// convicts on today, whose measured witness is a count of 12 rising to 14.
+// Separating them needs something the tree does not carry: the account's id on
+// the card, or a separator in front of the count.
 export function homeTxnCountsOf(cards: readonly CardReading[]): Record<string, TxnCount> | null {
   const cardsPerName = new Map<string, number>();
   for (const card of cards) cardsPerName.set(card.name, (cardsPerName.get(card.name) ?? 0) + 1);
@@ -381,15 +518,30 @@ export function createdAccountHasNonZeroBalance(args: {
   // card to: the card that turned up may be an older account of the same name
   // scrolling into view.
   if (!confirmedApplied(lastAction)) return false;
+  // A relaunch draws Home from the top again, so the card that carries the
+  // typed name may be an older account of that name laid out where the new one
+  // used to be, and the create may not have reached sqlite at all.
+  if (acrossRelaunch(lastAction)) return false;
   if (before === null || after === null) return false;
   const typed = (args.typedName ?? "").trim();
   if (typed === "") return false;
   // Web merges the card into one node whose text opens with the avatar
   // initials, so the identity key is "INInvestments" where android and iOS give
-  // "Investments"; endsWith covers both. Two cards answering to the same typed
-  // name (a second "Travel", or a card the tree exposed twice) leave the
-  // appearance unattributable, so nothing is judged.
-  const matches = after.filter(account => account.name.endsWith(typed));
+  // "Investments". Both forms are built from the name that was typed and
+  // compared whole. A suffix test covered both too, and it also let any OTHER
+  // account ending in those letters answer for the created one: type "Fund"
+  // next to an existing "Emergency Fund", have the new card clipped out of the
+  // reading the way Home clips any card, and the old account is convicted for
+  // money it has held all along. It cost detections as well, because a typed
+  // name that two cards end with is judged as unattributable rather than as the
+  // one card that carries it.
+  //
+  // Two cards answering to one key stay unattributable: Accounts.name is UNIQUE
+  // and Repository.createAccount rejects a name already taken, so that pair is
+  // a card the tree exposed twice, or two names the merged key cannot tell
+  // apart.
+  const mergedKey = initialsOf(typed) + typed;
+  const matches = after.filter(account => account.name === typed || account.name === mergedKey);
   const created = matches.length === 1 ? matches[0] : undefined;
   if (created === undefined) return false;
   if (before.some(account => account.name === created.name)) return false;
@@ -429,6 +581,54 @@ export function committedTransactionsExceedSubmits(args: {
     if (rise !== null && rise > 0) committed += rise;
   }
   return committed > submitsInWindow;
+}
+
+// The same rule as above, measured in money over the account's own window: one
+// submit action can commit one transaction, so the account's balance cannot
+// move by more than the amount that submit typed.
+//
+// An UPPER BOUND, not the equality submitChangesBalanceByTypedAmount uses, and
+// that is what makes a one-action window safe. A balance that has not moved is
+// a commit still in flight (createTransaction runs in a coroutine), a submit
+// the app rejected, or a tap that never landed, and none of those is evidence
+// of anything; an equality would convict all three. Moving by MORE than one
+// submit's worth is not something a correct app can do: only createTransaction
+// moves this number, only a TxnSubmit tap reaches it, and the window holds
+// exactly one such tap. A double tap is one action committing two transactions,
+// so it moves the balance by twice what was typed and lands here.
+//
+// A submit the runner could not confirm needs no case of its own for the same
+// reason: if it never landed the balance did not move, which is under the
+// bound. countSubmitsInWindow counts it either way, so it cannot smuggle a
+// second commit into a window that looks like one.
+//
+// typedAmount is the amount the app parsed for THIS submit (parseTypedAmount
+// mirrors parseCents), so every rejected amount and every amount too large to
+// hold exactly arrives here as 0 and is vacuous.
+//
+// The float guards are the ones submitChangesBalanceByTypedAmount explains:
+// each balance and the typed amount lose precision on their own past
+// Number.MAX_SAFE_INTEGER. Their difference needs none, because a difference
+// that is really within a safe typedAmount is itself safe and comes out exact.
+export function committedAmountExceedsOneSubmit(args: {
+  route: string | null;
+  lastAction: ObservedAction | null;
+  submitsInWindow: number;
+  typedAmount: number;
+  prevAccountBalance: number | null;
+  currAccountBalance: number | null;
+}): boolean {
+  const { route, lastAction, submitsInWindow, typedAmount } = args;
+  const { prevAccountBalance, currAccountBalance } = args;
+  if (!showsOneAccount(route)) return false;
+  if (!isTxnSubmitTap(lastAction)) return false;
+  if (submitsInWindow !== 1) return false;
+  if (typedAmount <= 0) return false;
+  if (prevAccountBalance === null || currAccountBalance === null) return false;
+  if (!Number.isSafeInteger(prevAccountBalance)) return false;
+  if (!Number.isSafeInteger(currAccountBalance)) return false;
+  if (!Number.isSafeInteger(typedAmount)) return false;
+  return Math.abs(currAccountBalance - prevAccountBalance) > typedAmount;
 }
 
 // How far one account's count rose between two readings, or null when the pair
@@ -510,6 +710,10 @@ export function submitChangesBalanceByTypedAmount(args: {
   // runner could not confirm may have committed nothing, and a balance that
   // did not move is then exactly what a healthy app looks like.
   if (!confirmedApplied(lastAction)) return true;
+  // The runner restarted the app after this tap, so the process may have died
+  // between the commit and the sqlite write. A balance that did not move is
+  // then a healthy app, exactly as it is for a submit that may not have landed.
+  if (acrossRelaunch(lastAction)) return true;
   if (submitsInWindow !== 1) return true;
   if (typedAmount === 0) return true;
   // An unknown total on either side is not evidence of anything. Comparing one

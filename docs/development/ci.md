@@ -96,27 +96,90 @@ The wasmJs app is served with `Cross-Origin-Opener-Policy` and
 cross-origin isolation. Served without them the app loads a blank canvas and
 every step observes an empty accessibility tree.
 
-The seeds are calibrated, not guessed. On an M-series mac, web seed 3 convicts at
-step 185-187 and ios seed 7 at step 97-101, each 3 runs out of 3 and each with a
-delta of exactly twice the typed amount. Both run a 240-step budget. Keep them
-pinned: honest evidence is rare, and across 2261 ios steps only one submit tap
-landing on Home had a single-submit window.
+The seeds are calibrated, not guessed, and every number here says which host it
+was measured on, because the hosts do not agree. On an M3 mac driving iOS 26.1
+simulators, ios seed 7 convicts at step 97-101, 11 runs out of 11 from a cleared
+install, each on both properties and each with the balance moving by exactly
+twice the typed amount: 199 typed, 39800 cents moved, one account's transaction
+count rising by two against a window holding one submit. Web seed 3 convicts at
+step 185-187 on that mac and at step 192 on the ubuntu runner. Both legs run a
+240-step budget.
 
-Android runs seed 9 over 200 steps: its conviction lands at step 178, so a
+What those numbers assume is a cleared starting state, and that is the only thing
+that moved them. Measured four ways on one simulator, seed 7 convicts at step 97
+from a fresh install with clear-state on, at 100 from a fresh install with it
+off, and at 97 from a dirty container with it on. It walks 240 steps clean
+exactly once: dirty container, clear-state off, where the app opens already
+signed in on the previous run's accounts and the walk diverges at step 1. The leg
+therefore clears state for itself rather than relying on how it was called.
+
+Do not read a mac number as a statement about CI. **The ios leg does not
+currently convict on the runner at all**, and no seed fixes that. Seed 7 and seed
+28 were both dispatched against macos-15 and both ran 240 steps clean, from the
+state the mac convicts from.
+
+Seed 7 diverges: the two walks agree action for action through step 48, where a
+double-tapped submit lands, and there the mac's next snapshot showed Home while
+the runner's still showed the transaction screen. Past that they are unrelated
+walks.
+
+Seed 28 is the informative one, because it did not diverge. It double-tapped
+Submit on the runner at step 32, which is exactly where it convicts on the mac 8
+runs out of 8. The counting invariant still could not judge it, and the trace
+says why. `submitCommitsOneTransactionPerAction` only evaluates when a Home
+reading arrives, and that run went from step 19 to step 136 without once
+returning Home:
+
+    step  19  null             -> {Checking: 0}              submits 0
+    step 136  {Checking: 0}    -> {Checking: 15}             submits 37
+    step 164  {Checking: 15}   -> {Checking: 19}             submits 7
+    step 222  {..., Travel: 0} -> {Checking: 25, Travel: 0}  submits 13
+    step 239  {Checking: 25}   -> {Checking: 26, Travel: 0}  submits 1
+
+A rise of 15 against a window of 37 is not a violation, and neither is 4 against
+7, 6 against 13, or 1 against 1. The property is sound; it needs a window holding
+roughly one submit before it can convict, and whether the walk closes the window
+soon after a double tap is timing dependent.
+
+So reaching the bug is necessary and not sufficient. Across 2411 swept steps only
+14 double-tapped Submit at all, and only one of those landed in a window the
+counting invariant could judge. Until the property can attribute a submit without
+waiting for Home, treat an ios pass as evidence and an ios failure as unproven.
+The transaction rows carry a `LedgerRow` test tag on the ledger screen, which the
+walk visits far more often than Home, so a count that does not depend on Home is
+available; it needs per-account attribution, since the ledger shows one account
+where Home shows all of them.
+
+Android runs seed 9 over 200 steps. Its conviction lands around step 178, and a
 shorter budget would never see the bonus. A full run costs about five minutes.
 
-Repeating the ios leg by hand is not the same as running it in CI: with
-`--clear-data=false` a second local run inherits the first one's accounts, so
-`simctl uninstall` before each repeat or the numbers drift.
+That step number was measured on a local emulator with animations ON, and the CI
+job sets `disable-animations: true`, so it does not describe the CI leg. The
+worry that follows is that zeroing the 700ms Compose fade would stop the leg
+exercising the cross-fade wait entirely. The first real dispatch says otherwise:
+its 200-step trace carries 4 `transitional` steps, so the wait still fires, just
+far less often than it does locally. Treat the android number as an order of
+magnitude, not a pin. It is a health gate, so nothing keys on it.
 
-The ios leg passes `--clear-data=false`, because the job installs a fresh build
-immediately before the run and a freshly installed app is already clear state.
-The in-run reinstall is worth avoiding: `simctl uninstall` + `install` followed
-straight away by the XCTest runner's own launch fails with `app.folio is unknown
-to FrontBoard` maybe half the time. That used to hang the run outright; the
-launch RPC is bounded now, so it fails in about 90 seconds with a real error
-instead, but a failing leg is still a failing leg. The job timeouts are the
-backstop if it happens anyway.
+Repeating the ios leg by hand needs nothing special now, because the run clears
+the app's state itself. It used to: `just ios` installs over the top without
+uninstalling and folio's signed-in session survives that, so a repeat under the
+old `--clear-data=false` opened on the previous run's Home screen and diverged at
+step 1. That is how the leg came to look dead while the app and the seed were
+both fine, and it is worth recognising: a leg that reports "the double-submit bug
+was NOT found" from a machine that has been running the app all day is describing
+the machine.
+
+The ios leg clears state and passes no `--ios-app-path`, which is deliberate:
+without an app path the driver wipes the app's data container instead of
+reinstalling, and the reinstall is the path that races FrontBoard. `simctl
+uninstall` + `install` followed straight away by the XCTest runner's own launch
+has failed with `app.folio is unknown to FrontBoard` about half the time on the
+host that reported it. That race is untouched and still open; the leg simply
+does not take that path. It did not reproduce here at all, in 20 consecutive
+reinstall-and-launch cycles on iOS 26.1, 10 of them reinstalling on top of a
+live app, so any fix for it has to be developed on a host that can still show it
+failing.
 
 Only one sanderling run may drive a given simulator at a time. The driver takes
 an advisory lock on the target's UDID and a second run is refused with the lock
@@ -177,3 +240,21 @@ do not raise the step budget blindly - run a seed sweep with the campaign tool
 (`cmd/internal-tools/campaign`), which exists for exactly this, and pin a seed
 that finds the bug with room to spare. A leg failing with "a predicate threw" is
 a different problem entirely and no seed will fix it.
+
+Sweep in the leg's own configuration, though. The campaign tool and the ios leg
+now clear state the same way, so a swept seed means what the leg means, but the
+starting frame is not a detail you can skip checking: while the leg still passed
+`--clear-data=false`, seed 14 convicted at step 17 in 2 campaign runs out of 2
+and in 0 leg-shaped runs out of 3. Prefer the earliest conviction on offer over
+the first one found, too. A run reproduces its trajectory on another host only
+for as long as every snapshot agrees, and every step of prefix is another chance
+for it not to: seeds convicting at steps 33, 60, 114, 187 and 189 all turned up
+within the first 30, so an early one is usually there to be found.
+
+A short prefix is necessary and not sufficient, though, and ios is the standing
+counter-example: seed 28 has the shortest prefix on offer, reproduced its walk on
+the runner exactly, reached the bug at step 32, and still did not convict,
+because the window the counting invariant had to judge it in was 117 steps wide.
+Sweeping selects for a seed that reaches the bug. It cannot select for one whose
+walk also closes the window, so when a property needs a window, check what the
+window looked like and not only that the conviction happened.

@@ -27,10 +27,10 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -43,7 +43,7 @@ jobs:
       # Pinned stable plus the AppArmor sysctl: the same setup ci.yml's browser
       # job needs to get headless Chrome up on ubuntu-latest.
       - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@v2
         with:
           chrome-version: stable
 
@@ -135,7 +135,7 @@ jobs:
 
       - name: Upload runs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: replay-ui-runs
           path: runs/

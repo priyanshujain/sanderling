@@ -12,14 +12,15 @@ import kotlin.test.assertTrue
 
 class WdaRecoveryTest {
 
-    private fun recovery(
-        isAlive: () -> Boolean,
-        restart: () -> Unit,
-    ) = WdaRecovery(isAlive = isAlive, restart = restart, log = {})
+    private fun recovery(isAlive: () -> Boolean, restart: () -> Unit) =
+        WdaRecovery(isAlive = isAlive, restart = restart, log = {})
 
     @Test fun aliveChannelSkipsRestartAndRetriesReads() {
         val restarts = AtomicInteger(0)
-        val recovery = recovery(isAlive = { true }, restart = { restarts.incrementAndGet() })
+        val recovery = recovery(
+            isAlive = { true },
+            restart = { restarts.incrementAndGet() },
+        )
         var calls = 0
 
         val result = recovery.run(replay = true) {
@@ -35,10 +36,15 @@ class WdaRecoveryTest {
 
     @Test fun aliveChannelSurfacesUnavailableForActions() {
         val restarts = AtomicInteger(0)
-        val recovery = recovery(isAlive = { true }, restart = { restarts.incrementAndGet() })
+        val recovery = recovery(
+            isAlive = { true },
+            restart = { restarts.incrementAndGet() },
+        )
 
         val thrown = assertFailsWith<io.grpc.StatusRuntimeException> {
-            recovery.run(replay = false) { throw IOException("connection reset") }
+            recovery.run(replay = false) {
+                throw IOException("connection reset")
+            }
         }
 
         assertEquals(io.grpc.Status.Code.UNAVAILABLE, thrown.status.code)
@@ -101,7 +107,9 @@ class WdaRecoveryTest {
         )
 
         val thrown = assertFailsWith<IllegalStateException> {
-            recovery.run(replay = true) { throw IOException("connection refused") }
+            recovery.run(replay = true) {
+                throw IOException("connection refused")
+            }
         }
 
         assertTrue(thrown.message.orEmpty().contains("WDA reconnect failed"))
@@ -116,7 +124,9 @@ class WdaRecoveryTest {
         )
 
         assertFailsWith<IllegalArgumentException> {
-            recovery.run(replay = true) { throw IllegalArgumentException("bad selector") }
+            recovery.run(replay = true) {
+                throw IllegalArgumentException("bad selector")
+            }
         }
 
         assertEquals(0, restarts.get())
@@ -127,7 +137,9 @@ class WdaRecoveryTest {
         val recovery = recovery(isAlive = { true }, restart = {})
 
         val thrown = assertFailsWith<io.grpc.StatusRuntimeException> {
-            recovery.run(replay = true) { throw IOException("connection reset") }
+            recovery.run(replay = true) {
+                throw IOException("connection reset")
+            }
         }
 
         assertEquals(io.grpc.Status.Code.UNAVAILABLE, thrown.status.code)

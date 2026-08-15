@@ -20,20 +20,34 @@ import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-private data class Quintuple<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: E)
+private data class Quintuple<A, B, C, D, E>(
+    val a: A,
+    val b: B,
+    val c: C,
+    val d: D,
+    val e: E,
+)
 
 class DriverServiceTest {
 
     @get:Rule val grpcCleanup: GrpcCleanupRule = GrpcCleanupRule()
 
-    private fun newClient(backend: DriverBackend): DriverGrpc.DriverBlockingStub {
+    private fun newClient(
+        backend: DriverBackend,
+    ): DriverGrpc.DriverBlockingStub {
         val serverName = InProcessServerBuilder.generateName()
         val service = DriverService(platform = "android", backend = backend)
         grpcCleanup.register(
-            InProcessServerBuilder.forName(serverName).directExecutor().addService(service).build().start()
+            InProcessServerBuilder.forName(serverName)
+                .directExecutor()
+                .addService(service)
+                .build()
+                .start(),
         )
         val channel: ManagedChannel = grpcCleanup.register(
-            InProcessChannelBuilder.forName(serverName).directExecutor().build()
+            InProcessChannelBuilder.forName(serverName)
+                .directExecutor()
+                .build(),
         )
         return DriverGrpc.newBlockingStub(channel)
     }
@@ -59,20 +73,32 @@ class DriverServiceTest {
         var terminated: String? = null
         var closed = false
         val backend = object : DriverBackend by StubDriverBackend("android") {
-            override fun terminate(bundleId: String) { terminated = bundleId }
-            override fun close() { closed = true }
+            override fun terminate(bundleId: String) {
+                terminated = bundleId
+            }
+            override fun close() {
+                closed = true
+            }
         }
         val serverName = InProcessServerBuilder.generateName()
         val service = DriverService(platform = "android", backend = backend)
         grpcCleanup.register(
-            InProcessServerBuilder.forName(serverName).directExecutor().addService(service).build().start()
+            InProcessServerBuilder.forName(serverName)
+                .directExecutor()
+                .addService(service)
+                .build()
+                .start(),
         )
         val channel: ManagedChannel = grpcCleanup.register(
-            InProcessChannelBuilder.forName(serverName).directExecutor().build()
+            InProcessChannelBuilder.forName(serverName)
+                .directExecutor()
+                .build(),
         )
         val client = DriverGrpc.newBlockingStub(channel)
 
-        client.launch(LaunchRequest.newBuilder().setBundleId("com.example").build())
+        client.launch(
+            LaunchRequest.newBuilder().setBundleId("com.example").build(),
+        )
         service.shutdown()
 
         assertEquals("com.example", terminated)
@@ -83,8 +109,12 @@ class DriverServiceTest {
         var terminated: String? = null
         var closed = false
         val backend = object : DriverBackend by StubDriverBackend("android") {
-            override fun terminate(bundleId: String) { terminated = bundleId }
-            override fun close() { closed = true }
+            override fun terminate(bundleId: String) {
+                terminated = bundleId
+            }
+            override fun close() {
+                closed = true
+            }
         }
         val service = DriverService(platform = "android", backend = backend)
 
@@ -128,17 +158,17 @@ class DriverServiceTest {
     // the runner can tell transient failures from fatal ones.
     @Test fun backendStatusCodePassesThrough() {
         val backend = object : DriverBackend by StubDriverBackend("android") {
-            override fun inputText(text: String) {
+            override fun inputText(text: String): Unit =
                 throw io.grpc.Status.UNAVAILABLE
                     .withDescription("connection dropped mid-action")
                     .asRuntimeException()
-            }
         }
         val client = newClient(backend)
 
-        val thrown = kotlin.test.assertFailsWith<io.grpc.StatusRuntimeException> {
-            client.inputText(Text.newBuilder().setValue("hello").build())
-        }
+        val thrown =
+            kotlin.test.assertFailsWith<io.grpc.StatusRuntimeException> {
+                client.inputText(Text.newBuilder().setValue("hello").build())
+            }
         assertEquals(io.grpc.Status.Code.UNAVAILABLE, thrown.status.code)
     }
 
@@ -147,17 +177,19 @@ class DriverServiceTest {
     // channel-level Unknown the runner cannot classify.
     @Test fun nonExceptionThrowableMapsToInternal() {
         val backend = object : DriverBackend by StubDriverBackend("android") {
-            override fun inputText(text: String) {
+            override fun inputText(text: String): Unit =
                 throw Throwable("only one gesture can be performed at a time")
-            }
         }
         val client = newClient(backend)
 
-        val thrown = kotlin.test.assertFailsWith<io.grpc.StatusRuntimeException> {
-            client.inputText(Text.newBuilder().setValue("hello").build())
-        }
+        val thrown =
+            kotlin.test.assertFailsWith<io.grpc.StatusRuntimeException> {
+                client.inputText(Text.newBuilder().setValue("hello").build())
+            }
         assertEquals(io.grpc.Status.Code.INTERNAL, thrown.status.code)
-        assertTrue(thrown.status.description.orEmpty().contains("only one gesture"))
+        assertTrue(
+            thrown.status.description.orEmpty().contains("only one gesture"),
+        )
     }
 
     @Test fun reapOrphanIosRunnersKillsStrayXcodebuildAndRunnerApp() {
@@ -171,7 +203,16 @@ class DriverServiceTest {
         assertEquals("pkill", commands[0][0])
         assertTrue(commands[0][2].contains("test-without-building"))
         assertTrue(commands[0][2].contains("UDID-1234"))
-        assertEquals(listOf("xcrun", "simctl", "terminate", "UDID-1234", IOS_XCTEST_RUNNER_BUNDLE_ID), commands[1])
+        assertEquals(
+            listOf(
+                "xcrun",
+                "simctl",
+                "terminate",
+                "UDID-1234",
+                IOS_XCTEST_RUNNER_BUNDLE_ID,
+            ),
+            commands[1],
+        )
     }
 
     @Test fun reapOrphanIosRunnersReportsNothingFound() {
@@ -192,7 +233,9 @@ class DriverServiceTest {
         // still executing fails instead of queuing.
         val tapAction = {
             if (!inFlight.compareAndSet(false, true)) {
-                throw IllegalStateException("only one gesture can be performed at a time")
+                throw IllegalStateException(
+                    "only one gesture can be performed at a time",
+                )
             }
             invocations.incrementAndGet()
             Thread.sleep(150)
@@ -211,7 +254,9 @@ class DriverServiceTest {
         val tapAction = {
             if (failedFirst.compareAndSet(false, true)) {
                 Thread.sleep(60)
-                throw IllegalStateException("only one gesture can be performed at a time")
+                throw IllegalStateException(
+                    "only one gesture can be performed at a time",
+                )
             }
             landed.incrementAndGet()
             Unit
@@ -226,21 +271,38 @@ class DriverServiceTest {
         // directly.
         val taps = mutableListOf<Pair<Int, Int>>()
         val backend = object : DriverBackend {
-            override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {}
+            override fun launch(
+                bundleId: String,
+                clearState: Boolean,
+                env: Map<String, String>,
+            ) {}
             override fun terminate(bundleId: String) {}
-            override fun tap(x: Int, y: Int) { taps.add(x to y) }
+            override fun tap(x: Int, y: Int) {
+                taps.add(x to y)
+            }
             override fun tapSelector(selector: String) {}
             override fun inputText(text: String) {}
             override fun eraseText(characterCount: Int) {}
-            override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {}
+            override fun swipe(
+                fromX: Int,
+                fromY: Int,
+                toX: Int,
+                toY: Int,
+                durationMillis: Long,
+            ) {}
             override fun pressKey(key: String) {}
             override fun longPress(x: Int, y: Int) {}
-            override fun screenshot(): Triple<ByteArray, Int, Int> = Triple(byteArrayOf(), 0, 0)
+            override fun screenshot(): Triple<ByteArray, Int, Int> =
+                Triple(byteArrayOf(), 0, 0)
             override fun hierarchy(): String = "{}"
-            override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> = emptyList()
+            override fun recentLogs(
+                sinceUnixMillis: Long,
+                minLevel: String,
+            ): List<LogLine> = emptyList()
             override fun waitForIdle(durationMillis: Long) {}
             override fun healthy(): Boolean = true
-            override fun metrics(bundleId: String): MetricsSample = MetricsSample(0.0, 0L, 0L)
+            override fun metrics(bundleId: String): MetricsSample =
+                MetricsSample(0.0, 0L, 0L)
         }
         val client = newClient(backend)
 
@@ -252,13 +314,16 @@ class DriverServiceTest {
         val backend = StubDriverBackend("android")
         val client = newClient(backend)
 
-        client.eraseText(EraseTextRequest.newBuilder().setCharacterCount(11).build())
+        client.eraseText(
+            EraseTextRequest.newBuilder().setCharacterCount(11).build(),
+        )
         assertEquals(11, backend.lastEraseCharacterCount)
     }
 
     @Test fun screenshotReturnsBackendBytes() {
         val backend = object : DriverBackend by StubDriverBackend("android") {
-            override fun screenshot(): Triple<ByteArray, Int, Int> = Triple(byteArrayOf(1, 2, 3), 1080, 2340)
+            override fun screenshot(): Triple<ByteArray, Int, Int> =
+                Triple(byteArrayOf(1, 2, 3), 1080, 2340)
         }
         val client = newClient(backend)
 
@@ -294,7 +359,13 @@ class DriverServiceTest {
     @Test fun swipeForwardsEndpointsAndDuration() {
         var observed: Quintuple<Int, Int, Int, Int, Long>? = null
         val backend = object : DriverBackend by StubDriverBackend("android") {
-            override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {
+            override fun swipe(
+                fromX: Int,
+                fromY: Int,
+                toX: Int,
+                toY: Int,
+                durationMillis: Long,
+            ) {
                 observed = Quintuple(fromX, fromY, toX, toY, durationMillis)
             }
         }
@@ -325,14 +396,18 @@ class DriverServiceTest {
 
     @Test fun recentLogsReturnsBackendEntries() {
         val backend = object : DriverBackend by StubDriverBackend("android") {
-            override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> {
-                return listOf(LogLine(1, "E", "AndroidRuntime", "boom"))
-            }
+            override fun recentLogs(
+                sinceUnixMillis: Long,
+                minLevel: String,
+            ): List<LogLine> = listOf(LogLine(1, "E", "AndroidRuntime", "boom"))
         }
         val client = newClient(backend)
 
         val response = client.recentLogs(
-            RecentLogsRequest.newBuilder().setSinceUnixMillis(0).setLevelAtLeast("E").build(),
+            RecentLogsRequest.newBuilder()
+                .setSinceUnixMillis(0)
+                .setLevelAtLeast("E")
+                .build(),
         )
         assertEquals(1, response.entriesCount)
         assertEquals("AndroidRuntime", response.getEntries(0).tag)
@@ -351,7 +426,9 @@ class DriverServiceTest {
         }
         val client = newClient(backend)
 
-        client.launch(LaunchRequest.newBuilder().setBundleId("com.launched").build())
+        client.launch(
+            LaunchRequest.newBuilder().setBundleId("com.launched").build(),
+        )
         client.metrics(MetricsRequest.getDefaultInstance())
 
         assertEquals("com.launched", sampled)
@@ -367,8 +444,12 @@ class DriverServiceTest {
         }
         val client = newClient(backend)
 
-        client.launch(LaunchRequest.newBuilder().setBundleId("com.launched").build())
-        client.metrics(MetricsRequest.newBuilder().setBundleId("com.other").build())
+        client.launch(
+            LaunchRequest.newBuilder().setBundleId("com.launched").build(),
+        )
+        client.metrics(
+            MetricsRequest.newBuilder().setBundleId("com.other").build(),
+        )
 
         assertEquals("com.other", sampled)
     }

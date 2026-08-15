@@ -31,17 +31,22 @@ type DeviceOptions struct {
 	BundleID string
 	// AppPath is the .app bundle installed via devicectl for clear-state.
 	AppPath string
+	// ClearState reinstalls the app while NewDevice runs, before the runner's
+	// test session exists. Clear state is a property of the driver rather than
+	// of a launch: see Launch.
+	ClearState bool
 	// Output receives the runner session log path and driver warnings.
 	Output io.Writer
 	// DoubleTapGapMilliseconds overrides the synthesized double-tap gap.
 	DoubleTapGapMilliseconds float64
 
 	// Test seams. Production leaves them nil and NewDevice wires the real
-	// build/spawn/tunnel/dial.
-	spawnRunner func(ctx context.Context, address string) (*exec.Cmd, error)
-	startTunnel func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
-	dialRunner  func(address string) (transport.Companion, error)
-	pickAddress func() (string, error)
+	// build/spawn/tunnel/dial/devicectl.
+	spawnRunner  func(ctx context.Context, address string) (*exec.Cmd, error)
+	startTunnel  func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
+	dialRunner   func(address string) (transport.Companion, error)
+	pickAddress  func() (string, error)
+	reinstallApp func(ctx context.Context) error
 }
 
 // deviceStartupTimeout bounds the runner's startup once its hosting test
@@ -61,6 +66,9 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 	if options.CoreDeviceID == "" {
 		return nil, errors.New("ios device: CoreDeviceID is required")
 	}
+	if options.ClearState && options.BundleID == "" {
+		return nil, errors.New("ios device: clear-state needs BundleID: there is nothing to uninstall without it")
+	}
 	output := options.Output
 	if output == nil {
 		output = io.Discard
@@ -75,6 +83,7 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 		coreDeviceID:             options.CoreDeviceID,
 		bundleID:                 options.BundleID,
 		appPath:                  options.AppPath,
+		clearStateAtStartup:      options.ClearState,
 		output:                   output,
 		doubleTapGapMilliseconds: gap,
 		deviceMode:               true,
@@ -103,7 +112,10 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 	// Device seams: clear-state reinstalls via devicectl; the container reset and
 	// paste grant are simulator-only and become no-ops. The runner types
 	// natively, so no paste prompt is ever hit.
-	d.reinstallApp = d.devicectlReinstall
+	d.reinstallApp = options.reinstallApp
+	if d.reinstallApp == nil {
+		d.reinstallApp = d.devicectlReinstall
+	}
 	d.resetContainer = d.deviceResetContainerUnsupported
 	d.grantPaste = func(context.Context) error { return nil }
 	d.restart = d.respawnDevice
@@ -115,6 +127,13 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 		return nil, err
 	}
 	d.deviceLock = lock
+
+	if options.ClearState {
+		if err := d.clearAppState(ctx); err != nil {
+			d.Close()
+			return nil, err
+		}
+	}
 
 	if err := d.bringUpDevice(ctx); err != nil {
 		d.Close()
