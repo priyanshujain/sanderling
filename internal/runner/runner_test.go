@@ -1894,8 +1894,10 @@ func TestEnsureForeground_DismissesSystemOverlay(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	options := Options{BundleID: "app.folio", Driver: m, IdleTimeout: 10 * time.Millisecond}
 
-	if !ensureForeground(context.Background(), options, logger, 5) {
-		t.Fatal("expected the guard to act on the focus-stealing overlay")
+	got := ensureForeground(context.Background(), options, logger, 5)
+	if got != foregroundOverlayDismissed {
+		t.Fatalf("the guard reported %v, want foregroundOverlayDismissed; "+
+			"an obscured app is not a relaunched one", got)
 	}
 	backs, relaunches := 0, 0
 	for _, a := range m.Actions() {

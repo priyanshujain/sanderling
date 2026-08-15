@@ -110,8 +110,23 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// backed out of (or otherwise left) the app, relaunch it before we
 		// observe or act, so properties never evaluate against a foreign app
 		// and actions never land outside the app.
-		if ensureForeground(ctx, options, logger, stepIndex) {
-			lastAction = nil
+		//
+		// What the guard did is reported to the spec on the action it followed,
+		// because dropping that action says "nothing ran between these two
+		// readings" and the runner has no business saying that: the action ran,
+		// and a property told otherwise convicts the app of an effect with no
+		// cause. See relaunch_last_action_test.go.
+		guard := ensureForeground(ctx, options, logger, stepIndex)
+		if lastAction != nil {
+			switch guard {
+			case foregroundRelaunched:
+				lastAction.Relaunched = true
+			case foregroundOverlayDismissed:
+				// A system window owned the focused window, so whether the app
+				// itself ever received this action is exactly the unknown
+				// Applied already has a state for.
+				lastAction.Applied = false
+			}
 		}
 
 		// Hierarchy, metrics, and logs are independent device reads. Run
@@ -445,20 +460,38 @@ func resolveIdleTimeout(options Options) time.Duration {
 	return timeout
 }
 
+// foregroundGuard is what ensureForeground had to do to put the app back in
+// front. The two interventions are separate values because they are separate
+// facts about the action they follow: a relaunch leaves it confirmed but
+// straddling a restart, while a system window holding the focus leaves it
+// dispatched with no way to tell whether the app received it.
+type foregroundGuard int
+
+const (
+	foregroundIntact foregroundGuard = iota
+	foregroundOverlayDismissed
+	foregroundRelaunched
+)
+
 // ensureForeground keeps the app under test in the foreground. When the driver
 // can report the foreground app and it no longer matches the bundle under test,
-// the app is relaunched. Returns true when a relaunch happened so the caller
-// can drop the now-stale lastAction. Drivers without ForegroundChecker (web,
+// the app is relaunched. Reports what it did so the caller can pass that on to
+// the spec through the previous action. Drivers without ForegroundChecker (web,
 // iOS) are a no-op.
-func ensureForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) bool {
+func ensureForeground(
+	ctx context.Context,
+	options Options,
+	logger *slog.Logger,
+	stepIndex int,
+) foregroundGuard {
 	checker, ok := options.Driver.(driver.ForegroundChecker)
 	if !ok || options.BundleID == "" {
-		return false
+		return foregroundIntact
 	}
 	foreground, err := checker.ForegroundApp(ctx)
 	if err != nil {
 		logger.Warn("foreground check failed", "step", stepIndex, "err", err)
-		return false
+		return foregroundIntact
 	}
 	if foreground != "" && foreground != options.BundleID {
 		logger.Warn("app left foreground; relaunching",
@@ -471,7 +504,7 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 		// window, so it never acts outside the app no matter how slow the
 		// relaunch settles.
 		awaitForeground(ctx, options, logger, stepIndex)
-		return true
+		return foregroundRelaunched
 	}
 	// The app is the resumed activity, but a system overlay can still own the
 	// focused window while the app stays resumed: a fuzzer swipe starting in the
@@ -481,15 +514,15 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 	// the app again.
 	focusChecker, hasFocus := options.Driver.(driver.FocusedWindowChecker)
 	if !hasFocus {
-		return false
+		return foregroundIntact
 	}
 	focused, err := focusChecker.FocusedWindowApp(ctx)
 	if err != nil {
 		logger.Warn("focus check failed", "step", stepIndex, "err", err)
-		return false
+		return foregroundIntact
 	}
 	if focused == "" || focused == options.BundleID {
-		return false
+		return foregroundIntact
 	}
 	logger.Warn("system window obscuring app; dismissing",
 		"step", stepIndex, "focused", focused, "want", options.BundleID)
@@ -497,7 +530,7 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 		logger.Warn("dismiss overlay failed", "step", stepIndex, "err", err)
 	}
 	settleForForeground(ctx, options)
-	return true
+	return foregroundOverlayDismissed
 }
 
 // appIsForeground reports whether the app under test currently owns the
