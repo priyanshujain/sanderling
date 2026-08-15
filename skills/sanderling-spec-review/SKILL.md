@@ -84,9 +84,14 @@ one named `Travel12` with 5 can both render `TRTravel125 transactions`. No
 function of that string can separate them.
 
 **Match whole keys, not endings or substrings.** `endsWith` attribution judges an
-older account named `Emergency Fund` when the user typed `Fund`. Substring
-matching is looser still: `{id: "Sub"}` matching `AddAccountSubmit` is not a
-match, it is a coincidence.
+older account named `Emergency Fund` when the user typed `Fund`.
+
+Selector matching has the same trap and it is easy to miss which keys carry it.
+`id`, `text`, `desc` and `descPrefix` resolve by their own rules, so `{id: "Sub"}`
+correctly matches nothing. Every other key, `testTag` included, falls through to a
+substring compare, so `{testTag: "Sub"}` matches `AddAccountSubmit`. That is not a
+match, it is a coincidence, and a property built on it judges whichever element
+happens to contain the fragment.
 
 **Drop the carrier when the screen changes.** A value carried across a route
 change is a value read from a screen that is no longer there.
