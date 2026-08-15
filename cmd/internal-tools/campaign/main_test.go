@@ -54,6 +54,7 @@ func TestParseArguments_Rejections(t *testing.T) {
 		{"missing output", []string{"--spec", "s", "--bundle-id", "a", "--arm", "b", "--seeds", "1", "--max-steps", "10"}, "--output is required"},
 		{"bad platform", append(baseArguments(), "--platform", "windows"), "unsupported platform"},
 		{"bad generator", append(baseArguments(), "--generator", "vibes"), "unsupported generator"},
+		{"bad label source", append(baseArguments(), "--label-source", "resource_id"), `unsupported label source: "resource_id"`},
 		{"zero max steps", append(baseArguments(), "--max-steps", "0"), "--max-steps must be positive"},
 		{"seed zero", append(baseArguments(), "--seeds", "0-2"), "not reproducible"},
 		{"duplicate device", append(baseArguments(), "--devices", "a,a"), "duplicate device"},
@@ -110,6 +111,16 @@ func TestRunArguments_PlatformDeviceFlagAndPassthrough(t *testing.T) {
 		if got[len(got)-1] != "--clear-data=false" {
 			t.Errorf("%s: passthrough argument lost: %v", testCase.platform, got)
 		}
+	}
+}
+
+func TestRunArguments_LabelSourceDefaultsToVisibleText(t *testing.T) {
+	configuration, err := parseArguments(baseArguments(), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := argumentValue(runArguments(configuration, "7", ""), "--label-source"); got != "visible-text" {
+		t.Errorf("--label-source = %q, want visible-text", got)
 	}
 }
 

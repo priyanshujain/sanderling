@@ -343,6 +343,28 @@ func TestRunCampaign_ContinuesAfterFailingRun(t *testing.T) {
 	}
 }
 
+func TestRunCampaign_GivesEveryRunTheCellsLabelSource(t *testing.T) {
+	directory := t.TempDir()
+	configuration := testConfiguration(t, directory, "--seeds", "1-3", "--label-source", "resource-id")
+
+	var mutex sync.Mutex
+	var dispatched []string
+	executor := versionAnswering(func(_ context.Context, _ string, arguments []string, _ io.Writer) (int, error) {
+		mutex.Lock()
+		dispatched = append(dispatched, argumentValue(arguments, "--label-source"))
+		mutex.Unlock()
+		writeFakeRun(t, arguments, []trace.Step{observedStep(1)})
+		return 0, nil
+	})
+	if err := runCampaign(context.Background(), configuration, executor, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(dispatched, []string{"resource-id", "resource-id", "resource-id"}) {
+		t.Errorf("--label-source reaching sanderling: got %v, want resource-id on every run", dispatched)
+	}
+}
+
 func TestRunCampaign_RefusesToReuseACampaignDirectory(t *testing.T) {
 	directory := t.TempDir()
 	configuration := testConfiguration(t, directory)
