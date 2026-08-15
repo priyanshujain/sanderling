@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+  <body>
+    <!-- One control and one counter. The spec's other two extractors look for
+         ids that are not here, which is the shape a route-scoped extractor has
+         on every step it is off its own screen. -->
+    <div id="app">
+      <button id="go" style="width:200px;height:80px">go</button>
+      <div id="count">0</div>
+    </div>
+    <script>
+      let taps = 0;
+      document.getElementById("go").addEventListener("click", function () {
+        document.getElementById("count").textContent = String(++taps);
+      });
+    </script>
+  </body>
+</html>

@@ -192,3 +192,21 @@ func testdataDir(t *testing.T) string {
 func specSrcDir(t *testing.T) string {
 	return filepath.Join(repoRoot(t), "pkg", "spec", "src")
 }
+
+// TestBrowserUndefinedExtractorStaysUndefined drives the four layers of the
+// undefined reading through one run: the page wraps each reading in a {value}
+// envelope, the driver unwraps an absent value to an empty payload, the runner
+// checks the page reported one reading per extractor, and the verifier decodes
+// the empty payload as undefined. Each layer has its own unit test; only a run
+// proves they compose. Written straight into the map instead, an undefined
+// reading lost its whole index to JSON.stringify and that extractor silently
+// kept goja's dump-derived value while its neighbours held the page's.
+func TestBrowserUndefinedExtractorStaysUndefined(t *testing.T) {
+	violations := runFixture(t, "undefined-extractor")
+	if slices.Contains(violations, "undefinedStaysUndefined") {
+		t.Error("a reading the page could not take did not reach the spec as undefined")
+	}
+	if !slices.Contains(violations, "counterNeverMoves") {
+		t.Fatalf("nothing was ever tapped, so the property above held vacuously; violations=%v", violations)
+	}
+}
