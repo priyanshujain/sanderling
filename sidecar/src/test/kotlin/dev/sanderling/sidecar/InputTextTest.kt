@@ -212,4 +212,46 @@ class InputTextTest {
         assertEquals(maestro.KeyCode.ENTER, maestroKeyFor("enter"))
         assertFailsWith<IllegalArgumentException> { maestroKeyFor("zorp") }
     }
+
+    // An IME left open hides every app node beneath it from the hierarchy, so a
+    // form whose submit button sits under the keyboard becomes unreachable for
+    // as long as the fuzzer keeps typing into it. Typing must close the
+    // keyboard it raised.
+    @Test fun dismissSoftKeyboardClosesAnOpenIme() {
+        val commands = mutableListOf<String>()
+        dismissSoftKeyboard {
+            commands.add(it)
+            IME_OPEN_DUMPSYS
+        }
+        assertEquals(
+            listOf("dumpsys input_method", "input keyevent 4"),
+            commands,
+        )
+    }
+
+    // The guard is the dangerous half: BACK is only swallowed by an open IME,
+    // so dismissing unconditionally would turn every InputText into a back
+    // press and walk the fuzzer straight out of the screen it was filling in.
+    @Test fun dismissSoftKeyboardSendsNoBackWhenNoImeIsOpen() {
+        val commands = mutableListOf<String>()
+        dismissSoftKeyboard {
+            commands.add(it)
+            IME_CLOSED_DUMPSYS
+        }
+        assertEquals(listOf("dumpsys input_method"), commands)
+    }
 }
+
+private val IME_OPEN_DUMPSYS =
+    """
+      mCurMethodId=com.google.android.inputmethod.latin/.LatinIME
+      mInputShown=true
+      mSystemReady=true mInteractive=true
+    """.trimIndent()
+
+private val IME_CLOSED_DUMPSYS =
+    """
+      mCurMethodId=com.google.android.inputmethod.latin/.LatinIME
+      mInputShown=false
+      mSystemReady=true mInteractive=true
+    """.trimIndent()
