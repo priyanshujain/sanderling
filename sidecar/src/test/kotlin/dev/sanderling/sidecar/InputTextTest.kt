@@ -206,6 +206,77 @@ class InputTextTest {
         )
     }
 
+    @Test fun aReadableDumpsysNamesTheResumedPackage() {
+        val warnings = mutableListOf<String>()
+        assertEquals(
+            "app.folio",
+            typingOwner(RESUMED_DUMPSYS, "app.folio") { warnings.add(it) },
+        )
+        assertTrue(warnings.isEmpty(), "nothing to report when the read worked")
+    }
+
+    // A dumpsys that said nothing is not evidence that focus is fine. Handing
+    // typeChunks a null owner turns the guard off outright, and the keystrokes
+    // then go wherever the foreground happens to be.
+    @Test fun anUnreadableDumpsysGuardsWithTheLaunchedBundle() {
+        val warnings = mutableListOf<String>()
+        assertEquals(
+            "app.folio",
+            typingOwner("", "app.folio") { warnings.add(it) },
+        )
+        assertEquals(1, warnings.size, "a degraded guard must not be silent")
+        assertTrue(warnings.single().contains("app.folio"), warnings.single())
+    }
+
+    // Wording no marker matches is the same "we do not know" as an empty read.
+    @Test fun dumpsysWithNoResumedMarkerGuardsWithTheLaunchedBundle() {
+        assertEquals(
+            "app.folio",
+            typingOwner("  mFocusedApp=null\n  nothing here\n", "app.folio") {},
+        )
+    }
+
+    // The whole point of the fallback: on a link that cannot answer, typing is
+    // still guarded, so a foreground that was stolen stops it after the first
+    // chunk instead of spraying the rest into whatever took focus.
+    @Test fun unreadableLinkStillStopsTypingWhenFocusWasStolen() {
+        val owner = typingOwner("", "app.folio") {}
+        val sent = mutableListOf<String>()
+
+        typeChunks(listOf("aaa", "bbb", "ccc"), owner, {
+            "com.android.launcher"
+        }) { sent.add(it) }
+
+        assertEquals(
+            listOf("aaa"),
+            sent,
+            "an unguarded type would have sent every chunk to the launcher",
+        )
+    }
+
+    // And the other half of the trade: the fallback must not turn a degraded
+    // link into a run that types nothing. A no-op InputText on every step is a
+    // green run that tested nothing, which is worse than the spray it avoids.
+    @Test fun unreadableLinkStillTypesWhenTheAppKeepsFocus() {
+        val owner = typingOwner("", "app.folio") {}
+        val sent = mutableListOf<String>()
+
+        val typed = typeChunks(listOf("aaa", "bbb", "cc"), owner, {
+            "app.folio"
+        }) { sent.add(it) }
+
+        assertEquals(listOf("aaa", "bbb", "cc"), sent)
+        assertEquals(8, typed)
+    }
+
+    // With no launch recorded there is nothing to guard against, and the honest
+    // answer is to say the guard is off rather than imply it ran.
+    @Test fun noLaunchedBundleLeavesTheGuardOffAndSaysSo() {
+        val warnings = mutableListOf<String>()
+        assertEquals(null, typingOwner("", null) { warnings.add(it) })
+        assertEquals(1, warnings.size)
+    }
+
     @Test fun maestroKeyForResolvesAndRejects() {
         assertEquals(maestro.KeyCode.BACK, maestroKeyFor("back"))
         assertEquals(maestro.KeyCode.BACK, maestroKeyFor("BACK"))
@@ -341,6 +412,12 @@ class InputTextTest {
         assertTrue(!treeShowsIme(APP_TREE, IME_PACKAGE))
     }
 }
+
+private val RESUMED_DUMPSYS =
+    """
+      mFocusedApp=ActivityRecord{1a u0 app.folio/.MainActivity t14}
+      topResumedActivity=ActivityRecord{f3 u0 app.folio/.MainActivity t14}
+    """.trimIndent()
 
 private const val IME_PACKAGE = "com.google.android.inputmethod.latin"
 
