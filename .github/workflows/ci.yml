@@ -1,19 +1,20 @@
 name: ci
 
 on:
-  # Runs on PRs (opened / synchronize / reopened, which are the defaults) and
-  # manual dispatch only. We deliberately don't run on direct pushes to master:
-  # master is PR-merge-only, and PR validation already covers the merge
-  # commit via the `synchronize` event on the PR branch.
   pull_request:
+  push:
+    branches: [master]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A superseded pull request run is waste. A run that publishes is not, so only
+# a pull request cancels.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -125,10 +126,8 @@ jobs:
       - name: Drive web fixtures through headless Chrome
         run: make test-browser
 
-  # Four workflows and four composite actions, and the ones that fuzz the
-  # examples are dispatch-only, which GitHub refuses to dispatch until they are
-  # on the default branch. Their first real run is therefore after merge, so a
-  # bad expression or a missing action would land before anything caught it.
+  # The folio jobs and the release job never run on a pull request, so a bad
+  # expression or a missing action in them would land before anything caught it.
   workflows:
     runs-on: ubuntu-latest
     steps:
@@ -147,3 +146,445 @@ jobs:
       # the job runs.
       - name: Check that the workflow references resolve
         run: .github/scripts/workflow-refs.sh
+
+  folio-android:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SEED: "9"
+      MAX_STEPS: "200"
+      DURATION: 20m
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+
+      - name: Build the folio app
+        uses: ./.github/actions/folio-app
+        with:
+          platform: android
+
+      - name: Build sanderling
+        run: make sanderling-android
+
+      - name: Run the spec on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: .github/scripts/folio-run.sh android
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: folio-android
+          path: runs/
+          retention-days: 14
+
+  folio-ios:
+    if: github.event_name != 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      SEED: "7"
+      MAX_STEPS: "240"
+      DURATION: 20m
+      IOS_DEVICE: iPhone 16 Pro
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+
+      - name: Build the folio app
+        uses: ./.github/actions/folio-app
+        with:
+          platform: ios
+
+      - name: Build sanderling
+        run: make sanderling-ios
+
+      - name: Boot a simulator
+        run: |
+          xcrun simctl boot "$IOS_DEVICE" || true
+          xcrun simctl bootstatus "$IOS_DEVICE" -b
+
+      - name: Build and install folio
+        working-directory: examples/folio
+        run: just ios
+
+      # `just ios` leaves the app running, and the run's first act is to clear
+      # its state. Stopping it here means the run always opens the same way.
+      - name: Stop the app before the run
+        run: xcrun simctl terminate booted app.folio || true
+
+      - name: Run the spec
+        run: .github/scripts/folio-run.sh ios
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: folio-ios
+          path: runs/
+          retention-days: 14
+
+  folio-web:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SEED: "3"
+      MAX_STEPS: "240"
+      DURATION: 20m
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+
+      - name: Set up headless Chrome
+        uses: ./.github/actions/headless-chrome
+
+      - name: Build the folio app
+        uses: ./.github/actions/folio-app
+        with:
+          platform: web
+
+      - name: Build sanderling
+        run: make sanderling-web
+
+      - name: Run the spec
+        run: .github/scripts/folio-run.sh web
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: folio-web
+          path: runs/
+          retention-days: 14
+
+  replay-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SEED: "3"
+      MAX_STEPS: "80"
+      DURATION: 10m
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+
+      - name: Set up headless Chrome
+        uses: ./.github/actions/headless-chrome
+
+      # The UI the spec drives is the one embedded in this binary, so the build
+      # has to come after any change to replay-ui/src.
+      - name: Build sanderling
+        run: make sanderling-web
+
+      # A trace with a violation and uncaught exceptions in it, so the UI has
+      # something to render in every panel the spec looks at. No
+      # --exit-on-violation here: the run is the fixture, and stopping it at the
+      # first violation would leave a four-step trace to run against.
+      - name: Record a fixture trace
+        run: |
+          python3 -m http.server 8792 --bind 127.0.0.1 \
+            --directory test/browser/testdata/throwing &
+          ready=""
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8792/ >/dev/null && { ready=1; break; }
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "the fixture http server never answered on 127.0.0.1:8792" >&2
+            exit 1
+          fi
+          ./bin/sanderling test \
+            --platform web \
+            --spec test/browser/testdata/throwing/spec.ts \
+            --bundle-id http://127.0.0.1:8792/ \
+            --duration 5m --max-steps 25 --seed 7 \
+            --output runs/fixture
+
+      - name: Serve the trace with sanderling replay
+        id: fixture
+        run: |
+          # Flags before the positional argument: Go's flag package stops
+          # parsing at the first non-flag word.
+          ./bin/sanderling replay --port 8793 --no-open runs/fixture &
+          ready=""
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8793/api/runs >/dev/null && { ready=1; break; }
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "sanderling replay never served /api/runs on 127.0.0.1:8793" >&2
+            exit 1
+          fi
+          run_id="$(basename "$(find runs/fixture -mindepth 1 -maxdepth 1 | head -1)")"
+          echo "url=http://127.0.0.1:8793/runs/$run_id/steps/1" >> "$GITHUB_OUTPUT"
+          curl -sf "http://127.0.0.1:8793/runs/$run_id/steps/1" >/dev/null
+
+      # The url goes through env rather than into the script text: a `${{ }}` is
+      # substituted before bash ever sees the line.
+      - name: Run the spec
+        run: |
+          ./bin/sanderling test \
+            --platform web \
+            --spec replay-ui/sanderling/spec.ts \
+            --bundle-id "$RUN_URL" \
+            --duration "$DURATION" \
+            --max-steps "$MAX_STEPS" \
+            --seed "$SEED" \
+            --exit-on-violation \
+            --output runs/replay-ui
+        env:
+          RUN_URL: ${{ steps.fixture.outputs.url }}
+
+      # Exit 0 above means no property returned false. It does not mean any
+      # property was ever evaluated against real content: they all decline to
+      # judge when the elements they read are absent, so a run that never
+      # rendered the step page is green and worthless. This step is what tells
+      # the two apart, and it fails the job when nothing was judged. folio's
+      # jobs make the same call inside folio-run.sh, where the exit code it is
+      # judging is in scope.
+      - name: Classify the run
+        if: always()
+        run: .github/scripts/replay-ui-summary.sh runs/replay-ui
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: replay-ui-runs
+          path: runs/
+          retention-days: 14
+
+  # On a tag this publishes @sanderling/spec at the tag's version and the CLI to
+  # GitHub Releases. On master it publishes @sanderling/spec only, and only when
+  # pkg/spec/package.json carries a version npm does not have yet.
+  release:
+    if: github.ref == 'refs/heads/master' || github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # A refname is attacker-controlled text and git permits backtick, `$`,
+      # `(`, `;`, `&` and `|` in it, so it goes through env: a `${{ }}` is
+      # substituted before bash ever sees the line. Every step below reads these
+      # outputs rather than the refname, and nothing reaches a shell before it
+      # has matched the pattern. The pattern is anchored and admits no newline,
+      # which is what stops the value below forging a second $GITHUB_OUTPUT key.
+      - name: Validate the tag
+        id: tag
+        if: github.ref_type == 'tag'
+        run: |
+          pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
+          if [[ ! "$TAG" =~ $pattern ]]; then
+            echo "release: refusing to publish from '$TAG'" >&2
+            echo "release: a release tag is vMAJOR.MINOR.PATCH with an optional -prerelease, e.g. v0.1.0 or v0.0.1-rc1" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ github.ref_name }}
+
+      - uses: actions/checkout@v7
+        with:
+          # Empty on master, where the commit that triggered the run is the one
+          # to publish and master may have moved on since.
+          ref: ${{ steps.tag.outputs.tag || github.sha }}
+          # GoReleaser reads the tag history for its changelog.
+          fetch-depth: 0
+          # `npm ci` below runs dependency lifecycle scripts, and no step in
+          # this job needs the git credential afterwards.
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+          cache-dependency-path: pkg/spec/package-lock.json
+
+      - name: Install dependencies
+        working-directory: pkg/spec
+        run: npm ci
+
+      - name: Stamp version
+        if: github.ref_type == 'tag'
+        working-directory: pkg/spec
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+
+      # npm refuses a version it already has, so most merges to master have
+      # nothing to publish and must not be red for it. The registry is asked
+      # rather than the diff of package.json: that answer is still right after a
+      # revert, after a merge that publishes nothing, and after a publish that
+      # failed halfway. Only stdout decides, because `npm view` on a version
+      # that does not exist is empty on some npm releases and an error on
+      # others, and an unreachable registry must end in a publish that fails
+      # loudly rather than a skip that looks like success.
+      - name: Ask npm whether this version is already published
+        id: version
+        working-directory: pkg/spec
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          # Held to the pattern the tag is held to above, and for the same
+          # reason: a value with a newline in it would forge a second key.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "release: pkg/spec/package.json carries '$version', which is not a version this publishes" >&2
+            exit 1
+          fi
+          published="$(npm view "@sanderling/spec@$version" version 2>/dev/null || true)"
+          if [ -n "$published" ]; then
+            echo "npm already has @sanderling/spec@$version, nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publishing @sanderling/spec@$version"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Publish @sanderling/spec to npm
+        if: steps.version.outputs.publish == 'true'
+        working-directory: pkg/spec
+        # npm tag pre-releases (e.g. 0.1.0-rc1) as "next" so npm install @sanderling/spec
+        # keeps resolving the latest stable.
+        run: |
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --access public --tag next
+          else
+            npm publish --access public
+          fi
+        # The publish credential is scoped to the one step that publishes rather
+        # than to the job, so no other step runs with it in reach.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Set up Go
+        if: github.ref_type == 'tag'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up JDK 17
+        if: github.ref_type == 'tag'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        if: github.ref_type == 'tag'
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+
+      - name: Cache Gradle
+        if: github.ref_type == 'tag'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Build sidecar JAR
+        if: github.ref_type == 'tag'
+        run: make sidecar
+
+      - name: Publish the sanderling CLI to GitHub Releases
+        if: github.ref_type == 'tag'
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The docs used to build only when docs/ or the Makefile changed. A path
+  # filter here would have to sit on the whole workflow, so the site is rebuilt
+  # on every merge instead: it is pandoc over a few pages, and a deploy of bytes
+  # that did not change is a no-op.
+  docs:
+    if: github.ref == 'refs/heads/master' || github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    # Pages takes one deployment at a time.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+
+      - name: Build site
+        run: make docs
+
+      # No include-hidden-files: v4 stopped uploading dot-files by default, and
+      # build/site has none. It is pandoc output plus a copy of docs/_assets,
+      # which holds three ordinary files. _assets is underscore-prefixed, not
+      # hidden, and deploy-pages serves the artifact without running Jekyll, so
+      # it needs no .nojekyll either.
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: build/site
+
+      - uses: actions/deploy-pages@v5
+        id: deployment
