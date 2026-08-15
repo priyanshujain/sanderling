@@ -16,7 +16,8 @@ Run a spec against an app for a fixed duration.
 |---|---|---|
 | `--spec` | required | Path to the TypeScript spec. |
 | `--bundle-id` | required | Target app bundle ID (Android: applicationId). |
-| `--launcher-activity` | resolved | Optional `<pkg>/<activity>` to launch. Overrides default resolution. |
+| `--device` | optional (android) | Android device serial, as `adb devices` reports it. Required when more than one device is attached. |
+| `--android-app-path` | optional (android) | Path to the APK. Clear-state reinstalls from it instead of running `pm clear`. |
 | `--platform` | `android` | Target platform: `android`, `ios`, or `web`. |
 | `--avd` | optional (android) | Android AVD name to boot if no device is connected. Required only when no device is connected and multiple AVDs exist. |
 | `--ios-device` | optional (ios) | iOS target: a simulator name/UDID to boot, or a connected device's name, UDID, or CoreDevice id. |
@@ -24,6 +25,7 @@ Run a spec against an app for a fixed duration.
 | `--duration` | `5m` | Total test duration (`30s`, `5m`, `2h`, `1d`). |
 | `--max-steps` | `0` | Stop after this many steps (`0` = no cap, the duration governs). A step budget is what makes two generators comparable. |
 | `--exit-on-violation` | `false` | Stop the run at the first property violation and exit `2`. |
+| `--arm` | optional | Experiment label recorded in the run's metadata. Used by the campaign tool to tell one sweep cell from another. |
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
 | `--generator` | `seeded` | Who picks each action: `seeded` (the run's PRNG) or `llm` (a vision model). See [the LLM generator](../spec-language/#llm-generator). |
 | `--output` | `./runs` | Output directory for traces. |
