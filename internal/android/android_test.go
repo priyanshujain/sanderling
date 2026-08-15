@@ -1,6 +1,8 @@
 package android
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -133,6 +135,114 @@ func TestPickAVD_NoneAvailable(t *testing.T) {
 	_, err := pickAVD("", nil)
 	if err == nil {
 		t.Fatal("expected error when no AVDs exist")
+	}
+}
+
+// fakeSDK writes an SDK layout holding only the named tools ("emulator/emulator"),
+// so a lookup test never resolves against the host's own SDK.
+func fakeSDK(t *testing.T, tools ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, tool := range tools {
+		path := filepath.Join(root, filepath.FromSlash(tool))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, nil, 0o755); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return root
+}
+
+// isolateSDKLookup closes every route to the host's own SDK: an empty PATH, no
+// root variables, a home with nothing under it, and the standard install
+// locations replaced by the given roots. It returns the fake home directory.
+func isolateSDKLookup(t *testing.T, roots ...string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+	t.Setenv("HOME", home)
+	original := standardSDKRoots
+	t.Cleanup(func() { standardSDKRoots = original })
+	standardSDKRoots = roots
+	return home
+}
+
+func TestAdbBinary_ResolvesUnderStandardSDKRootWithAndroidHomeUnset(t *testing.T) {
+	sdk := fakeSDK(t, "platform-tools/adb")
+	isolateSDKLookup(t, sdk)
+
+	adb, err := AdbBinary()
+	if err != nil {
+		t.Fatalf("AdbBinary: %v", err)
+	}
+	if want := filepath.Join(sdk, "platform-tools", "adb"); adb != want {
+		t.Errorf("AdbBinary() = %q, want %q", adb, want)
+	}
+}
+
+func TestEmulatorBinary_ResolvesUnderStandardSDKRootWithAndroidHomeUnset(t *testing.T) {
+	sdk := fakeSDK(t, "emulator/emulator")
+	isolateSDKLookup(t, sdk)
+
+	emulator, err := EmulatorBinary()
+	if err != nil {
+		t.Fatalf("EmulatorBinary: %v", err)
+	}
+	if want := filepath.Join(sdk, "emulator", "emulator"); emulator != want {
+		t.Errorf("EmulatorBinary() = %q, want %q", emulator, want)
+	}
+}
+
+func TestAdbBinary_UsesAndroidHome(t *testing.T) {
+	sdk := fakeSDK(t, "platform-tools/adb")
+	isolateSDKLookup(t)
+	t.Setenv("ANDROID_HOME", sdk)
+
+	adb, err := AdbBinary()
+	if err != nil {
+		t.Fatalf("AdbBinary: %v", err)
+	}
+	if want := filepath.Join(sdk, "platform-tools", "adb"); adb != want {
+		t.Errorf("AdbBinary() = %q, want %q", adb, want)
+	}
+}
+
+func TestAdbBinary_NoSDKAnywhereReportsWhereItLooked(t *testing.T) {
+	empty := t.TempDir()
+	home := isolateSDKLookup(t, empty)
+
+	_, err := AdbBinary()
+	if err == nil {
+		t.Fatal("expected an error with no SDK anywhere")
+	}
+	for _, want := range []string{
+		"adb not found: not on PATH",
+		filepath.Join(home, "Library", "Android", "sdk", "platform-tools", "adb"),
+		filepath.Join(empty, "platform-tools", "adb"),
+		"$ANDROID_HOME and $ANDROID_SDK_ROOT are unset",
+		"put adb on PATH, or point $ANDROID_HOME at an Android SDK that has platform-tools/adb",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+}
+
+func TestAdbBinary_AndroidHomePointingNowhereIsNamed(t *testing.T) {
+	isolateSDKLookup(t, t.TempDir())
+	missing := filepath.Join(t.TempDir(), "no-such-sdk")
+	t.Setenv("ANDROID_HOME", missing)
+
+	_, err := AdbBinary()
+	if err == nil {
+		t.Fatal("expected an error when ANDROID_HOME points nowhere")
+	}
+	if want := "$ANDROID_HOME=" + missing + " does not exist"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q must say %q rather than leaving it in the tried list", err, want)
 	}
 }
 

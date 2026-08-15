@@ -3,6 +3,8 @@ package testrun
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -46,6 +48,33 @@ func TestPreflight_AndroidNeedsAdbAndJava(t *testing.T) {
 				t.Errorf("error missing doctor hint: %v", err)
 			}
 		})
+	}
+}
+
+// Every adb call in an android run resolves through $ANDROID_HOME and the
+// standard SDK locations, so a preflight that only looks at PATH turns away a
+// host the run itself would drive.
+func TestPreflight_AndroidAcceptsAdbUnderAndroidHome(t *testing.T) {
+	sdk := t.TempDir()
+	writeExecutable(t, filepath.Join(sdk, "platform-tools", "adb"))
+	pathDirectory := t.TempDir()
+	writeExecutable(t, filepath.Join(pathDirectory, "java"))
+	t.Setenv("PATH", pathDirectory)
+	t.Setenv("ANDROID_HOME", sdk)
+	t.Setenv("ANDROID_SDK_ROOT", "")
+
+	if err := Preflight(context.Background(), "android"); err != nil {
+		t.Fatalf("Preflight with adb under $ANDROID_HOME: %v", err)
+	}
+}
+
+func writeExecutable(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, nil, 0o755); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 

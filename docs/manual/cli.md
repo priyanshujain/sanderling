@@ -56,7 +56,7 @@ sanderling doctor [--platform web|android|ios|ios-device|all]
 | Platform | Checks |
 |---|---|
 | `web` | headless Chromium can launch (the bundled CDP surface boots a real browser). |
-| `android` | `adb` on PATH; `emulator` on PATH or under `ANDROID_HOME`; Java 17+; embedded native sidecar JAR is real. |
+| `android` | `adb` and `emulator` on PATH, or under `$ANDROID_HOME`, `$ANDROID_SDK_ROOT` or a standard SDK install location; Java 17+; embedded native sidecar JAR is real. |
 | `ios` | `xcrun` on PATH; `simctl` on PATH. The simulator path drives the native companion with no JVM. |
 | `ios-device` | the `ios` checks plus `devicectl`; the macOS `usbmuxd` socket; a connected, paired device; App Store Connect signing credentials present. |
 

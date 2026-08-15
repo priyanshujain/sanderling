@@ -5,15 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/chromedp/chromedp"
 
+	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion"
 	"github.com/priyanshujain/sanderling/internal/ios"
 	"github.com/priyanshujain/sanderling/internal/sidecarassets"
@@ -52,8 +51,8 @@ func webChecks() []doctorCheck {
 
 func androidChecks() []doctorCheck {
 	return []doctorCheck{
-		{Name: "adb on PATH", Run: checkExecutableOnPath("adb")},
-		{Name: "emulator on PATH or under ANDROID_HOME", Run: checkEmulator},
+		{Name: "adb on PATH or under the Android SDK", Run: checkAdb},
+		{Name: "emulator on PATH or under the Android SDK", Run: checkEmulator},
 		{Name: "java 17+ on PATH", Run: checkJavaVersion},
 		{Name: "sidecar JAR is real (not placeholder)", Run: checkSidecarJAR},
 	}
@@ -235,22 +234,16 @@ func checkExecutableOnPath(name string) func(context.Context) error {
 	}
 }
 
+// checkAdb and checkEmulator resolve through the same helpers a run uses, so a
+// host the doctor passes is a host a run can drive.
+func checkAdb(_ context.Context) error {
+	_, err := android.AdbBinary()
+	return err
+}
+
 func checkEmulator(_ context.Context) error {
-	if _, err := exec.LookPath("emulator"); err == nil {
-		return nil
-	}
-	androidHome := os.Getenv("ANDROID_HOME")
-	if androidHome == "" {
-		androidHome = os.Getenv("ANDROID_SDK_ROOT")
-	}
-	if androidHome == "" {
-		return fmt.Errorf("not on PATH and ANDROID_HOME is unset")
-	}
-	candidate := filepath.Join(androidHome, "emulator", "emulator")
-	if _, err := os.Stat(candidate); err != nil {
-		return fmt.Errorf("not found at %s", candidate)
-	}
-	return nil
+	_, err := android.EmulatorBinary()
+	return err
 }
 
 var javaVersionPattern = regexp.MustCompile(`(?:java|openjdk)[^"]*"(\d+)(?:\.(\d+))?`)
