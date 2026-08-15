@@ -181,6 +181,7 @@ export interface ObservedAction {
   kind?: string;
   on?: string | object;
   applied?: true | null;
+  relaunched?: true | null;
 }
 
 function isTapOn(lastAction: ObservedAction | null, target: string): boolean {
@@ -214,6 +215,19 @@ export function isAddAccountSubmitTap(lastAction: ObservedAction | null): boolea
 // uncertainty.
 export function confirmedApplied(lastAction: ObservedAction | null): boolean {
   return lastAction != null && lastAction.applied === true;
+}
+
+// The runner reports this when its foreground guard had to relaunch the app
+// after the action. The action still happened, so it still counts toward how
+// many submits a window could hold; what nobody can promise across it is that
+// the process survived long enough to commit, or that Home is showing the same
+// slice of the account list it was.
+//
+// `true | null` for the same reason `applied` is: web and iOS cannot read the
+// foreground at all, so "no relaunch reported" is not "the app never
+// restarted", and only an explicit true licenses declining.
+export function acrossRelaunch(lastAction: ObservedAction | null): boolean {
+  return lastAction != null && lastAction.relaunched === true;
 }
 
 // Counts the submit actions inside the window the balance property compares
@@ -453,6 +467,10 @@ export function createdAccountHasNonZeroBalance(args: {
   // card to: the card that turned up may be an older account of the same name
   // scrolling into view.
   if (!confirmedApplied(lastAction)) return false;
+  // A relaunch draws Home from the top again, so the card that carries the
+  // typed name may be an older account of that name laid out where the new one
+  // used to be, and the create may not have reached sqlite at all.
+  if (acrossRelaunch(lastAction)) return false;
   if (before === null || after === null) return false;
   const typed = (args.typedName ?? "").trim();
   if (typed === "") return false;
@@ -641,6 +659,10 @@ export function submitChangesBalanceByTypedAmount(args: {
   // runner could not confirm may have committed nothing, and a balance that
   // did not move is then exactly what a healthy app looks like.
   if (!confirmedApplied(lastAction)) return true;
+  // The runner restarted the app after this tap, so the process may have died
+  // between the commit and the sqlite write. A balance that did not move is
+  // then a healthy app, exactly as it is for a submit that may not have landed.
+  if (acrossRelaunch(lastAction)) return true;
   if (submitsInWindow !== 1) return true;
   if (typedAmount === 0) return true;
   // An unknown total on either side is not evidence of anything. Comparing one

@@ -322,6 +322,40 @@ test("a card that was already there is not a card that was just created", () => 
   );
 });
 
+// The runner's foreground guard restarted the app after the create. A fresh
+// launch draws Home from the top, so the visible set is whatever the new layout
+// fits rather than what was there a step ago, and "appeared in the reading" is
+// even less like "was created" than usual. The process may also have died
+// before the write landed, which makes the card that carries the typed name an
+// older account of that name coming into view.
+test("a create the runner relaunched across attributes nothing", () => {
+  assert.equal(
+    createdAccountHasNonZeroBalance({
+      route: "home",
+      lastAction: { ...created, relaunched: true },
+      typedName: "Travel",
+      before: [account("Checking", 0)],
+      after: [account("Checking", 0), account("Travel", 5000)],
+    }),
+    false,
+  );
+});
+
+test("no relaunch reported still judges the account that was created", () => {
+  for (const relaunched of [null, undefined]) {
+    assert.equal(
+      createdAccountHasNonZeroBalance({
+        route: "home",
+        lastAction: { ...created, relaunched },
+        typedName: "Travel",
+        before: [account("Checking", 0)],
+        after: [account("Checking", 0), account("Travel", 5000)],
+      }),
+      true,
+    );
+  }
+});
+
 // The apply call failed with the gesture possibly already delivered, so nobody
 // knows whether that account was created. The card carrying the typed name may
 // be an older one that scrolled into view, and attributing it to a creation
