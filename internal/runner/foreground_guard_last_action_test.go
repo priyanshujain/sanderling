@@ -74,8 +74,10 @@ func (d *leavesForegroundAfterSubmitDriver) Snapshot(context.Context) (string, d
 	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), driver.Image{}, nil
 }
 
-// No device answers Snapshot and Hierarchy off different trees, and the runner
-// reads both per step, so this one answers them off the same commit count.
+// The runner reads both per step and compares them, so a device that answered
+// them off different trees would make every step of this test transitional and
+// judged by nothing. The sidecar serves both off one read path (snapshotTree)
+// for the same reason; this one answers them off the same commit count.
 func (d *leavesForegroundAfterSubmitDriver) Hierarchy(context.Context) (string, error) {
 	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), nil
 }

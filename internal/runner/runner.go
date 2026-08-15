@@ -1079,6 +1079,13 @@ retryLoop:
 // filling in. Two reads a read apart are the cheapest thing that can see it
 // happening: the round trip IS the interval, so there is no sleep here.
 //
+// The comparison only means anything because the Hierarchy RPC serves the tree
+// the snapshot's own read produces (see snapshotTree in the sidecar). Off the
+// bare device read it does not: with an IME standing open, the snapshot answers
+// with 134 nodes and the bare read with 489, and the pair then differs over
+// whether the sidecar closed a keyboard between them rather than over anything
+// the app did.
+//
 // Waiting for the change to stop was measured on an API 34 device and refused:
 // a 750ms-quiet poll capped at 2s cost a median 1434ms against 76ms for one
 // read, hit its cap on every frame it fired for, and still handed back a frame
