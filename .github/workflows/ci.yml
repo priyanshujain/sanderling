@@ -100,7 +100,7 @@ jobs:
       # JAVA_HOME after `make test` rather than installing both up front
       # leaves every step above this one on exactly the JDK it ran on before.
       - name: Set up JDK 21 for folio
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
