@@ -3,6 +3,7 @@ package app.folio.feature.ledger
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.folio.core.data.Account
+import app.folio.core.data.MAX_TRANSACTION_AMOUNT_CENTS
 import app.folio.core.data.Repository
 import app.folio.core.data.TxnType
 import app.folio.navigation.Navigator
@@ -85,6 +86,10 @@ class AddTransactionViewModel(
         }
         if (cents <= 0) {
             form.update { it.copy(error = "Amount must be greater than zero") }
+            return
+        }
+        if (cents > MAX_TRANSACTION_AMOUNT_CENTS) {
+            form.update { it.copy(error = "Amount is too large (max \$1,000,000.00)") }
             return
         }
         viewModelScope.launch {
