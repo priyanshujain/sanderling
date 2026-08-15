@@ -63,12 +63,12 @@ Both versions pass most of the time. The fuzzer put the before panel on another
 tab, which left the after panel's image first on the page, and the first version
 fired against a UI that was behaving correctly.
 
-**What else goes wrong: never getting both panels on screen at once.** This
+**What else goes wrong: never getting both readings onto one step.** This
 shape's failure mode is vacuity, not false conviction, which makes it quiet. An
 undirected run over replay-ui went 40 steps without switching a single tab out
 of roughly 15 clickable elements, leaving both tab-facing properties vacuously
 true. The fix is in the action tree, not the property: give the action that
-brings the second panel into view its own weight.
+brings the second reading into view its own weight.
 
 ```ts
 const switchATab = actions(() => {
@@ -78,9 +78,25 @@ const switchATab = actions(() => {
 
 export const actionsRoot = weighted(
   [25, switchATab],
+  [20, showAViolatingStepWithItsPanel],
   [25, defaultActions],
 );
 ```
+
+Weighting one half is usually not enough, and this is the part that surprises
+people. `badgeCountMatchesThePanel` needs a badge, which a tab strip renders
+only for a step that has a violation, and a panel to compare it against, which
+exists only while a particular tab is selected. Undirected actions put both on
+the same step 0 times in the 80 steps of replay-ui's first dogfood run. Aiming
+at the violating step alone just moved the misses to the other side: still 0
+judged. `showAViolatingStepWithItsPanel` in that spec aims at both halves in
+sequence, selecting a violating row and then opening a panel if none is up.
+
+It also opens the *after* panel deliberately, because the before panel's
+screenshot is what `screenshotShowsTheSelectedStep` reads, and covering it up
+would buy one property's evidence with another's. When two properties read the
+same screen, an action tree can starve one to feed the other, and nothing in the
+run output will say so.
 
 ## 2. An effect must not exceed what the actions could have caused
 
@@ -90,28 +106,41 @@ climbed), state a bound on it rather than a prediction of it.
 **Prefer an upper bound to an equality.** This is the single most valuable
 sentence in this file.
 
-Both of these must hold at a step where exactly one submit is in the window:
+`examples/folio/sanderling/predicates.ts` states one rule about one app both
+ways, so the two are worth reading side by side. Each line is the last line of
+its predicate, after the guards, at a step where exactly one submit sits in the
+window:
 
 ```ts
-// sound: no more moved than that one submit could account for
-Math.abs(currTotalBalance - prevTotalBalance) <= typedAmount
-// tempting: it moved by exactly what I typed
+// sound, committedAmountExceedsOneSubmit: the violation is moving by MORE
+// than the one submit in this window could account for
+Math.abs(currAccountBalance - prevAccountBalance) > typedAmount
+// tempting, submitChangesBalanceByTypedAmount: it moved by exactly what I typed
 Math.abs(currTotalBalance - prevTotalBalance) === typedAmount
 ```
 
-The equality catches the same bug, a double submit moving the balance by twice
-the typed amount, and it also convicts an app that behaved: a commit still in
-flight when the reading was taken, a submit the app refused, a tap that never
-landed. Each of those is a legitimate way for the balance not to have moved, and
-under an equality each one obliges you to write a guard for it. You will miss
-one. Under a bound none of them are violations in the first place, because the
-app doing less than you expected is not the bug you are hunting.
+Both catch the bug, because a double submit moves the balance by twice the typed
+amount. Only the second also convicts an app that behaved. A balance that has
+not moved is a commit still in flight (folio's `createTransaction` runs in a
+coroutine), a submit the app rejected, or a tap that never landed, and none of
+those is evidence of anything.
 
-`submitChangesBalanceByTypedAmount` in `examples/folio/sanderling/predicates.ts`
-is written as the equality, and you can read its guard stack as the price of
-that choice: a route gate, a confirmed-dispatch gate, a window gate, a
-typed-amount-is-parseable gate, two null gates and three
-`Number.isSafeInteger` gates, all before the comparison.
+The asymmetry is the point. Moving by more than one submit's worth is not
+something a correct app can do, so the bound needs no case for any of the three.
+The equality needs a case for each, and every one you forget is a false
+conviction. Compare the two guard stacks and the price is exactly legible: the
+equality declines on `confirmedApplied` and on `acrossRelaunch`, and the bound
+carries neither, because a submit that may not have landed and a restart that
+may have eaten the commit both leave the balance under the bound anyway. Those
+are the two facts the runner cannot promise (see below), and needing to guard
+against both is a cost of the equality, not of the app.
+
+You do give something up, so make the trade deliberately. A bound cannot see a
+balance that moved by *less* than the typed amount, and for a ledger that is a
+real bug. The question to settle before giving it up is whether your readings are
+tight enough to tell "moved by less" from "has not finished moving yet". If they
+are not, the equality was never detecting that bug either; it was reporting it at
+random.
 
 The bound has one precondition, and it is the same one as shape 3: it bounds the
 effect by what the actions in the window could have caused, so the window has to
@@ -123,54 +152,80 @@ bound.
 The same bound, stated in counts. One action must not produce two effects.
 
 ```ts
-const submitCommitsOneTransactionPerAction = always(
-  next(() =>
-    !committedTransactionsExceedSubmits({
-      countsBefore: homeTxnCounts.previous ?? null,
-      countsAfter: homeTxnCounts.current,
-      submitsInWindow: submitsSinceCounts.current,
-    }),
-  ),
-);
+!committedTransactionsExceedSubmits({
+  countsBefore: homeTxnCounts.previous ?? null,
+  countsAfter: homeTxnCounts.current,
+  submitsInWindow: submitsSinceCounts.current,
+})
 ```
 
-Reach for this whenever the effect is countable, because it beats the amount
-version on every axis. No arithmetic on values the UI formatted and you parsed
-back, no float precision to reason about, and it stays sound however wide the
-window between two readings gets, since both sides accumulate over the same
-window. In folio it is the property that does most of the detecting.
+Reach for this whenever the effect is countable. No arithmetic on values the UI
+formatted and you parsed back, no float precision to reason about, and it stays
+sound however wide the window between two readings gets, since both sides
+accumulate over the same window.
 
 It has exactly two failure modes and both are about the window. Neither makes it
 unsound. Both make it useless, quietly.
 
 **The window has to close often enough to attribute anything.** The window opens
 when you last read the fact and closes when you read it again, so a run that
-wanders away from that screen accumulates actions on one side of the bound
-without accumulating evidence on the other. Measured on a real run: it went from
-step 19 to step 136 without returning to the screen the property reads, giving a
-transaction rise of 15 against a window of 37 actions. 15 is not more than 37,
-so nothing was reported. The same run also gave 4 against 7, 6 against 13, and 1
-against 1. Sound throughout, detected nothing.
+wanders away from that screen accumulates budget on one side of the bound
+without accumulating evidence on the other. Measured on a real iOS run: it went
+from step 19 to step 136 without returning to the screen the property reads,
+giving a transaction rise of 15 against a window of 37 submits. 15 is not more
+than 37, so nothing was reported. The same run also gave 4 against 7, 6 against
+13, and 1 against 1. Sound throughout, detected nothing.
 
-The fix is to read the fact somewhere the run visits often, and to weight the
-actions that return there. A bound whose budget always exceeds its evidence is a
-property you can delete.
+The obvious fix is to read the fact somewhere the run visits often. The better
+one, when the wide window is the app's own shape rather than an accident, is to
+**state the same rule a second time over a narrower window**, which is what
+folio's spec now does:
+
+```ts
+const submitCommitsOneTransactionPerAction = always(
+  next(
+    () =>
+      !committedTransactionsExceedSubmits({ /* Home's counts, wide window */ }) &&
+      !committedAmountExceedsOneSubmit({ /* this account's balance, narrow window */ }),
+  ),
+);
+```
+
+The counting form can only close its window on a Home reading, and a walk that
+stays inside the transaction flow leaves it hundreds of steps and dozens of
+submits wide. The second conjunct says the same thing in money about the one
+account whose screen the walk is already on, and the transaction flow redraws
+that balance on nearly every frame, so its window is usually a single action
+wide, narrow enough to tell one commit from two. One rule, two windows, and the
+narrow one is where the detection actually comes from.
+
+That only works because the two readings are kept from spanning two accounts:
+`readAccountBalance` drops its carrier on every route that is not the ledger or
+the transaction screen, transition frames included. A narrow window buys nothing
+if the pair it compares straddles two different subjects.
 
 **The window must not be spent on actions that provably could not cause the
-effect.** Folio's transaction submit button is declared
-`enabled = state.amount.isNotBlank()` (`AddTransactionScreen.kt`), so a tap on
-it with an empty amount field commits nothing and must not consume budget.
-Counting those taps was over half the window on real runs: 35 taps against a
-real budget of 16, and 42 against 17. `countSubmitsInWindow` in
-`predicates.ts` still counts them, which is why that number is worth checking
-before you trust a green run of this property.
+effect.** A bound inflated by taps that commit nothing is a bound the app can
+never exceed, which is slack a real double submit hides behind. Folio's
+transaction submit is `clickable(enabled = amount.isNotBlank())`, so a tap with
+an empty field never fires at all, and the app's own `parseCents` refuses
+anything outside `^\d+(\.\d{1,2})?$` or parsing to zero. Measured over four
+recorded Android runs, 19, 11, 25 and 25 of 35, 26, 42 and 42 submit taps landed
+with the amount field empty, which is roughly half the budget in every one.
+
+`submitCouldCommit` in `predicates.ts` is that rule, and note how narrowly it is
+drawn. It returns false only where folio's own code **must** have refused, and
+returns true for anything it cannot rule out, including an undefined reading and
+an amount too large for the app to hold. Over-counting costs a detection;
+under-counting convicts a healthy app.
 
 Establishing that an action could not have had an effect is app knowledge, not
-something the runner can tell you. Here the field's own text at the moment of
-the tap settles it, and the spec already reads it as
-`txnAmountField.previous?.text`. `element.enabled` is on every
-`AccessibilityElement` for the general case, though whether your platform
-populates it honestly is something to verify on a real tree rather than assume.
+something the runner can tell you, and it has to come from the frame the tap
+read. Folio reads the amount field on the landing frame, which is sound because
+the tap changes nothing about it and one action runs per step.
+`element.enabled` is on every `AccessibilityElement` for the general case,
+though whether your platform populates it honestly is worth checking on a real
+tree rather than assuming.
 
 The mirror of this rule matters just as much: an action whose effect you cannot
 rule out **must** be counted. Leaving out submits whose dispatch the runner
@@ -299,31 +354,55 @@ name carried by more than one card, because subtracting two different accounts'
 counts convicts a healthy app of double-submitting.
 
 **Match whole keys, not endings.** `endsWith` attribution judges an older
-account named `Emergency Fund` when the user typed `Fund`, and substring
-matching is looser still.
+account named `Emergency Fund` when the user typed `Fund`: have the new card
+clipped out of the reading, the way a list clips any card, and the old account
+is convicted for money it has held all along. Substring matching is looser
+still. Build every form of the key the platforms can produce and compare each
+one whole, which is what `createdAccountHasNonZeroBalance` does with
+`account.name === typed || account.name === initialsOf(typed) + typed`. Note
+that this bought detections as well as soundness: under the suffix test, a name
+that two cards ended with was thrown away as unattributable rather than matched
+to the one card that actually carried it.
 
-**What the runner could not promise.** `state.lastAction` distinguishes three
-things and collapsing them is unsound:
+**What the runner could not promise.** `state.lastAction` is
+`Action & { applied: true | null; relaunched: true | null }`, and collapsing any
+of its states is unsound:
 
-- `null` means no action ran
+- `null`, the whole field, means no action ran
 - `applied: true` means the runner saw the dispatch succeed
 - `applied: null` means it was dispatched and nobody can find out whether it
   landed, because an RPC deadline can fire after the tap arrived
+- `relaunched: true` means the runner had to bring the app back to the
+  foreground after this action, so the two readings straddle a restart
 
-The rule follows the shape of the property. An action of unknown fate still
-counts toward a **bound on what the app could have done**, and it never licenses
-attributing an effect **to** it. So a bound counts it and an equality must
-decline on it, which is the same reason shape 2 prefers bounds: a property
-demanding the effect of an action that may never have run convicts the app of
-the runner's own uncertainty.
+One rule covers the last two, and it is the rule that decides shape 2 for you.
+An action the runner cannot fully vouch for **still counts toward a bound on
+what the app could have done**, and it **never licenses attributing an effect to
+it**. So a bound counts it and an equality has to decline on it. That is why
+`committedAmountExceedsOneSubmit` needs no `confirmedApplied` guard and no
+`acrossRelaunch` guard while `submitChangesBalanceByTypedAmount` needs both: a
+property demanding the effect of an action that may never have run, or that a
+restart may have swallowed, convicts the app of the runner's own uncertainty.
 
-Note the one event that removes an action from a window without removing its
-effect: when the app leaves the foreground the runner relaunches it and drops
-the pending `lastAction`, while any effect that action already committed to
-persisted storage survives the restart. A carrier you hold across steps in a
-module-level variable does not know a restart happened either. If a property
-compares readings across an interval that a relaunch can sit inside, that is the
-gap to think about.
+`relaunched` is the same shape of fact as `applied`, applied to app state rather
+than to dispatch. The action itself did happen. What nobody can promise across
+it is that the process ran continuously, that the commit survived, or that the
+screen is showing the same slice of the same list it was. So a property assuming
+continuous state declines, via `acrossRelaunch(lastAction)`, and folio uses it
+in three places: `createdAccountHasNonZeroBalance` declines because Home redraws
+from the top and the card carrying the typed name may be an older account laid
+out where the new one used to be, the equality property declines because it
+demands an effect, and `countSubmitsInWindow` uses it to **stop trusting its own
+refusal evidence**, since a relaunch is the one thing that can put a form state
+on screen other than the one the tap read.
+
+Both fields are `true | null` rather than booleans, and that is deliberate: only
+the positive report is a fact the runner can vouch for, so `null` is "not
+reported" rather than "did not happen". `relaunched` shows why it has to be that
+way. Web and iOS cannot read the foreground at all, so they never relaunch the
+app and equally cannot promise it never restarted, and a `false` there would be
+a claim nobody is in a position to make. Read the absence as a guarantee and you
+have made the same mistake as reading a missing value as zero, one level up.
 
 **Testing a property means both directions, every time.**
 
@@ -333,8 +412,9 @@ gap to think about.
 The second is the one people skip and the one that catches unsoundness. Build
 the fixture where the effect happens legitimately, at the boundary the property
 draws, and assert silence: the commit that is still settling, the submit the app
-refused, the card that scrolled into view rather than being created. A property
-you have only ever seen go red is a property you have half tested.
+refused, the card that scrolled into view rather than being created, the pair of
+readings taken either side of a relaunch. A property you have only ever seen go
+red is a property you have half tested.
 
 Then hand it to `sanderling-spec-review`, which will ask how many steps it
 actually judged on a real run.
