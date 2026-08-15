@@ -124,3 +124,26 @@ jobs:
 
       - name: Drive web fixtures through headless Chrome
         run: make test-browser
+
+  # Four workflows and four composite actions, and the ones that fuzz the
+  # examples are dispatch-only, which GitHub refuses to dispatch until they are
+  # on the default branch. Their first real run is therefore after merge, so a
+  # bad expression or a missing action would land before anything caught it.
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned so a new actionlint release cannot change what CI enforces,
+      # for the same reason the buf version above is spelled out. shellcheck
+      # runs over every run: block by default.
+      - name: Lint the workflows
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+        with:
+          version: 1.7.12
+
+      # actionlint reads a local action's inputs but never checks that its path
+      # exists: `uses: ./.github/actions/typo` lints clean and fails only when
+      # the job runs.
+      - name: Check that the workflow references resolve
+        run: .github/scripts/workflow-refs.sh

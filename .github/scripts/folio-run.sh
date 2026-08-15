@@ -25,16 +25,23 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 # proves false is a different finding, and this leg has nothing to say about it.
 GATED_PROPERTIES="submitMovesBalanceByAtMostTypedAmount,submitCommitsOneTransactionPerAction"
 
+# The route android's health gate needs the run to have reached. This is a key
+# of SCREENS in the spec, which is also where the spec's `route` extractor gets
+# its answer, so the gate and the app agree on what "on that screen" means.
+TRANSACTION_ROUTE="add-transaction"
+
 # A gate is only as good as these names, and nothing else ties them to the spec.
 # Rename a property there and the classification below matches nothing: ios and
 # web blame the spec for finding a different bug, and android reclassifies a
 # real conviction as "judging health only" and stays green. Checked before the
 # run so a rename costs seconds rather than the whole budget.
-SPEC="$spec" GATED="$GATED_PROPERTIES" SELF="$0" python3 - <<'PY' || exit 1
+SPEC="$spec" GATED="$GATED_PROPERTIES" ROUTE="$TRANSACTION_ROUTE" SELF="$0" \
+  python3 - <<'PY' || exit 1
 import os, re, sys
 
 spec_path = os.environ["SPEC"]
 gated = [name for name in os.environ["GATED"].split(",") if name]
+route = os.environ["ROUTE"]
 try:
     with open(spec_path, encoding="utf-8") as handle:
         source = handle.read()
@@ -59,6 +66,27 @@ if missing:
              "cannot be violated and every real conviction would read as a different "
              "finding. Update GATED_PROPERTIES in %s."
              % (spec_path, ", ".join(missing), os.environ["SELF"]))
+
+# The android health gate reads the `route` extractor and asks whether it ever
+# reported TRANSACTION_ROUTE. Both names come from the spec, so both are checked
+# here: a renamed extractor or a renamed SCREENS key would otherwise make every
+# android run report a transaction screen it never failed to reach.
+if not re.search(r'extract\s*(?:<[^>]*>)?\s*\(\s*"route"', source):
+    sys.exit("folio: %s no longer declares extract(\"route\", ...), so the android "
+             "health gate has nothing to read. Update %s."
+             % (spec_path, os.environ["SELF"]))
+
+screens = re.search(r"const\s+SCREENS\s*=\s*\{(.*?)\}", source, re.S)
+if screens is None:
+    sys.exit("folio: %s declares no `const SCREENS = {...}`, so the route the android "
+             "health gate wants cannot be checked against it" % spec_path)
+
+routes = set(re.findall(r'["\']?([A-Za-z0-9_-]+)["\']?\s*:',
+                        re.sub(r"//[^\n]*", "", screens.group(1))))
+if route not in routes:
+    sys.exit("folio: %s SCREENS declares %s, not %r, so the android health gate waits "
+             "for a route the app never reports. Update TRANSACTION_ROUTE in %s."
+             % (spec_path, ", ".join(sorted(routes)), route, os.environ["SELF"]))
 PY
 
 folio_args=(--bundle-id app.folio)
@@ -148,11 +176,14 @@ steps=0
 #   line 1  convictions: a gated property that was proved false
 #   line 2  thrown: a predicate that blew up, with the reason it gave
 #   line 3  other: a real violation of some property this leg does not gate on
+#   line 4  routes: every value the spec's `route` extractor reported, in the
+#           order it first reported them, which is what android's health gate
+#           reads instead of grepping the hierarchy dump for a screen marker
 classified=$(TRACE="$trace" GATED="$GATED_PROPERTIES" python3 - <<'PY'
 import json, os
 
 gated = set(os.environ["GATED"].split(","))
-convictions, thrown, other = [], [], []
+convictions, thrown, other, routes = [], [], [], []
 try:
     lines = open(os.environ["TRACE"], encoding="utf-8", errors="replace")
 except OSError:
@@ -162,6 +193,13 @@ for line in lines:
         step = json.loads(line)
     except ValueError:
         continue
+    # Only the extractors that changed are recorded, so a route appears at the
+    # step it was first reached and never again until it changes.
+    change = (step.get("extractor_changes") or {}).get("route")
+    if isinstance(change, dict):
+        value = change.get("curr")
+        if isinstance(value, str) and value not in routes:
+            routes.append(value)
     witnesses = step.get("witnesses") or {}
     for name in step.get("violations") or []:
         witness = witnesses.get(name) or {}
@@ -172,7 +210,7 @@ for line in lines:
             convictions.append(name)
         else:
             other.append(name)
-for names in (convictions, thrown, other):
+for names in (convictions, thrown, other, routes):
     print(", ".join(names))
 PY
 ) || {
@@ -182,6 +220,7 @@ PY
 convicted=$(printf '%s\n' "$classified" | sed -n '1p')
 thrown=$(printf '%s\n' "$classified" | sed -n '2p')
 other=$(printf '%s\n' "$classified" | sed -n '3p')
+routes=$(printf '%s\n' "$classified" | sed -n '4p')
 
 {
   echo "### folio on $platform"
@@ -228,15 +267,16 @@ if [ "$platform" = "android" ]; then
       ;;
     *) echo "folio/android: the harness failed with exit $code" >&2; exit "$code" ;;
   esac
-  if ! grep -q '"AddTransactionScreen"' "$trace"; then
-    # Where it stopped is a much longer question than this gate answers, so
-    # name the routes the trace holds and leave the diagnosis to the reader.
-    reached=$(grep -oE '"[A-Za-z0-9]+Screen"' "$trace" | tr -d '"' |
-      awk '!seen[$0]++' | paste -sd, -) || reached=""
-    echo "folio/android: the run never reached AddTransactionScreen over $steps steps" >&2
-    echo "folio/android: routes the trace does record: ${reached:-none}" >&2
-    exit 1
-  fi
+  case ", $routes, " in
+    *", $TRANSACTION_ROUTE, "*) ;;
+    *)
+      # Where it stopped is a much longer question than this gate answers, so
+      # name the routes the trace holds and leave the diagnosis to the reader.
+      echo "folio/android: the run never reached the $TRANSACTION_ROUTE route over $steps steps" >&2
+      echo "folio/android: routes the trace does record: ${routes:-none}" >&2
+      exit 1
+      ;;
+  esac
   echo "folio/android: healthy run over $steps steps, reached the transaction screen"
   exit 0
 fi
