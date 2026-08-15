@@ -13,7 +13,10 @@ class StabilityPollTest {
             elapsed >= MIN_STABLE_STREAK_MILLIS,
             "must observe a stable streak of at least ${MIN_STABLE_STREAK_MILLIS}ms, elapsed=${elapsed}ms",
         )
-        assertTrue(elapsed < 3000L, "should not run to cap when stable, elapsed=${elapsed}ms")
+        assertTrue(
+            elapsed < 3000L,
+            "should not run to cap when stable, elapsed=${elapsed}ms",
+        )
     }
 
     @Test fun slowSnapshotReadsDoNotEatTheStreak() {
@@ -38,8 +41,9 @@ class StabilityPollTest {
         val observedQuiet = sampleStarts.last() - sampleEnds.first()
         assertTrue(
             observedQuiet >= MIN_STABLE_STREAK_MILLIS,
-            "the poll returned having observed only ${observedQuiet}ms of quiet, not " +
-                "${MIN_STABLE_STREAK_MILLIS}ms; starts=$sampleStarts ends=$sampleEnds",
+            "the poll returned having observed only ${observedQuiet}ms of " +
+                "quiet, not ${MIN_STABLE_STREAK_MILLIS}ms; " +
+                "starts=$sampleStarts ends=$sampleEnds",
         )
         assertTrue(
             sampleStarts.size >= 3,
@@ -60,23 +64,27 @@ class StabilityPollTest {
             calls++
             when {
                 calls <= 2 -> "calm"
+
                 calls == 3 -> {
                     transientAt = System.currentTimeMillis()
                     "transient"
                 }
+
                 else -> "stable"
             }
         }
         val sinceTransition = System.currentTimeMillis() - transientAt
         assertTrue(
             calls >= 8,
-            "after the transition the poll needs a fresh matching pair and then a full " +
-                "${MIN_STABLE_STREAK_MILLIS}ms of quiet, which is 8 samples, got $calls",
+            "after the transition the poll needs a fresh matching pair and " +
+                "then a full ${MIN_STABLE_STREAK_MILLIS}ms of quiet, which " +
+                "is 8 samples, got $calls",
         )
         assertTrue(
             sinceTransition >= MIN_STABLE_STREAK_MILLIS,
-            "the calm prefix must not count: a full ${MIN_STABLE_STREAK_MILLIS}ms streak has to " +
-                "start over after the transition, returned ${sinceTransition}ms after it",
+            "the calm prefix must not count: a full " +
+                "${MIN_STABLE_STREAK_MILLIS}ms streak has to start over " +
+                "after the transition, returned ${sinceTransition}ms after it",
         )
     }
 
@@ -105,7 +113,10 @@ class StabilityPollTest {
             "frame-$calls"
         }
         val elapsed = System.currentTimeMillis() - start
-        assertTrue(elapsed in budget..(budget + 1000L), "expected to hit cap, elapsed=$elapsed")
+        assertTrue(
+            elapsed in budget..(budget + 1000L),
+            "expected to hit cap, elapsed=$elapsed",
+        )
     }
 
     @Test fun zeroBudgetReturnsImmediately() {
@@ -117,7 +128,8 @@ class StabilityPollTest {
         assertEquals(0, calls)
     }
 
-    @Test fun structuralHashIgnoresBoundsAndIdenticalForSemanticallyEqualTrees() {
+    @Test
+    fun structuralHashIgnoresBoundsAndIdenticalForSemanticallyEqualTrees() {
         val a = """
         {"attributes":{"resource-id":"LoginScreen","bounds":"[0,0,1080,2340]"},
          "children":[
@@ -130,13 +142,24 @@ class StabilityPollTest {
            {"attributes":{"resource-id":"LoginEmail","bounds":"[10,11,1070,101]","text":"a@b"},"children":[]}
          ]}
         """.trimIndent()
-        assertEquals(structuralHash(a), structuralHash(b), "bounds-only flicker must not change hash")
+        assertEquals(
+            structuralHash(a),
+            structuralHash(b),
+            "bounds-only flicker must not change hash",
+        )
     }
 
     @Test fun structuralHashDiffersWhenContentChanges() {
-        val a = """{"attributes":{"resource-id":"LoginEmail","text":"a@b"},"children":[]}"""
-        val b = """{"attributes":{"resource-id":"LoginEmail","text":"c@d"},"children":[]}"""
-        assertTrue(structuralHash(a) != structuralHash(b), "text change must alter hash")
+        val a = """
+        {"attributes":{"resource-id":"LoginEmail","text":"a@b"},"children":[]}
+        """.trimIndent()
+        val b = """
+        {"attributes":{"resource-id":"LoginEmail","text":"c@d"},"children":[]}
+        """.trimIndent()
+        assertTrue(
+            structuralHash(a) != structuralHash(b),
+            "text change must alter hash",
+        )
     }
 
     @Test fun stabilitySnapshotReturnsNullDuringNavHostCrossFade() {
@@ -160,7 +183,10 @@ class StabilityPollTest {
          ]}
         """.trimIndent()
         val hash = stabilitySnapshot(singleScreen)
-        assertTrue(hash != null && hash.isNotBlank(), "single-screen tree must yield a hash, got $hash")
+        assertTrue(
+            hash != null && hash.isNotBlank(),
+            "single-screen tree must yield a hash, got $hash",
+        )
     }
 
     @Test fun stabilitySnapshotIgnoresNonRouteAttributeValues() {
@@ -173,7 +199,10 @@ class StabilityPollTest {
            {"attributes":{"text":"Welcome to MyScreen"},"children":[]}
          ]}
         """.trimIndent()
-        assertTrue(stabilitySnapshot(tree) != null, "non-route attribute must not be counted as a screen")
+        assertTrue(
+            stabilitySnapshot(tree) != null,
+            "non-route attribute must not be counted as a screen",
+        )
     }
 
     @Test fun countRouteScreensCountsTestTagAndIdentifier() {

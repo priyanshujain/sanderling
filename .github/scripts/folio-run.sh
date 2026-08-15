@@ -189,7 +189,12 @@ if [ "$platform" = "android" ]; then
     *) echo "folio/android: the harness failed with exit $code" >&2; exit "$code" ;;
   esac
   if ! grep -q '"AddTransactionScreen"' "$trace"; then
-    echo "folio/android: the run never reached AddTransactionScreen, so it never got past login" >&2
+    # Where it stopped is a much longer question than this gate answers, so
+    # name the routes the trace holds and leave the diagnosis to the reader.
+    reached=$(grep -oE '"[A-Za-z0-9]+Screen"' "$trace" | tr -d '"' |
+      awk '!seen[$0]++' | paste -sd, -) || reached=""
+    echo "folio/android: the run never reached AddTransactionScreen over $steps steps" >&2
+    echo "folio/android: routes the trace does record: ${reached:-none}" >&2
     exit 1
   fi
   echo "folio/android: healthy run over $steps steps, reached the transaction screen"
