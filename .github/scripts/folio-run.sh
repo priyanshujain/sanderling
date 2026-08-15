@@ -18,8 +18,48 @@ max_steps="${MAX_STEPS:-240}"
 duration="${DURATION:-20m}"
 sanderling="${SANDERLING:-./bin/sanderling}"
 output="runs/folio-$platform"
-spec="examples/folio/sanderling/spec.ts"
+spec="${SPEC:-examples/folio/sanderling/spec.ts}"
 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+# The two properties that state folio's double-submit. Anything else the spec
+# proves false is a different finding, and this leg has nothing to say about it.
+GATED_PROPERTIES="submitMovesBalanceByAtMostTypedAmount,submitCommitsOneTransactionPerAction"
+
+# A gate is only as good as these names, and nothing else ties them to the spec.
+# Rename a property there and the classification below matches nothing: ios and
+# web blame the spec for finding a different bug, and android reclassifies a
+# real conviction as "judging health only" and stays green. Checked before the
+# run so a rename costs seconds rather than the whole budget.
+SPEC="$spec" GATED="$GATED_PROPERTIES" SELF="$0" python3 - <<'PY' || exit 1
+import os, re, sys
+
+spec_path = os.environ["SPEC"]
+gated = [name for name in os.environ["GATED"].split(",") if name]
+try:
+    with open(spec_path, encoding="utf-8") as handle:
+        source = handle.read()
+except OSError as error:
+    sys.exit("folio: cannot read %s to check the gated properties still exist: %s"
+             % (spec_path, error))
+
+block = re.search(r"export\s+const\s+properties\s*=\s*\{(.*?)\}", source, re.S)
+if block is None:
+    sys.exit("folio: %s declares no `export const properties = {...}`, so the gated "
+             "properties cannot be checked against it" % spec_path)
+
+declared = set()
+for entry in re.sub(r"//[^\n]*", "", block.group(1)).split(","):
+    name = entry.split(":")[0].strip()
+    if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", name):
+        declared.add(name)
+
+missing = [name for name in gated if name not in declared]
+if missing:
+    sys.exit("folio: %s no longer declares %s, so this leg gates on a property that "
+             "cannot be violated and every real conviction would read as a different "
+             "finding. Update GATED_PROPERTIES in %s."
+             % (spec_path, ", ".join(missing), os.environ["SELF"]))
+PY
 
 folio_args=(--bundle-id app.folio)
 case "$platform" in
@@ -96,10 +136,6 @@ trace=""
 [ -n "$run_dir" ] && trace="${run_dir}trace.jsonl"
 steps=0
 [ -f "$trace" ] && steps=$(wc -l < "$trace" | tr -d ' ')
-
-# The two properties that state folio's double-submit. Anything else the spec
-# proves false is a different finding, and this leg has nothing to say about it.
-GATED_PROPERTIES="submitMovesBalanceByAtMostTypedAmount,submitCommitsOneTransactionPerAction"
 
 # Exit 2 means "the run recorded a violation", and that is NOT the same as "the
 # run convicted folio". A predicate that THROWS is recorded as a violation too,
