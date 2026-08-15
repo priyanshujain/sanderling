@@ -20,6 +20,8 @@ The spec package, in your project:
 npm install --save-dev @sanderling/spec
 ```
 
+Both come from the same release tag, and the CLI bundles the package's TypeScript sources when it evaluates your spec, so upgrade them together. Pre-releases are published under npm's `next` tag; `npm install @sanderling/spec` gives you the current stable one.
+
 ## Check your environment
 
 ```sh

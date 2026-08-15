@@ -123,10 +123,22 @@ export function readHomeCards<T>(args: {
   return { value: reading, carrier: reading, fresh: true };
 }
 
-function isTapOn(
-  lastAction: { kind?: string; on?: string | object } | null,
-  target: string,
-): boolean {
+// state.lastAction as the two hosts build it (internal/verifier/marshal.go
+// lastActionFields), read defensively: every field is what a Go struct decided
+// to emit, not something this file can trust a compile-time shape for.
+//
+// `applied` is true when the runner saw the action's dispatch succeed and null
+// when the apply call failed with the gesture possibly already delivered: an
+// RPC deadline can fire after the tap landed, and nothing can find out
+// afterwards. That is unknown, not "it did not happen", which is what
+// `lastAction === null` says.
+export interface ObservedAction {
+  kind?: string;
+  on?: string | object;
+  applied?: true | null;
+}
+
+function isTapOn(lastAction: ObservedAction | null, target: string): boolean {
   if (lastAction == null) return false;
   if (lastAction.kind !== "Tap" && lastAction.kind !== "DoubleTap") return false;
   const on = lastAction.on;
@@ -138,17 +150,25 @@ function isTapOn(
 // Repository.createTransaction: AddTransactionViewModel.submit() is the only
 // caller, AddTransactionEvent.Submit is the only thing that runs it, and the
 // TxnSubmit button's onClick is the only thing that sends that event.
-export function isTxnSubmitTap(
-  lastAction: { kind?: string; on?: string | object } | null,
-): boolean {
+export function isTxnSubmitTap(lastAction: ObservedAction | null): boolean {
   return isTapOn(lastAction, "TxnSubmit");
 }
 
 // Likewise the only action that creates an account.
-export function isAddAccountSubmitTap(
-  lastAction: { kind?: string; on?: string | object } | null,
-): boolean {
+export function isAddAccountSubmitTap(lastAction: ObservedAction | null): boolean {
   return isTapOn(lastAction, "AddAccountSubmit");
+}
+
+// Did the runner see this action's dispatch succeed? `applied` is null when the
+// apply call failed with the gesture possibly already delivered (an RPC
+// deadline can fire after the tap landed), and the runner has no way to find
+// out afterwards. Such an action may have caused anything the next reading
+// shows, so it counts toward how many submits a window COULD hold, but it never
+// licenses attributing an effect to it: a property that demands the effect of
+// an action that may never have run convicts the app of the runner's own
+// uncertainty.
+export function confirmedApplied(lastAction: ObservedAction | null): boolean {
+  return lastAction != null && lastAction.applied === true;
 }
 
 // Counts the submit actions inside the window the balance property compares
@@ -164,9 +184,15 @@ export function isAddAccountSubmitTap(
 //
 // The reset lands on `fresh`, the same event that advances the carrier, so the
 // count always describes exactly the interval the two compared totals span.
+//
+// A submit whose dispatch the runner could not confirm counts here, because
+// this number is an upper bound on the submits the window holds and the tap may
+// well have landed. Leaving it out is what convicted a healthy app:
+// committedTransactionsExceedSubmits saw a transaction rise of one against a
+// window of zero and called it a double submit.
 export function countSubmitsInWindow(args: {
   previousCount: number;
-  lastAction: { kind?: string; on?: string | object } | null;
+  lastAction: ObservedAction | null;
   fresh: boolean;
 }): { reported: number; next: number } {
   const { previousCount, lastAction, fresh } = args;
@@ -343,7 +369,7 @@ export function homeTxnCountsOf(cards: readonly CardReading[]): Record<string, T
 // same as fine, and both come back false here.
 export function createdAccountHasNonZeroBalance(args: {
   route: string | null;
-  lastAction: { kind?: string; on?: string | object } | null;
+  lastAction: ObservedAction | null;
   typedName: string | undefined;
   before: Account[] | null;
   after: Account[] | null;
@@ -351,6 +377,10 @@ export function createdAccountHasNonZeroBalance(args: {
   const { route, lastAction, before, after } = args;
   if (route !== "home") return false;
   if (!isAddAccountSubmitTap(lastAction)) return false;
+  // A creation nobody can confirm happened is not a creation to attribute a
+  // card to: the card that turned up may be an older account of the same name
+  // scrolling into view.
+  if (!confirmedApplied(lastAction)) return false;
   if (before === null || after === null) return false;
   const typed = (args.typedName ?? "").trim();
   if (typed === "") return false;
@@ -465,7 +495,7 @@ export function parseTypedAmount(text: string | undefined | null): number {
 // the bug: the double-tap is a single action.
 export function submitChangesBalanceByTypedAmount(args: {
   route: string | null;
-  lastAction: { kind?: string; on?: string | object } | null;
+  lastAction: ObservedAction | null;
   submitsInWindow: number;
   typedAmount: number;
   prevTotalBalance: number | null;
@@ -476,6 +506,10 @@ export function submitChangesBalanceByTypedAmount(args: {
 
   if (route !== "home") return true;
   if (!isTxnSubmitTap(lastAction)) return true;
+  // The whole rule is that the delta belongs to THIS submit. A submit the
+  // runner could not confirm may have committed nothing, and a balance that
+  // did not move is then exactly what a healthy app looks like.
+  if (!confirmedApplied(lastAction)) return true;
   if (submitsInWindow !== 1) return true;
   if (typedAmount === 0) return true;
   // An unknown total on either side is not evidence of anything. Comparing one

@@ -298,11 +298,18 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				logger.Warn("apply error; marking step transitional", "step", stepIndex, "err", err)
 				transitional = true
 				applySkipped = true
-				lastAction = nil
+				// The error says the call failed, not that the gesture never
+				// reached the app: a deadline that fires after dispatch leaves
+				// the effect committed. Reporting no action here would let a
+				// property convict the app for an effect with no cause, so the
+				// action is reported with its fate unknown instead.
+				unconfirmed := nextAction
+				lastAction = &unconfirmed
 			} else {
 				consecutiveApplyFailures = 0
-				actionCopy := nextAction
-				lastAction = &actionCopy
+				applied := nextAction
+				applied.Applied = true
+				lastAction = &applied
 			}
 		} else {
 			lastAction = nil

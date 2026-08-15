@@ -12,7 +12,7 @@ test("single submit: delta matches typed amount", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 500,
       prevTotalBalance: 1000,
@@ -26,7 +26,7 @@ test("double submit: delta is twice the typed amount, fires", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 500,
       prevTotalBalance: 1000,
@@ -40,7 +40,7 @@ test("DoubleTap kind also caught when delta exceeds typed amount", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "DoubleTap", on: submitOn },
+      lastAction: { kind: "DoubleTap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 500,
       prevTotalBalance: 0,
@@ -54,7 +54,7 @@ test("wrong action kind: vacuous true even with mismatch", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "InputText", on: submitOn },
+      lastAction: { kind: "InputText", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 500,
       prevTotalBalance: 1000,
@@ -68,7 +68,7 @@ test("wrong target: vacuous true even with mismatch", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: "testTag:LoginScreen > testTag:LoginSubmit" },
+      lastAction: { kind: "Tap", on: "testTag:LoginScreen > testTag:LoginSubmit", applied: true },
       submitsInWindow: 1,
       typedAmount: 500,
       prevTotalBalance: 1000,
@@ -96,7 +96,7 @@ test("zero typedAmount: vacuous true", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 0,
       prevTotalBalance: 1000,
@@ -110,7 +110,7 @@ test("selector as object: coerced safely and TxnSubmit detected", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: { testTag: "TxnSubmit" } },
+      lastAction: { kind: "Tap", on: { testTag: "TxnSubmit" }, applied: true },
       submitsInWindow: 1,
       typedAmount: 500,
       prevTotalBalance: 0,
@@ -124,7 +124,7 @@ test("selector as object without TxnSubmit: vacuous true", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: { testTag: "LoginSubmit" } },
+      lastAction: { kind: "Tap", on: { testTag: "LoginSubmit" }, applied: true },
       submitsInWindow: 1,
       typedAmount: 500,
       prevTotalBalance: 0,
@@ -138,7 +138,7 @@ test("raw whole-dollar input: single submit clears", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: parseTypedAmount("50"),
       prevTotalBalance: 5000,
@@ -152,7 +152,7 @@ test("raw whole-dollar input: double submit fires", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: parseTypedAmount("50"),
       prevTotalBalance: 5000,
@@ -166,7 +166,7 @@ test("decimal input from empty prior balance clears", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: parseTypedAmount("5.50"),
       prevTotalBalance: 0,
@@ -180,7 +180,7 @@ test("DoubleTap kind with raw whole-dollar input fires", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "DoubleTap", on: submitOn },
+      lastAction: { kind: "DoubleTap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: parseTypedAmount("100"),
       prevTotalBalance: 0,
@@ -194,7 +194,7 @@ test("route gate: ledger landing with stale carrier is skipped", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "ledger",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 5000,
       prevTotalBalance: 0,
@@ -208,7 +208,7 @@ test("route gate: add-transaction landing with double-submit delta is skipped", 
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "add-transaction",
-      lastAction: { kind: "DoubleTap", on: submitOn },
+      lastAction: { kind: "DoubleTap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 5000,
       prevTotalBalance: 0,
@@ -222,7 +222,7 @@ test("route gate: null route is skipped", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: null,
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 5000,
       prevTotalBalance: 0,
@@ -236,7 +236,7 @@ test("route gate: home landing with matching delta passes", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 5000,
       prevTotalBalance: 0,
@@ -250,7 +250,7 @@ test("route gate: home landing with double-insert delta fires", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 5000,
       prevTotalBalance: 0,
@@ -275,7 +275,7 @@ test("above 2^53 a healthy single submit is not reported", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 1600,
       prevTotalBalance: HUGE_BALANCE,
@@ -289,7 +289,7 @@ test("above 2^53 a double-submit delta is not reported either", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 1600,
       prevTotalBalance: HUGE_BALANCE,
@@ -303,7 +303,7 @@ test("an unreadable previous balance above 2^53 is not evidence", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 1600,
       prevTotalBalance: HUGE_BALANCE,
@@ -320,7 +320,7 @@ test("typed amount above 2^53 is not evidence", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 1e23,
       prevTotalBalance: 0,
@@ -336,7 +336,7 @@ test("boundary: a double submit landing exactly on MAX_SAFE_INTEGER still fires"
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 4503599627370495,
       prevTotalBalance: 0,
@@ -350,7 +350,7 @@ test("boundary: a single submit landing exactly on MAX_SAFE_INTEGER passes", () 
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 9007199254740991,
       prevTotalBalance: 0,
@@ -364,7 +364,7 @@ test("boundary: one cent past MAX_SAFE_INTEGER stops being evidence", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 4503599627370496,
       prevTotalBalance: 0,
@@ -381,7 +381,7 @@ test("a large but exact difference between safe balances still fires", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 500,
       prevTotalBalance: -9007199254740991,
@@ -397,7 +397,7 @@ test("21-digit typed amount with an unmoved balance is not a violation", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: parseTypedAmount("999999999999999999999"),
       prevTotalBalance: 220900,
@@ -417,7 +417,7 @@ test("freshness: two submits in the window is vacuous, not a conviction", () => 
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "DoubleTap", on: submitOn },
+      lastAction: { kind: "DoubleTap", on: submitOn, applied: true },
       submitsInWindow: 2,
       typedAmount: 19600,
       prevTotalBalance: 0,
@@ -431,7 +431,7 @@ test("freshness: two submits cannot convict even on a clean 2x delta", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 2,
       typedAmount: 500,
       prevTotalBalance: 1000,
@@ -448,7 +448,7 @@ test("freshness boundary: exactly one submit is the window that convicts", () =>
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "DoubleTap", on: submitOn },
+      lastAction: { kind: "DoubleTap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 19600,
       prevTotalBalance: 0,
@@ -462,7 +462,7 @@ test("freshness boundary: one submit with a healthy 1x delta still passes", () =
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 1,
       typedAmount: 19600,
       prevTotalBalance: 0,
@@ -476,7 +476,7 @@ test("freshness boundary: three submits is vacuous", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 3,
       typedAmount: 500,
       prevTotalBalance: 0,
@@ -493,11 +493,29 @@ test("freshness boundary: a window with no submit in it is vacuous", () => {
   assert.equal(
     submitChangesBalanceByTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn },
+      lastAction: { kind: "Tap", on: submitOn, applied: true },
       submitsInWindow: 0,
       typedAmount: 500,
       prevTotalBalance: 1000,
       currTotalBalance: 2000,
+    }),
+    true,
+  );
+});
+
+// applied: null is the runner saying it dispatched the tap and never learned
+// whether it landed. A submit that committed nothing leaves the balance where
+// it was, so demanding the typed amount of movement for it convicts an app that
+// did exactly what it should have.
+test("a submit the runner could not confirm demands no balance move", () => {
+  assert.equal(
+    submitChangesBalanceByTypedAmount({
+      route: "home",
+      lastAction: { kind: "Tap", on: submitOn, applied: null },
+      submitsInWindow: 1,
+      typedAmount: 500,
+      prevTotalBalance: 1000,
+      currTotalBalance: 1000,
     }),
     true,
   );

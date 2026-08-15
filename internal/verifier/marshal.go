@@ -26,7 +26,7 @@ type stateInput struct {
 }
 
 // stateObject builds the JS-side `state` object matching the State type from
-// pkg/spec-api. Fields beyond snapshots/ax are included when the caller
+// pkg/spec. Fields beyond snapshots/ax are included when the caller
 // populated them on stateInput.
 func stateObject(runtime *goja.Runtime, input stateInput) (*goja.Object, error) {
 	state := runtime.NewObject()
@@ -344,7 +344,19 @@ func lastActionFields(action *Action) []actionField {
 	point := func(x, y int) []actionField {
 		return []actionField{{key: "x", value: x}, {key: "y", value: y}}
 	}
-	fields := []actionField{{key: "kind", value: string(action.Kind)}}
+	// An action whose apply call failed is not an action that did not happen:
+	// the dispatch may have landed before the error. That is unknown, and
+	// unknown is null here for the same reason every other absence in the spec
+	// surface is, so a property decides for itself instead of being handed a
+	// "nothing happened" the runner cannot vouch for.
+	var applied any
+	if action.Applied {
+		applied = true
+	}
+	fields := []actionField{
+		{key: "kind", value: string(action.Kind)},
+		{key: "applied", value: applied},
+	}
 	if action.On != "" {
 		fields = append(fields, actionField{key: "on", value: action.On})
 	}
@@ -397,7 +409,7 @@ func objectFromFields(runtime *goja.Runtime, fields []actionField) *goja.Object 
 // has no Go-side state object to read: the runner pushes this JSON into the
 // page before each extractor evaluation. A nil action encodes as JSON null,
 // the same value the goja host reports on the first step of a run and after a
-// step whose action was never applied.
+// step whose action was never dispatched.
 func EncodeLastAction(action *Action) json.RawMessage {
 	if action == nil {
 		return json.RawMessage("null")

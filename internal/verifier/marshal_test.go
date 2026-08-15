@@ -168,6 +168,7 @@ func TestLastAction_WebJSONMatchesTheGojaObject(t *testing.T) {
 	}{
 		{"nil", nil},
 		{"Tap", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", X: 12, Y: 34}},
+		{"TapApplied", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true}},
 		{"TapWithoutSelector", &Action{Kind: ActionKindTap, X: 12, Y: 34}},
 		{"DoubleTap", &Action{Kind: ActionKindDoubleTap, On: `desc:say "hi" <b>`}},
 		{"InputText", &Action{Kind: ActionKindInputText, On: "id:field", Text: "50"}},
@@ -189,6 +190,45 @@ func TestLastAction_WebJSONMatchesTheGojaObject(t *testing.T) {
 			web := string(EncodeLastAction(testCase.action))
 			if goja != web {
 				t.Errorf("the two hosts disagree on state.lastAction\n goja: %s\n  web: %s", goja, web)
+			}
+		})
+	}
+}
+
+// A spec has to be able to tell three things apart: no action ran, an action
+// ran, and an action was dispatched whose fate the runner cannot vouch for.
+// The third used to be reported as the first, which is how a property that
+// reasons "an effect landed with no action to cause it" convicts an app over
+// an RPC deadline.
+func TestLastAction_SeparatesNoActionFromAnActionOfUnknownFate(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.fate = __sanderling__.extract(state =>
+			state.lastAction === null ? "no action"
+			: state.lastAction.applied === true ? "applied"
+			: state.lastAction.applied === null ? "unknown"
+			: "unreadable");
+	`)
+
+	for _, testCase := range []struct {
+		name   string
+		action *Action
+		want   string
+	}{
+		{"nothing ran", nil, "no action"},
+		{"dispatch confirmed", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true}, "applied"},
+		{"dispatch unconfirmed", &Action{Kind: ActionKindTap, On: "id:TxnSubmit"}, "unknown"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := verifier.PushSnapshot(SnapshotInput{
+				Snapshots:  Snapshots{},
+				LastAction: testCase.action,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			handle := verifier.runtime.GlobalObject().Get("fate").ToObject(verifier.runtime)
+			if got := handle.Get("current").String(); got != testCase.want {
+				t.Errorf("the spec read %q, want %q", got, testCase.want)
 			}
 		})
 	}
