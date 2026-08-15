@@ -50,7 +50,7 @@ func TestRunner_WebInstallsLastActionInThePage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
+		Duration:    time.Hour,
 		IdleTimeout: 20 * time.Millisecond,
 		MaxSteps:    3,
 		Driver:      web,
