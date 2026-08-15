@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  committedTransactionsExceedSubmits,
   countSubmitsInWindow,
   isTxnSubmitTap,
   readHomeTotalBalance,
@@ -148,4 +149,26 @@ test("an unreadable Home does not close the window", () => {
   ]);
   assert.equal(trace[2]?.total, null);
   assert.equal(trace[3]?.submits, 2);
+});
+
+// The window is an upper bound on the submits it holds, so a submit whose
+// dispatch the runner could not confirm belongs in it: the tap may well have
+// landed, and a bound that leaves it out is one the transaction it committed
+// exceeds. That is the false conviction, a rise of one against a window of
+// zero, on the property carrying most of the detection on android.
+test("a submit the runner could not confirm still counts toward the window", () => {
+  const window = countSubmitsInWindow({
+    previousCount: 0,
+    lastAction: { kind: "Tap", on: submitOn, applied: null },
+    fresh: true,
+  });
+  assert.equal(window.reported, 1);
+  assert.equal(
+    committedTransactionsExceedSubmits({
+      countsBefore: { Travel: 3 },
+      countsAfter: { Travel: 4 },
+      submitsInWindow: window.reported,
+    }),
+    false,
+  );
 });
