@@ -28,15 +28,12 @@ case "$platform" in
       examples/folio/app/androidApp/build/outputs/apk/debug/androidApp-debug.apk)
     ;;
   ios)
-    # --clear-data=false because the caller has just installed a fresh build (a
-    # freshly installed app IS clear state). The in-run reinstall path is worth
-    # avoiding here: `simctl uninstall` + `install` immediately followed by the
-    # XCTest runner's own launch hits "app.folio is unknown to FrontBoard"
-    # perhaps half the time. The launch RPC is bounded now, so that surfaces
-    # as an error rather than an indefinite hang, but a failed leg is still a
-    # failed leg and a fresh install is already clear state.
+    # Clear state is left at its default, and no --ios-app-path is passed, so
+    # the driver wipes the app's data container rather than reinstalling. That
+    # is what the calibrated numbers were measured from, and it keeps the run
+    # away from the `simctl uninstall` + `install` path that races FrontBoard
+    # ("app.folio is unknown to FrontBoard"), which needs an app path to reach.
     folio_args+=(--platform ios
-      --clear-data=false
       --ios-device "${IOS_DEVICE:-iPhone 16 Pro}")
     ;;
   web)
