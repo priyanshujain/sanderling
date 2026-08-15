@@ -53,12 +53,13 @@ var shutdownGrace = 15 * time.Second
 // A variable so the timeout test can shrink it.
 var launchTimeout = 90 * time.Second
 
-// launchRecoveryTimeout bounds the session restart that a blown launch bound
-// triggers. Together with launchTimeout it keeps the whole launch path inside
-// the three minutes testrun allows it: launchTimeout to discover the wedge,
-// this to replace the session, and whatever is left of the caller's budget for
-// the second attempt.
-const launchRecoveryTimeout = 60 * time.Second
+// launchRecoveryTimeout bounds the whole recovery a blown launch bound
+// triggers, the session restart and the second attempt together. It keeps the
+// launch path inside the three minutes testrun allows it, so what a user sees
+// when the app really cannot be launched stays the driver's error rather than
+// that backstop firing over the top of it. A variable so the bound test can
+// shrink it.
+var launchRecoveryTimeout = 60 * time.Second
 
 // longPressHoldMilliseconds is how long LongPress holds the finger down.
 const longPressHoldMilliseconds = 600
@@ -515,19 +516,22 @@ func (d *Driver) launchWithSessionRecovery(ctx context.Context) error {
 		d.bundleID, launchTimeout, err)
 
 	// The restart runs under the driver's own lifetime context for the same
-	// reason withRecovery's does, but bounded: a launch that already spent
-	// launchTimeout must not then wait out the session's full cold-start
-	// budget, or the launch path outgrows the backstop testrun puts around it.
+	// reason withRecovery's does, while the second attempt stays on the
+	// caller's. Both end at one deadline, so a launch that already spent
+	// launchTimeout cannot then wait out a session cold start on top of it.
+	recoveryDeadline := time.Now().Add(launchRecoveryTimeout)
 	restartCtx := d.processContext
 	if restartCtx == nil {
 		restartCtx = ctx
 	}
-	restartCtx, cancel := context.WithTimeout(restartCtx, launchRecoveryTimeout)
-	defer cancel()
+	restartCtx, cancelRestart := context.WithDeadline(restartCtx, recoveryDeadline)
+	defer cancelRestart()
 	if restartErr := d.restart(restartCtx); restartErr != nil {
 		return fmt.Errorf("session restart failed: %w (original: %v)", restartErr, err)
 	}
-	return d.lifecycleCall(ctx, launch)
+	relaunchCtx, cancelRelaunch := context.WithDeadline(ctx, recoveryDeadline)
+	defer cancelRelaunch()
+	return d.lifecycleCall(relaunchCtx, launch)
 }
 
 // lifecycleCall runs an app lifecycle RPC against lifecycleCompanion under a
