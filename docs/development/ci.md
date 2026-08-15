@@ -32,7 +32,7 @@ SEED=9 MAX_STEPS=200 .github/scripts/folio-run.sh android
 
 **web and ios expect the bug.** Folio double-submits a transaction when the
 submit button is double-tapped, and two properties catch it:
-`submitMovesBalanceByTypedAmount`, which demands the total balance move by
+`submitMovesBalanceByAtMostTypedAmount`, which demands the total balance move by
 exactly the amount typed, and `submitCommitsOneTransactionPerAction`, which
 demands no more transactions committed over a window than there were submit
 actions in it. A double tap is one action committing two transactions, so it

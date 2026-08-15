@@ -27,7 +27,7 @@ You do not script the double tap. You state the invariant and let sanderling fin
 The amount the user types must equal the amount the balance moves:
 
 ```ts
-const submitMovesBalanceByTypedAmount = always(
+const submitMovesBalanceByAtMostTypedAmount = always(
   next(() => {
     if (route.current !== "home") return true;
     const action = lastAction.current;
@@ -179,7 +179,7 @@ That is the whole input. Three invariants, a way in, and a weighted sense of whe
 
 ## What the run does
 
-sanderling launches Folio, logs in, and starts exploring. Most steps are unremarkable: open an account, add a transaction, watch the balance move by exactly what was typed, `submitMovesBalanceByTypedAmount` holds.
+sanderling launches Folio, logs in, and starts exploring. Most steps are unremarkable: open an account, add a transaction, watch the balance move by exactly what was typed, `submitMovesBalanceByAtMostTypedAmount` holds.
 
 Then a step lands two taps on submit before the first save settles. Two transactions post. The balance jumps by twice the typed amount. At that step the formula evaluates false and the run records a violation: the step, the screenshot, the offending action, and the residual formula that failed.
 

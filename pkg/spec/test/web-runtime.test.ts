@@ -338,7 +338,7 @@ test("an extractor that returned undefined keeps its index through JSON", () => 
 // state.lastAction is the one piece of state the page cannot observe for
 // itself: only the runner knows which action it actually applied. While the web
 // runtime hardcoded null there, a spec property gated on the last action (e.g.
-// folio's submitMovesBalanceByTypedAmount, which only looks at taps on
+// folio's submitMovesBalanceByAtMostTypedAmount, which only looks at taps on
 // TxnSubmit) was vacuously true on web forever, and the run went green having
 // checked nothing.
 function lastActionSeenByASpec(pushed: unknown): unknown {

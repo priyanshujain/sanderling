@@ -30,7 +30,7 @@ import {
   readHomeCards,
   readHomeTotalBalance,
   routeOfFrame,
-  submitChangesBalanceByTypedAmount,
+  submitChangesBalanceByAtMostTypedAmount,
 } from "./predicates";
 import type { Account, CardReading, TxnCount } from "./predicates";
 
@@ -264,12 +264,12 @@ const newAccountBalanceIsZero = always(
 // predicate skips off-Home landings where totalBalance.current is the carrier.
 //
 // The name is the property's, and the gate keys on it, so it stays; what it
-// demands is the bound, for the reason submitChangesBalanceByTypedAmount gives:
+// demands is the bound, for the reason submitChangesBalanceByAtMostTypedAmount gives:
 // a total that has not re-rendered yet has not moved, and an equality convicts a
 // healthy app for a frame that has not caught up.
-const submitMovesBalanceByTypedAmount = always(
+const submitMovesBalanceByAtMostTypedAmount = always(
   next(() =>
-    submitChangesBalanceByTypedAmount({
+    submitChangesBalanceByAtMostTypedAmount({
       route: route.current,
       lastAction: lastAction.current,
       submitsInWindow: submitsInWindow.current,
@@ -367,7 +367,7 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
 
 export const properties = {
   newAccountBalanceIsZero,
-  submitMovesBalanceByTypedAmount,
+  submitMovesBalanceByAtMostTypedAmount,
   submitCommitsOneTransactionPerAction,
 };
 

@@ -95,7 +95,7 @@ steps=0
 
 # The two properties that state folio's double-submit. Anything else the spec
 # proves false is a different finding, and this leg has nothing to say about it.
-GATED_PROPERTIES="submitMovesBalanceByTypedAmount,submitCommitsOneTransactionPerAction"
+GATED_PROPERTIES="submitMovesBalanceByAtMostTypedAmount,submitCommitsOneTransactionPerAction"
 
 # Exit 2 means "the run recorded a violation", and that is NOT the same as "the
 # run convicted folio". A predicate that THROWS is recorded as a violation too,

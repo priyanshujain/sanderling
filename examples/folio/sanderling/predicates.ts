@@ -602,7 +602,7 @@ export function committedTransactionsExceedSubmits(args: {
 // submit action can commit one transaction, so the account's balance cannot
 // move by more than the amount that submit typed.
 //
-// An UPPER BOUND, not the equality submitChangesBalanceByTypedAmount uses, and
+// An UPPER BOUND, not the equality submitChangesBalanceByAtMostTypedAmount uses, and
 // that is what makes a one-action window safe. A balance that has not moved is
 // a commit still in flight (createTransaction runs in a coroutine), a submit
 // the app rejected, or a tap that never landed, and none of those is evidence
@@ -621,7 +621,7 @@ export function committedTransactionsExceedSubmits(args: {
 // mirrors parseCents), so every rejected amount and every amount too large to
 // hold exactly arrives here as 0 and is vacuous.
 //
-// The float guards are the ones submitChangesBalanceByTypedAmount explains:
+// The float guards are the ones submitChangesBalanceByAtMostTypedAmount explains:
 // each balance and the typed amount lose precision on their own past
 // Number.MAX_SAFE_INTEGER. Their difference needs none, because a difference
 // that is really within a safe typedAmount is itself safe and comes out exact.
@@ -723,7 +723,7 @@ export function parseTypedAmount(text: string | undefined | null): number {
 // evidence about the amount typed into any one submit, so anything other than
 // exactly one submit action in the window is vacuous. Exactly one still catches
 // the bug: the double-tap is a single action.
-export function submitChangesBalanceByTypedAmount(args: {
+export function submitChangesBalanceByAtMostTypedAmount(args: {
   route: string | null;
   lastAction: ObservedAction | null;
   submitsInWindow: number;
