@@ -84,6 +84,7 @@ test("installRuntime defined the host-invoked globals", () => {
 });
 
 const { fakeElement, withFakeDocument } = await import("./web-dom-harness.ts");
+type FakeElementSpec = Parameters<typeof fakeElement>[0];
 
 // The host reports facts and never routes verbs: which of these a verb may act
 // on is decided by the shared rule in src/targets.ts, exercised across both
@@ -172,6 +173,55 @@ test("queryTargets leaves duplicated identities unnamed", () => {
     const targets = host.queryTargets();
     assert.equal(targets[0]!.selector, undefined);
     assert.equal(targets[1]!.selector, undefined);
+  });
+});
+
+// The enumeration ORDER is the parity contract. buildTree in
+// internal/driver/chrome/driver.go emits a host's shadow children before its
+// light ones, and TestHierarchy_DerivesTheSameFactsAsTheWebRuntime compares the
+// two enumerations position by position.
+test("queryTargets splices shadow content in before the host's light children", () => {
+  const page = fakeElement({
+    tag: "div", x: 0, y: 0, width: 400, height: 800, id: "page",
+    children: [
+      {
+        tag: "div", x: 0, y: 0, width: 400, height: 100, id: "mount",
+        shadow: [
+          { tag: "button", x: 0, y: 0, width: 40, height: 20, id: "shadow-save", clickable: true },
+        ],
+        children: [{ tag: "div", x: 0, y: 20, width: 40, height: 20, id: "mount-light-child" }],
+      },
+      { tag: "div", x: 0, y: 100, width: 400, height: 100, id: "after" },
+    ],
+  });
+  withFakeDocument([page], () => {
+    assert.deepEqual(
+      host.queryTargets().map((target) => target.selector),
+      ["id:page", "id:mount", "id:shadow-save", "id:mount-light-child", "id:after"],
+    );
+  });
+});
+
+// The tappable set is resolved by selector, and querySelectorAll stops dead at
+// a shadow boundary, so a control inside a shadow root carries the clickable
+// fact only if the selector sweep descends. A Compose for Web app keeps every
+// control it has on the far side of one boundary.
+test("queryTargets reports a shadow-hosted control as clickable", () => {
+  const mount = fakeElement({
+    tag: "div", x: 0, y: 0, width: 400, height: 100, id: "mount",
+    shadow: [
+      { tag: "button", x: 0, y: 0, width: 40, height: 20, id: "shadow-save", clickable: true },
+      { tag: "input", x: 0, y: 20, width: 40, height: 20, id: "shadow-amount", editable: true },
+    ],
+  });
+  withFakeDocument([mount], () => {
+    const targets = host.queryTargets();
+    assert.deepEqual(
+      targets.map((target) => target.selector),
+      ["id:mount", "id:shadow-save", "id:shadow-amount"],
+    );
+    assert.equal(targets[1]!.clickable, true);
+    assert.equal(targets[2]!.editable, true);
   });
 });
 
@@ -473,28 +523,23 @@ test("selectorTag renders the selector shapes the goja host renders", () => {
 // accounts/totalBalance extractors (findAll([{HomeScreen}, {AccountCard}]))
 // were empty on every web step and the properties over them checked nothing.
 test("ax.findAll resolves a selector path segment by segment", () => {
-  const rect = { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 };
-  const node = (id: string, answers: Record<string, unknown[]> = {}) => ({
-    id,
-    tagName: "DIV",
-    className: "",
-    textContent: id,
-    dataset: {},
-    getAttribute: () => null,
-    getBoundingClientRect: () => rect,
-    querySelectorAll: (selector: string) => answers[selector] ?? [],
+  const card = (id: string, y: number): FakeElementSpec => ({
+    tag: "div", x: 0, y, width: 10, height: 10, testid: "AccountCard", text: id,
   });
-  const cardCss = `:is([data-testid="AccountCard"], [id="AccountCard"])`;
-  const screenCss = `:is([data-testid="HomeScreen"], [id="HomeScreen"])`;
-  const cards = [node("first"), node("second")];
-  const home = node("HomeScreen", { [cardCss]: cards });
+  // The stray card is outside HomeScreen, so a document-wide sweep for the
+  // second segment picks it up and the scoping assertion below fails.
+  const page = fakeElement({
+    tag: "div", x: 0, y: 0, width: 100, height: 100,
+    children: [
+      {
+        tag: "div", x: 0, y: 0, width: 100, height: 50, testid: "HomeScreen",
+        children: [card("first", 0), card("second", 10)],
+      },
+      card("stray", 60),
+    ],
+  });
 
-  const g = globalThis as Record<string, unknown>;
-  const originalDocument = g.document;
-  const originalWindow = g.window;
-  g.document = { querySelectorAll: (selector: string) => (selector === screenCss ? [home] : []) };
-  g.window = {};
-  try {
+  withFakeDocument([page], () => {
     __testing__.extractors.length = 0;
     __testing__.runtime.extract((state) => {
       const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
@@ -506,30 +551,14 @@ test("ax.findAll resolves a selector path segment by segment", () => {
     // Scoped to the head match: the cards come from the HomeScreen node, not
     // from a document-wide sweep for AccountCard.
     assert.deepEqual(readingOf(values, 0), ["first", "second"]);
-  } finally {
-    g.document = originalDocument;
-    g.window = originalWindow;
-  }
+  });
 });
 
 test("ax.find and ax.findAll label the element with its selector", () => {
-  const rect = { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 };
-  const submit = {
-    id: "TxnSubmit",
-    tagName: "DIV",
-    className: "",
-    textContent: "Submit",
-    dataset: {},
-    getAttribute: () => null,
-    getBoundingClientRect: () => rect,
-  };
-  const matches = `:is([data-testid="TxnSubmit"], [id="TxnSubmit"])`;
-  const g = globalThis as Record<string, unknown>;
-  const originalDocument = g.document;
-  const originalWindow = g.window;
-  g.document = { querySelectorAll: (selector: string) => (selector === matches ? [submit] : []) };
-  g.window = {};
-  try {
+  const submit = fakeElement({
+    tag: "div", x: 0, y: 0, width: 10, height: 10, id: "TxnSubmit", text: "Submit",
+  });
+  withFakeDocument([submit], () => {
     __testing__.extractors.length = 0;
     __testing__.runtime.extract((state) => {
       const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
@@ -546,8 +575,39 @@ test("ax.find and ax.findAll label the element with its selector", () => {
     // reference would hand the array INDEX to the runtime as the selector.
     const all = readingOf(values, 1) as Record<string, unknown>[];
     assert.equal(all[0]!.__sanderlingSelector, "testTag:TxnSubmit");
-  } finally {
-    g.document = originalDocument;
-    g.window = originalWindow;
-  }
+  });
+});
+
+// One page, one selector, two hosts. The goja host resolves a selector against
+// the hierarchy dump, whose buildTree (internal/driver/chrome/driver.go) emits
+// a host's shadow children BEFORE its light ones, so a pre-order search there
+// reaches a shadow-hosted match first. deepQueryAll swept the whole light DOM
+// first and only then descended, so this page answered find({id:"x"}) with the
+// light node in V8 and the shadow node in goja, and on web V8's answer is the
+// one that reaches the properties.
+test("ax.find resolves the shadow-hosted match the hierarchy dump reaches first", () => {
+  const page = fakeElement({
+    tag: "div", x: 0, y: 0, width: 400, height: 800, id: "page",
+    children: [
+      {
+        tag: "div", x: 0, y: 0, width: 400, height: 100, id: "mount",
+        shadow: [{ tag: "span", x: 0, y: 0, width: 40, height: 20, id: "x", text: "shadow" }],
+      },
+      { tag: "span", x: 0, y: 100, width: 40, height: 20, id: "x", text: "light" },
+    ],
+  });
+  withFakeDocument([page], () => {
+    __testing__.extractors.length = 0;
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
+      return ax.find({ id: "x" })?.text;
+    });
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
+      return ax.findAll({ id: "x" }).map((element) => element.text);
+    });
+    const values = __testing__.evaluateExtractors();
+    assert.equal(readingOf(values, 0), "shadow");
+    assert.deepEqual(readingOf(values, 1), ["shadow", "light"]);
+  });
 });

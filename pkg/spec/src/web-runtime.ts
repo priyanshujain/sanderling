@@ -193,13 +193,18 @@ function selectorFromString(selector: string): { css?: string; xpath?: string } 
 // (Compose for Web mounts its canvas and its whole accessibility tree inside a
 // shadow root on the mount element) keeps its entire UI on the far side of one:
 // without this a spec sees four nodes and can neither enumerate a target nor
-// resolve a testTag. Light-DOM matches come first, then shadow content in walk
-// order. XPath has no equivalent, so `text:` selectors stop at the boundary.
+// resolve a testTag. Matches come back in the order expandShadowContent walks
+// and buildTree (internal/driver/chrome/driver.go) emits: a host, then that
+// host's shadow content, then the host's light children. Sweeping the light DOM
+// first and descending afterwards put a shadow-hosted match behind a later
+// light-DOM one, so find() answered with a different element on each host.
+// XPath has no equivalent, so `text:` selectors stop at the boundary.
 function deepQueryAll(selector: string, root: ParentNode): Element[] {
   const found: Element[] = [];
   const visit = (scope: ParentNode): void => {
-    for (const element of Array.from(scope.querySelectorAll(selector))) found.push(element);
+    const matched = new Set<Element>(Array.from(scope.querySelectorAll(selector)));
     for (const element of Array.from(scope.querySelectorAll<HTMLElement>("*"))) {
+      if (matched.has(element)) found.push(element);
       if (element.shadowRoot) visit(element.shadowRoot);
     }
   };
