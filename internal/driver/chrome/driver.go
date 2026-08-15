@@ -79,14 +79,10 @@ func New() *Driver {
 				}
 			}
 		}
-		level := strings.ToUpper(string(e.Type))
-		if level == "LOG" {
-			level = "I"
-		}
 		d.logsMu.Lock()
 		d.logs = append(d.logs, driver.LogEntry{
 			UnixMillis: int64(e.Timestamp.Time().UnixMilli()),
-			Level:      level,
+			Level:      consoleLevel(e.Type),
 			Tag:        "console",
 			Message:    strings.Join(parts, " "),
 		})
@@ -710,6 +706,22 @@ func (d *Driver) Metrics(ctx context.Context, _ string) (driver.Metrics, error) 
 		HeapBytes:        int64(heap),
 		TotalMemoryBytes: int64(total),
 	}, nil
+}
+
+// consoleLevel places a console call on driver.LogEntry's logcat scale. The
+// verbs a spec acts on are all named here; the rest are info rather than "E"
+// because promoting them would convict an app of an error it never logged.
+func consoleLevel(apiType runtime.APIType) string {
+	switch apiType {
+	case runtime.APITypeError, runtime.APITypeAssert:
+		return "E"
+	case runtime.APITypeWarning:
+		return "W"
+	case runtime.APITypeDebug:
+		return "D"
+	default:
+		return "I"
+	}
 }
 
 // meetsLevel keeps an entry whose level the scale cannot rank. Ranking an
