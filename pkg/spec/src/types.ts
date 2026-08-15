@@ -102,10 +102,20 @@ export interface ExceptionRecord {
   unixMillis?: number;
 }
 
+/**
+ * The previous step's action as the runner reports it. `applied` is true when
+ * the runner saw the dispatch succeed and null when the apply call failed with
+ * the gesture possibly already delivered: an RPC deadline can fire after the
+ * tap landed. Null is unknown, not "it did not happen" (`state.lastAction` is
+ * itself null for that), so a property attributing an effect to this action
+ * has to decline unless `applied` is true.
+ */
+export type LastAction = Action & { applied: true | null };
+
 export interface State {
   snapshots: Snapshots;
   ax: AccessibilityTree;
-  lastAction: Action | null;
+  lastAction: LastAction | null;
   time: number;
   logs: readonly LogEntry[];
   exceptions: readonly ExceptionRecord[];
