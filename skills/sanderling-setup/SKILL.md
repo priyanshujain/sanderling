@@ -213,8 +213,13 @@ against an empty page gives `nodes=2` for every step, and still exits 0 with no
 violations. If `nodes` is a handful and never grows, the run is looking at
 something that is not your app.
 
-`screen=` is the route marker your spec's screen hooks produce. A run where it
-never changes never left one screen.
+`screen=` is web-only and has nothing to do with your spec's screen hooks: the
+Chrome driver puts the URL hash, or the pathname when there is no hash, on the
+root node, and only that driver writes the attribute. On Android and iOS it is
+empty on every step, so an empty `screen=` there is the normal reading and not a
+symptom. On web, a `screen=` that never changes means the run never left one
+URL, which for a single-page app that routes in memory is also normal. Your
+spec's own route extractor is the thing to trust on every platform.
 
 The summary can carry a third line you should never skim past:
 
