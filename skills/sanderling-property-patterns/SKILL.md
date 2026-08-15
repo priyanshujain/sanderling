@@ -311,7 +311,7 @@ incoming screen together on 425 of 1879 steps measured across 17 runs, better
 than one frame in five. Such a frame is evidence about neither screen, and
 ranking the markers to pick one is how a spec convicts itself on an animation.
 
-## 6. The ones you get for free
+## 6. The ones you get for free, on one platform each
 
 ```ts
 import { noUncaughtExceptions, noLogcatErrors } from "@sanderling/spec/defaults";
@@ -319,15 +319,25 @@ import { noUncaughtExceptions, noLogcatErrors } from "@sanderling/spec/defaults"
 export const properties = { noUncaughtExceptions, /* yours */ };
 ```
 
-Export `noUncaughtExceptions` before you write anything of your own. It costs a
-line, it needs no app knowledge, and a fuzzer typing `'; DROP TABLE--` and a
-4096-character string into every field it finds will surface real breakage
-through it. `noLogcatErrors` is stricter and Android-only; it holds trivially
-elsewhere, so it is worth turning on once you know your app's log hygiene can
-support it.
+Both read a field the driver fills, and each field is filled on one platform, so
+check which one is yours before counting either as coverage. Folio's spec
+exports neither, and that is the tell: folio's primary target is Android and iOS.
 
-They do not substitute for the shapes above. An app can be thoroughly wrong
-about money without throwing once.
+`noUncaughtExceptions` fails when `state.exceptions` is non-empty. Only the web
+runtime fills it, from `error` and `unhandledrejection` listeners installed in
+the page by `pkg/spec/src/web-runtime.ts`. On web it is worth the line: a fuzzer
+typing `'; DROP TABLE--` and a 4096-character string into every field it finds
+will surface real breakage through it. On Android and iOS the field is never
+populated, so the property holds at every step of a run that crashed.
+
+`noLogcatErrors` fails on a log line at level `E`. An uncaught Java or Kotlin
+throwable is logged there, so on Android it is the nearest equivalent and worth
+turning on once you know your app's log hygiene can support it. It holds
+vacuously on web and iOS.
+
+That leaves iOS with neither, and it leaves both platforms uncovered for the
+thing that matters most anyway. An app can be thoroughly wrong about money
+without throwing once.
 
 ## The rules that cut across all of them
 
