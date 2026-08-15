@@ -538,8 +538,14 @@ class StubDriverBackend(
     companion object {
         private const val IDLE_POLL_INTERVAL_MILLIS = 50L
 
+        // A count we could not read is not a count of zero. Defaulting it to
+        // zero made an unreadable dumpsys mean "nothing is animating, go
+        // ahead", which is the one answer the caller cannot check: it breaks
+        // out of the settle and snapshots whatever frame is on screen. Unknown
+        // keeps it waiting instead, inside the deadline waitForIdle already
+        // holds, and it agrees with the probe's own exception path.
         internal fun isAnimationCountIdle(grepOutput: String): Boolean =
-            (grepOutput.trim().toIntOrNull() ?: 0) == 0
+            grepOutput.trim().toIntOrNull() == 0
 
         internal fun parseResolvedActivity(
             bundleId: String,
