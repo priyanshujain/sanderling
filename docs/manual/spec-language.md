@@ -29,7 +29,7 @@ Every extractor callback receives a `State`:
 interface State {
   ax: AccessibilityTree;
   snapshots: Record<string, unknown>;
-  lastAction: Action | null;
+  lastAction: (Action & { applied: true | null }) | null;
   logs: readonly LogEntry[];
   exceptions: readonly ExceptionRecord[];
   time: number;   // ms since run start
@@ -40,10 +40,12 @@ interface State {
 |---|---|
 | `ax` | Live UI hierarchy for this step |
 | `snapshots` | Key-value data pushed by the app SDK (empty if SDK not integrated) |
-| `lastAction` | The action dispatched in the previous step, or `null` on the first step |
+| `lastAction` | The action dispatched in the previous step, or `null` on the first step and on any step that dispatched nothing |
 | `logs` | Log entries collected since the previous step |
 | `exceptions` | Uncaught exceptions or `Sanderling.reportError()` calls since the previous step |
 | `time` | Milliseconds elapsed since the run started |
+
+`lastAction.applied` is `true` when the runner saw the dispatch succeed and `null` when the apply call failed with the action possibly already delivered: an RPC deadline can fire after the tap reached the app, and nothing can find out afterwards. So there are three states, not two. `state.lastAction === null` means no action ran; `applied === null` means one ran whose fate is unknown. A property that attributes an effect to the action ("this submit must move the balance by the typed amount") has to decline unless `applied` is `true`, or a timeout convicts a healthy app. A property that counts what the app COULD have done should include it: an unconfirmed submit belongs in an upper bound on how many submits a window holds.
 
 ## Selectors
 
