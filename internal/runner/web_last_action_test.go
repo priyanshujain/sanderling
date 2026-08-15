@@ -72,7 +72,7 @@ func TestRunner_WebInstallsLastActionInThePage(t *testing.T) {
 	// Every later step carries what the runner actually applied. The shape is
 	// the goja host's (internal/verifier/marshal.go lastActionFields), pinned
 	// against it by TestLastAction_WebJSONMatchesTheGojaObject.
-	const want = `{"kind":"Tap","applied":true,"on":"id:TxnSubmit"}`
+	const want = `{"kind":"Tap","applied":true,"relaunched":null,"on":"id:TxnSubmit"}`
 	if web.installed[1] != want {
 		t.Errorf("step 2 installed %s, want %s", web.installed[1], want)
 	}
@@ -112,7 +112,7 @@ func TestRunner_WebInstallsAnUnconfirmedActionWithItsFateUnknown(t *testing.T) {
 		t.Fatalf("the page was handed lastAction %d time(s); the web path never installed it",
 			len(web.installed))
 	}
-	const want = `{"kind":"Tap","applied":null,"on":"id:TxnSubmit"}`
+	const want = `{"kind":"Tap","applied":null,"relaunched":null,"on":"id:TxnSubmit"}`
 	if web.installed[1] != want {
 		t.Errorf("step 2 installed %s, want %s", web.installed[1], want)
 	}
