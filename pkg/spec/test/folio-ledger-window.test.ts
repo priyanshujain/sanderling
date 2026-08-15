@@ -145,6 +145,37 @@ test("one submit moving the balance by exactly the typed amount is the app worki
   }
 });
 
+// The frames this bound is actually driven down, replayed off the recorded iOS
+// run at runs/folio-ios/20260815-102711 (seed 7, 240 steps). It judged 18 of
+// them and fired on none: every one was a single Tap on TxnSubmit landing back
+// on the account's own ledger with the balance moved by exactly what was typed,
+// which is the app working. Three of those readings are below, with the same
+// frame as it looks when the one action commits twice.
+//
+// A double tap is nowhere in that list, and the run took three of them: all
+// three landed on Home, where this conjunct has no balance to read and
+// committedTransactionsExceedSubmits convicted instead. What reaches here is
+// the interleaving where the second commit's pop does not run.
+test("the ledger landings a real run produces are judged, and a doubled one fires", () => {
+  for (const [prev, typed] of [
+    [357900, 25100],
+    [455800, 7900],
+    [682500, 19300],
+  ]) {
+    const judge = (currAccountBalance: number) =>
+      committedAmountExceedsOneSubmit({
+        route: "ledger",
+        lastAction: submit,
+        submitsInWindow: 1,
+        typedAmount: typed!,
+        prevAccountBalance: prev!,
+        currAccountBalance,
+      });
+    assert.equal(judge(prev! + typed!), false, `the recorded ${prev} -> ${prev! + typed!} was convicted`);
+    assert.equal(judge(prev! + 2 * typed!), true, `a second commit on ${prev} went unjudged`);
+  }
+});
+
 // A balance that has not moved is a commit still in flight (createTransaction
 // runs in a coroutine), a submit the app rejected, or a tap that never landed.
 // None of those is evidence, and an equality would convict all three.
