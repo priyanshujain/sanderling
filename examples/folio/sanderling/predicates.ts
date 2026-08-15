@@ -633,8 +633,8 @@ export function committedTransactionsExceedSubmits(args: {
 // It is not idle either. Over that same run it judged 18 of 240 steps against
 // real readings, every one a submit landing back on the ledger with the balance
 // moved by exactly what was typed. A commit for more than the amount typed, on
-// any of them, had nowhere else to be caught: Home's total was read once in the
-// whole run.
+// any of those 18, had nowhere else to be caught: the total-balance form got
+// past its own gates on one step in the whole run.
 //
 // A submit the runner could not confirm needs no case of its own: if it never
 // landed the balance did not move, which is under the bound.
