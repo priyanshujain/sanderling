@@ -937,6 +937,39 @@ internal fun treeWithoutKeyboard(
     return current
 }
 
+// typingOwner picks what the mid-type foreground guard holds later reads
+// against. A dumpsys it could read names the resumed package, and that is the
+// answer.
+//
+// A read that failed is the interesting case, and neither obvious answer is
+// right. Passing null hands typeChunks "no owner", which switches the guard off
+// altogether and lets the rest of the string spray into whatever holds the
+// foreground: an unreadable probe must never read as focus being fine. But
+// refusing to type is worse in practice. The failure is a degraded link, which
+// lasts, so every InputText in the run becomes a no-op, the budget goes on
+// typing nothing, and the run ends green having tested nothing.
+//
+// So it falls back to the bundle the run launched, which leaves the guard armed
+// against the app the keystrokes were meant for. That reference is better than
+// the resumed package anyway: a foreground already stolen before typing began
+// reads as its own owner, and the guard then matches it happily chunk after
+// chunk.
+internal fun typingOwner(
+    dumpsys: String,
+    launchedBundleId: String?,
+    warn: (String) -> Unit,
+): String? {
+    parseResumedPackage(dumpsys)?.let { return it }
+    warn(
+        "warn: could not read the foreground app; guarding typing with " +
+            (
+                launchedBundleId?.let { "the launched bundle $it" }
+                    ?: "nothing, no launch was recorded"
+                ),
+    )
+    return launchedBundleId
+}
+
 // resumedActivityPackage matches a "package/activity" component, mirroring the
 // Go scope guard's regex so both read the same dumpsys wording.
 private val resumedActivityPackage =
@@ -1013,6 +1046,9 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
             }
         }
 
+    @Volatile
+    private var launchedBundleId: String? = null
+
     override fun launch(
         bundleId: String,
         clearState: Boolean,
@@ -1020,6 +1056,7 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     ) {
         if (clearState) driver.clearAppState(bundleId)
         driver.launchApp(bundleId, env)
+        launchedBundleId = bundleId
     }
 
     override fun terminate(bundleId: String) = driver.stopApp(bundleId)
@@ -1063,8 +1100,14 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     // started in has lost the foreground, the remaining keystrokes would spray
     // into whatever window stole it (the launcher search box, in practice), so
     // typing stops instead of leaking out of the app under test.
+    //
+    // typingOwner decides what "the app the type started in" means when the
+    // read that would name it fails: the launched bundle, so a link that cannot
+    // answer degrades the guard rather than switching it off.
     private fun typeShellSafe(text: String) {
-        val owner = foregroundPackage()
+        val owner = typingOwner(foregroundDumpsys(), launchedBundleId) {
+            System.err.println(it)
+        }
         val typed =
             typeChunks(chunkForInput(text, INPUT_CHUNK_CHARS), owner, {
                 foregroundPackage()
@@ -1078,14 +1121,15 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         }
     }
 
+    private fun foregroundDumpsys(): String = adbOutput(
+        serial,
+        listOf("shell", "dumpsys", "activity", "activities"),
+    )
+
     // foregroundPackage returns the package of the top resumed activity, or null
     // if it cannot be read. Used to detect mid-type focus escapes.
-    private fun foregroundPackage(): String? = parseResumedPackage(
-        adbOutput(
-            serial,
-            listOf("shell", "dumpsys", "activity", "activities"),
-        ),
-    )
+    private fun foregroundPackage(): String? =
+        parseResumedPackage(foregroundDumpsys())
 
     override fun eraseText(characterCount: Int) =
         driver.eraseText(characterCount)
