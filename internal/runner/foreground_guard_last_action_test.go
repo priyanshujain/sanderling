@@ -74,6 +74,12 @@ func (d *leavesForegroundAfterSubmitDriver) Snapshot(context.Context) (string, d
 	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), driver.Image{}, nil
 }
 
+// No device answers Snapshot and Hierarchy off different trees, and the runner
+// reads both per step, so this one answers them off the same commit count.
+func (d *leavesForegroundAfterSubmitDriver) Hierarchy(context.Context) (string, error) {
+	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), nil
+}
+
 // obscuredAfterSubmitDriver is the other half of the same guard: the app stays
 // the resumed activity, but a system window (the notification shade) owns the
 // focused window when the next step looks, and the guard presses back to
@@ -121,6 +127,10 @@ func (d *obscuredAfterSubmitDriver) FocusedWindowApp(context.Context) (string, e
 
 func (d *obscuredAfterSubmitDriver) Snapshot(context.Context) (string, driver.Image, error) {
 	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), driver.Image{}, nil
+}
+
+func (d *obscuredAfterSubmitDriver) Hierarchy(context.Context) (string, error) {
+	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), nil
 }
 
 // runTwoSubmitSteps drives two steps of the shipped folio counting property

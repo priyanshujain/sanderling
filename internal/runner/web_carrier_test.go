@@ -55,6 +55,12 @@ func (d *carrierWebDriver) Snapshot(ctx context.Context) (string, driver.Image, 
 
 func (d *carrierWebDriver) InstallBundle(context.Context, []byte) error { return nil }
 
+// A web target says so. The runner's per-step hierarchy reread is android-only,
+// and a fake claiming android would take a path no chrome run takes.
+func (d *carrierWebDriver) Health(context.Context) (driver.Health, error) {
+	return driver.Health{Ready: true, Version: "fake", Platform: "web"}, nil
+}
+
 func (d *carrierWebDriver) EvaluateExtractors(context.Context) (map[int]json.RawMessage, error) {
 	d.reads++
 	return map[int]json.RawMessage{0: json.RawMessage(strconv.Itoa(d.reads))}, nil

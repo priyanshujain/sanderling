@@ -90,6 +90,10 @@ func (d *dispatchThenFailDriver) Snapshot(context.Context) (string, driver.Image
 	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), driver.Image{}, nil
 }
 
+func (d *dispatchThenFailDriver) Hierarchy(context.Context) (string, error) {
+	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), nil
+}
+
 func TestRunner_ApplyErrorAfterDispatchDoesNotConvictTheSubmitCountingProperty(t *testing.T) {
 	predicates, err := filepath.Abs("../../examples/folio/sanderling/predicates.ts")
 	if err != nil {
