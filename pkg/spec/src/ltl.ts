@@ -12,9 +12,10 @@ export function next(predicate: () => boolean): Formula {
   return globalThis.__sanderling__.next(predicate);
 }
 
-// An unbounded `eventually` never forces a violation within a finite run.
-// Prefer `.within(n, unit)` when you want the verifier to fail a property
-// that stalls.
+// An unbounded `eventually` that never fires is violated when the run ends,
+// with the reason "eventually never satisfied", so a goal the run does not
+// reach is a violation every time. `.within(n, unit)` convicts at the step the
+// window closes instead of at run end.
 export function eventually(predicate: () => boolean): EventuallyFormula {
   return globalThis.__sanderling__.eventually(predicate);
 }

@@ -115,18 +115,30 @@ every reading take its answer from there. `routeOfFrame` in folio's
 to the next, which is how you state "this action had that effect". `now(f)`
 evaluates at the current step inside a formula body.
 `eventually(f).within(n, "steps" | "seconds" | "milliseconds")` requires `f`
-before the window closes; unbounded, it never fails a finite run. At the top
+before the window closes and convicts at the step it does not. Unbounded, it
+does not stop being a liveness obligation: one that never fires is violated when
+the run ends, with the reason `eventually never satisfied`. So an `eventually`
+over a state your run may not reach fires on every run that does not reach it,
+and that is the usual way a first spec ends up red for no reason. At the top
 level an `eventually` is one goal for the whole run, armed once and discharged
 for good the first time it holds; written inside `always` it re-arms at every
 step, which asks for the window to be met from everywhere. Every formula has
 `.implies`, `.and`, `.or`, `.not`.
 
-The stock properties are in `@sanderling/spec/defaults`. Put
-`noUncaughtExceptions` in every spec: it fails when the run captures an uncaught
-throwable or a `Sanderling.reportError` call, it needs no hooks and no
-calibration, and it is free. `noLogcatErrors` (also exported from
-`@sanderling/spec/defaults/properties`) fails on any error-level logcat line and
-is Android-only, holding vacuously elsewhere.
+The stock properties are in `@sanderling/spec/defaults`. Both are cheap and both
+are narrower than their names suggest, so know which platform yours runs on.
+
+`noUncaughtExceptions` fails when `state.exceptions` is non-empty, and today only
+the web runtime fills it: `pkg/spec/src/web-runtime.ts` installs `error` and
+`unhandledrejection` listeners in the page. On Android and iOS nothing populates
+the field, so it holds at every step whatever the app does. Export it on web,
+where it is free and real; on native, understand that a green run says nothing
+about crashes.
+
+`noLogcatErrors` fails on any log line the driver reports at level `E`, which is
+where an uncaught Java or Kotlin throwable lands, so on Android it is the closest
+thing to `noUncaughtExceptions`. It holds vacuously on web and iOS. Neither
+platform has an equivalent today: an iOS crash is invisible to both properties.
 
 ## What makes a good first property
 
@@ -136,11 +148,17 @@ the list renders rows; a badge counts violation records and the panel counts the
 rows it can show for them. Those hold on any run, so they never need
 recalibrating against a fixture, and an app that gets the fact wrong in one of
 the two places cannot satisfy them however it was driven there.
-`replay-ui/sanderling/spec.ts` is six of these plus `noUncaughtExceptions`, and
-its header explains the choice.
+Three of the seven properties in `replay-ui/sanderling/spec.ts` are this shape:
+`stepCountMatchesTheList`, `screenshotShowsTheSelectedStep` and
+`badgeCountMatchesThePanel`. The rest of that spec shows what to write when no
+second panel derives the fact: a range invariant on user input
+(`selectedStepIsInRange`), a counting invariant inside one panel
+(`exactlyOneStepIsSelected`), a no-effect property across an action
+(`switchingTabsKeepsTheStep`), and the stock `noUncaughtExceptions`. All of them
+still hold on any run, which is the property worth keeping.
 
 Contrast a property that needs the fuzzer to reach a specific state, like
-folio's "a submit moves the balance by exactly the amount typed". That is where
+folio's "a submit moves the balance by no more than the amount typed". That is where
 the real bugs are, and it is the harder thing to keep honest: it needs an action
 tree that reaches the state, a window that closes often enough to bound what
 happened inside it, and attribution that cannot blame the wrong action. Folio's
@@ -159,8 +177,11 @@ on. If you cannot, it is decoration.
 picker chooses one. The verbs are `Tap`, `DoubleTap`, `LongPress`, `InputText`,
 `Scroll`, `Swipe`, `PressKey`, and `Wait`. The built-in generators are `taps`,
 `doubleTaps`, `longPresses`, `typing`, `scrolls`, `swipes`, `pressKeys`, and
-`waitOnce`; `defaultActions` bundles them at taps and typing 100, scrolls 50,
-swipes 25, double taps 10.
+`waitOnce`. `defaultActions` bundles five of them: taps and typing at 100,
+scrolls 50, swipes 25, double taps 10. `longPresses`, `pressKeys` and `waitOnce`
+are not in it, so a spec that only exports `defaultActions` never presses android
+back, never long-presses, and never waits. Weight those in yourself if the app
+has behaviour behind them.
 
 `weighted([n, generator], ...)` composes them with relative weights.
 `whenRoute(routeExtractor, routes, body)` runs `body` only on the named screens.

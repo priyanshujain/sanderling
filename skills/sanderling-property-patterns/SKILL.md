@@ -106,34 +106,34 @@ climbed), state a bound on it rather than a prediction of it.
 **Prefer an upper bound to an equality.** This is the single most valuable
 sentence in this file.
 
-`examples/folio/sanderling/predicates.ts` states one rule about one app both
-ways, so the two are worth reading side by side. Each line is the last line of
-its predicate, after the guards, at a step where exactly one submit sits in the
-window:
+Folio shipped one of these both ways and the equality lost, so the two are worth
+reading side by side. Each line is the last line of a predicate in
+`examples/folio/sanderling/predicates.ts`, after the guards, at a step where
+exactly one submit sits in the window:
 
 ```ts
-// sound, committedAmountExceedsOneSubmit: the violation is moving by MORE
-// than the one submit in this window could account for
-Math.abs(currAccountBalance - prevAccountBalance) > typedAmount
-// tempting, submitChangesBalanceByTypedAmount: it moved by exactly what I typed
+// what folio's total-balance property demanded, until 6e8e6d5
 Math.abs(currTotalBalance - prevTotalBalance) === typedAmount
+// what it demands now
+Math.abs(currTotalBalance - prevTotalBalance) <= typedAmount
+// and the same bound stated as the violation, over the account's own balance
+Math.abs(currAccountBalance - prevAccountBalance) > typedAmount
 ```
 
-Both catch the bug, because a double submit moves the balance by twice the typed
-amount. Only the second also convicts an app that behaved. A balance that has
-not moved is a commit still in flight (folio's `createTransaction` runs in a
-coroutine), a submit the app rejected, or a tap that never landed, and none of
-those is evidence of anything.
+All three catch the bug, because a double submit moves the balance by twice the
+typed amount and twice x exceeds x. Only the equality also convicts an app that
+behaved. A balance that has not moved is a commit still in flight (folio's
+`createTransaction` runs in a coroutine, and Home's total re-renders on the
+store's own schedule), a submit the app rejected, or a tap that never landed,
+and none of those is evidence of anything.
 
 The asymmetry is the point. Moving by more than one submit's worth is not
 something a correct app can do, so the bound needs no case for any of the three.
 The equality needs a case for each, and every one you forget is a false
-conviction. Compare the two guard stacks and the price is exactly legible: the
-equality declines on `confirmedApplied` and on `acrossRelaunch`, and the bound
-carries neither, because a submit that may not have landed and a restart that
-may have eaten the commit both leave the balance under the bound anyway. Those
-are the two facts the runner cannot promise (see below), and needing to guard
-against both is a cost of the equality, not of the app.
+conviction. Two of those cases are facts the runner cannot promise you (see
+below): an action it could not confirm was applied, and an action it had to
+relaunch the app after. Both leave the balance under the bound and both break an
+equality, so a bound counts them and an equality has to decline on them.
 
 You do give something up, so make the trade deliberately. A bound cannot see a
 balance that moved by *less* than the typed amount, and for a ledger that is a
@@ -311,7 +311,7 @@ incoming screen together on 425 of 1879 steps measured across 17 runs, better
 than one frame in five. Such a frame is evidence about neither screen, and
 ranking the markers to pick one is how a spec convicts itself on an animation.
 
-## 6. The ones you get for free
+## 6. The ones you get for free, on one platform each
 
 ```ts
 import { noUncaughtExceptions, noLogcatErrors } from "@sanderling/spec/defaults";
@@ -319,25 +319,38 @@ import { noUncaughtExceptions, noLogcatErrors } from "@sanderling/spec/defaults"
 export const properties = { noUncaughtExceptions, /* yours */ };
 ```
 
-Export `noUncaughtExceptions` before you write anything of your own. It costs a
-line, it needs no app knowledge, and a fuzzer typing `'; DROP TABLE--` and a
-4096-character string into every field it finds will surface real breakage
-through it. `noLogcatErrors` is stricter and Android-only; it holds trivially
-elsewhere, so it is worth turning on once you know your app's log hygiene can
-support it.
+Both read a field the driver fills, and each field is filled on one platform, so
+check which one is yours before counting either as coverage. Folio's spec exports
+neither, and that is the tell: one spec drives its Android, iOS and web builds,
+and neither of these holds anything on all three.
 
-They do not substitute for the shapes above. An app can be thoroughly wrong
-about money without throwing once.
+`noUncaughtExceptions` fails when `state.exceptions` is non-empty. Only the web
+runtime fills it, from `error` and `unhandledrejection` listeners installed in
+the page by `pkg/spec/src/web-runtime.ts`. On web it is worth the line: a fuzzer
+typing `'; DROP TABLE--` and a 4096-character string into every field it finds
+will surface real breakage through it. On Android and iOS the field is never
+populated, so the property holds at every step of a run that crashed.
+
+`noLogcatErrors` fails on a log line at level `E`. An uncaught Java or Kotlin
+throwable is logged there, so on Android it is the nearest equivalent and worth
+turning on once you know your app's log hygiene can support it. It holds
+vacuously on web and iOS.
+
+That leaves iOS with neither, and it leaves both platforms uncovered for the
+thing that matters most anyway. An app can be thoroughly wrong about money
+without throwing once.
 
 ## The rules that cut across all of them
 
 **Absence is unknown, never a default.** Extractors return null when the element
 is not there, and a property handed null declines. `0`, `""` and `[]` are the
 values that turn a property into one that fires on healthy runs: folio's
-balances once parsed as `0` on web, so the check became `|0 - 0| === typed` and
-was false at every healthy submit. An empty list has the same problem in the
-other direction, and it is worse because it looks reasonable. Android renders
-Home's own node a frame or two before its list, so `findAll` over the cards
+balances once parsed as `0` on web, so the check, an equality at the time,
+became `|0 - 0| === typed` and was false at every healthy submit. Under today's
+bound the same `0` reads as `|0 - 0| <= typed` and passes at every submit
+instead, which is the same defect wearing green. An empty list has the same
+problem in the other direction, and it is worse because it looks reasonable.
+Android renders Home's own node a frame or two before its list, so `findAll` over the cards
 comes back empty while the screen already claims to be Home. That is unknown,
 not "no accounts", and reading it as zero accounts killed folio's counting
 invariant outright: `countsBefore` was `{}` at every evaluation point of all 17
@@ -378,23 +391,24 @@ of its states is unsound:
 One rule covers the last two, and it is the rule that decides shape 2 for you.
 An action the runner cannot fully vouch for **still counts toward a bound on
 what the app could have done**, and it **never licenses attributing an effect to
-it**. So a bound counts it and an equality has to decline on it. That is why
-`committedAmountExceedsOneSubmit` needs no `confirmedApplied` guard and no
-`acrossRelaunch` guard while `submitChangesBalanceByTypedAmount` needs both: a
-property demanding the effect of an action that may never have run, or that a
-restart may have swallowed, convicts the app of the runner's own uncertainty.
+it**. So a bound counts it and a property demanding an effect has to decline on
+it. That is why `committedAmountExceedsOneSubmit`, which only bounds how far the
+balance could have moved, needs no `confirmedApplied` guard and no
+`acrossRelaunch` guard, while `createdAccountHasNonZeroBalance`, which demands
+that a card appear, needs both. Demanding the effect of an action that may never
+have run, or that a restart may have swallowed, convicts the app of the runner's
+own uncertainty.
 
 `relaunched` is the same shape of fact as `applied`, applied to app state rather
 than to dispatch. The action itself did happen. What nobody can promise across
 it is that the process ran continuously, that the commit survived, or that the
 screen is showing the same slice of the same list it was. So a property assuming
-continuous state declines, via `acrossRelaunch(lastAction)`, and folio uses it
-in three places: `createdAccountHasNonZeroBalance` declines because Home redraws
-from the top and the card carrying the typed name may be an older account laid
-out where the new one used to be, the equality property declines because it
-demands an effect, and `countSubmitsInWindow` uses it to **stop trusting its own
-refusal evidence**, since a relaunch is the one thing that can put a form state
-on screen other than the one the tap read.
+continuous state declines, via `acrossRelaunch(lastAction)`.
+`createdAccountHasNonZeroBalance` declines because Home redraws from the top and
+the card carrying the typed name may be an older account laid out where the new
+one used to be. `countSubmitsInWindow` uses the same call to **stop trusting its
+own refusal evidence**, since a relaunch is the one thing that can put a form
+state on screen other than the one the tap read.
 
 Both fields are `true | null` rather than booleans, and that is deliberate: only
 the positive report is a fact the runner can vouch for, so `null` is "not

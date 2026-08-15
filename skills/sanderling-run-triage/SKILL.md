@@ -64,8 +64,9 @@ evaluation produced the violation; for a deferred obligation (a `next`, an
 
 The discipline is one sentence: open the witness and confirm those values could
 actually produce that verdict. An iOS witness read `typedAmount = 0`, and
-`submitChangesBalanceByTypedAmount` in `examples/folio/sanderling/predicates.ts`
-returns true at `typedAmount === 0` before it compares anything. So the trace
+`submitChangesBalanceByAtMostTypedAmount` in
+`examples/folio/sanderling/predicates.ts` returns true at `typedAmount === 0`
+before it compares anything. So the trace
 appeared to show a conviction that could not have happened. The verdict was real
 and the artifact was lying, and until that was resolved neither the bug report
 nor the fix could be trusted.
