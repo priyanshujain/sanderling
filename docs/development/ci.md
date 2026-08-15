@@ -113,15 +113,42 @@ exactly once: dirty container, clear-state off, where the app opens already
 signed in on the previous run's accounts and the walk diverges at step 1. The leg
 therefore clears state for itself rather than relying on how it was called.
 
-Do not read a mac number as a statement about CI, though. Seed 7 ran 240 steps
-clean on the macos-15 runner from a state the mac convicts from. The two walks
-agree action for action through step 48, where a double-tapped submit lands: the
-mac's next snapshot showed Home, the runner's still showed the transaction
-screen, and past that they are unrelated random walks. An arbitrary walk convicts
-about one run in ten, so this leg is only as pinned as the runner's timing lets
-it be. Honest evidence is scarce either way: across 2411 swept steps only 14
-double-tapped Submit at all, and only one of those landed in a window the
-counting invariant could judge.
+Do not read a mac number as a statement about CI. **The ios leg does not
+currently convict on the runner at all**, and no seed fixes that. Seed 7 and seed
+28 were both dispatched against macos-15 and both ran 240 steps clean, from the
+state the mac convicts from.
+
+Seed 7 diverges: the two walks agree action for action through step 48, where a
+double-tapped submit lands, and there the mac's next snapshot showed Home while
+the runner's still showed the transaction screen. Past that they are unrelated
+walks.
+
+Seed 28 is the informative one, because it did not diverge. It double-tapped
+Submit on the runner at step 32, which is exactly where it convicts on the mac 8
+runs out of 8. The counting invariant still could not judge it, and the trace
+says why. `submitCommitsOneTransactionPerAction` only evaluates when a Home
+reading arrives, and that run went from step 19 to step 136 without once
+returning Home:
+
+    step  19  null             -> {Checking: 0}              submits 0
+    step 136  {Checking: 0}    -> {Checking: 15}             submits 37
+    step 164  {Checking: 15}   -> {Checking: 19}             submits 7
+    step 222  {..., Travel: 0} -> {Checking: 25, Travel: 0}  submits 13
+    step 239  {Checking: 25}   -> {Checking: 26, Travel: 0}  submits 1
+
+A rise of 15 against a window of 37 is not a violation, and neither is 4 against
+7, 6 against 13, or 1 against 1. The property is sound; it needs a window holding
+roughly one submit before it can convict, and whether the walk closes the window
+soon after a double tap is timing dependent.
+
+So reaching the bug is necessary and not sufficient. Across 2411 swept steps only
+14 double-tapped Submit at all, and only one of those landed in a window the
+counting invariant could judge. Until the property can attribute a submit without
+waiting for Home, treat an ios pass as evidence and an ios failure as unproven.
+The transaction rows carry a `LedgerRow` test tag on the ledger screen, which the
+walk visits far more often than Home, so a count that does not depend on Home is
+available; it needs per-account attribution, since the ledger shows one account
+where Home shows all of them.
 
 Android runs seed 9 over 200 steps: its conviction lands at step 178, so a
 shorter budget would never see the bonus. A full run costs about five minutes.
@@ -215,3 +242,11 @@ the first one found, too. A run reproduces its trajectory on another host only
 for as long as every snapshot agrees, and every step of prefix is another chance
 for it not to: seeds convicting at steps 33, 60, 114, 187 and 189 all turned up
 within the first 30, so an early one is usually there to be found.
+
+A short prefix is necessary and not sufficient, though, and ios is the standing
+counter-example: seed 28 has the shortest prefix on offer, reproduced its walk on
+the runner exactly, reached the bug at step 32, and still did not convict,
+because the window the counting invariant had to judge it in was 117 steps wide.
+Sweeping selects for a seed that reaches the bug. It cannot select for one whose
+walk also closes the window, so when a property needs a window, check what the
+window looked like and not only that the conviction happened.
