@@ -72,16 +72,17 @@ func accessibilityObject(runtime *goja.Runtime, tree *hierarchy.Tree) *goja.Obje
 		if node == nil {
 			return goja.Undefined()
 		}
-		return nodeObject(runtime, node, selectorStringFromJS(runtime, call.Argument(0)))
+		return nodeObject(runtime, tree, node, selectorStringFromJS(runtime, call.Argument(0)))
 	}
 	findAll := func(call goja.FunctionCall) goja.Value {
 		if tree == nil {
 			return goja.Undefined()
 		}
 		nodes := findAllNodesFromJS(runtime, tree, call.Argument(0))
+		selector := selectorStringFromJS(runtime, call.Argument(0))
 		array := runtime.NewArray()
 		for i, n := range nodes {
-			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(runtime, call.Argument(0))))
+			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, tree, n, selector))
 		}
 		return array
 	}
@@ -90,7 +91,26 @@ func accessibilityObject(runtime *goja.Runtime, tree *hierarchy.Tree) *goja.Obje
 	return accessibility
 }
 
-func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) goja.Value {
+// unambiguousSelector returns selector only when no node other than this one
+// answers to it. The runner prefers tree.Find(action.On) over the coordinates
+// the element reported (resolveCoordinates) and Find takes the first match, so
+// naming an element by a selector its siblings share sends every one of their
+// actions to the first sibling. An unnamed element keeps its own coordinates,
+// which are already right, matching what selectorsFor does for the builtin
+// target enumeration in pkg/spec/src/web-runtime.ts.
+func unambiguousSelector(tree *hierarchy.Tree, node *hierarchy.Node, selector string) string {
+	if tree == nil || selector == "" {
+		return ""
+	}
+	for _, match := range tree.FindAllNodes(selector) {
+		if match != node {
+			return ""
+		}
+	}
+	return selector
+}
+
+func nodeObject(runtime *goja.Runtime, tree *hierarchy.Tree, node *hierarchy.Node, selector string) goja.Value {
 	element := &node.Element
 	object := runtime.NewObject()
 	centerX, centerY := element.Bounds.Center()
@@ -106,7 +126,7 @@ func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) go
 	_ = object.Set("editable", element.Editable)
 	_ = object.Set("x", centerX)
 	_ = object.Set("y", centerY)
-	_ = object.Set(tagSelector, selector)
+	_ = object.Set(tagSelector, unambiguousSelector(tree, node, selector))
 	bounds := runtime.NewObject()
 	_ = bounds.Set("left", element.Bounds.Left)
 	_ = bounds.Set("top", element.Bounds.Top)
@@ -124,14 +144,15 @@ func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) go
 		if childNode == nil {
 			return goja.Undefined()
 		}
-		return nodeObject(runtime, childNode, selectorStringFromJS(runtime, arg))
+		return nodeObject(runtime, tree, childNode, selectorStringFromJS(runtime, arg))
 	}
 	childFindAll := func(call goja.FunctionCall) goja.Value {
 		arg := call.Argument(0)
 		childNodes := findAllNodesInSubtreeFromJS(runtime, node, arg)
+		childSelector := selectorStringFromJS(runtime, arg)
 		array := runtime.NewArray()
 		for i, n := range childNodes {
-			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(runtime, arg)))
+			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, tree, n, childSelector))
 		}
 		return array
 	}

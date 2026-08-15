@@ -3,9 +3,11 @@ package verifier
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1431,5 +1433,82 @@ func TestExtractorCount_ReportsEveryRegisteredExtractor(t *testing.T) {
 	mustLoad(t, verifier, helloSpec)
 	if got := verifier.ExtractorCount(); got != 2 {
 		t.Errorf("ExtractorCount() = %d, want 2 (helloSpec registers screen and balance)", got)
+	}
+}
+
+// TestAxSelectorTag_OnlyNamesTheElementItAloneResolvesTo pins the rule the
+// runner depends on: resolveCoordinates prefers tree.Find(action.On) over the
+// coordinates the element reported, and Find takes the first match, so a
+// selector three sibling cards share would send all three taps to the first
+// card. Siblings therefore carry no selector and keep their own coordinates;
+// an element the selector alone resolves to still carries it.
+func TestAxSelectorTag_OnlyNamesTheElementItAloneResolvesTo(t *testing.T) {
+	const treeJSON = `{
+	  "attributes": {"resource-id": "root", "bounds": "[0,0,100,400]"},
+	  "children": [
+	    {"attributes": {"testTag": "AccountCard", "text": "Alpha", "bounds": "[0,0,100,100]"}, "clickable": true, "children": []},
+	    {"attributes": {"testTag": "AccountCard", "text": "Beta", "bounds": "[0,100,100,200]"}, "clickable": true, "children": []},
+	    {"attributes": {"testTag": "AccountCard", "text": "Gamma", "bounds": "[0,200,100,300]"}, "clickable": true, "children": []},
+	    {"attributes": {"testTag": "AddAccount", "bounds": "[0,300,100,400]"}, "clickable": true, "children": []}
+	  ]
+	}`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.cards = __sanderling__.extract(state =>
+			state.ax.findAll({ testTag: "AccountCard" })
+		);
+		globalThis.sole = __sanderling__.extract(state =>
+			state.ax.findAll({ testTag: "AddAccount" })
+		);
+		globalThis.soleFind = __sanderling__.extract(state =>
+			state.ax.find({ testTag: "AddAccount" })
+		);
+	`)
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.PushSnapshot(SnapshotInput{Snapshots: Snapshots{}, Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+
+	current := func(name string) *goja.Object {
+		handle := verifier.runtime.GlobalObject().Get(name).ToObject(verifier.runtime)
+		value := handle.Get("current")
+		if goja.IsUndefined(value) || goja.IsNull(value) {
+			t.Fatalf("%s: extractor produced no value", name)
+		}
+		return value.ToObject(verifier.runtime)
+	}
+	element := func(array *goja.Object, index int) *goja.Object {
+		return array.Get(strconv.Itoa(index)).ToObject(verifier.runtime)
+	}
+
+	cards := current("cards")
+	if got := cards.Get("length").ToInteger(); got != 3 {
+		t.Fatalf("findAll returned %d cards, want 3", got)
+	}
+	centers := map[string]bool{}
+	for index := range 3 {
+		card := element(cards, index)
+		if got := card.Get(tagSelector).String(); got != "" {
+			t.Errorf("card %d (%s) carries selector %q; three cards answer to it, so the runner would tap the first card three times",
+				index, card.Get("text"), got)
+		}
+		centers[fmt.Sprintf("%d,%d", card.Get("x").ToInteger(), card.Get("y").ToInteger())] = true
+	}
+	if len(centers) != 3 {
+		t.Errorf("the three cards report %d distinct centers, want 3: %v", len(centers), centers)
+	}
+
+	soleAll := current("sole")
+	if got := soleAll.Get("length").ToInteger(); got != 1 {
+		t.Fatalf("findAll returned %d AddAccount elements, want 1", got)
+	}
+	if got := element(soleAll, 0).Get(tagSelector).String(); got != "testTag:AddAccount" {
+		t.Errorf("findAll over a single match: selector = %q, want %q", got, "testTag:AddAccount")
+	}
+	if got := current("soleFind").Get(tagSelector).String(); got != "testTag:AddAccount" {
+		t.Errorf("find over a single match: selector = %q, want %q", got, "testTag:AddAccount")
 	}
 }
