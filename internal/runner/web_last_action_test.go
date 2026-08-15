@@ -1,9 +1,12 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +121,37 @@ func TestRunner_WebInstallsTheStepsLogsInThePage(t *testing.T) {
 	const want = `[{"unixMillis":1700000000123,"level":"E","tag":"console","message":"boom from the page"}]`
 	if web.installedLogs[0] != want {
 		t.Errorf("step 1 installed %s, want %s", web.installedLogs[0], want)
+	}
+}
+
+// A log fetch that fails decides the verdict of every log property: they all
+// evaluate against an empty slice and hold. That is not a fact about the app,
+// so the step it happened on has to be visible in the run's output. It used to
+// be dropped in silence, under a comment claiming it was warned about.
+func TestRunner_ReportsALogFetchItCouldNotMake(t *testing.T) {
+	state := newHarnessWithSpec(t, lastActionSpec)
+	state.mock.Failures[mockdriver.ActionRecentLogs] = errors.New("adb: device offline")
+
+	var buffer bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    2,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Logger:      logger,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !strings.Contains(buffer.String(), "adb: device offline") {
+		t.Errorf("the run never reported the failed log fetch, so noLogcatErrors "+
+			"held on evidence nobody collected; log was %q", buffer.String())
 	}
 }
 
