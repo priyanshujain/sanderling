@@ -123,6 +123,51 @@ export function readHomeCards<T>(args: {
   return { value: reading, carrier: reading, fresh: true };
 }
 
+// The balance of the ONE account the ledger and the add-transaction screen are
+// showing, and the window it closes.
+//
+// It exists because the Home readings above close their window only when the
+// walk goes back to Home, and a walk inside the transaction flow does not: a
+// submit pops back to the ledger it came from, so the fuzzer can add
+// transactions all day without Home ever being redrawn. The iOS run in #78 went
+// 117 steps between two Home readings and accumulated 37 submits against a rise
+// of 15 transactions, which is no evidence about any single action. Both
+// screens here carry the account's own balance (LedgerBalance,
+// TxnCurrentBalance), so the window between two readings holds one action.
+//
+// WHICH account is never asked, because inside a run of these two routes it
+// cannot change. Route.Ledger is pushed only by tapping a card on Home,
+// Route.AddTransaction only by the ledger's own button for its own account, and
+// an accepted submit pops back to that same ledger. Reaching another account's
+// ledger means passing through Home, and one action reads one frame, so a frame
+// that is neither of these two routes always sits in between. Dropping the
+// carrier on every such frame, transition frames included, is what makes the
+// two compared numbers two readings of one account.
+export interface AccountBalanceReading {
+  value: number | null;
+  carrier: number | null;
+  fresh: boolean;
+}
+
+function showsOneAccount(route: string | null): boolean {
+  return route === "ledger" || route === "add-transaction";
+}
+
+export function readAccountBalance(args: {
+  route: string | null;
+  balanceText: string | undefined;
+  previousCarrier: number | null;
+}): AccountBalanceReading {
+  const { route, balanceText, previousCarrier } = args;
+  if (!showsOneAccount(route)) return { value: null, carrier: null, fresh: false };
+  const balance = parseAccountBalance(balanceText);
+  // Unreadable is unknown, not a new value: the balance node scrolls off the
+  // viewport like anything else. The account still cannot have changed, so the
+  // last number we read is carried across and the window stays open.
+  if (balance === null) return { value: previousCarrier, carrier: previousCarrier, fresh: false };
+  return { value: balance, carrier: balance, fresh: true };
+}
+
 // state.lastAction as the two hosts build it (internal/verifier/marshal.go
 // lastActionFields), read defensively: every field is what a Go struct decided
 // to emit, not something this file can trust a compile-time shape for.
@@ -238,6 +283,15 @@ export function cardBalanceText(args: {
   if (childText) return childText;
   const match = cardText?.match(TRAILING_BALANCE);
   return match ? match[0].trim() : undefined;
+}
+
+// One account's own balance, off the node whose whole text it is: bare on the
+// ledger ("$196.00"), labelled in the add-transaction header
+// ("Balance: $196.00"). Anchored at the end for the same reason as above, so
+// the label cannot be read as part of the amount.
+export function parseAccountBalance(text: string | undefined): number | null {
+  const match = text?.match(TRAILING_BALANCE);
+  return match ? parseDollarCents(match[0].trim()) : null;
 }
 
 // The result is an identity key, not a display name: off web it is the
@@ -458,6 +512,54 @@ export function committedTransactionsExceedSubmits(args: {
     if (rise !== null && rise > 0) committed += rise;
   }
   return committed > submitsInWindow;
+}
+
+// The same rule as above, measured in money over the account's own window: one
+// submit action can commit one transaction, so the account's balance cannot
+// move by more than the amount that submit typed.
+//
+// An UPPER BOUND, not the equality submitChangesBalanceByTypedAmount uses, and
+// that is what makes a one-action window safe. A balance that has not moved is
+// a commit still in flight (createTransaction runs in a coroutine), a submit
+// the app rejected, or a tap that never landed, and none of those is evidence
+// of anything; an equality would convict all three. Moving by MORE than one
+// submit's worth is not something a correct app can do: only createTransaction
+// moves this number, only a TxnSubmit tap reaches it, and the window holds
+// exactly one such tap. A double tap is one action committing two transactions,
+// so it moves the balance by twice what was typed and lands here.
+//
+// A submit the runner could not confirm needs no case of its own for the same
+// reason: if it never landed the balance did not move, which is under the
+// bound. countSubmitsInWindow counts it either way, so it cannot smuggle a
+// second commit into a window that looks like one.
+//
+// typedAmount is the amount the app parsed for THIS submit (parseTypedAmount
+// mirrors parseCents), so every rejected amount and every amount too large to
+// hold exactly arrives here as 0 and is vacuous.
+//
+// The float guards are the ones submitChangesBalanceByTypedAmount explains:
+// each balance and the typed amount lose precision on their own past
+// Number.MAX_SAFE_INTEGER. Their difference needs none, because a difference
+// that is really within a safe typedAmount is itself safe and comes out exact.
+export function committedAmountExceedsOneSubmit(args: {
+  route: string | null;
+  lastAction: ObservedAction | null;
+  submitsInWindow: number;
+  typedAmount: number;
+  prevAccountBalance: number | null;
+  currAccountBalance: number | null;
+}): boolean {
+  const { route, lastAction, submitsInWindow, typedAmount } = args;
+  const { prevAccountBalance, currAccountBalance } = args;
+  if (!showsOneAccount(route)) return false;
+  if (!isTxnSubmitTap(lastAction)) return false;
+  if (submitsInWindow !== 1) return false;
+  if (typedAmount <= 0) return false;
+  if (prevAccountBalance === null || currAccountBalance === null) return false;
+  if (!Number.isSafeInteger(prevAccountBalance)) return false;
+  if (!Number.isSafeInteger(currAccountBalance)) return false;
+  if (!Number.isSafeInteger(typedAmount)) return false;
+  return Math.abs(currAccountBalance - prevAccountBalance) > typedAmount;
 }
 
 // How far one account's count rose between two readings, or null when the pair
