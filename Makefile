@@ -157,6 +157,7 @@ test-folio:
 # evidence. bash and python3 only, which is all a runner has.
 test-ci-scripts:
 	.github/scripts/replay-ui-summary-test.sh
+	.github/scripts/folio-run-test.sh
 
 test-spec-api:
 	cd pkg/spec && npm test --silent
