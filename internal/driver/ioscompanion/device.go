@@ -243,13 +243,11 @@ func (d *Driver) devicectlReinstall(ctx context.Context) error {
 	return nil
 }
 
-// deviceResetContainerUnsupported warns once that device clear-state needs an
-// app path for a devicectl reinstall: there is no simulator-style data-container
-// wipe on a physical device.
+// deviceResetContainerUnsupported ends the run: there is no simulator-style
+// data-container wipe on a physical device, so a clear-state with no app path
+// to reinstall from cannot happen. Warning and carrying on hands the run every
+// previous run's data while the flag says it started clean.
 func (d *Driver) deviceResetContainerUnsupported(context.Context) error {
-	if !d.clearStateWarned {
-		fmt.Fprintln(d.output, "clear-state on a physical device requires --ios-app-path for a reinstall; skipping (state not cleared)")
-		d.clearStateWarned = true
-	}
-	return nil
+	return errors.New("clear-state on a physical device requires --ios-app-path for a reinstall; " +
+		"there is no data-container wipe on a device, so the run would start on the previous run's state")
 }
