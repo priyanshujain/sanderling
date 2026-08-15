@@ -454,6 +454,21 @@ function selectorTag(selector: unknown): string {
   return "";
 }
 
+// selectorTagFor names the element only when no other element in the document
+// answers to the selector. The runner prefers tree.Find(action.On) over the
+// coordinates the element reported (resolveCoordinates in internal/runner) and
+// Find takes the first match, so naming an element by a selector its siblings
+// share sends every one of their actions to the first sibling. It is the rule
+// selectorsFor already applies to the builtin target enumeration, and it is
+// checked document-wide even for a child lookup because the runner re-resolves
+// against the whole dump rather than the parent's subtree.
+function selectorTagFor(element: Element, selector: unknown): string {
+  for (const match of queryAllElements(document, selector)) {
+    if (match !== element) return "";
+  }
+  return selectorTag(selector);
+}
+
 // isEnabled answers the `enabled` fact. `.disabled` is a property only real form
 // controls have, so it reads undefined on the role-based controls the tappable
 // set now covers, and every one of them looked enabled however plainly it was
@@ -505,7 +520,7 @@ function elementHandle(element: Element, selector: unknown): Record<string, unkn
     },
     attrs,
     dataset: datasetCopy,
-    [SELECTOR_TAG]: selectorTag(selector),
+    [SELECTOR_TAG]: selectorTagFor(element, selector),
     find(childSelector: unknown): unknown {
       const child = queryElement(element, childSelector);
       return child ? elementHandle(child, childSelector) : undefined;

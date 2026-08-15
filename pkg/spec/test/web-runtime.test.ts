@@ -726,33 +726,56 @@ test("ax.findAll resolves a selector path segment by segment", () => {
         .findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }])
         .map((card) => card.text);
     });
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
+      return ax
+        .findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }])
+        .map((card) => card.__sanderlingSelector);
+    });
     const values = __testing__.evaluateExtractors();
     // Scoped to the head match: the cards come from the HomeScreen node, not
     // from a document-wide sweep for AccountCard.
     assert.deepEqual(readingOf(values, 0), ["first", "second"]);
+    // Both cards answer to the same path, so neither may carry it: the runner
+    // re-resolves a named target and would send both taps to the first card.
+    assert.deepEqual(readingOf(values, 1), ["", ""]);
   } finally {
     g.document = originalDocument;
     g.window = originalWindow;
   }
 });
 
-test("ax.find and ax.findAll label the element with its selector", () => {
-  const rect = { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 };
-  const submit = {
-    id: "TxnSubmit",
+// A selector is a name only while ONE element answers to it. The runner prefers
+// the name over the coordinates the element reported (resolveCoordinates in
+// internal/runner) and takes the first match, so labelling siblings that share a
+// testTag sends every one of their taps to the first sibling: on folio's Home
+// screen no account but the first could ever be opened.
+test("ax.find and ax.findAll label the element with the selector only when it names that element alone", () => {
+  const rect = (top: number) => ({ left: 0, top, right: 10, bottom: top + 10, width: 10, height: 10 });
+  const node = (id: string, top: number) => ({
+    id,
     tagName: "DIV",
     className: "",
-    textContent: "Submit",
+    textContent: id,
     dataset: {},
     getAttribute: () => null,
     matches: (selector: string) => matchesAnyPart(selector, "div", {}),
-    getBoundingClientRect: () => rect,
-  };
+    getBoundingClientRect: () => rect(top),
+  });
+  const submit = node("TxnSubmit", 0);
+  const cards = [node("Alpha", 20), node("Beta", 40), node("Gamma", 60)];
   const matches = `:is([data-testid="TxnSubmit"], [id="TxnSubmit"])`;
+  const cardMatches = `:is([data-testid="AccountCard"], [id="AccountCard"])`;
   const g = globalThis as Record<string, unknown>;
   const originalDocument = g.document;
   const originalWindow = g.window;
-  g.document = { querySelectorAll: (selector: string) => (selector === matches ? [submit] : []) };
+  g.document = {
+    querySelectorAll: (selector: string) => {
+      if (selector === matches) return [submit];
+      if (selector === cardMatches) return cards;
+      return [];
+    },
+  };
   g.window = {};
   try {
     __testing__.extractors.length = 0;
@@ -764,6 +787,10 @@ test("ax.find and ax.findAll label the element with its selector", () => {
       const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
       return ax.findAll({ testTag: "TxnSubmit" });
     });
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
+      return ax.findAll({ testTag: "AccountCard" });
+    });
     const values = __testing__.evaluateExtractors();
     const found = readingOf(values, 0) as Record<string, unknown>;
     assert.equal(found.__sanderlingSelector, "testTag:TxnSubmit");
@@ -771,6 +798,77 @@ test("ax.find and ax.findAll label the element with its selector", () => {
     // reference would hand the array INDEX to the runtime as the selector.
     const all = readingOf(values, 1) as Record<string, unknown>[];
     assert.equal(all[0]!.__sanderlingSelector, "testTag:TxnSubmit");
+    const siblings = readingOf(values, 2) as Record<string, unknown>[];
+    assert.deepEqual(
+      siblings.map((card) => card.__sanderlingSelector),
+      ["", "", ""],
+    );
+    assert.deepEqual(
+      siblings.map((card) => card.y),
+      [25, 45, 65],
+    );
+  } finally {
+    g.document = originalDocument;
+    g.window = originalWindow;
+  }
+});
+
+// The same rule for a child lookup, which is the shape a spec reaches a row
+// through: screen.findAll({...}). The runner resolves the child selector against
+// the whole dump, not the parent's subtree, so scoping does not make a shared
+// name safe.
+test("element.find and element.findAll label a child only when the selector names it alone", () => {
+  const rect = { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 };
+  const node = (id: string, answers: Record<string, unknown[]> = {}) => ({
+    id,
+    tagName: "DIV",
+    className: "",
+    textContent: id,
+    dataset: {},
+    getAttribute: () => null,
+    matches: (selector: string) => matchesAnyPart(selector, "div", {}),
+    getBoundingClientRect: () => rect,
+    querySelectorAll: (selector: string) => answers[selector] ?? [],
+  });
+  const cardCss = `:is([data-testid="AccountCard"], [id="AccountCard"])`;
+  const totalCss = `:is([data-testid="Total"], [id="Total"])`;
+  const screenCss = `:is([data-testid="HomeScreen"], [id="HomeScreen"])`;
+  const cards = [node("first"), node("second")];
+  const total = node("Total");
+  const home = node("HomeScreen", { [cardCss]: cards, [totalCss]: [total] });
+
+  const g = globalThis as Record<string, unknown>;
+  const originalDocument = g.document;
+  const originalWindow = g.window;
+  g.document = {
+    querySelectorAll: (selector: string) => {
+      if (selector === screenCss) return [home];
+      if (selector === cardCss) return cards;
+      if (selector === totalCss) return [total];
+      return [];
+    },
+  };
+  g.window = {};
+  try {
+    __testing__.extractors.length = 0;
+    __testing__.runtime.extract((state) => {
+      const ax = (state as {
+        ax: { find(s: unknown): { findAll(s: unknown): Record<string, unknown>[] } };
+      }).ax;
+      return ax
+        .find({ testTag: "HomeScreen" })
+        .findAll({ testTag: "AccountCard" })
+        .map((card) => card.__sanderlingSelector);
+    });
+    __testing__.runtime.extract((state) => {
+      const ax = (state as {
+        ax: { find(s: unknown): { find(s: unknown): Record<string, unknown> } };
+      }).ax;
+      return ax.find({ testTag: "HomeScreen" }).find({ testTag: "Total" }).__sanderlingSelector;
+    });
+    const values = __testing__.evaluateExtractors();
+    assert.deepEqual(readingOf(values, 0), ["", ""]);
+    assert.equal(readingOf(values, 1), "testTag:Total");
   } finally {
     g.document = originalDocument;
     g.window = originalWindow;
