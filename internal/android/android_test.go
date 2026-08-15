@@ -441,3 +441,134 @@ func TestNavModeToRestore(t *testing.T) {
 		}
 	}
 }
+
+// scriptedAdb puts an adb under a fake SDK root that logs each invocation's
+// arguments and answers from replies, a `case "$*" in` body. SDK lookup is
+// isolated onto that root, so ReinstallApp runs its real command sequence
+// against the script and the log holds what reached adb.
+func scriptedAdb(t *testing.T, replies string) string {
+	t.Helper()
+	root := t.TempDir()
+	log := filepath.Join(root, "adb.log")
+	adb := filepath.Join(root, "platform-tools", "adb")
+	if err := os.MkdirAll(filepath.Dir(adb), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(adb), err)
+	}
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\ncase \"$*\" in\n" + replies + "\nesac\n"
+	if err := os.WriteFile(adb, []byte(script), 0o755); err != nil {
+		t.Fatalf("write %s: %v", adb, err)
+	}
+	isolateSDKLookup(t, root)
+	return log
+}
+
+func adbCalls(t *testing.T, log string) []string {
+	t.Helper()
+	contents, err := os.ReadFile(log)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("read %s: %v", log, err)
+	}
+	return strings.Split(strings.TrimSpace(string(contents)), "\n")
+}
+
+const (
+	uninstallRefused      = `"uninstall "*) echo "Failure [DELETE_FAILED_INTERNAL_ERROR]"; exit 1;;`
+	stillInstalled        = `"shell pm path "*) echo "package:/data/app/app.example-1/base.apk";;`
+	notInstalled          = `"shell pm path "*) exit 1;;`
+	installedSuccessfully = `"install "*) echo "Success";;`
+)
+
+func TestReinstallApp_RefusedUninstallClearsTheDataItLeftBehind(t *testing.T) {
+	log := scriptedAdb(t, strings.Join([]string{
+		uninstallRefused,
+		stillInstalled,
+		`"shell pm clear "*) echo "Success";;`,
+		installedSuccessfully,
+	}, "\n"))
+	output := &strings.Builder{}
+
+	if err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", output); err != nil {
+		t.Fatalf("ReinstallApp: %v", err)
+	}
+
+	want := []string{
+		"uninstall app.example",
+		"shell pm path app.example",
+		"shell pm clear app.example",
+		"install -r /tmp/app.apk",
+	}
+	if got := adbCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("adb calls = %v, want %v", got, want)
+	}
+	if !strings.Contains(output.String(), "pm clear") {
+		t.Errorf("output %q does not say the data was cleared some other way", output.String())
+	}
+}
+
+func TestReinstallApp_RefusedUninstallThatCannotBeClearedIsFatal(t *testing.T) {
+	log := scriptedAdb(t, strings.Join([]string{
+		uninstallRefused,
+		stillInstalled,
+		`"shell pm clear "*) echo "Failed"; exit 1;;`,
+		installedSuccessfully,
+	}, "\n"))
+
+	err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", &strings.Builder{})
+
+	if err == nil {
+		t.Fatal("ReinstallApp reported success while app.example kept the data clear-state was asked to remove")
+	}
+	for _, want := range []string{"app.example", "DELETE_FAILED_INTERNAL_ERROR", "Failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not quote %q", err, want)
+		}
+	}
+	if slices.Contains(adbCalls(t, log), "install -r /tmp/app.apk") {
+		t.Error("installed over an app whose data survived, which is the reinstall reporting a clear it did not perform")
+	}
+}
+
+func TestReinstallApp_UninstallFailureWithNothingInstalledIsQuiet(t *testing.T) {
+	log := scriptedAdb(t, strings.Join([]string{
+		uninstallRefused,
+		notInstalled,
+		installedSuccessfully,
+	}, "\n"))
+	output := &strings.Builder{}
+
+	if err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", output); err != nil {
+		t.Fatalf("ReinstallApp: %v", err)
+	}
+
+	calls := adbCalls(t, log)
+	if !slices.Contains(calls, "install -r /tmp/app.apk") {
+		t.Fatalf("adb calls = %v, want the install to go ahead: a first run has no app to uninstall", calls)
+	}
+	if slices.Contains(calls, "shell pm clear app.example") {
+		t.Errorf("adb calls = %v, want no data clear: there was no app holding data", calls)
+	}
+	if output.String() != "" {
+		t.Errorf("output = %q, want nothing: a first run has no app to uninstall", output.String())
+	}
+}
+
+func TestReinstallApp_SuccessfulUninstallNeedsNoFallback(t *testing.T) {
+	log := scriptedAdb(t, strings.Join([]string{
+		`"uninstall "*) echo "Success";;`,
+		stillInstalled,
+		`"shell pm clear "*) echo "Success";;`,
+		installedSuccessfully,
+	}, "\n"))
+
+	if err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", &strings.Builder{}); err != nil {
+		t.Fatalf("ReinstallApp: %v", err)
+	}
+
+	want := []string{"uninstall app.example", "install -r /tmp/app.apk"}
+	if got := adbCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("adb calls = %v, want %v", got, want)
+	}
+}
