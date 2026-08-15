@@ -96,27 +96,55 @@ The wasmJs app is served with `Cross-Origin-Opener-Policy` and
 cross-origin isolation. Served without them the app loads a blank canvas and
 every step observes an empty accessibility tree.
 
-The seeds are calibrated, not guessed. On an M-series mac, web seed 3 convicts at
-step 185-187 and ios seed 7 at step 97-101, each 3 runs out of 3 and each with a
-delta of exactly twice the typed amount. Both run a 240-step budget. Keep them
-pinned: honest evidence is rare, and across 2261 ios steps only one submit tap
-landing on Home had a single-submit window.
+The seeds are calibrated, not guessed, and every number here says which host it
+was measured on, because the hosts do not agree. On an M3 mac driving iOS 26.1
+simulators, ios seed 7 convicts at step 97-101, 11 runs out of 11 from a cleared
+install, each on both properties and each with the balance moving by exactly
+twice the typed amount: 199 typed, 39800 cents moved, one account's transaction
+count rising by two against a window holding one submit. Web seed 3 convicts at
+step 185-187 on that mac and at step 192 on the ubuntu runner. Both legs run a
+240-step budget.
+
+What those numbers assume is a cleared starting state, and that is the only thing
+that moved them. Measured four ways on one simulator, seed 7 convicts at step 97
+from a fresh install with clear-state on, at 100 from a fresh install with it
+off, and at 97 from a dirty container with it on. It walks 240 steps clean
+exactly once: dirty container, clear-state off, where the app opens already
+signed in on the previous run's accounts and the walk diverges at step 1. The leg
+therefore clears state for itself rather than relying on how it was called.
+
+Do not read a mac number as a statement about CI, though. Seed 7 ran 240 steps
+clean on the macos-15 runner from a state the mac convicts from. The two walks
+agree action for action through step 48, where a double-tapped submit lands: the
+mac's next snapshot showed Home, the runner's still showed the transaction
+screen, and past that they are unrelated random walks. An arbitrary walk convicts
+about one run in ten, so this leg is only as pinned as the runner's timing lets
+it be. Honest evidence is scarce either way: across 2411 swept steps only 14
+double-tapped Submit at all, and only one of those landed in a window the
+counting invariant could judge.
 
 Android runs seed 9 over 200 steps: its conviction lands at step 178, so a
 shorter budget would never see the bonus. A full run costs about five minutes.
 
-Repeating the ios leg by hand is not the same as running it in CI: with
-`--clear-data=false` a second local run inherits the first one's accounts, so
-`simctl uninstall` before each repeat or the numbers drift.
+Repeating the ios leg by hand needs nothing special now, because the run clears
+the app's state itself. It used to: `just ios` installs over the top without
+uninstalling and folio's signed-in session survives that, so a repeat under the
+old `--clear-data=false` opened on the previous run's Home screen and diverged at
+step 1. That is how the leg came to look dead while the app and the seed were
+both fine, and it is worth recognising: a leg that reports "the double-submit bug
+was NOT found" from a machine that has been running the app all day is describing
+the machine.
 
-The ios leg passes `--clear-data=false`, because the job installs a fresh build
-immediately before the run and a freshly installed app is already clear state.
-The in-run reinstall is worth avoiding: `simctl uninstall` + `install` followed
-straight away by the XCTest runner's own launch fails with `app.folio is unknown
-to FrontBoard` maybe half the time. That used to hang the run outright; the
-launch RPC is bounded now, so it fails in about 90 seconds with a real error
-instead, but a failing leg is still a failing leg. The job timeouts are the
-backstop if it happens anyway.
+The ios leg clears state and passes no `--ios-app-path`, which is deliberate:
+without an app path the driver wipes the app's data container instead of
+reinstalling, and the reinstall is the path that races FrontBoard. `simctl
+uninstall` + `install` followed straight away by the XCTest runner's own launch
+has failed with `app.folio is unknown to FrontBoard` about half the time on the
+host that reported it. That race is untouched and still open; the leg simply
+does not take that path. It did not reproduce here at all, in 20 consecutive
+reinstall-and-launch cycles on iOS 26.1, 10 of them reinstalling on top of a
+live app, so any fix for it has to be developed on a host that can still show it
+failing.
 
 Only one sanderling run may drive a given simulator at a time. The driver takes
 an advisory lock on the target's UDID and a second run is refused with the lock
@@ -177,3 +205,13 @@ do not raise the step budget blindly - run a seed sweep with the campaign tool
 (`cmd/internal-tools/campaign`), which exists for exactly this, and pin a seed
 that finds the bug with room to spare. A leg failing with "a predicate threw" is
 a different problem entirely and no seed will fix it.
+
+Sweep in the leg's own configuration, though. The campaign tool and the ios leg
+now clear state the same way, so a swept seed means what the leg means, but the
+starting frame is not a detail you can skip checking: while the leg still passed
+`--clear-data=false`, seed 14 convicted at step 17 in 2 campaign runs out of 2
+and in 0 leg-shaped runs out of 3. Prefer the earliest conviction on offer over
+the first one found, too. A run reproduces its trajectory on another host only
+for as long as every snapshot agrees, and every step of prefix is another chance
+for it not to: seeds convicting at steps 33, 60, 114, 187 and 189 all turned up
+within the first 30, so an early one is usually there to be found.
