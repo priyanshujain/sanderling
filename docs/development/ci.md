@@ -186,11 +186,13 @@ from `test/browser/testdata/throwing` (violations and uncaught exceptions, so
 every panel has something to render), serves it with `sanderling replay`, and
 fuzzes that UI with `replay-ui/sanderling/spec.ts`.
 
-Six of the seven properties there are cross-panel agreements - two panels
-deriving the same fact by different paths have to say the same thing - so they
-hold for any trace and need no recalibrating when the fixture changes. The
-seventh is the stock `noUncaughtExceptions`, which asks nothing of the panels
-and only fails if the UI throws. Any violation fails the job.
+Three of the seven properties there are cross-panel agreements - two panels
+deriving the same fact by different paths have to say the same thing. The other
+four are a range invariant on the step in the URL, a count of selected rows
+inside the list, a no-effect property across a tab switch, and the stock
+`noUncaughtExceptions`, which asks nothing of the panels and only fails if the
+UI throws. All seven hold for any trace and need no recalibrating when the
+fixture changes. Any violation fails the job.
 
 So does a run that judged nothing. Exit 0 says no property returned false, which
 is not the same as any property having been evaluated: each one declines to
