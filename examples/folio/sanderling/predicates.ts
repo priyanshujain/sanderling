@@ -602,20 +602,36 @@ export function committedTransactionsExceedSubmits(args: {
 // submit action can commit one transaction, so the account's balance cannot
 // move by more than the amount that submit typed.
 //
-// An UPPER BOUND, not the equality submitChangesBalanceByAtMostTypedAmount uses, and
-// that is what makes a one-action window safe. A balance that has not moved is
-// a commit still in flight (createTransaction runs in a coroutine), a submit
-// the app rejected, or a tap that never landed, and none of those is evidence
-// of anything; an equality would convict all three. Moving by MORE than one
-// submit's worth is not something a correct app can do: only createTransaction
-// moves this number, only a TxnSubmit tap reaches it, and the window holds
-// exactly one such tap. A double tap is one action committing two transactions,
-// so it moves the balance by twice what was typed and lands here.
+// An UPPER BOUND, the same one submitChangesBalanceByAtMostTypedAmount applies
+// to Home's total, and that is what makes a one-action window safe. A balance
+// that has not moved is a commit still in flight (createTransaction runs in a
+// coroutine), a submit the app rejected, or a tap that never landed, and none
+// of those is evidence of anything; an equality would convict all three. Moving
+// by MORE than one submit's worth is not something a correct app can do: only
+// createTransaction moves this number, only a TxnSubmit tap reaches it, and the
+// window holds exactly one such tap.
 //
-// A submit the runner could not confirm needs no case of its own for the same
-// reason: if it never landed the balance did not move, which is under the
-// bound. countSubmitsInWindow counts it either way, so it cannot smuggle a
-// second commit into a window that looks like one.
+// What it can convict, and what it cannot. The double tap sends two Submit
+// events, and where they land decides who judges them. Two commits and two pops
+// reach Home, where this reads no balance at all and
+// committedTransactionsExceedSubmits does the convicting: that is the shape the
+// recorded iOS run at runs/folio-ios/20260815-102711 produced, three double taps
+// out of three, all on Home. Two commits with the second pop cancelled by the
+// first stop on the account's own ledger, and only this sees them. So this is
+// not the check that fixed #78, and widening its route gate would not make it
+// one: readAccountBalance drops the carrier off these two screens, so a Home
+// landing has nothing to compare.
+//
+// It is not idle either. Over that same run it judged 18 of 240 steps against
+// real readings, every one a submit landing back on the ledger with the balance
+// moved by exactly what was typed. A commit for more than the amount typed, on
+// any of them, had nowhere else to be caught: Home's total was read once in the
+// whole run.
+//
+// A submit the runner could not confirm needs no case of its own: if it never
+// landed the balance did not move, which is under the bound.
+// countSubmitsInWindow counts it either way, so it cannot smuggle a second
+// commit into a window that looks like one.
 //
 // typedAmount is the amount the app parsed for THIS submit (parseTypedAmount
 // mirrors parseCents), so every rejected amount and every amount too large to
