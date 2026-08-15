@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -71,7 +72,47 @@ func TestRunner_WebInstallsLastActionInThePage(t *testing.T) {
 	// Every later step carries what the runner actually applied. The shape is
 	// the goja host's (internal/verifier/marshal.go lastActionFields), pinned
 	// against it by TestLastAction_WebJSONMatchesTheGojaObject.
-	const want = `{"kind":"Tap","on":"id:TxnSubmit"}`
+	const want = `{"kind":"Tap","applied":true,"on":"id:TxnSubmit"}`
+	if web.installed[1] != want {
+		t.Errorf("step 2 installed %s, want %s", web.installed[1], want)
+	}
+}
+
+// failingTapWebDriver dispatches the tap and then fails the call, the shape an
+// RPC deadline takes: the page has the click, the runner has an error.
+type failingTapWebDriver struct {
+	*tappingWebDriver
+}
+
+func (d *failingTapWebDriver) Tap(context.Context, int, int) error {
+	return errors.New("rpc error: code = DeadlineExceeded desc = context deadline exceeded")
+}
+
+// The web leg of the same three states the goja host reports. "applied":null is
+// not "no action": a property gated on the last action still sees the tap and
+// decides for itself, which it cannot do if the page is handed a bare null.
+func TestRunner_WebInstallsAnUnconfirmedActionWithItsFateUnknown(t *testing.T) {
+	state := newHarnessWithSpec(t, lastActionSpec)
+	web := &failingTapWebDriver{tappingWebDriver: &tappingWebDriver{Driver: state.mock}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    2,
+		Driver:      web,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(web.installed) < 2 {
+		t.Fatalf("the page was handed lastAction %d time(s); the web path never installed it",
+			len(web.installed))
+	}
+	const want = `{"kind":"Tap","applied":null,"on":"id:TxnSubmit"}`
 	if web.installed[1] != want {
 		t.Errorf("step 2 installed %s, want %s", web.installed[1], want)
 	}
