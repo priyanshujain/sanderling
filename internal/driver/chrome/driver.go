@@ -70,23 +70,27 @@ func New() *Driver {
 		}
 		var parts []string
 		for _, arg := range e.Args {
-			if arg.Value != nil {
-				var s string
-				if err := json.Unmarshal(arg.Value, &s); err == nil {
-					parts = append(parts, s)
-				} else {
-					parts = append(parts, string(arg.Value))
+			// An object argument, which is what console.error(err) passes,
+			// carries no value at all: CDP sends a description instead. Reading
+			// only the value logged those calls with an empty message, so the
+			// entry named a level and nothing a reader could act on.
+			if arg.Value == nil {
+				if arg.Description != "" {
+					parts = append(parts, arg.Description)
 				}
+				continue
 			}
-		}
-		level := strings.ToUpper(string(e.Type))
-		if level == "LOG" {
-			level = "I"
+			var s string
+			if err := json.Unmarshal(arg.Value, &s); err == nil {
+				parts = append(parts, s)
+			} else {
+				parts = append(parts, string(arg.Value))
+			}
 		}
 		d.logsMu.Lock()
 		d.logs = append(d.logs, driver.LogEntry{
 			UnixMillis: int64(e.Timestamp.Time().UnixMilli()),
-			Level:      level,
+			Level:      consoleLevel(e.Type),
 			Tag:        "console",
 			Message:    strings.Join(parts, " "),
 		})
@@ -712,9 +716,33 @@ func (d *Driver) Metrics(ctx context.Context, _ string) (driver.Metrics, error) 
 	}, nil
 }
 
+// consoleLevel places a console call on driver.LogEntry's logcat scale. The
+// verbs a spec acts on are all named here; the rest are info rather than "E"
+// because promoting them would convict an app of an error it never logged.
+func consoleLevel(apiType runtime.APIType) string {
+	switch apiType {
+	case runtime.APITypeError, runtime.APITypeAssert:
+		return "E"
+	case runtime.APITypeWarning:
+		return "W"
+	case runtime.APITypeDebug:
+		return "D"
+	default:
+		return "I"
+	}
+}
+
+// meetsLevel keeps an entry whose level the scale cannot rank. Ranking an
+// unknown level below every threshold drops it, and a dropped entry is
+// indistinguishable from a quiet app: the caller sees silence and reports it as
+// health.
 func meetsLevel(level, minLevel string) bool {
 	order := map[string]int{"V": 0, "D": 1, "I": 2, "W": 3, "E": 4, "F": 5}
-	return order[level] >= order[minLevel]
+	rank, ranked := order[level]
+	if !ranked {
+		return true
+	}
+	return rank >= order[minLevel]
 }
 
 func pngDimensions(png []byte) (int, int) {
