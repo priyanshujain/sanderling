@@ -104,6 +104,11 @@ const homeCards = oncePerFrame((s: State): CardReading[] =>
 // the last-read Home total so `previous` and `current` stay on the same scale.
 const homeTotalText = (s: State) => on("home", "TotalBalance")(s)?.text;
 
+// The amount field as the frame a submit landed on shows it, which is the form
+// state that submit read. Every window below asks, because a submit the app
+// must have refused raises no bound: see submitCouldCommit.
+const txnAmountText = oncePerFrame((s: State) => on("add-transaction", "TxnAmountField")(s)?.text);
+
 let lastHomeTotal: number | null = null;
 const totalBalance = extract<number | null>("totalBalance", s => {
   const reading = readHomeTotalBalance({
@@ -129,6 +134,7 @@ const submitsInWindow = extract("submitsInWindow", s => {
   const window = countSubmitsInWindow({
     previousCount: submitsSinceHomeTotal,
     lastAction: s.lastAction,
+    amountText: txnAmountText(s),
     fresh,
   });
   submitsSinceHomeTotal = window.next;
@@ -177,6 +183,7 @@ const submitsSinceCounts = extract("submitsSinceCounts", s => {
   const window = countSubmitsInWindow({
     previousCount: submitsSinceHomeCards,
     lastAction: s.lastAction,
+    amountText: txnAmountText(s),
     fresh,
   });
   submitsSinceHomeCards = window.next;
@@ -215,6 +222,7 @@ const submitsSinceBalance = extract("submitsSinceAccountBalance", s => {
   const window = countSubmitsInWindow({
     previousCount: submitsSinceAccountBalance,
     lastAction: s.lastAction,
+    amountText: txnAmountText(s),
     fresh,
   });
   submitsSinceAccountBalance = window.next;
