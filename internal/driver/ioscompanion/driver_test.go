@@ -1076,6 +1076,50 @@ func TestLaunchKeepsTheSessionWhenTheCallersOwnDeadlineExpires(t *testing.T) {
 	}
 }
 
+// refusedLaunchCompanion answers a launch the way the runner does once it
+// checks the app's state after activating it: promptly, naming the app and the
+// state it reached, over a session that is still serving.
+type refusedLaunchCompanion struct {
+	fakeCompanion
+	attempts int
+}
+
+func (r *refusedLaunchCompanion) Launch(context.Context, string, bool) error {
+	r.attempts++
+	return errors.New(`runner launch: failed("com.example.app is not running after launch")`)
+}
+
+// TestLaunchKeepsTheSessionWhenTheRunnerNamesTheRefusal separates a launch that
+// answers from a launch that never does. The session restart is the only
+// recovery from a wedged session, and it costs a cold start; a runner that
+// reports the app's state has already said what a fresh session would say, so
+// restarting to hear it again only delays the error and hides the app under it.
+func TestLaunchKeepsTheSessionWhenTheRunnerNamesTheRefusal(t *testing.T) {
+	companion := &refusedLaunchCompanion{}
+	output := &bytes.Buffer{}
+	d := newTestDriver(companion)
+	d.output = output
+	restarts := 0
+	d.restart = func(context.Context) error {
+		restarts++
+		return nil
+	}
+
+	err := d.Launch(context.Background(), "", false, nil)
+	if err == nil || !strings.Contains(err.Error(), "com.example.app is not running after launch") {
+		t.Fatalf("err = %v, want the runner's refusal reaching the caller intact", err)
+	}
+	if restarts != 0 {
+		t.Fatalf("session restarts = %d, want 0: a refusal the runner reported is not a wedged session", restarts)
+	}
+	if companion.attempts != 1 {
+		t.Fatalf("launch attempts = %d, want 1: relaunching an app the runner just refused cannot launch it", companion.attempts)
+	}
+	if strings.Contains(output.String(), "restarting the session") {
+		t.Fatalf("the driver announced a recovery it must not spend here; output was %q", output.String())
+	}
+}
+
 // newLockTestOptions builds New options that dial a seamed companion, so the
 // device-lock tests exercise New without spawning anything.
 func newLockTestOptions(t *testing.T, udid string) Options {
