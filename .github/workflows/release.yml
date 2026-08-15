@@ -11,26 +11,55 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  resolve-tag:
+    name: Resolve and validate the tag
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      # A refname is attacker-controlled text and git permits backtick, `$`,
+      # `(`, `;`, `&` and `|` in it, so it goes through env: a `${{ }}` is
+      # substituted before bash ever sees the line. Every later job reads these
+      # outputs rather than the refname, and nothing reaches a shell before it
+      # has matched the pattern. The pattern is anchored and admits no newline,
+      # which is what stops the value below forging a second $GITHUB_OUTPUT key.
+      - name: Validate the tag
+        id: tag
+        run: |
+          pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
+          if [[ ! "$TAG" =~ $pattern ]]; then
+            echo "release: refusing to publish from '$TAG'" >&2
+            echo "release: a release tag is vMAJOR.MINOR.PATCH with an optional -prerelease, e.g. v0.1.0 or v0.0.1-rc1" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+
   release-npm:
     name: Publish @sanderling/spec to npm
+    needs: resolve-tag
     runs-on: ubuntu-latest
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
-
-      - name: Resolve version
-        id: ver
-        run: |
-          raw="${{ inputs.tag || github.ref_name }}"
-          echo "version=${raw#v}" >> "$GITHUB_OUTPUT"
+          ref: ${{ needs.resolve-tag.outputs.tag }}
+          # `npm ci` below runs dependency lifecycle scripts, and no step in
+          # this job needs the git credential afterwards.
+          persist-credentials: false
 
       - name: Set up Node 22
         uses: actions/setup-node@v7
@@ -46,28 +75,36 @@ jobs:
 
       - name: Stamp version
         working-directory: pkg/spec
-        run: npm version ${{ steps.ver.outputs.version }} --no-git-tag-version --allow-same-version
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+        env:
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
 
       - name: Publish
         working-directory: pkg/spec
         # npm tag pre-releases (e.g. 0.1.0-rc1) as "next" so npm install @sanderling/spec
         # keeps resolving the latest stable.
         run: |
-          if [[ "${{ steps.ver.outputs.version }}" == *-* ]]; then
+          if [[ "$VERSION" == *-* ]]; then
             npm publish --access public --tag next
           else
             npm publish --access public
           fi
+        # The publish credential is scoped to the one step that publishes rather
+        # than to the job, so no other step runs with it in reach.
+        env:
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   release-cli:
     name: Publish sanderling CLI to GitHub Releases
+    needs: resolve-tag
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.resolve-tag.outputs.tag }}
           fetch-depth: 0
 
       - name: Set up Go
