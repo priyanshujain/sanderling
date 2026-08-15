@@ -712,9 +712,17 @@ func (d *Driver) Metrics(ctx context.Context, _ string) (driver.Metrics, error) 
 	}, nil
 }
 
+// meetsLevel keeps an entry whose level the scale cannot rank. Ranking an
+// unknown level below every threshold drops it, and a dropped entry is
+// indistinguishable from a quiet app: the caller sees silence and reports it as
+// health.
 func meetsLevel(level, minLevel string) bool {
 	order := map[string]int{"V": 0, "D": 1, "I": 2, "W": 3, "E": 4, "F": 5}
-	return order[level] >= order[minLevel]
+	rank, ranked := order[level]
+	if !ranked {
+		return true
+	}
+	return rank >= order[minLevel]
 }
 
 func pngDimensions(png []byte) (int, int) {
