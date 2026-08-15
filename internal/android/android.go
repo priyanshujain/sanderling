@@ -221,11 +221,7 @@ func navOverlayCommand(ctx context.Context, adb, serial, overlay string) *exec.C
 // EnvWithAndroidPlatformTools returns env with the directory containing adb
 // prepended to PATH, so child processes (the sidecar) can invoke adb even
 // when the user hasn't set up their shell PATH.
-func EnvWithAndroidPlatformTools(env []string) []string {
-	adb, err := AdbBinary()
-	if err != nil {
-		return env
-	}
+func EnvWithAndroidPlatformTools(env []string, adb string) []string {
 	adbDir := filepath.Dir(adb)
 	result := make([]string, 0, len(env))
 	found := false
