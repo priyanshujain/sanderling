@@ -1219,6 +1219,52 @@ func TestChangedExtractors_DiffsBetweenSnapshots(t *testing.T) {
 	}
 }
 
+// TestPushSnapshot_ReportsAValueItCannotRecord covers the residue the
+// projection cannot reach: a value with no JSON form at all. The author has to
+// hear about it, because an extractor dropped from the diff is indistinguishable
+// from one that never changed.
+func TestPushSnapshot_ReportsAValueItCannotRecord(t *testing.T) {
+	verifier := newVerifier(t)
+	if err := verifier.runtime.GlobalObject().Set("hostChannel", make(chan int)); err != nil {
+		t.Fatal(err)
+	}
+	mustLoad(t, verifier, `__sanderling__.extract(() => globalThis.hostChannel, "wedged");`)
+
+	err := verifier.PushSnapshot(SnapshotInput{})
+	if err == nil {
+		t.Fatal("PushSnapshot accepted a value it cannot record; the extractor would vanish from the trace")
+	}
+	if !strings.Contains(err.Error(), "wedged") {
+		t.Errorf("error does not name the extractor: %v", err)
+	}
+}
+
+// TestChangedExtractors_RecordsValuesJSONCannotHold pins the projection's
+// edges: a cycle and a NaN are recorded as null rather than costing the run,
+// which is what JSON.stringify does with them on the web host.
+func TestChangedExtractors_RecordsValuesJSONCannotHold(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		__sanderling__.extract(() => { const node = { n: 1 }; node.self = node; return node; }, "cyclic");
+		__sanderling__.extract(() => 0 / 0, "notANumber");
+	`)
+
+	if err := verifier.PushSnapshot(SnapshotInput{}); err != nil {
+		t.Fatalf("PushSnapshot: %v", err)
+	}
+	changes := verifier.ChangedExtractors()
+	cyclic, ok := changes["cyclic"]
+	if !ok {
+		t.Fatalf("cyclic extractor missing from the diff: %+v", changes)
+	}
+	if got := string(cyclic.Curr); got != `{"n":1,"self":null}` {
+		t.Errorf("cyclic recorded as %s, want the data with the cycle cut", got)
+	}
+	if got := string(verifier.extractorSnapshot()["notANumber"]); got != "null" {
+		t.Errorf("NaN recorded as %s, want null (a run must not die on it)", got)
+	}
+}
+
 // TestExtract_DefaultsAndNamedNames verifies bindExtract assigns a fallback
 // `extractor_N` name when no name is supplied and respects an explicit one.
 func TestExtract_DefaultsAndNamedNames(t *testing.T) {
