@@ -52,6 +52,11 @@ type Summary struct {
 	EndTime    time.Time
 	Steps      int
 	Violations []ViolationRecord
+	// SkippedVerification counts the steps whose tree was still moving when it
+	// was read, so no property judged them. A green run that skipped most of
+	// its steps checked almost nothing, and nothing else in the output would
+	// say so.
+	SkippedVerification int
 	// UnsupportedVerbs lists verbs the picker requested that the platform
 	// could not dispatch, deduped, so the report can flag a spec exercising
 	// gestures this target does not support.
@@ -89,6 +94,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		return Summary{}, err
 	}
 	_, pageExtractors := extractorSource.(webSource)
+	rereadHierarchy := driverIsAndroid(ctx, options, logger)
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -147,7 +153,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// screenshot describe the same frame, then re-fetches the pair
 		// while the tree still looks transitional.
 		g.Go(func() error {
-			tree, screenshotPNG, transitional, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
+			tree, screenshotPNG, transitional, hierarchyErr = fetchSyncedState(
+				gctx, options, logger, si, rereadHierarchy)
 			return nil
 		})
 		g.Go(func() error {
@@ -188,8 +195,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			screen = tree.Elements[0].Screen
 		}
 
-		// Transitional trees describe a NavHost mid cross-fade. Pushing
-		// one would poison the verifier's previous/current extractor
+		// A transitional tree is one nothing can vouch for: a NavHost mid
+		// cross-fade, a screen that changed shape between two reads, or a
+		// hierarchy that came back empty. Pushing one would poison the
+		// verifier's previous/current extractor
 		// advance, so the next clean step would compare against this
 		// transient state and emit false-positive violations. We still
 		// record the step (hierarchy + screenshot) for replay-side
@@ -262,7 +271,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			extractorChanges = encodeExtractorChanges(options.Verifier.ChangedExtractors())
 		} else {
 			skippedVerification = true
-			logger.Warn("transitional tree after retry budget; skipping verifier",
+			summary.SkippedVerification++
+			logger.Warn("unsettled tree; skipping verifier",
 				"step", stepIndex, "screen", screen, "nodes", treeSize)
 		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
@@ -410,6 +420,10 @@ func RenderSummary(w io.Writer, summary Summary, platform string) {
 		for _, violation := range summary.Violations {
 			fmt.Fprintf(w, "  step %d: %v\n", violation.StepIndex, violation.Properties)
 		}
+	}
+	if summary.SkippedVerification > 0 {
+		fmt.Fprintf(w, "%d step(s) judged by nothing: the screen was still moving when it was read\n",
+			summary.SkippedVerification)
 	}
 	if len(summary.UnsupportedVerbs) > 0 {
 		fmt.Fprintf(w, "unsupported on %s: %s\n",
@@ -964,10 +978,17 @@ const (
 // orthogonal case where the frame itself is transitional.
 //
 // The transitional return reports whether the retry budget was exhausted
-// on a still-transitional tree. Callers use it to skip the verifier for
-// that step so the previous/current extractor advance does not absorb
+// on a still-transitional tree, or (when reread is set) whether a second
+// hierarchy read disagreed with the first. Callers use it to skip the verifier
+// for that step so the previous/current extractor advance does not absorb
 // transient state.
-func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (tree *hierarchy.Tree, png []byte, transitional bool, err error) {
+func fetchSyncedState(
+	ctx context.Context,
+	options Options,
+	logger *slog.Logger,
+	stepIndex int,
+	reread bool,
+) (tree *hierarchy.Tree, png []byte, transitional bool, err error) {
 	var pngBytes []byte
 	var previousJSON string
 retryLoop:
@@ -1003,12 +1024,97 @@ retryLoop:
 		case <-timer.C:
 		}
 	}
+	if reread && err == nil && !transitional && changedOnReread(ctx, options, logger, stepIndex, tree) {
+		transitional = true
+	}
 	if len(pngBytes) > 0 {
 		if writeErr := options.TraceWriter.WriteScreenshot(stepIndex, pngBytes); writeErr != nil {
 			logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
 		}
 	}
 	return tree, pngBytes, transitional, err
+}
+
+// changedOnReread reads the hierarchy once more and reports whether the screen
+// changed shape while we were looking at it. A Compose route can settle before
+// its content composes (a lazy list mounts over several frames, a query lands a
+// frame late), and a tree read in that window describes a screen that is still
+// filling in. Two reads a read apart are the cheapest thing that can see it
+// happening: the round trip IS the interval, so there is no sleep here.
+//
+// Waiting for the change to stop was measured on an API 34 device and refused:
+// a 750ms-quiet poll capped at 2s cost a median 1434ms against 76ms for one
+// read, hit its cap on every frame it fired for, and still handed back a frame
+// that might be filling. Detecting is what the runner can act on, because a
+// step it declines to verify is at worst a missed conviction, never a false
+// one.
+//
+// A read that fails reports no change. Nothing about a dropped RPC says the
+// screen was moving, and skipping verification on it would quietly spend the
+// run's evidence on a flaky link.
+func changedOnReread(
+	ctx context.Context,
+	options Options,
+	logger *slog.Logger,
+	stepIndex int,
+	first *hierarchy.Tree,
+) bool {
+	// An empty tree is skipped by the caller anyway, so the read buys nothing.
+	if first == nil || len(first.Elements) == 0 {
+		return false
+	}
+	hierarchyJSON, err := options.Driver.Hierarchy(ctx)
+	if err != nil {
+		logger.Warn("second hierarchy read failed", "step", stepIndex, "err", err)
+		return false
+	}
+	second, err := hierarchy.Parse(hierarchyJSON)
+	if err != nil || second == nil {
+		logger.Warn("second hierarchy parse failed", "step", stepIndex, "err", err)
+		return false
+	}
+	if structuralShape(first) == structuralShape(second) {
+		return false
+	}
+	logger.Warn("screen changed between two reads; skipping verifier",
+		"step", stepIndex, "nodes", len(first.Elements), "then", len(second.Elements))
+	return true
+}
+
+// structuralShape renders what is on screen as its nodes' identities in tree
+// order: how many there are, and which ids and classes they carry.
+//
+// Text and bounds are deliberately absent. A measure pass that moves pixels is
+// not a screen still composing, and neither is a value arriving into a node
+// that already exists, which this cannot tell apart from a clock ticking. This
+// decides whether a property gets to judge at all, so it reads only what a
+// change in what is on screen can move: a detector that fires on every step of
+// a screen with a timer on it would leave the run green and vacuous, which is
+// worse than the composition it set out to catch. The trade is measured rather
+// than assumed: over 100 folio steps on an API 35 emulator, text moved under
+// an unchanged shape on 1 step, and the shape itself moved on 1 other.
+func structuralShape(tree *hierarchy.Tree) string {
+	var shape strings.Builder
+	for _, element := range tree.Elements {
+		shape.WriteString(element.ResourceID)
+		shape.WriteByte(0x1f)
+		shape.WriteString(element.Class)
+		shape.WriteByte(0x1e)
+	}
+	return shape.String()
+}
+
+// driverIsAndroid asks the driver what it is, once per run, so the step loop
+// never repeats the RPC. It gates the reread: #75 is about Compose composition,
+// and web and iOS have their own settle paths and no measurement saying an
+// extra hierarchy read there is cheap. An unreadable answer is not android.
+func driverIsAndroid(ctx context.Context, options Options, logger *slog.Logger) bool {
+	health, err := options.Driver.Health(ctx)
+	if err != nil {
+		logger.Warn("health read failed; not rereading the hierarchy", "err", err)
+		return false
+	}
+	return health.Platform == "android"
 }
 
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {
