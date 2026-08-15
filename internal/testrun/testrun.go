@@ -242,7 +242,15 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 // --exit-on-violation a run that found violations is still a successful run
 // (the summary reports them), which is the behaviour every existing caller
 // depends on.
+//
+// A run none of whose steps reached the verifier fails whatever the flags say,
+// because it holds no verdict to report. The threshold is every step and not a
+// fraction of them: a screen that composes now and then costs a healthy android
+// run a step or two, and a check that fired on those would be red on every run.
 func runOutcome(options Options, summary runner.Summary) error {
+	if summary.Steps > 0 && summary.SkippedVerification == summary.Steps {
+		return VacuousRunError{Steps: summary.Steps}
+	}
 	if options.ExitOnViolation && len(summary.Violations) > 0 {
 		return ViolationsError{Count: len(summary.Violations)}
 	}
@@ -259,6 +267,22 @@ type ViolationsError struct {
 
 func (e ViolationsError) Error() string {
 	return fmt.Sprintf("%d violation record(s)", e.Count)
+}
+
+// VacuousRunError reports a run in which no step reached the verifier, so no
+// property ever judged anything. It is not a clean run and it is not a found
+// bug: it is a run that produced no evidence either way, and the absence of
+// violations in it says nothing about the app. It stays untyped to the CLI's
+// violation path on purpose, so it exits 1 as a broken run rather than 2.
+type VacuousRunError struct {
+	Steps int
+}
+
+func (e VacuousRunError) Error() string {
+	return fmt.Sprintf(
+		"%d step(s) ran and none of them reached the verifier: the screen was "+
+			"still moving every time it was read, so no property judged this run",
+		e.Steps)
 }
 
 // bundleInputs holds the pre-driver assembly: alias map, seed, esbuild defines,

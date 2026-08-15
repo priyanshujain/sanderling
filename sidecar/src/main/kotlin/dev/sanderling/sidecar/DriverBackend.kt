@@ -30,11 +30,21 @@ interface DriverBackend {
     fun healthy(): Boolean
     fun metrics(bundleId: String): MetricsSample
 
+    // snapshotTree is the tree a snapshot reads, without the screenshot. It is
+    // what the Hierarchy RPC serves, so the runner's two reads of a step come
+    // off one pipeline: a backend that waits out a transition or closes a
+    // keyboard before reading has to do the same on both, or the two trees
+    // differ over what the backend did between them rather than over what the
+    // app did. Measured on an API 34 emulator, an IME standing open is a
+    // 489-node bare read against the snapshot's 134.
+    fun snapshotTree(): String = hierarchy()
+
     // snapshot captures hierarchy then screenshot back-to-back. The service
     // layer holds a mutex around the call so concurrent callers observe a
     // serialized pair from the same on-device frame. Backends may override
     // to fuse the two reads more tightly when their native API allows.
-    fun snapshot(): SnapshotSample = SnapshotSample(hierarchy(), screenshot())
+    fun snapshot(): SnapshotSample =
+        SnapshotSample(snapshotTree(), screenshot())
 
     // close releases device-side resources on shutdown. The iOS backend must
     // stop its XCTest runner here: an orphaned runner session auto-restarts
@@ -1250,8 +1260,8 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     override fun recentLogs(sinceUnixMillis: Long, minLevel: String) =
         readLogcat(serial, sinceUnixMillis, minLevel)
 
-    // snapshot waits out a NavHost cross-fade before it reads, so the runner is
-    // never handed a tree holding two routes at once. It belongs here rather
+    // snapshotTree waits out a NavHost cross-fade before it reads, so the runner
+    // is never handed a tree holding two routes at once. It belongs here rather
     // than in waitForIdle: the runner gives waitForIdle a one-second deadline
     // and abandons the RPC when it expires, which is not enough room for a
     // 700ms fade that began before the settle did, and a wait that outlives the
@@ -1262,16 +1272,15 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     // The predicate costs nothing on a settled frame: the read it needs is the
     // read the snapshot was going to do anyway. That is what makes this
     // affordable, where the structural poll that used to run in waitForIdle was
-    // not: it fetched the hierarchy ~4 more times on every mutating step.
-    override fun snapshot(): SnapshotSample {
-        val tree = treeWithoutKeyboard(
-            awaitSettledTree { hierarchy() },
-            imePackage,
-            dismiss = { runCatching { dadb.shell("input keyevent 4") } },
-            reread = { awaitSettledTree { hierarchy() } },
-        )
-        return SnapshotSample(tree, screenshot())
-    }
+    // not: it fetched the hierarchy ~4 more times on every mutating step. The
+    // keyboard leg costs nothing either when no IME is standing in the tree,
+    // which is what lets the Hierarchy RPC serve this too.
+    override fun snapshotTree(): String = treeWithoutKeyboard(
+        awaitSettledTree { hierarchy() },
+        imePackage,
+        dismiss = { runCatching { dadb.shell("input keyevent 4") } },
+        reread = { awaitSettledTree { hierarchy() } },
+    )
 
     override fun waitForIdle(durationMillis: Long) {
         // waitForAppToSettle blocks on the View-system animation and maestro's

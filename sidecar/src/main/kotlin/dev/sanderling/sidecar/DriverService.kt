@@ -170,12 +170,18 @@ class DriverService(
         }
     }
 
+    // The runner reads this a second time per step to see whether the screen
+    // changed while it was looking, so it has to describe the same thing the
+    // snapshot's tree describes: same settle, same keyboard handling, same
+    // lock. Served off the bare backend read, the pair differed over what the
+    // backend did between them rather than over what the app did.
     override fun hierarchy(
         request: Empty,
         responseObserver: StreamObserver<HierarchyJSON>,
     ) {
         runRpc(responseObserver) {
-            HierarchyJSON.newBuilder().setJson(backend.hierarchy()).build()
+            val tree = synchronized(snapshotLock) { backend.snapshotTree() }
+            HierarchyJSON.newBuilder().setJson(tree).build()
         }
     }
 

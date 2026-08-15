@@ -266,6 +266,31 @@ func TestRunOutcome_ReportsViolationsOnlyUnderTheFlag(t *testing.T) {
 	}
 }
 
+// A step the verifier skipped was judged by nothing, so a run whose every step
+// was skipped holds no verdict at all: "no violations" there is the absence of
+// an answer rather than a clean one. Reporting it as a successful run is the
+// green and vacuous outcome structuralShape's own design notes call worse than
+// the composition it catches, and the runner's hold is what makes a fully
+// skipped run reachable.
+func TestRunOutcome_ARunThatJudgedNothingIsNotASuccess(t *testing.T) {
+	nothingJudged := runner.Summary{Steps: 6, SkippedVerification: 6}
+	err := runOutcome(Options{}, nothingJudged)
+	var vacuous VacuousRunError
+	if !errors.As(err, &vacuous) {
+		t.Fatalf("a run that judged none of its 6 steps came back %v, want a VacuousRunError", err)
+	}
+	if vacuous.Steps != 6 {
+		t.Errorf("steps: got %d, want 6", vacuous.Steps)
+	}
+
+	// A screen that composes now and then costs a run steps, not its verdict. A
+	// check that fired here would turn every healthy android run red.
+	mostlyJudged := runner.Summary{Steps: 6, SkippedVerification: 5}
+	if err := runOutcome(Options{}, mostlyJudged); err != nil {
+		t.Errorf("a run that judged one of its 6 steps must succeed, got %v", err)
+	}
+}
+
 // wedgedLaunchDriver never returns from Launch, standing in for a driver whose
 // device-side session is stuck.
 type wedgedLaunchDriver struct {

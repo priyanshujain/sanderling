@@ -100,7 +100,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	deadline := summary.StartTime.Add(options.Duration)
 	stepIndex := 0
 	consecutiveApplyFailures := 0
-	heldSteps := 0
 	var lastAction *verifier.Action
 	var lastLogTime time.Time
 	for time.Now().Before(deadline) {
@@ -287,16 +286,16 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// their effects would then see an effect whose cause the runner
 		// swallowed. See TestRunner_ASkippedStepDoesNotSwallowTheActionBeforeIt.
 		//
-		// Bounded, because a screen that never settles must not stall the whole
-		// run: past the bound the runner acts anyway, which is where it was
-		// before this held anything back.
-		held := skippedVerification && heldSteps < maxHeldSteps
+		// Unbounded, because lastAction holds exactly one action: any bound that
+		// let the runner act again while the verifier was still being skipped
+		// would overwrite the action the hold was carrying, and that is the same
+		// swallow arriving one step later. A screen that keeps moving therefore
+		// costs the run its actions rather than its soundness, and a run that
+		// verified nothing says so in its outcome (internal/testrun).
+		held := skippedVerification
 		if held {
-			heldSteps++
 			logger.Warn("screen still moving; holding this step's action back",
-				"step", stepIndex, "held", heldSteps)
-		} else {
-			heldSteps = 0
+				"step", stepIndex)
 		}
 
 		var nextAction verifier.Action
@@ -401,7 +400,16 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// concurrent fetches observe a stable post-action state. A transient
 		// apply error means nothing landed, so the idle poll has nothing to
 		// settle and may itself hang on the same device condition.
-		if nextErr == nil && !applySkipped && nextAction.Kind != verifier.ActionKindWait {
+		//
+		// A held step settles too, and it is the only case here that waits with
+		// nothing applied. The reread that held it takes its two reads a round
+		// trip apart, which is a tighter window than the one the detector was
+		// measured over (an action and a settle); looping straight back into it
+		// would compare two reads of a composing screen closer together still,
+		// so the screen that most needs to settle is the one given least room.
+		mutated := nextErr == nil && !applySkipped &&
+			nextAction.Kind != verifier.ActionKindWait
+		if held || mutated {
 			idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
 			idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
 			if idleErr != nil && idleCtx.Err() == nil {
@@ -1071,6 +1079,13 @@ retryLoop:
 // filling in. Two reads a read apart are the cheapest thing that can see it
 // happening: the round trip IS the interval, so there is no sleep here.
 //
+// The comparison only means anything because the Hierarchy RPC serves the tree
+// the snapshot's own read produces (see snapshotTree in the sidecar). Off the
+// bare device read it does not: with an IME standing open, the snapshot answers
+// with 134 nodes and the bare read with 489, and the pair then differs over
+// whether the sidecar closed a keyboard between them rather than over anything
+// the app did.
+//
 // Waiting for the change to stop was measured on an API 34 device and refused:
 // a 750ms-quiet poll capped at 2s cost a median 1434ms against 76ms for one
 // read, hit its cap on every frame it fired for, and still handed back a frame
@@ -1122,6 +1137,9 @@ func changedOnReread(
 // worse than the composition it set out to catch. The trade is measured rather
 // than assumed: over 100 folio steps on an API 35 emulator, text moved under
 // an unchanged shape on 1 step, and the shape itself moved on 1 other.
+//
+// TestRunner_OnlyAChangeOfShapeCostsAStepItsVerdict is what holds the line:
+// adding either field back to the shape turns one of its cases red.
 func structuralShape(tree *hierarchy.Tree) string {
 	var shape strings.Builder
 	for _, element := range tree.Elements {
@@ -1315,14 +1333,6 @@ func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessa
 // an unbroken streak means the device is wedged and the rest of the budget
 // would be spent doing nothing.
 const maxConsecutiveApplyFailures = 3
-
-// maxHeldSteps bounds how many steps in a row the runner will decline to act on
-// because their screen was still moving. It is a livelock bound, not a settle
-// budget: a screen that changes shape under every pair of reads (a live list, a
-// spinner that mounts and unmounts) would otherwise take the whole run without
-// the fuzzer ever touching it. Two is what the measured cases need, which came
-// one step at a time and never twice in a row.
-const maxHeldSteps = 2
 
 // isWDADrop reports that the sidecar could not restart the iOS XCTest
 // runner: the channel is gone for good and the run must abort. Transient

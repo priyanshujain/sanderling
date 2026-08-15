@@ -333,9 +333,17 @@ class DriverServiceTest {
         assertEquals(3, image.png.size())
     }
 
-    @Test fun hierarchyReturnsBackendJson() {
+    // The runner reads the hierarchy a second time per step to see whether the
+    // screen changed while it was looking, so this has to answer with the tree
+    // the snapshot's read produces: same settle, same keyboard handling. Served
+    // off the bare backend read, the pair differs over what the backend did
+    // between the two reads rather than over what the app did. Measured on an
+    // API 34 emulator with an IME standing open, that is a 489-node tree
+    // against the snapshot's 134.
+    @Test fun hierarchyServesTheTreeTheSnapshotReads() {
         val backend = object : DriverBackend by StubDriverBackend("android") {
-            override fun hierarchy(): String = "{\"x\":1}"
+            override fun hierarchy(): String = "{\"bare\":1}"
+            override fun snapshotTree(): String = "{\"x\":1}"
         }
         val client = newClient(backend)
 
