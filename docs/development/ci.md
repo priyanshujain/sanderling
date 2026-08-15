@@ -146,10 +146,13 @@ shorter budget would never see the bonus. A full run costs about five minutes.
 That step number was measured on a local emulator with animations ON, and the CI
 job sets `disable-animations: true`, so it does not describe the CI leg. The
 worry that follows is that zeroing the 700ms Compose fade would stop the leg
-exercising the cross-fade wait entirely. The first real dispatch says otherwise:
-its 200-step trace carries 4 `transitional` steps, so the wait still fires, just
-far less often than it does locally. Treat the android number as an order of
-magnitude, not a pin. It is a health gate, so nothing keys on it.
+exercising the cross-fade wait entirely, and the traces say that worry is
+largely right. The first dispatch, whose run was stuck on one screen, carried 4
+`transitional` steps in 200. The healthy runs since carry **zero**. So on CI the
+wait almost never fires, and a leg that is green there is not evidence the wait
+works. Local runs with animations on are where that gets exercised. Treat the
+android number as an order of magnitude, not a pin. It is a health gate, so
+nothing keys on it.
 
 Repeating the ios leg by hand needs nothing special now, because the run clears
 the app's state itself. It used to: `just ios` installs over the top without
