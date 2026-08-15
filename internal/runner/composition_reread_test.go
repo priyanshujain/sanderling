@@ -135,7 +135,7 @@ func TestRunner_AStepWhoseTreeChangedBetweenReadsIsNotVerified(t *testing.T) {
 
 // submitsOnTapDriver commits a transaction on every tap, shows the running
 // total in the tree, and grows a row under the hierarchy read that follows the
-// paired Snapshot on one chosen step.
+// paired Snapshot: on one chosen step, or on every one of them.
 type submitsOnTapDriver struct {
 	*mockdriver.Driver
 	composingRead int64
