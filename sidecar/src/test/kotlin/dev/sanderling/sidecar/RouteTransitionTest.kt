@@ -84,12 +84,25 @@ class RouteTransitionTest {
     @Test fun capCoversTheNavHostFadePlusTheStreak() {
         // Compose navigation's default enter and exit are a 700ms tween, and
         // the fade starts when the action lands, not when the snapshot begins.
-        // A cap that does not clear the fade and the streak after it leaves the
-        // frame transitional, which is the whole defect.
+        // A cap that does not clear the fade and the streak after it hands the
+        // caller a transitional frame, which is the whole defect.
+        val fadeMillis = 700L
+        val start = System.currentTimeMillis()
+        val settled = awaitSettledTree {
+            if (System.currentTimeMillis() - start < fadeMillis) crossFade else landed
+        }
+        val elapsed = System.currentTimeMillis() - start
+
+        assertEquals(landed, settled, "must hand back the landed tree, not the fade")
         assertTrue(
-            TRANSITION_POLL_CAP_MILLIS >= 700L + TRANSITION_STABLE_STREAK_MILLIS,
-            "cap ${TRANSITION_POLL_CAP_MILLIS}ms cannot cover a 700ms fade plus a " +
-                "${TRANSITION_STABLE_STREAK_MILLIS}ms streak",
+            elapsed >= fadeMillis,
+            "cannot have settled before the fade ended, elapsed=${elapsed}ms",
+        )
+        assertTrue(
+            elapsed < TRANSITION_POLL_CAP_MILLIS,
+            "the ${TRANSITION_POLL_CAP_MILLIS}ms cap has to leave room for a ${fadeMillis}ms " +
+                "fade and the ${TRANSITION_STABLE_STREAK_MILLIS}ms streak after it, but the " +
+                "wait ran to the cap instead, elapsed=${elapsed}ms",
         )
     }
 }
