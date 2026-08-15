@@ -21,6 +21,7 @@
   },
   "files": [
     "dist",
+    "src",
     "README.md"
   ],
   "repository": {
