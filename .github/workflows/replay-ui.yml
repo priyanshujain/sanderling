@@ -69,10 +69,15 @@ jobs:
         run: |
           python3 -m http.server 8792 --bind 127.0.0.1 \
             --directory test/browser/testdata/throwing &
+          ready=""
           for _ in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8792/ >/dev/null && break
+            curl -sf http://127.0.0.1:8792/ >/dev/null && { ready=1; break; }
             sleep 1
           done
+          if [ -z "$ready" ]; then
+            echo "the fixture http server never answered on 127.0.0.1:8792" >&2
+            exit 1
+          fi
           ./bin/sanderling test \
             --platform web \
             --spec test/browser/testdata/throwing/spec.ts \
@@ -85,10 +90,15 @@ jobs:
           # Flags before the positional argument: Go's flag package stops
           # parsing at the first non-flag word.
           ./bin/sanderling replay --port 8793 --no-open runs/fixture &
+          ready=""
           for _ in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8793/api/runs >/dev/null && break
+            curl -sf http://127.0.0.1:8793/api/runs >/dev/null && { ready=1; break; }
             sleep 1
           done
+          if [ -z "$ready" ]; then
+            echo "sanderling replay never served /api/runs on 127.0.0.1:8793" >&2
+            exit 1
+          fi
           run_id="$(ls runs/fixture | head -1)"
           echo "RUN_URL=http://127.0.0.1:8793/runs/$run_id/steps/1" >> "$GITHUB_ENV"
           curl -sf "http://127.0.0.1:8793/runs/$run_id/steps/1" >/dev/null

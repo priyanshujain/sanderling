@@ -64,10 +64,15 @@ http.server.HTTPServer(("127.0.0.1", port), handler).serve_forever()
 PY
     server_pid=$!
     trap 'kill "$server_pid" 2>/dev/null' EXIT
+    ready=""
     for _ in $(seq 1 30); do
-      curl -sf "http://127.0.0.1:$port/index.html" >/dev/null && break
+      curl -sf "http://127.0.0.1:$port/index.html" >/dev/null && { ready=1; break; }
       sleep 1
     done
+    if [ -z "$ready" ]; then
+      echo "folio/web: the app server never served index.html on 127.0.0.1:$port from $dist" >&2
+      exit 1
+    fi
     folio_args=(--platform web --bundle-id "http://127.0.0.1:$port/index.html")
     ;;
   *)
