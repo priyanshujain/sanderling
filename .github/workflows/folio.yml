@@ -49,11 +49,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up JDK 17
+      - name: Set up the JDKs
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          # The metro gradle plugin folio builds with needs a 21 runtime; the
+          # sidecar toolchain pins 17. Both are installed so gradle can pick.
+          java-version: |
+            17
+            21
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -134,11 +138,15 @@ jobs:
       - name: Install idb-companion, xcodegen and just
         run: brew install facebook/fb/idb-companion xcodegen just
 
-      - name: Set up JDK 17
+      - name: Set up the JDKs
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          # The metro gradle plugin folio builds with needs a 21 runtime; the
+          # sidecar toolchain pins 17. Both are installed so gradle can pick.
+          java-version: |
+            17
+            21
 
       # The iOS app builds its Kotlin framework through the folio gradle
       # project, which configures :app:androidApp and so needs an Android SDK
@@ -208,11 +216,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up JDK 17
+      - name: Set up the JDKs
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          # The metro gradle plugin folio builds with needs a 21 runtime; the
+          # sidecar toolchain pins 17. Both are installed so gradle can pick.
+          java-version: |
+            17
+            21
 
       - name: Set up bun
         uses: oven-sh/setup-bun@v2
