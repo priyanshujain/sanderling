@@ -14,6 +14,7 @@ import (
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
+	"github.com/priyanshujain/sanderling/internal/trace"
 )
 
 // homeWithRows is one settled route whose list holds rows. A row arriving
@@ -485,8 +486,9 @@ func TestRunner_OnlyAChangeOfShapeCostsAStepItsVerdict(t *testing.T) {
 }
 
 type traceLine struct {
-	Step       int      `json:"step"`
-	Violations []string `json:"violations"`
+	Step             int                              `json:"step"`
+	Violations       []string                         `json:"violations"`
+	ExtractorChanges map[string]trace.ExtractorChange `json:"extractor_changes"`
 }
 
 func traceSteps(t *testing.T, directory string) []traceLine {

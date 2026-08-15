@@ -285,3 +285,79 @@ func TestRunner_AnOverlayDoesNotConvictTheSubmitCountingProperty(t *testing.T) {
 		}
 	})
 }
+
+// reportedActionSpec puts what the runner told the spec about the last action
+// into an extractor, so a test can read it out of the trace. `applied` and
+// `relaunched` have no other producer: the runner's two guard writes are the
+// only thing that ever sets them, and every spec-side guard built on them (see
+// acrossRelaunch and confirmedApplied in the folio predicates) reads nothing
+// else. A regression in either write leaves those guards permanently off with
+// no property anywhere able to notice.
+const reportedActionSpec = `
+import { actions, always, extract, Tap } from "@sanderling/spec";
+const reportedAction = extract("reportedAction", state => {
+  const last = state.lastAction;
+  if (last == null) return "none";
+  const dispatch = last.applied === true ? "applied" : "unconfirmed";
+  const process = last.relaunched === true ? "relaunched" : "same-process";
+  return dispatch + "/" + process;
+});
+globalThis.properties = {
+  theGuardTheRunnerRanReachesTheSpec: always(
+    () => reportedAction.current !== "applied/same-process",
+  ),
+};
+globalThis.actions = actions(() => [Tap({ on: "id:TxnSubmit" })]);
+`
+
+// runReportingTheGuard drives two steps against a device whose submit tap trips
+// one of the foreground guards, and hands back what the spec read off
+// state.lastAction on the step the guard fired.
+func runReportingTheGuard(t *testing.T, device committingDevice, state *harness) string {
+	t.Helper()
+	if violations := runTwoSubmitSteps(t, state, device, 1); len(violations) != 0 {
+		t.Errorf("the spec was told the action ran untouched by any guard: %v", violations)
+	}
+	steps := traceSteps(t, state.writer.Directory())
+	if len(steps) != 2 {
+		t.Fatalf("trace holds %d step(s), want 2", len(steps))
+	}
+	change, ok := steps[1].ExtractorChanges["reportedAction"]
+	if !ok {
+		t.Fatalf("step 2 recorded no reading of the reported action: %+v", steps[1])
+	}
+	return string(change.Curr)
+}
+
+func TestRunner_TheSpecIsToldTheAppWasRelaunchedUnderTheAction(t *testing.T) {
+	state := newHarnessWithSpec(t, reportedActionSpec)
+	device := &leavesForegroundAfterSubmitDriver{Driver: state.mock, commitsPerTap: 1}
+
+	reported := runReportingTheGuard(t, device, state)
+
+	if countMockActions(state, mockdriver.ActionLaunch, "") == 0 {
+		t.Fatal("the app was never relaunched, so the write this test is about never ran")
+	}
+	if reported != `"applied/relaunched"` {
+		t.Errorf("the spec read %s off state.lastAction, want \"applied/relaunched\"; "+
+			"a property relaxed across a relaunch cannot fire on a run that never "+
+			"tells it one happened", reported)
+	}
+}
+
+func TestRunner_TheSpecIsToldAnObscuredActionWasNotConfirmed(t *testing.T) {
+	state := newHarnessWithSpec(t, reportedActionSpec)
+	device := &obscuredAfterSubmitDriver{Driver: state.mock, commitsPerTap: 1}
+
+	reported := runReportingTheGuard(t, device, state)
+
+	if countMockActions(state, mockdriver.ActionPressKey, "back") == 0 {
+		t.Fatal("the overlay was never dismissed, so the write this test is about never ran")
+	}
+	if reported != `"unconfirmed/same-process"` {
+		t.Errorf("the spec read %s off state.lastAction, want "+
+			"\"unconfirmed/same-process\"; a system window held the focused window, "+
+			"so whether the app received the tap is exactly what nobody can say",
+			reported)
+	}
+}
