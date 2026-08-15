@@ -2,7 +2,9 @@ package testrun
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -302,5 +304,105 @@ func TestLaunchAppBoundsWedgedDriver(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("launchApp never returned: the pre-run launch is unbounded, so a wedged driver hangs the run forever")
+	}
+}
+
+// repoFile walks up from the test's working directory and returns the absolute
+// path of rel inside the sanderling checkout.
+func repoFile(t *testing.T, rel string) string {
+	t.Helper()
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		candidate := filepath.Join(directory, rel)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			t.Fatalf("%s not found above the test directory", rel)
+		}
+		directory = parent
+	}
+}
+
+// publishedFiles returns the "files" entries of pkg/spec/package.json, the
+// exact set npm ships in the @sanderling/spec tarball.
+func publishedFiles(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(repoFile(t, "pkg/spec/package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	return manifest.Files
+}
+
+// installPublishedPackage reproduces what `npm install @sanderling/spec`
+// unpacks into node_modules: only the paths package.json publishes.
+func installPublishedPackage(t *testing.T, dest string) {
+	t.Helper()
+	specDir := filepath.Dir(repoFile(t, "pkg/spec/package.json"))
+	for _, entry := range publishedFiles(t) {
+		source := filepath.Join(specDir, entry)
+		if _, err := os.Stat(source); err != nil {
+			continue
+		}
+		copyTree(t, source, filepath.Join(dest, entry))
+	}
+}
+
+func copyTree(t *testing.T, source, dest string) {
+	t.Helper()
+	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dest, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestResolveRuntimeSibling_PublishedPackageShipsTheRuntimes pins npm's "files"
+// list against the resolver that consumes it. The tarball shipped dist/ alone
+// while the node_modules fallback looks for src/goja-runtime.ts, so every
+// `npm install @sanderling/spec` user hit "goja-runtime.ts not found".
+func TestResolveRuntimeSibling_PublishedPackageShipsTheRuntimes(t *testing.T) {
+	root := t.TempDir()
+	installPublishedPackage(t, filepath.Join(root, "node_modules", "@sanderling", "spec"))
+	specPath := filepath.Join(root, "spec.ts")
+	if err := os.WriteFile(specPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, filename := range []string{"goja-runtime.ts", "web-runtime.ts"} {
+		if resolveRuntimeSibling("", specPath, filename) == "" {
+			t.Errorf("%s unreachable from a published install; package.json publishes %v",
+				filename, publishedFiles(t))
+		}
 	}
 }
