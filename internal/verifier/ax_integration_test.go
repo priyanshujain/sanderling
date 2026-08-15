@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
@@ -98,4 +99,78 @@ func TestStateAxFindWorks(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("findAll count = %d, want 1", count)
 	}
+}
+
+// axSelectorFormsTree carries one node per id shape a dump produces: the bare
+// tag Compose and the web driver emit, the package-qualified resource id
+// Android emits, and the iOS accessibility identifier.
+const axSelectorFormsTree = `{
+	"attributes": {"resource-id": "root", "bounds": "[0,0,400,800]"},
+	"children": [
+		{"attributes": {"resource-id": "BareThing", "text": "bare", "bounds": "[0,0,100,50]"},
+		 "children": []},
+		{"attributes": {"resource-id": "com.example.app:id/AndroidThing", "text": "android",
+		 "bounds": "[0,50,100,100]"}, "children": []},
+		{"attributes": {"accessibilityIdentifier": "IosThing", "text": "ios",
+		 "bounds": "[0,100,100,150]"}, "children": []}
+	]
+}`
+
+// TestStateAxSelectorFormsAgree drives both selector forms a spec can write
+// through state.ax.find and holds them to the same element. The two forms
+// dispatch to different lookups (findNodeFromJS sends a string to FindNode and
+// an object to FindBySelector), and the object one used to skip the id rule
+// that knows an Android resource id is package-qualified, so a spec that wrote
+// ax.find({id: "AddAccountSubmit"}) got undefined on Android and every property
+// reading it passed while checking nothing.
+func TestStateAxSelectorFormsAgree(t *testing.T) {
+	tree, err := hierarchy.Parse(axSelectorFormsTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{"BareThing", "bare"},
+		{"AndroidThing", "android"},
+		{"com.example.app:id/AndroidThing", "android"},
+		{"IosThing", "ios"},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			verifier := newVerifier(t)
+			mustLoad(t, verifier, `
+				globalThis.fromObject = __sanderling__.extract(
+					state => state.ax.find({ id: `+strconv.Quote(test.value)+` })?.text, "fromObject");
+				globalThis.fromString = __sanderling__.extract(
+					state => state.ax.find("id:" + `+strconv.Quote(test.value)+`)?.text, "fromString");
+				globalThis.properties = {};
+			`)
+			if err := verifier.PushSnapshot(SnapshotInput{Tree: tree}); err != nil {
+				t.Fatal(err)
+			}
+			fromObject := readCurrent(t, verifier, "fromObject")
+			fromString := readCurrent(t, verifier, "fromString")
+			if fromString != test.want {
+				t.Fatalf(`ax.find("id:%s") read %v, want %q`, test.value, fromString, test.want)
+			}
+			if fromObject != fromString {
+				t.Errorf(
+					`one selector, two answers: ax.find({id: %q}) read %v and ax.find("id:%s") read %v`,
+					test.value, fromObject, test.value, fromString,
+				)
+			}
+		})
+	}
+}
+
+// readCurrent returns a named extractor's current value, or nil when the getter
+// returned undefined, which is what an unresolved selector produces.
+func readCurrent(t *testing.T, verifier *Verifier, name string) any {
+	t.Helper()
+	handle := verifier.runtime.GlobalObject().Get(name)
+	if handle == nil {
+		t.Fatalf("%s is not defined", name)
+	}
+	return handle.ToObject(verifier.runtime).Get("current").Export()
 }
