@@ -125,11 +125,13 @@ agreement properties possible.
 **iOS.** `accessibilityIdentifier`, set via `.accessibilityIdentifier` in
 SwiftUI or UIKit. Compose Multiplatform maps `testTag` to it for you.
 
-Two rules about the names themselves. A `testTag` selector falls through to a
-substring compare, so `{testTag: "Sub"}` matches `AddAccountSubmit`: make each
-hook a whole distinct name rather than a fragment of another. And give every
-screen a marker of its own, because a route extractor is what lets a property
-decline on the screens it has nothing to say about.
+Two rules about the names themselves. On Android and iOS a `testTag` selector
+falls through to a substring compare, so `{testTag: "Sub"}` matches
+`AddAccountSubmit`; on web the same selector compiles to an exact CSS attribute
+match and hits nothing. Make each hook a whole distinct name rather than a
+fragment of another, and you are right on both. And give every screen a marker
+of its own, because a route extractor is what lets a property decline on the
+screens it has nothing to say about.
 
 The check that a hook exists is not that you added it. It is that you can point
 at a step in a real trace where a selector over it resolved to a value.
