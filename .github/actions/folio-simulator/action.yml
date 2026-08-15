@@ -1,0 +1,31 @@
+name: folio on a simulator
+description: Boot an iOS simulator, install folio on it, and leave the app stopped.
+
+inputs:
+  device:
+    description: simulator device name
+    default: iPhone 16 Pro
+
+runs:
+  using: composite
+  steps:
+    - name: Boot a simulator
+      shell: bash
+      run: |
+        xcrun simctl boot "$IOS_DEVICE" || true
+        xcrun simctl bootstatus "$IOS_DEVICE" -b
+      env:
+        IOS_DEVICE: ${{ inputs.device }}
+
+    - name: Build and install folio
+      shell: bash
+      working-directory: examples/folio
+      run: just ios
+      env:
+        IOS_DEVICE: ${{ inputs.device }}
+
+    # `just ios` leaves the app running, and the run's first act is to clear
+    # its state. Stopping it here means the run always opens the same way.
+    - name: Stop the app before the run
+      shell: bash
+      run: xcrun simctl terminate booted app.folio || true

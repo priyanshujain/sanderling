@@ -1,0 +1,30 @@
+name: headless chrome
+description: Install Chrome and prove it starts headless before a driver depends on it.
+
+runs:
+  using: composite
+  steps:
+    # stable is setup-chrome v2's own default, spelled out so a new release of
+    # the action cannot move the browser these jobs drive. The alternative it
+    # offers is Chrome for Testing latest, which tracks ahead of the channel
+    # users run.
+    - uses: browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd # v2.1.2
+      with:
+        chrome-version: stable
+
+    # Ubuntu 24.04 (current ubuntu-latest) restricts unprivileged user
+    # namespaces via AppArmor, which stops headless Chrome from starting even
+    # with --no-sandbox: the process launches but never opens its DevTools
+    # socket. Re-enable them so the driver's Chrome can come up.
+    - name: Allow Chrome under unprivileged user namespaces
+      shell: bash
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+    # Fail here with Chrome's own stderr if the browser can't launch, instead
+    # of letting the driver report an opaque DevTools timeout downstream.
+    - name: Verify headless Chrome starts
+      shell: bash
+      run: |
+        chrome --version
+        chrome --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
+          --dump-dom 'data:text/html,<title>ok</title>'

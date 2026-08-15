@@ -1,0 +1,81 @@
+name: folio app
+description: Install the toolchain folio needs on one platform, and build the app there.
+
+inputs:
+  platform:
+    description: android, ios or web
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up the JDKs
+      uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        # The metro gradle plugin folio builds with needs a 21 runtime; the
+        # sidecar toolchain pins 17. Both are installed so gradle can pick.
+        java-version: |
+          17
+          21
+
+    # The iOS app builds its Kotlin framework through the folio gradle project,
+    # which configures :app:androidApp, so this is needed off Android too.
+    # `make sanderling-android` wants it as well, for the sidecar JAR.
+    - name: Set up Android SDK
+      if: inputs.platform != 'web'
+      uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+
+    - name: Cache Gradle
+      if: inputs.platform != 'ios'
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: folio-gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          folio-gradle-${{ runner.os }}-
+
+    # idb-companion is not in homebrew-core, only in facebook/homebrew-fb, so
+    # it has to be named by its full tap path. xcodegen and just are core.
+    - name: Install idb-companion, xcodegen and just
+      if: inputs.platform == 'ios'
+      shell: bash
+      run: brew install facebook/fb/idb-companion xcodegen just
+
+    # Both asset tarballs are built by the prepare scripts, and the runner
+    # bundle is an xcodebuild of companion/Sources. Keyed on the scripts and
+    # the versions the Makefile embeds, so a later run reuses them. This has to
+    # land before `make sanderling-ios`, which is what consumes them.
+    - name: Cache the companion and runner bundles
+      if: inputs.platform == 'ios'
+      uses: actions/cache@v6
+      with:
+        path: |
+          internal/driver/ioscompanion/companionassets/assets
+          internal/driver/ioscompanion/runnerassets/assets
+        key: ios-assets-${{ runner.os }}-${{ hashFiles('internal/driver/ioscompanion/companionassets/prepare.sh', 'companion/prepare.sh', 'companion/project.yml', 'companion/Sources/**') }}
+
+    # Without this the emulator falls back to software rendering and every
+    # step costs several seconds.
+    - name: Enable KVM
+      if: inputs.platform == 'android'
+      shell: bash
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+          | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+
+    - name: Build the folio APK
+      if: inputs.platform == 'android'
+      shell: bash
+      working-directory: examples/folio
+      run: ./gradlew :app:androidApp:assembleDebug
+
+    - name: Build the folio wasmJs app
+      if: inputs.platform == 'web'
+      shell: bash
+      working-directory: examples/folio
+      run: ./gradlew :app:webApp:wasmJsBrowserDevelopmentExecutableDistribution

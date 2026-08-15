@@ -3,7 +3,7 @@
 # summary it renders. Run under the flags GitHub Actions uses for a `run:`
 # block, because that is where a swallowed failure hides.
 #
-# testdata/replay-ui-real-run.jsonl is the first 10 steps of the dogfood run in
+# testdata/replay-ui-real-run.jsonl is the first 10 steps of the replay-ui run in
 # actions run 31873049857 on master, with the per-step `hierarchy` dumps and the
 # rowElements/tabElements extractors removed so the file stays readable. Nothing
 # else was touched. That run was green, and badgeCountMatchesThePanel judged

@@ -30,6 +30,11 @@ jobs:
       - name: Build site
         run: make docs
 
+      # No include-hidden-files: v4 stopped uploading dot-files by default, and
+      # build/site has none. It is pandoc output plus a copy of docs/_assets,
+      # which holds three ordinary files. _assets is underscore-prefixed, not
+      # hidden, and deploy-pages serves the artifact without running Jekyll, so
+      # it needs no .nojekyll either.
       - uses: actions/upload-pages-artifact@v5
         with:
           path: build/site
