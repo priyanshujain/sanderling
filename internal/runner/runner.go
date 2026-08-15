@@ -222,9 +222,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			// behind the hierarchy fetch; the fetch is what decides whether this
 			// step counts at all, so it has to go first.
 			//
-			// lastAction is the same value PushSnapshot hands the goja state
-			// below: the two engines evaluate this step against one action.
-			v8Overrides, overridesErr := extractorSource.ExtractorOverrides(ctx, lastAction)
+			// lastAction and logs are the same values PushSnapshot hands the
+			// goja state below: the two engines evaluate this step against one
+			// action and one set of log entries.
+			v8Overrides, overridesErr := extractorSource.ExtractorOverrides(ctx, lastAction, logs)
 			if overridesErr != nil {
 				// Not a warning. Without the page's values this step's
 				// extractors keep goja's dump-derived readings while the
