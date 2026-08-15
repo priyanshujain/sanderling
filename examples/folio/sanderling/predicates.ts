@@ -106,6 +106,21 @@ export function readHomeTotalBalance(args: {
 //
 // Callers pass null for a reading they could not take, so an empty list and an
 // empty map are one case here rather than two.
+//
+// A non-empty list is trusted as current, and that rests on the app's shape
+// rather than on anything in the frame. `fresh` also resets the submit window,
+// so a card list drawn before the store caught up with a commit would bank
+// stale counts, start the next window empty, and leave the rise arriving with
+// no budget to cover it: a healthy app convicted of a double submit. Folio
+// cannot serve that frame. AddTransactionViewModel.submit pops ONE entry, so a
+// commit lands back on the ledger it came from and the first Home reading is a
+// whole action and settle later. Two pops do reach Home, but two pops means two
+// Submit events, which is the double submit itself, and a verdict there is
+// late rather than wrong. Measured over four recorded android runs: 51
+// commit-capable single taps landed on the ledger or the transaction screen and
+// none on Home, 49 of 49 commits already showed their new balance in the frame
+// read at the same step, and no rise ever arrived against an empty budget in
+// 1303 steps. A submit that navigated straight to Home would reopen this.
 export interface HomeCardReading<T> {
   value: T | null;
   carrier: T | null;
