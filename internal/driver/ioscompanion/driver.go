@@ -1084,7 +1084,10 @@ func (d *Driver) WaitForIdle(ctx context.Context, _ time.Duration) error {
 }
 
 // RecentLogs returns no entries: the companion log RPC is a follow-up, so v1
-// reports an empty slice rather than failing.
+// reports an empty slice rather than failing. Every property reading state.logs
+// therefore holds vacuously on iOS and nothing says so; closing it means
+// tailing idb's streaming log RPC and mapping os_log levels onto the
+// single-letter scale driver.LogEntry declares.
 func (d *Driver) RecentLogs(_ context.Context, _ time.Time, _ string) ([]driver.LogEntry, error) {
 	return []driver.LogEntry{}, nil
 }
