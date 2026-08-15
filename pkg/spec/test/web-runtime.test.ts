@@ -365,6 +365,35 @@ test("state.lastAction is null when the host pushed nothing", () => {
   assert.equal(lastActionSeenByASpec(null), null);
 });
 
+// state.logs is the same kind of hole. Console output reaches the runner over
+// CDP, so the page cannot read it back, and while the web runtime hardcoded []
+// there the default noLogcatErrors counted an empty array on every web run: a
+// page whose console was full of errors went green having checked nothing.
+function logsSeenByASpec(pushed: unknown): unknown {
+  const setLogs = (globalThis as Record<string, unknown>).__sanderlingSetLogs__ as (
+    value: unknown,
+  ) => void;
+  __testing__.extractors.length = 0;
+  __testing__.runtime.extract((state) => (state as { logs: unknown }).logs);
+  let out: Record<number, { value?: unknown }> = {};
+  withState(() => {
+    setLogs(pushed);
+    out = __testing__.evaluateExtractors();
+  });
+  return readingOf(out, 0);
+}
+
+test("state.logs carries the entries the host pushed", () => {
+  const entries = [
+    { unixMillis: 1700000000123, level: "E", tag: "console", message: "boom from the page" },
+  ];
+  assert.deepEqual(logsSeenByASpec(entries), entries);
+});
+
+test("state.logs is empty when the host pushed no entries", () => {
+  assert.deepEqual(logsSeenByASpec([]), []);
+});
+
 // sanitize runs over every extractor's return value before it leaves the
 // runtime. A user extractor that returns a page object reachable from
 // document/window can be self-referential, carry functions, or nest deeply;

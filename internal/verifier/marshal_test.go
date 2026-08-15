@@ -282,3 +282,50 @@ func TestLastAction_ReportsARelaunchSeparatelyFromTheDispatch(t *testing.T) {
 		})
 	}
 }
+
+// TestLogs_WebJSONMatchesTheGojaObject pins state.logs to ONE shape across the
+// two hosts, for the same reason lastAction is pinned. On web the page's
+// reading of every extractor replaces the host's, so state.logs is whatever
+// EncodeLogs put in the page: a field this side renames or cases differently
+// leaves the default noLogcatErrors counting nothing on web while it counts on
+// native, with nothing reporting that it never saw an entry.
+func TestLogs_WebJSONMatchesTheGojaObject(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.lines = __sanderling__.extract(state => JSON.stringify(state.logs));
+	`)
+
+	for _, testCase := range []struct {
+		name string
+		logs []LogEntry
+	}{
+		{"none", nil},
+		{"empty", []LogEntry{}},
+		{
+			"one error",
+			[]LogEntry{{UnixMillis: 1700000000123, Level: "E", Tag: "console", Message: "boom from the page"}},
+		},
+		{
+			"mixed levels",
+			[]LogEntry{
+				{UnixMillis: 1, Level: "E", Tag: "console", Message: `say "hi" <b> & co`},
+				{UnixMillis: 2, Level: "W", Tag: "AndroidRuntime", Message: "a warning"},
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := verifier.PushSnapshot(SnapshotInput{
+				Snapshots: Snapshots{},
+				Logs:      testCase.logs,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			handle := verifier.runtime.GlobalObject().Get("lines").ToObject(verifier.runtime)
+			goja := handle.Get("current").String()
+			web := string(EncodeLogs(testCase.logs))
+			if goja != web {
+				t.Errorf("the two hosts disagree on state.logs\n goja: %s\n  web: %s", goja, web)
+			}
+		})
+	}
+}

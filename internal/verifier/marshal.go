@@ -468,17 +468,42 @@ func runtimeMillis(stepTime, runStart time.Time) int64 {
 	return stepTime.Sub(runStart).Milliseconds()
 }
 
+// logFields is the ONE description of a state.logs entry, for the same reason
+// lastActionFields is: the goja host turns it into a JS object (logsArray) and
+// the web host receives the same fields as JSON (EncodeLogs), so a property
+// counting error-level lines cannot read one shape on native and another on web.
+func logFields(entry LogEntry) []actionField {
+	return []actionField{
+		{key: "unixMillis", value: entry.UnixMillis},
+		{key: "level", value: entry.Level},
+		{key: "tag", value: entry.Tag},
+		{key: "message", value: entry.Message},
+	}
+}
+
 func logsArray(runtime *goja.Runtime, logs []LogEntry) *goja.Object {
 	array := runtime.NewArray()
 	for index, entry := range logs {
-		item := runtime.NewObject()
-		_ = item.Set("unixMillis", entry.UnixMillis)
-		_ = item.Set("level", entry.Level)
-		_ = item.Set("tag", entry.Tag)
-		_ = item.Set("message", entry.Message)
-		_ = array.Set(fmt.Sprintf("%d", index), item)
+		_ = array.Set(fmt.Sprintf("%d", index), objectFromFields(runtime, logFields(entry)))
 	}
 	return array
+}
+
+// EncodeLogs renders this step's log entries for the web host, which has no
+// Go-side state object to read: the runner pushes this JSON into the page
+// before each extractor evaluation. No entries encodes as an empty array, the
+// same value the goja host reports for a step whose log fetch found nothing.
+func EncodeLogs(logs []LogEntry) json.RawMessage {
+	var buffer bytes.Buffer
+	buffer.WriteByte('[')
+	for index, entry := range logs {
+		if index > 0 {
+			buffer.WriteByte(',')
+		}
+		buffer.Write(encodeFields(logFields(entry)))
+	}
+	buffer.WriteByte(']')
+	return buffer.Bytes()
 }
 
 func exceptionsArray(runtime *goja.Runtime, exceptions []Exception) *goja.Object {
