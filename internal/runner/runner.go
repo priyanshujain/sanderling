@@ -163,7 +163,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		})
 		logSince := lastLogTime
 		g.Go(func() error {
-			logs = collectLogs(gctx, options.Driver, logSince)
+			logs = collectLogs(gctx, options.Driver, logger, si, logSince)
 			return nil
 		})
 		// All goroutines write to local variables and return nil, so the Wait
@@ -824,11 +824,23 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 }
 
 // collectLogs pulls recent error-level log entries from the driver since the
-// previous fetch. A failure is warned-on but not fatal: log capture is a
-// best-effort observability channel, not a correctness dependency.
-func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) []verifier.LogEntry {
+// previous fetch. A failure is warned-on but not fatal: one unreadable fetch on
+// a flaky device should not end a run. It is not free either. This fetch is the
+// whole evidence base for state.logs, so a step that could not make it leaves
+// every log property (the default noLogcatErrors included) holding on an empty
+// slice, and that has to be visible in the run's output rather than read as the
+// app having logged nothing.
+func collectLogs(
+	ctx context.Context,
+	drv driver.DeviceDriver,
+	logger *slog.Logger,
+	step int,
+	since time.Time,
+) []verifier.LogEntry {
 	entries, err := drv.RecentLogs(ctx, since, "E")
 	if err != nil {
+		logger.Warn("log fetch failed; log properties hold vacuously this step",
+			"step", step, "err", err)
 		return nil
 	}
 	result := make([]verifier.LogEntry, 0, len(entries))
