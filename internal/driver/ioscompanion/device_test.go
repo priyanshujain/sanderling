@@ -83,6 +83,25 @@ func TestNewDeviceWiresRunnerOnlyMode(t *testing.T) {
 	}
 }
 
+// TestNewDeviceWiresTheAddressPickerEveryBringUpUses keeps the device driver
+// whole. bringUpRunner reads its picker from a field rather than calling the
+// package function, and NewDevice left that field nil, so the only thing
+// standing between a device run and a nil call was which restart path ran.
+func TestNewDeviceWiresTheAddressPickerEveryBringUpUses(t *testing.T) {
+	address := startLoopbackListener(t)
+	options := testDeviceOptions(address, newDeviceCompanion())
+	options.HardwareUDID = "00008140-PICKER"
+	d, err := NewDevice(context.Background(), options)
+	if err != nil {
+		t.Fatalf("NewDevice: %v", err)
+	}
+	defer d.Close()
+
+	if err := d.bringUpRunner(context.Background()); err != nil {
+		t.Fatalf("bringUpRunner: %v", err)
+	}
+}
+
 func TestNewDeviceRequiresIdentifiers(t *testing.T) {
 	if _, err := NewDevice(context.Background(), DeviceOptions{CoreDeviceID: "x"}); err == nil {
 		t.Fatal("missing HardwareUDID must error")
@@ -222,17 +241,32 @@ func TestDevicectlReinstallProceedsWhenNothingIsInstalled(t *testing.T) {
 	}
 }
 
-func TestDeviceClearStateWithoutAppPathWarnsOnce(t *testing.T) {
-	output := &bytes.Buffer{}
-	d := &Driver{output: output, deviceMode: true}
-	d.resetContainer = d.deviceResetContainerUnsupported
-	for i := 0; i < 2; i++ {
-		if err := d.deviceResetContainerUnsupported(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+// TestNewDeviceRefusesClearStateWithoutAnAppPath keeps the device from starting
+// a run whose clear-state cannot happen. There is no data-container wipe on a
+// physical device, so without an app path to reinstall from, carrying on hands
+// the run every previous run's data under a flag that says otherwise.
+func TestNewDeviceRefusesClearStateWithoutAnAppPath(t *testing.T) {
+	address := startLoopbackListener(t)
+	options := testDeviceOptions(address, newDeviceCompanion())
+	options.HardwareUDID = "00008140-NO-APP-PATH"
+	options.ClearState = true
+	spawned := false
+	spawn := options.spawnRunner
+	options.spawnRunner = func(ctx context.Context, runnerAddress string) (*exec.Cmd, error) {
+		spawned = true
+		return spawn(ctx, runnerAddress)
 	}
-	if got := bytes.Count(output.Bytes(), []byte("requires --ios-app-path")); got != 1 {
-		t.Fatalf("warning emitted %d times, want once", got)
+
+	d, err := NewDevice(context.Background(), options)
+	if err == nil {
+		d.Close()
+		t.Fatal("NewDevice returned a driver whose clear-state never happened")
+	}
+	if !strings.Contains(err.Error(), "--ios-app-path") {
+		t.Fatalf("err = %v, want it to name the flag that makes the clear possible", err)
+	}
+	if spawned {
+		t.Fatal("the run started anyway; a clear-state that cannot happen must end the run, not open it")
 	}
 }
 

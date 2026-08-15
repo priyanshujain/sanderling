@@ -83,7 +83,6 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 		coreDeviceID:             options.CoreDeviceID,
 		bundleID:                 options.BundleID,
 		appPath:                  options.AppPath,
-		clearStateAtStartup:      options.ClearState,
 		output:                   output,
 		doubleTapGapMilliseconds: gap,
 		deviceMode:               true,
@@ -104,20 +103,24 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 		}
 	}
 	if options.pickAddress != nil {
-		d.pickDeviceAddress = options.pickAddress
+		d.pickRunnerAddress = options.pickAddress
 	} else {
-		d.pickDeviceAddress = pickLoopbackAddress
+		d.pickRunnerAddress = pickLoopbackAddress
 	}
 
 	// Device seams: clear-state reinstalls via devicectl; the container reset and
 	// paste grant are simulator-only and become no-ops. The runner types
-	// natively, so no paste prompt is ever hit.
+	// natively, so no paste prompt is ever hit. Stopping the app before the
+	// clear is a no-op too: devicectl addresses processes by pid rather than by
+	// bundle, and the uninstall that is the device's only clear takes the
+	// running app with it, which is what a terminate here would be for.
 	d.reinstallApp = options.reinstallApp
 	if d.reinstallApp == nil {
 		d.reinstallApp = d.devicectlReinstall
 	}
 	d.resetContainer = d.deviceResetContainerUnsupported
 	d.grantPaste = func(context.Context) error { return nil }
+	d.terminateApp = func(context.Context) error { return nil }
 	d.restart = d.respawnDevice
 	d.processContext, d.processCancel = context.WithCancel(ctx)
 
@@ -133,6 +136,7 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 			d.Close()
 			return nil, err
 		}
+		d.clearedBundleID = options.BundleID
 	}
 
 	if err := d.bringUpDevice(ctx); err != nil {
@@ -155,7 +159,7 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 // health. The build runs inside spawnRunner under the process context, so the
 // startup timeout only bounds the post-spawn wait, not the build.
 func (d *Driver) bringUpDevice(ctx context.Context) error {
-	address, err := d.pickDeviceAddress()
+	address, err := d.pickRunnerAddress()
 	if err != nil {
 		return err
 	}
@@ -239,13 +243,11 @@ func (d *Driver) devicectlReinstall(ctx context.Context) error {
 	return nil
 }
 
-// deviceResetContainerUnsupported warns once that device clear-state needs an
-// app path for a devicectl reinstall: there is no simulator-style data-container
-// wipe on a physical device.
+// deviceResetContainerUnsupported ends the run: there is no simulator-style
+// data-container wipe on a physical device, so a clear-state with no app path
+// to reinstall from cannot happen. Warning and carrying on hands the run every
+// previous run's data while the flag says it started clean.
 func (d *Driver) deviceResetContainerUnsupported(context.Context) error {
-	if !d.clearStateWarned {
-		fmt.Fprintln(d.output, "clear-state on a physical device requires --ios-app-path for a reinstall; skipping (state not cleared)")
-		d.clearStateWarned = true
-	}
-	return nil
+	return errors.New("clear-state on a physical device requires --ios-app-path for a reinstall; " +
+		"there is no data-container wipe on a device, so the run would start on the previous run's state")
 }

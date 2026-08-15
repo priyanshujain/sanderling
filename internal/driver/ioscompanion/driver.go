@@ -91,6 +91,7 @@ type Options struct {
 	dialRunner     func(address string) (transport.Companion, error)
 	reinstallApp   func(ctx context.Context) error
 	resetContainer func(ctx context.Context) error
+	terminateApp   func(ctx context.Context) error
 }
 
 // Driver implements driver.DeviceDriver against an iOS simulator companion.
@@ -101,11 +102,12 @@ type Driver struct {
 	appPath   string
 	output    io.Writer
 
-	// clearStateAtStartup records that New (or NewDevice) reset the app to
-	// first-launch state before attaching, which is the only point in a run
-	// where clearing is safe. Launch refuses a clear-state request the driver
-	// was not built for rather than reinstalling under a live session.
-	clearStateAtStartup bool
+	// clearedBundleID names the app New (or NewDevice) reset to first-launch
+	// state before attaching, which is the only point in a run where clearing
+	// is safe. Launch refuses a clear-state request for anything else rather
+	// than reinstalling under a live session or reporting a reset that only
+	// ever reached another bundle.
+	clearedBundleID string
 
 	screenWidth  int
 	screenHeight int
@@ -136,6 +138,10 @@ type Driver struct {
 	// A seam so tests skip the simctl shell-outs.
 	reinstallApp func(ctx context.Context) error
 
+	// terminateApp stops the app before its state is cleared. A seam so tests
+	// skip the simctl shell-out.
+	terminateApp func(ctx context.Context) error
+
 	// grantPaste pre-authorizes the app's pasteboard access. A seam so tests
 	// skip the sqlite shell-out.
 	grantPaste func(ctx context.Context) error
@@ -151,23 +157,26 @@ type Driver struct {
 	// lifecycle, screenshot) with an in-simulator runner that serves
 	// collapse-free accessibility snapshots and native unicode typing.
 	// runnerClient is nil on the legacy-only path.
-	runnerClient      transport.Companion
-	runnerChild       *exec.Cmd
-	runnerAddress     string
-	spawnRunner       func(ctx context.Context, address string) (*exec.Cmd, error)
-	dialRunner        func(address string) (transport.Companion, error)
+	runnerClient  transport.Companion
+	runnerChild   *exec.Cmd
+	runnerAddress string
+	spawnRunner   func(ctx context.Context, address string) (*exec.Cmd, error)
+	dialRunner    func(address string) (transport.Companion, error)
+	hybrid        bool
+
+	// pickRunnerAddress hands every bring-up a free loopback port, on the
+	// simulator and the device alike. One field, so no path can be wired
+	// without it.
 	pickRunnerAddress func() (string, error)
-	hybrid            bool
 
 	// Device-mode fields. On the physical-device path d.companion is the runner
 	// dialed over a usbmux tunnel, hybrid is false, and runnerClient is nil.
 	// coreDeviceID feeds devicectl; tunnel is the in-process usbmux forwarder
 	// bridging the host loopback port to the runner's device-side port.
-	deviceMode        bool
-	coreDeviceID      string
-	tunnel            io.Closer
-	startTunnel       func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
-	pickDeviceAddress func() (string, error)
+	deviceMode   bool
+	coreDeviceID string
+	tunnel       io.Closer
+	startTunnel  func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
 
 	// processContext owns the companion child's lifetime: it is derived from
 	// New's context (so a canceled run still reaps the child) and canceled by
@@ -228,7 +237,6 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 		udid:                     options.UniqueDeviceIdentifier,
 		bundleID:                 options.BundleID,
 		appPath:                  options.AppPath,
-		clearStateAtStartup:      options.ClearState,
 		output:                   output,
 		doubleTapGapMilliseconds: gap,
 		spawnChild:               options.spawnChild,
@@ -237,6 +245,7 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 		dialRunner:               options.dialRunner,
 		reinstallApp:             options.reinstallApp,
 		resetContainer:           options.resetContainer,
+		terminateApp:             options.terminateApp,
 		hybrid:                   hybridCompanionEnabled(),
 	}
 	if driverInstance.spawnChild == nil {
@@ -271,6 +280,9 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 	if driverInstance.reinstallApp == nil {
 		driverInstance.reinstallApp = driverInstance.simctlReinstall
 	}
+	if driverInstance.terminateApp == nil {
+		driverInstance.terminateApp = driverInstance.simctlTerminate
+	}
 	driverInstance.grantPaste = driverInstance.grantPasteboardAccess
 	driverInstance.processContext, driverInstance.processCancel = context.WithCancel(ctx)
 
@@ -286,6 +298,7 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 			driverInstance.Close()
 			return nil, err
 		}
+		driverInstance.clearedBundleID = options.BundleID
 	}
 
 	if err := driverInstance.bringUp(ctx); err != nil {
@@ -484,6 +497,26 @@ func isConnectionError(err error) bool {
 	return false
 }
 
+// isBudgetExpiry reports whether err is a call that outlived its bound rather
+// than a failure the transport can name. Each transport says so differently:
+// the runner wraps the context's error when cancellation has landed and the
+// connection's i/o timeout when the deadline it armed from that context fires
+// first, and the legacy companion returns a gRPC status. Only an expiry earns
+// a session restart; an error the runner reports has already said what a fresh
+// session would say.
+func isBudgetExpiry(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	if statusValue, ok := status.FromError(err); ok {
+		return statusValue.Code() == codes.DeadlineExceeded
+	}
+	return false
+}
+
 func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, env map[string]string) error {
 	if bundleID != "" {
 		d.bundleID = bundleID
@@ -495,12 +528,13 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 		// loudly rather than silently dropping the request.
 		return errors.New("ios companion: launch with environment variables is unsupported on this backend")
 	}
-	if clearState && !d.clearStateAtStartup {
+	if clearState && (d.clearedBundleID == "" || d.clearedBundleID != d.bundleID) {
 		// Clearing here would uninstall and reinstall the app underneath a live
 		// automation session, which is what races FrontBoard's registration and
 		// leaves the session launching a bundle FrontBoard has not registered.
-		return errors.New("ios companion: clear-state must be requested when the driver is created (Options.ClearState); " +
-			"this backend clears the app before its automation session exists")
+		return fmt.Errorf("ios companion: clear-state must be requested when the driver is created (Options.ClearState) "+
+			"for the bundle being launched; this backend cleared %q before its automation session existed, not %q",
+			d.clearedBundleID, d.bundleID)
 	}
 
 	// Terminate first so the launch is a clean cold start regardless of the
@@ -545,7 +579,7 @@ func (d *Driver) launchWithSessionRecovery(ctx context.Context) error {
 	err := d.lifecycleCall(ctx, launch)
 	// A caller whose own budget ran out gets no restart: the bound that expired
 	// was the caller's to spend, and the second attempt would inherit it dead.
-	if err == nil || !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil || d.restart == nil {
+	if !isBudgetExpiry(err) || ctx.Err() != nil || d.restart == nil {
 		return err
 	}
 	fmt.Fprintf(d.output, "launch %s blew its %v bound (%v); restarting the session and launching once more\n",
@@ -599,6 +633,11 @@ func (d *Driver) lifecycleCompanion() transport.Companion {
 // container and warns once that a full reinstall needs the app path. Called
 // only from construction, before any automation session is attached to the app.
 func (d *Driver) clearAppState(ctx context.Context) error {
+	// Nothing may be writing to the state while it goes, which is the ordering
+	// Launch used to hold: uninstall copes with a running app, deleting the
+	// data container out from under one does not. Best effort, because an app
+	// that is not running reports a failure that means nothing here.
+	_ = d.terminateApp(ctx)
 	if d.appPath != "" {
 		if err := d.reinstallApp(ctx); err != nil {
 			return fmt.Errorf("reinstall %s: %w", d.appPath, err)
@@ -626,6 +665,18 @@ func (d *Driver) simctlReinstall(ctx context.Context) error {
 	output, err := exec.CommandContext(ctx, "xcrun", "simctl", "install", d.udid, d.appPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("simctl install: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// simctlTerminate stops the app under test. Launch used to terminate through
+// the automation session before clearing; the clear now runs before any session
+// exists, so simctl is what is left to stop the app with. An app that is not
+// running reports a failure that means nothing to the caller, which is why
+// clearAppState treats this as best effort.
+func (d *Driver) simctlTerminate(ctx context.Context) error {
+	if output, err := exec.CommandContext(ctx, "xcrun", "simctl", "terminate", d.udid, d.bundleID).CombinedOutput(); err != nil {
+		return fmt.Errorf("simctl terminate %s: %w: %s", d.bundleID, err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
