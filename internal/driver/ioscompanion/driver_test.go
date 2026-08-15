@@ -232,6 +232,7 @@ func clearStateOptions(t *testing.T, probe *clearStateProbe, udid string, clearS
 		},
 		reinstallApp:   func(context.Context) error { probe.record("reinstall"); return nil },
 		resetContainer: func(context.Context) error { probe.record("reset container"); return nil },
+		terminateApp:   func(context.Context) error { probe.record("stop app"); return nil },
 	}
 }
 
@@ -249,9 +250,9 @@ func TestClearStateReinstallsOnceBeforeTheRunnerSession(t *testing.T) {
 		t.Fatalf("Launch: %v", err)
 	}
 
-	want := []string{"reinstall", "runner session"}
+	want := []string{"stop app", "reinstall", "runner session"}
 	if got := probe.recorded(); !slices.Equal(got, want) {
-		t.Fatalf("calls = %v, want %v: the reinstall must run once, before the automation session attaches", got, want)
+		t.Fatalf("calls = %v, want %v: the reinstall must run once, on a stopped app, before the automation session attaches", got, want)
 	}
 }
 
@@ -270,9 +271,9 @@ func TestClearStateWithoutAppPathWipesContainerBeforeTheRunnerSession(t *testing
 		t.Fatalf("Launch: %v", err)
 	}
 
-	want := []string{"reset container", "runner session"}
+	want := []string{"stop app", "reset container", "runner session"}
 	if got := probe.recorded(); !slices.Equal(got, want) {
-		t.Fatalf("calls = %v, want %v: the fallback must wipe the container once, before the session, and never reinstall", got, want)
+		t.Fatalf("calls = %v, want %v: the fallback must wipe a stopped app's container once, before the session, and never reinstall", got, want)
 	}
 	if warnings := strings.Count(output.String(), "resetting the data container only"); warnings != 1 {
 		t.Fatalf("warning emitted %d times, want once", warnings)
@@ -390,6 +391,55 @@ func TestSimctlReinstallProceedsWhenNothingIsInstalled(t *testing.T) {
 	want := []string{"simctl uninstall SIM-UDID app.example", "simctl install SIM-UDID /tmp/Sample.app"}
 	if got := xcrunCalls(t, log); !slices.Equal(got, want) {
 		t.Fatalf("xcrun calls = %v, want %v", got, want)
+	}
+}
+
+// TestClearStateStopsTheAppBeforeWipingItsContainer covers the ordering Launch
+// used to hold. simctl uninstall copes with a running app; deleting the data
+// container out from under one does not, and the CI iOS leg passes no app path
+// so it is the wipe that runs. A run whose previous run was interrupted finds
+// the app still up.
+func TestClearStateStopsTheAppBeforeWipingItsContainer(t *testing.T) {
+	container := t.TempDir()
+	stale := filepath.Join(container, "Documents")
+	if err := os.Mkdir(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := scriptedXcrun(t, `"simctl terminate "*) :;;
+"simctl get_app_container "*) echo `+container+`;;`)
+	d := &Driver{udid: "SIM-UDID", bundleID: "app.example", output: &bytes.Buffer{}}
+	d.terminateApp = d.simctlTerminate
+	d.resetContainer = d.resetDataContainer
+
+	if err := d.clearAppState(context.Background()); err != nil {
+		t.Fatalf("clearAppState: %v", err)
+	}
+
+	want := []string{
+		"simctl terminate SIM-UDID app.example",
+		"simctl get_app_container SIM-UDID app.example data",
+	}
+	if got := xcrunCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("xcrun calls = %v, want %v: the app was still writing to the container being deleted", got, want)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stat %s = %v, want the previous run's state gone", stale, err)
+	}
+}
+
+// TestClearStateSurvivesAnAppThatIsNotRunning holds the terminate to best
+// effort. simctl exits non-zero when there is nothing to stop, and a first run
+// on a fresh simulator must not fail on it.
+func TestClearStateSurvivesAnAppThatIsNotRunning(t *testing.T) {
+	container := t.TempDir()
+	scriptedXcrun(t, `"simctl terminate "*) echo "No matching processes belonging to bundle identifier app.example"; exit 3;;
+"simctl get_app_container "*) echo `+container+`;;`)
+	d := &Driver{udid: "SIM-UDID", bundleID: "app.example", output: &bytes.Buffer{}}
+	d.terminateApp = d.simctlTerminate
+	d.resetContainer = d.resetDataContainer
+
+	if err := d.clearAppState(context.Background()); err != nil {
+		t.Fatalf("clearAppState: %v: an app that is not running is not a failure to clear", err)
 	}
 }
 
