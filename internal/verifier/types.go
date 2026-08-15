@@ -33,6 +33,11 @@ type Action struct {
 	// Direction is the scroll direction for ActionKindScroll: one of "up",
 	// "down", "left", "right". Empty for every other kind.
 	Direction string
+	// Applied is meaningful only on the action a step reports to the spec as
+	// state.lastAction: true when the runner saw the dispatch succeed, false
+	// when the apply call failed and nothing can say whether the action
+	// reached the app. The spec is told which of the two it is.
+	Applied bool
 }
 
 // LogEntry mirrors a logcat line captured between steps.
