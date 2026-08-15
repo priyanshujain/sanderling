@@ -224,8 +224,14 @@ func (d *Driver) respawnDevice(ctx context.Context) error {
 // devicectlReinstall uninstalls then installs the app bundle via devicectl,
 // keyed on the CoreDevice id. App lifecycle stays with devicectl: the runner's
 // own install path is simulator-specific.
+// A failed uninstall ends the reinstall: installing over an app keeps its data,
+// so clear-state would be reported without happening. Uninstalling an app that
+// is not installed exits 0 ("App uninstalled." on a paired iPhone running iOS
+// 26.5), so there is no benign failure here to sort out from a real one.
 func (d *Driver) devicectlReinstall(ctx context.Context) error {
-	_ = exec.CommandContext(ctx, "xcrun", "devicectl", "device", "uninstall", "app", "--device", d.coreDeviceID, d.bundleID).Run()
+	if output, err := exec.CommandContext(ctx, "xcrun", "devicectl", "device", "uninstall", "app", "--device", d.coreDeviceID, d.bundleID).CombinedOutput(); err != nil {
+		return fmt.Errorf("devicectl uninstall %s: %w: %s", d.bundleID, err, strings.TrimSpace(string(output)))
+	}
 	output, err := exec.CommandContext(ctx, "xcrun", "devicectl", "device", "install", "app", "--device", d.coreDeviceID, d.appPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("devicectl install: %w: %s", err, strings.TrimSpace(string(output)))

@@ -7,6 +7,7 @@ import (
 	"net"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion/transport"
@@ -179,6 +180,45 @@ func TestNewDeviceReinstallsOnceBeforeTheRunnerSession(t *testing.T) {
 	want := []string{"reinstall", "runner session"}
 	if got := probe.recorded(); !slices.Equal(got, want) {
 		t.Fatalf("calls = %v, want %v: devicectl must reinstall once, before the runner's test session attaches", got, want)
+	}
+}
+
+func TestDevicectlReinstallStopsWhenTheUninstallFails(t *testing.T) {
+	log := scriptedXcrun(t, `"devicectl device uninstall "*) echo "ERROR: Internal logic error: Connection was invalidated"; exit 1;;
+"devicectl device install "*) :;;`)
+	d := &Driver{coreDeviceID: "CORE-DEVICE", bundleID: "app.example", appPath: "/tmp/Sample.app"}
+
+	err := d.devicectlReinstall(context.Background())
+
+	if err == nil {
+		t.Fatal("devicectlReinstall reported success while app.example kept the data clear-state was asked to remove")
+	}
+	for _, want := range []string{"app.example", "Connection was invalidated"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not quote %q", err, want)
+		}
+	}
+	calls := xcrunCalls(t, log)
+	if slices.ContainsFunc(calls, func(call string) bool { return strings.HasPrefix(call, "devicectl device install") }) {
+		t.Errorf("xcrun calls = %v: installing over the app carries its data into the run", calls)
+	}
+}
+
+func TestDevicectlReinstallProceedsWhenNothingIsInstalled(t *testing.T) {
+	log := scriptedXcrun(t, `"devicectl device uninstall "*) echo "App uninstalled.";;
+"devicectl device install "*) :;;`)
+	d := &Driver{coreDeviceID: "CORE-DEVICE", bundleID: "app.example", appPath: "/tmp/Sample.app"}
+
+	if err := d.devicectlReinstall(context.Background()); err != nil {
+		t.Fatalf("devicectlReinstall: %v", err)
+	}
+
+	want := []string{
+		"devicectl device uninstall app --device CORE-DEVICE app.example",
+		"devicectl device install app --device CORE-DEVICE /tmp/Sample.app",
+	}
+	if got := xcrunCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("xcrun calls = %v, want %v", got, want)
 	}
 }
 
