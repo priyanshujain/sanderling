@@ -59,7 +59,7 @@ jobs:
       # up` after three retries. The version is the action's own default, made
       # explicit so a new action release cannot move the buf we build with.
       - name: Install buf
-        uses: bufbuild/buf-setup-action@v1
+        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
           version: "1.50.0"
           github_token: ${{ secrets.GITHUB_TOKEN }}
