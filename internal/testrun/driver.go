@@ -84,6 +84,17 @@ var newDeviceDriver = func(ctx context.Context, options ioscompanion.DeviceOptio
 	return d, d.Close, nil
 }
 
+// newSimulatorDriver constructs the iOS simulator driver and its cleanup. A
+// seam so routing tests assert the run's options reach ioscompanion.Options
+// without spawning a companion.
+var newSimulatorDriver = func(ctx context.Context, options ioscompanion.Options) (driver.DeviceDriver, func(), error) {
+	d, err := ioscompanion.New(ctx, options)
+	if err != nil {
+		return nil, nil, err
+	}
+	return d, d.Close, nil
+}
+
 // buildDriver creates the appropriate DeviceDriver for the platform and returns
 // a cleanup function. For web, ChromeDriver is used directly. An iOS simulator
 // is driven by the native simulator companion (no JVM). A physical iOS device
@@ -99,16 +110,17 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	}
 
 	if options.Platform == "ios" && options.iosIsSimulator {
-		d, err := ioscompanion.New(ctx, ioscompanion.Options{
+		d, cleanup, err := newSimulatorDriver(ctx, ioscompanion.Options{
 			UniqueDeviceIdentifier: options.iosUDID,
 			BundleID:               options.BundleID,
 			AppPath:                options.IosAppPath,
+			ClearState:             options.ClearData,
 			Output:                 stdout,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("ios simulator driver: %w", err)
 		}
-		return d, d.Close, nil
+		return d, cleanup, nil
 	}
 
 	if options.Platform == "ios" {
@@ -117,6 +129,7 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 			CoreDeviceID: options.iosCoreDeviceID,
 			BundleID:     options.BundleID,
 			AppPath:      options.IosAppPath,
+			ClearState:   options.ClearData,
 			Output:       stdout,
 		})
 		if err != nil {

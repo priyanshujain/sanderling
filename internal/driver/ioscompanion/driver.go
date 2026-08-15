@@ -73,16 +73,24 @@ type Options struct {
 	// AppPath is the .app bundle directory. Required for clear-state reinstall;
 	// when empty, clear state falls back to resetting the data container.
 	AppPath string
+	// ClearState resets the app to first-launch state while New runs, before
+	// any automation session attaches. Clear state is a property of the driver
+	// rather than of a launch: see Launch.
+	ClearState bool
 	// Output receives companion stdout and stderr plus driver warnings.
 	Output io.Writer
 	// DoubleTapGapMilliseconds overrides the synthesized double-tap gap.
 	DoubleTapGapMilliseconds float64
 
-	// spawnChild, dialCompanion, and pickAddress are test seams. Production
-	// leaves them nil and New wires the real extraction, spawn, and dial.
-	spawnChild    func(ctx context.Context, address string) (*exec.Cmd, error)
-	dialCompanion func(address string) (transport.Companion, error)
-	pickAddress   func() (string, error)
+	// These are test seams. Production leaves them nil and New wires the real
+	// extraction, spawn, dial and simctl calls.
+	spawnChild     func(ctx context.Context, address string) (*exec.Cmd, error)
+	dialCompanion  func(address string) (transport.Companion, error)
+	pickAddress    func() (string, error)
+	spawnRunner    func(ctx context.Context, address string) (*exec.Cmd, error)
+	dialRunner     func(address string) (transport.Companion, error)
+	reinstallApp   func(ctx context.Context) error
+	resetContainer func(ctx context.Context) error
 }
 
 // Driver implements driver.DeviceDriver against an iOS simulator companion.
@@ -92,6 +100,12 @@ type Driver struct {
 	bundleID  string
 	appPath   string
 	output    io.Writer
+
+	// clearStateAtStartup records that New (or NewDevice) reset the app to
+	// first-launch state before attaching, which is the only point in a run
+	// where clearing is safe. Launch refuses a clear-state request the driver
+	// was not built for rather than reinstalling under a live session.
+	clearStateAtStartup bool
 
 	screenWidth  int
 	screenHeight int
@@ -137,12 +151,13 @@ type Driver struct {
 	// lifecycle, screenshot) with an in-simulator runner that serves
 	// collapse-free accessibility snapshots and native unicode typing.
 	// runnerClient is nil on the legacy-only path.
-	runnerClient  transport.Companion
-	runnerChild   *exec.Cmd
-	runnerAddress string
-	spawnRunner   func(ctx context.Context, address string) (*exec.Cmd, error)
-	dialRunner    func(address string) (transport.Companion, error)
-	hybrid        bool
+	runnerClient      transport.Companion
+	runnerChild       *exec.Cmd
+	runnerAddress     string
+	spawnRunner       func(ctx context.Context, address string) (*exec.Cmd, error)
+	dialRunner        func(address string) (transport.Companion, error)
+	pickRunnerAddress func() (string, error)
+	hybrid            bool
 
 	// Device-mode fields. On the physical-device path d.companion is the runner
 	// dialed over a usbmux tunnel, hybrid is false, and runnerClient is nil.
@@ -197,6 +212,9 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 	if options.UniqueDeviceIdentifier == "" {
 		return nil, errors.New("ios companion: UniqueDeviceIdentifier is required")
 	}
+	if options.ClearState && options.BundleID == "" {
+		return nil, errors.New("ios companion: clear-state needs BundleID: there is nothing to uninstall or wipe without it")
+	}
 	output := options.Output
 	if output == nil {
 		output = io.Discard
@@ -210,10 +228,15 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 		udid:                     options.UniqueDeviceIdentifier,
 		bundleID:                 options.BundleID,
 		appPath:                  options.AppPath,
+		clearStateAtStartup:      options.ClearState,
 		output:                   output,
 		doubleTapGapMilliseconds: gap,
 		spawnChild:               options.spawnChild,
 		dial:                     options.dialCompanion,
+		spawnRunner:              options.spawnRunner,
+		dialRunner:               options.dialRunner,
+		reinstallApp:             options.reinstallApp,
+		resetContainer:           options.resetContainer,
 		hybrid:                   hybridCompanionEnabled(),
 	}
 	if driverInstance.spawnChild == nil {
@@ -240,9 +263,14 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 		return nil, err
 	}
 	driverInstance.address = address
+	driverInstance.pickRunnerAddress = pickAddress
 	driverInstance.restart = driverInstance.respawnAndRedial
-	driverInstance.resetContainer = driverInstance.resetDataContainer
-	driverInstance.reinstallApp = driverInstance.simctlReinstall
+	if driverInstance.resetContainer == nil {
+		driverInstance.resetContainer = driverInstance.resetDataContainer
+	}
+	if driverInstance.reinstallApp == nil {
+		driverInstance.reinstallApp = driverInstance.simctlReinstall
+	}
 	driverInstance.grantPaste = driverInstance.grantPasteboardAccess
 	driverInstance.processContext, driverInstance.processCancel = context.WithCancel(ctx)
 
@@ -252,6 +280,13 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 		return nil, err
 	}
 	driverInstance.deviceLock = lock
+
+	if options.ClearState {
+		if err := driverInstance.clearAppState(ctx); err != nil {
+			driverInstance.Close()
+			return nil, err
+		}
+	}
 
 	if err := driverInstance.bringUp(ctx); err != nil {
 		driverInstance.Close()
@@ -366,7 +401,7 @@ func (d *Driver) bringUpRunner(ctx context.Context) error {
 	// A fresh port every bring-up: after a restart the dying session's
 	// listener may still answer on the old port and would satisfy the wait
 	// below with a dead server.
-	address, err := pickLoopbackAddress()
+	address, err := d.pickRunnerAddress()
 	if err != nil {
 		return err
 	}
@@ -460,18 +495,19 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, e
 		// loudly rather than silently dropping the request.
 		return errors.New("ios companion: launch with environment variables is unsupported on this backend")
 	}
+	if clearState && !d.clearStateAtStartup {
+		// Clearing here would uninstall and reinstall the app underneath a live
+		// automation session, which is what races FrontBoard's registration and
+		// leaves the session launching a bundle FrontBoard has not registered.
+		return errors.New("ios companion: clear-state must be requested when the driver is created (Options.ClearState); " +
+			"this backend clears the app before its automation session exists")
+	}
 
 	// Terminate first so the launch is a clean cold start regardless of the
 	// app's prior state. A not-running app is not an error here.
 	_ = d.lifecycleCall(ctx, func(callCtx context.Context, companion transport.Companion) error {
 		return companion.Terminate(callCtx, d.bundleID)
 	})
-
-	if clearState {
-		if err := d.clearAppState(ctx); err != nil {
-			return err
-		}
-	}
 
 	// Grant the app pasteboard access before it runs so unicode input (which
 	// must go through the pasteboard, since HID cannot express it) never trips
@@ -560,7 +596,8 @@ func (d *Driver) lifecycleCompanion() transport.Companion {
 
 // clearAppState resets the app to a first-launch state. With an app path it
 // uninstalls and reinstalls; without one it falls back to wiping the app's data
-// container and warns once that a full reinstall needs the app path.
+// container and warns once that a full reinstall needs the app path. Called
+// only from construction, before any automation session is attached to the app.
 func (d *Driver) clearAppState(ctx context.Context) error {
 	if d.appPath != "" {
 		if err := d.reinstallApp(ctx); err != nil {
