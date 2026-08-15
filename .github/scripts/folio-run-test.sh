@@ -90,8 +90,11 @@ expect_argv() { # <text> <case>
 convicting='{"violations":["submitCommitsOneTransactionPerAction"],"witnesses":{"submitCommitsOneTransactionPerAction":{"reason":"predicate false"}}}'
 unrelated='{"violations":["newAccountBalanceIsZero"],"witnesses":{"newAccountBalanceIsZero":{"reason":"predicate false"}}}'
 threw='{"violations":["submitMovesBalanceByAtMostTypedAmount"],"witnesses":{"submitMovesBalanceByAtMostTypedAmount":{"is_error":true,"reason":"TypeError: cannot read text of undefined"}}}'
-on_txn='{"route":"AddTransactionScreen","violations":[]}'
-off_txn='{"route":"HomeScreen","violations":[]}'
+# The spec's `route` extractor, which is what the health gate reads. Only the
+# extractors that changed at a step are recorded, hence the prev/curr shape.
+on_txn='{"extractor_changes":{"route":{"prev":"ledger","curr":"add-transaction"}},"violations":[]}'
+off_txn='{"extractor_changes":{"route":{"prev":null,"curr":"home"}},"violations":[]}'
+on_ledger='{"extractor_changes":{"route":{"prev":"home","curr":"ledger"}},"violations":[]}'
 
 # --- the flags the calibrated runs were measured with reach the binary --------
 
@@ -190,11 +193,32 @@ expect_says "healthy run over 2 steps, reached the transaction screen" android-h
 # a leg that proved nothing, however green the exit code.
 run android-stalled android 0 <<TRACE
 $off_txn
-{"route":"LedgerScreen","violations":[]}
+$on_ledger
 TRACE
 expect_status 1 android-stalled
-expect_says "never reached AddTransactionScreen over 2 steps" android-stalled
-expect_says "routes the trace does record: HomeScreen,LedgerScreen" android-stalled
+expect_says "never reached the add-transaction route over 2 steps" android-stalled
+expect_says "routes the trace does record: home, ledger" android-stalled
+
+# The gate used to grep the hierarchy dump for the "AddTransactionScreen"
+# marker, so a trace carrying that marker without ever reporting the route
+# passed. It reads the route the spec computed now, and routeOf answers null on
+# a frame showing two screens, which is exactly when the marker is present and
+# the app is not on that screen.
+run android-marker-without-route android 0 <<TRACE
+$off_txn
+{"hierarchy":{"resourceIds":["AddTransactionScreen"]},"violations":[]}
+TRACE
+expect_status 1 android-marker-without-route
+expect_says "never reached the add-transaction route over 2 steps" android-marker-without-route
+expect_says "routes the trace does record: home" android-marker-without-route
+
+# And the converse: the route alone is enough, with no hierarchy in the trace.
+run android-route-without-hierarchy android 0 <<TRACE
+$off_txn
+$on_txn
+TRACE
+expect_status 0 android-route-without-hierarchy
+expect_says "healthy run over 2 steps, reached the transaction screen" android-route-without-hierarchy
 
 # The thrown-predicate check has to bite on android too: this is the leg whose
 # gate is loose enough to swallow it.
@@ -276,6 +300,24 @@ run drift-shapeless ios 2 none </dev/null
 expect_status 1 drift-shapeless
 expect_says "declares no \`export const properties" drift-shapeless
 
+# The health gate reads two more names out of the spec: the `route` extractor
+# and the SCREENS key naming the transaction screen. Renaming either would make
+# every android run report a route it never failed to reach.
+sed 's/extract<Route | null>("route"/extract<Route | null>("screen"/' \
+  "$spec" > "$work/no-route-spec.ts"
+spec_override="$work/no-route-spec.ts"
+run drift-route-extractor android 0 none </dev/null
+expect_status 1 drift-route-extractor
+expect_says 'no longer declares extract("route"' drift-route-extractor
+
+sed 's/"add-transaction": "AddTransactionScreen"/"add-txn": "AddTransactionScreen"/' \
+  "$spec" > "$work/renamed-route-spec.ts"
+spec_override="$work/renamed-route-spec.ts"
+run drift-route-key android 0 none </dev/null
+expect_status 1 drift-route-key
+expect_says "waits for a route the app never reports" drift-route-key
+expect_says "add-txn" drift-route-key
+
 # And the same check against the spec as it stands: this is the assertion that
 # fails at `make test` when someone renames a property without moving the gate.
 run gate-matches-spec ios 2 <<TRACE
@@ -322,8 +364,8 @@ expect_silent "never reached" android-real
 head -10 "$testdata/folio-android-healthy.jsonl" > "$work/android-early.jsonl"
 run android-real-stalled android 0 file < "$work/android-early.jsonl"
 expect_status 1 android-real-stalled
-expect_says "never reached AddTransactionScreen over 10 steps" android-real-stalled
-expect_says "routes the trace does record: LoginScreen,HomeScreen,AddAccountScreen,LedgerScreen" android-real-stalled
+expect_says "never reached the add-transaction route over 10 steps" android-real-stalled
+expect_says "routes the trace does record: login, home, add-account, ledger" android-real-stalled
 
 if [ "$failed" = 0 ]; then
   echo "folio-run.sh: ok"
