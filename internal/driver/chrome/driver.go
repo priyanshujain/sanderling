@@ -887,6 +887,30 @@ func (d *Driver) SetLastAction(ctx context.Context, encoded json.RawMessage) err
 	return nil
 }
 
+// SetLogs installs the entries this step's log fetch returned as state.logs
+// inside the page runtime. The page cannot derive them: console output reaches
+// the driver over CDP and nothing in the page reads it back. Without this call
+// every web state.logs is empty, and since the page's reading of an extractor
+// replaces the host's, the default noLogcatErrors then reports green on a run
+// whose console was full of errors.
+//
+// Unguarded for the same reason as SetLastAction: on a page with no setter,
+// "the page cannot accept logs" has to fail the run rather than be reported as
+// a successful install.
+func (d *Driver) SetLogs(ctx context.Context, encoded json.RawMessage) error {
+	payload := strings.TrimSpace(string(encoded))
+	if payload == "" {
+		payload = "[]"
+	}
+	script := fmt.Sprintf(`window.__sanderlingSetLogs__(%s)`, payload)
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, nil)); err != nil {
+		return fmt.Errorf("set logs: %w", err)
+	}
+	return nil
+}
+
 // extractorScript resolves the extractor table once the page is not mid route
 // transition, giving up on that wait after %d ms.
 //
