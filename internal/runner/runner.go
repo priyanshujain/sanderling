@@ -1130,6 +1130,9 @@ func changedOnReread(
 // worse than the composition it set out to catch. The trade is measured rather
 // than assumed: over 100 folio steps on an API 35 emulator, text moved under
 // an unchanged shape on 1 step, and the shape itself moved on 1 other.
+//
+// TestRunner_OnlyAChangeOfShapeCostsAStepItsVerdict is what holds the line:
+// adding either field back to the shape turns one of its cases red.
 func structuralShape(tree *hierarchy.Tree) string {
 	var shape strings.Builder
 	for _, element := range tree.Elements {

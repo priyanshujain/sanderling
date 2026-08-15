@@ -367,6 +367,123 @@ func TestRunner_AScreenThatNeverSettlesActsOnNothingAndSaysSo(t *testing.T) {
 	}
 }
 
+// homeWithTicker is one settled route holding a total that ticks and a button
+// whose measured bounds shift under it. The nodes, their ids and their classes
+// are the same in every rendering of it.
+const homeWithTicker = `{"attributes":{"resource-id":"HomeScreen","class":"android.view.View"},"children":[
+	{"attributes":{"resource-id":"Total","class":"android.widget.TextView","text":"%s"},"children":[]},
+	{"attributes":{"resource-id":"TxnSubmit","class":"android.widget.Button","bounds":"%s"},"children":[]}
+]}`
+
+// The same route with a node in it that was not there a read ago.
+const homeWithTickerAndRow = `{"attributes":{"resource-id":"HomeScreen","class":"android.view.View"},"children":[
+	{"attributes":{"resource-id":"Total","class":"android.widget.TextView","text":"120.00"},"children":[]},
+	{"attributes":{"resource-id":"TxnSubmit","class":"android.widget.Button","bounds":"[40,80,240,160]"},"children":[]},
+	{"attributes":{"resource-id":"TxnRowLate","class":"android.view.View"},"children":[]}
+]}`
+
+// rereadsDriver answers the paired Snapshot with one fixed tree and the
+// hierarchy read that follows with another, so a test can say exactly what
+// moved between the two reads the detector compares.
+type rereadsDriver struct {
+	*mockdriver.Driver
+	snapshotTree string
+	rereadTree   string
+}
+
+func (d *rereadsDriver) Snapshot(context.Context) (string, driver.Image, error) {
+	return d.snapshotTree, driver.Image{}, nil
+}
+
+func (d *rereadsDriver) Hierarchy(context.Context) (string, error) {
+	return d.rereadTree, nil
+}
+
+// What the two reads are compared ON is the whole feature. Comparing the values
+// in the tree instead of the nodes in it would fire on every step of a screen
+// with a total on it or a measure pass in flight, and a runner that skips every
+// step verifies nothing while reporting no violations: green and vacuous, which
+// is a worse answer than the composition the comparison set out to catch.
+//
+// The always-false property is the witness: it fires on the first step that
+// reaches the verifier, so its presence and its step index say whether the step
+// was judged at all.
+func TestRunner_OnlyAChangeOfShapeCostsAStepItsVerdict(t *testing.T) {
+	settled := fmt.Sprintf(homeWithTicker, "120.00", "[40,80,240,160]")
+	cases := []struct {
+		name     string
+		reread   string
+		verified bool
+	}{
+		{
+			name:     "a total that ticked between the two reads",
+			reread:   fmt.Sprintf(homeWithTicker, "121.00", "[40,80,240,160]"),
+			verified: true,
+		},
+		{
+			name:     "a measure pass that moved the button",
+			reread:   fmt.Sprintf(homeWithTicker, "120.00", "[40,84,240,164]"),
+			verified: true,
+		},
+		{
+			name:     "a node that was not in the tree a read ago",
+			reread:   homeWithTickerAndRow,
+			verified: false,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			state := newHarnessWithSpec(t, violationSpec)
+			device := &rereadsDriver{
+				Driver:       state.mock,
+				snapshotTree: settled,
+				rereadTree:   testCase.reread,
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			summary, err := Run(ctx, Options{
+				Duration:    time.Hour,
+				IdleTimeout: 20 * time.Millisecond,
+				MaxSteps:    3,
+				Driver:      device,
+				Verifier:    state.verifier,
+				TraceWriter: state.writer,
+			})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if summary.Steps != 3 {
+				t.Fatalf("steps = %d, want 3", summary.Steps)
+			}
+
+			if !testCase.verified {
+				if summary.SkippedVerification != 3 {
+					t.Errorf("the run judged %d of 3 steps whose tree grew a node between "+
+						"the two reads; a screen still composing must reach no property",
+						3-summary.SkippedVerification)
+				}
+				if len(summary.Violations) != 0 {
+					t.Errorf("a skipped step reached the verifier anyway: %v",
+						summary.Violations)
+				}
+				return
+			}
+			if summary.SkippedVerification != 0 {
+				t.Fatalf("the run judged nothing: %d of 3 steps were skipped over a tree "+
+					"whose nodes never changed", summary.SkippedVerification)
+			}
+			if len(summary.Violations) != 1 {
+				t.Fatalf("violations = %v, want exactly one", summary.Violations)
+			}
+			if got := summary.Violations[0].StepIndex; got != 1 {
+				t.Errorf("the property first judged step %d, want 1", got)
+			}
+		})
+	}
+}
+
 type traceLine struct {
 	Step       int      `json:"step"`
 	Violations []string `json:"violations"`
