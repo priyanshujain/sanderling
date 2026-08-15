@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os/exec"
+	"slices"
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion/transport"
@@ -149,6 +150,35 @@ func TestDeviceEraseAndPressKeyRouteThroughEditor(t *testing.T) {
 	}
 	if len(companion.pressedKeys) != 1 || companion.pressedKeys[0] != "enter" {
 		t.Fatalf("pressedKeys = %v, want [enter]", companion.pressedKeys)
+	}
+}
+
+func TestNewDeviceReinstallsOnceBeforeTheRunnerSession(t *testing.T) {
+	address := startLoopbackListener(t)
+	probe := &clearStateProbe{}
+	options := testDeviceOptions(address, newDeviceCompanion())
+	options.HardwareUDID = "00008140-CLEAR"
+	options.AppPath = "/tmp/Sample.app"
+	options.ClearState = true
+	options.reinstallApp = func(context.Context) error { probe.record("reinstall"); return nil }
+	spawn := options.spawnRunner
+	options.spawnRunner = func(ctx context.Context, runnerAddress string) (*exec.Cmd, error) {
+		probe.record("runner session")
+		return spawn(ctx, runnerAddress)
+	}
+
+	d, err := NewDevice(context.Background(), options)
+	if err != nil {
+		t.Fatalf("NewDevice: %v", err)
+	}
+	defer d.Close()
+	if err := d.Launch(context.Background(), "", true, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	want := []string{"reinstall", "runner session"}
+	if got := probe.recorded(); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v: devicectl must reinstall once, before the runner's test session attaches", got, want)
 	}
 }
 
