@@ -31,14 +31,22 @@ func TestBrowserConsoleErrorReachesTheSpec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recent logs: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("the runner's error-level fetch returned %d entries, want the page's one console.error: %+v", len(entries), entries)
+	if len(entries) != 2 {
+		t.Fatalf("the runner's error-level fetch returned %d entries, want the page's two console.error calls: %+v", len(entries), entries)
 	}
-	if entries[0].Level != "E" {
-		t.Errorf("console.error arrived as level %q, want %q", entries[0].Level, "E")
+	for _, entry := range entries {
+		if entry.Level != "E" {
+			t.Errorf("console.error %q arrived as level %q, want %q", entry.Message, entry.Level, "E")
+		}
 	}
-	if !strings.Contains(entries[0].Message, "boom from the page") {
-		t.Errorf("console.error arrived as %q, want the page's message", entries[0].Message)
+	// console.error(err) is the ordinary way a page reports a failure, and the
+	// argument is then an object rather than a string. An entry that arrives
+	// with the right level and no message names nothing a reader can act on.
+	if !messageSeen(entries, "boom from the page") {
+		t.Errorf("the page's console.error string never arrived: %+v", entries)
+	}
+	if !messageSeen(entries, "object arg detail") {
+		t.Errorf("console.error(new Error(...)) arrived with no message: %+v", entries)
 	}
 
 	dump, err := driverInstance.Hierarchy(ctx)
@@ -86,8 +94,8 @@ func TestBrowserConsoleLevelsMapToTheLogcatScale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recent logs: %v", err)
 	}
-	if len(entries) != 6 {
-		t.Fatalf("the page made 6 console calls, the driver kept %d: %+v", len(entries), entries)
+	if len(entries) != 7 {
+		t.Fatalf("the page made 7 console calls, the driver kept %d: %+v", len(entries), entries)
 	}
 
 	wantLevels := map[string]string{
@@ -122,15 +130,15 @@ func TestBrowserConsoleLevelsMapToTheLogcatScale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recent logs: %v", err)
 	}
-	if len(errorsOnly) != 1 {
-		t.Fatalf("the error-level fetch kept %d of the 6 entries, want only the console.error: %+v", len(errorsOnly), errorsOnly)
+	if len(errorsOnly) != 2 {
+		t.Fatalf("the error-level fetch kept %d of the 7 entries, want only the console.error calls: %+v", len(errorsOnly), errorsOnly)
 	}
 	warningsUp, err := driverInstance.RecentLogs(ctx, since, "W")
 	if err != nil {
 		t.Fatalf("recent logs: %v", err)
 	}
-	if len(warningsUp) != 2 {
-		t.Fatalf("the warning-level fetch kept %d entries, want the console.error and the console.warn: %+v", len(warningsUp), warningsUp)
+	if len(warningsUp) != 3 {
+		t.Fatalf("the warning-level fetch kept %d entries, want the console.error calls and the console.warn: %+v", len(warningsUp), warningsUp)
 	}
 }
 
@@ -158,6 +166,12 @@ func launchConsoleFixture(t *testing.T) (context.Context, *chrome.Driver, time.T
 		t.Fatalf("launch: %v", err)
 	}
 	return ctx, driverInstance, since
+}
+
+func messageSeen(entries []driver.LogEntry, want string) bool {
+	return slices.ContainsFunc(entries, func(entry driver.LogEntry) bool {
+		return strings.Contains(entry.Message, want)
+	})
 }
 
 func asVerifierLogs(entries []driver.LogEntry) []verifier.LogEntry {
