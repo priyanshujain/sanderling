@@ -247,7 +247,9 @@ func EnvWithAndroidPlatformTools(env []string) []string {
 // AdbBinary locates the adb binary via PATH or known Android SDK locations.
 func AdbBinary() (string, error) { return findAndroidTool("adb", "platform-tools") }
 
-func emulatorBinary() (string, error) { return findAndroidTool("emulator", "emulator") }
+// EmulatorBinary locates the emulator binary via PATH or known Android SDK
+// locations.
+func EmulatorBinary() (string, error) { return findAndroidTool("emulator", "emulator") }
 
 // findAndroidTool locates a binary from the Android SDK. It checks PATH,
 // then $ANDROID_HOME/<subdir>/<name> and $ANDROID_SDK_ROOT/<subdir>/<name>,
@@ -264,7 +266,36 @@ func findAndroidTool(name, subdir string) (string, error) {
 		}
 		tried = append(tried, candidate)
 	}
-	return "", fmt.Errorf("could not locate %q: not on PATH and not under any known Android SDK root (set $ANDROID_HOME to point at your SDK; tried %v)", name, tried)
+	return "", fmt.Errorf(
+		"%s not found: not on PATH, and not at [%s]; %s\nput %s on PATH, or point $ANDROID_HOME at an Android SDK that has %s/%s",
+		name, strings.Join(tried, ", "), sdkRootStatus(), name, subdir, name,
+	)
+}
+
+// sdkRootStatus reports what the SDK root variables hold, so a lookup failure
+// says whether they were unset or pointed somewhere that is not an SDK instead
+// of leaving the reader to work out which from a list of paths.
+func sdkRootStatus() string {
+	var reported []string
+	for _, variable := range []string{"ANDROID_HOME", "ANDROID_SDK_ROOT"} {
+		value := os.Getenv(variable)
+		if value == "" {
+			continue
+		}
+		info, err := os.Stat(value)
+		switch {
+		case err != nil:
+			reported = append(reported, fmt.Sprintf("$%s=%s does not exist", variable, value))
+		case !info.IsDir():
+			reported = append(reported, fmt.Sprintf("$%s=%s is not a directory", variable, value))
+		default:
+			reported = append(reported, fmt.Sprintf("$%s=%s", variable, value))
+		}
+	}
+	if len(reported) == 0 {
+		return "$ANDROID_HOME and $ANDROID_SDK_ROOT are unset"
+	}
+	return strings.Join(reported, ", ")
 }
 
 func androidSDKCandidates() []string {
@@ -283,9 +314,18 @@ func androidSDKCandidates() []string {
 		addRoot(filepath.Join(home, "Library", "Android", "sdk"))
 		addRoot(filepath.Join(home, "Android", "Sdk"))
 	}
-	addRoot("/opt/homebrew/share/android-commandlinetools")
-	addRoot("/usr/local/share/android-commandlinetools")
+	for _, root := range standardSDKRoots {
+		addRoot(root)
+	}
 	return roots
+}
+
+// standardSDKRoots are the install locations checked after the environment and
+// the home directory. A var so a resolution test can point it at a fixture
+// instead of whatever SDK the host running the test happens to have.
+var standardSDKRoots = []string{
+	"/opt/homebrew/share/android-commandlinetools",
+	"/usr/local/share/android-commandlinetools",
 }
 
 func listAdbDevices(ctx context.Context) ([]string, error) {
@@ -317,7 +357,7 @@ func parseAdbDevices(output string) []string {
 }
 
 func listAVDs(ctx context.Context) ([]string, error) {
-	emulator, err := emulatorBinary()
+	emulator, err := EmulatorBinary()
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +422,7 @@ func pickAVD(requested string, available []string) (string, error) {
 }
 
 func bootAVD(_ context.Context, name string) error {
-	emulator, err := emulatorBinary()
+	emulator, err := EmulatorBinary()
 	if err != nil {
 		return err
 	}
