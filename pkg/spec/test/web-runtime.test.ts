@@ -611,3 +611,27 @@ test("ax.find resolves the shadow-hosted match the hierarchy dump reaches first"
     assert.deepEqual(readingOf(values, 1), ["shadow", "light"]);
   });
 });
+
+// A nested undefined is the one reading shape the two hosts do NOT encode
+// alike, and this pins the split instead of hiding it. JSON has no undefined,
+// so the key goes with the value here; goja marshals the same member as null,
+// and it cannot do otherwise, because an exported goja object reports undefined
+// and null identically, so dropping those keys there would drop the genuine
+// nulls this host keeps. Carrying the member across would take a wire format
+// that can express undefined.
+//
+// What both hosts DO agree on is the member's value: reading it answers
+// undefined either way, and that is the guarantee a property may rely on. Key
+// presence (`in`, Object.keys) is not.
+// TestExtractorEncoding_NestedUndefinedIsNotOnTheWire in
+// internal/verifier/extractor_encoding_test.go pins the other half.
+test("a nested undefined leaves the page as a dropped key, a nested null does not", () => {
+  __testing__.extractors.length = 0;
+  __testing__.runtime.extract(() => ({ absent: undefined, empty: null, present: 1 }));
+  let wire = "";
+  withState(() => {
+    // Exactly what extractorScript in internal/driver/chrome/driver.go sends.
+    wire = JSON.stringify(__testing__.evaluateExtractors());
+  });
+  assert.equal(wire, `{"0":{"value":{"empty":null,"present":1}}}`);
+});
