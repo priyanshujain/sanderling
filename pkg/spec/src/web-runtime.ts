@@ -501,9 +501,18 @@ function defineLockedGlobal(name: string, value: unknown): void {
   });
 }
 
-function evaluateExtractors(): Record<number, unknown> {
+// Each reading is wrapped in a {value} envelope because JSON has no undefined.
+// Written straight into the map, an extractor whose getter returned undefined
+// (folio's on(route, tag) off its own screen, which is most extractors on most
+// steps) had its whole INDEX dropped by JSON.stringify, and the host kept goja's
+// dump-derived reading for it while the rest held the page's. Inside the
+// envelope the same drop means "this getter returned undefined", which is what
+// the goja host records for the same getter; a JSON null would instead claim it
+// returned null, and `x.current === undefined` would answer differently on the
+// two hosts.
+function evaluateExtractors(): Record<number, { value?: unknown }> {
   const state = buildState();
-  const result: Record<number, unknown> = {};
+  const result: Record<number, { value?: unknown }> = {};
   for (let i = 0; i < extractors.length; i++) {
     const entry = extractors[i];
     if (!entry) continue;
@@ -520,7 +529,7 @@ function evaluateExtractors(): Record<number, unknown> {
       extracting = false;
     }
     entry.currentValue = value;
-    result[i] = sanitize(value);
+    result[i] = { value: sanitize(value) };
   }
   return result;
 }

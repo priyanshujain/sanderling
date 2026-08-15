@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -772,7 +773,7 @@ func TestEvaluateExtractors_WaitsOutARouteTransition(t *testing.T) {
 	  const root = document.getElementById("app").attachShadow({mode: "open"});
 	  root.innerHTML = '<div id="LedgerScreen">ledger</div>';
 	  window.__sanderlingExtractors__ = function () {
-	    return {0: Array.from(root.querySelectorAll('[id$="Screen"]')).map(e => e.id).join(",")};
+	    return {0: {value: Array.from(root.querySelectorAll('[id$="Screen"]')).map(e => e.id).join(",")}};
 	  };
 	  window.startTransition = function () {
 	    const incoming = document.createElement("div");
@@ -883,5 +884,84 @@ func TestEvaluateExtractors_ReportsAMissingTable(t *testing.T) {
 	if err == nil {
 		t.Errorf("EvaluateExtractors returned %v and no error on a page with no "+
 			"extractor table; a page that cannot be read must not read as empty", values)
+	}
+}
+
+// TestEvaluateExtractors_KeepsUndefinedApartFromNull covers the wire the page's
+// readings cross. JSON has no undefined, so the web runtime wraps each reading
+// in a {value} envelope: written straight into the table, an extractor that
+// returned undefined lost its whole index to JSON.stringify and the host kept
+// goja's dump-derived reading for it while the rest held the page's. An absent
+// value has to arrive as an empty payload, which is what makes the verifier
+// record undefined (the value the native host records for the same getter);
+// arriving as JSON null would claim the getter returned null.
+func TestEvaluateExtractors_KeepsUndefinedApartFromNull(t *testing.T) {
+	const page = `<body><script>
+	  window.__sanderlingExtractors__ = function () {
+	    return {0: {}, 1: {value: null}, 2: {value: {balance: 7}}};
+	  };
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	values, err := d.EvaluateExtractors(ctx)
+	if err != nil {
+		t.Fatalf("EvaluateExtractors: %v", err)
+	}
+	if len(values) != 3 {
+		t.Fatalf("the page reported 3 readings, %d survived the wire: %v", len(values), values)
+	}
+	if got := values[0]; len(got) != 0 {
+		t.Errorf("the undefined reading arrived as %s, want an empty payload; "+
+			"the verifier records anything else as a value the getter never returned", got)
+	}
+	if got := string(values[1]); got != "null" {
+		t.Errorf("the null reading arrived as %s, want null", got)
+	}
+	if got := string(values[2]); got != `{"balance":7}` {
+		t.Errorf("the object reading arrived as %s, want {\"balance\":7}", got)
+	}
+}
+
+// TestEvaluateExtractors_RejectsAnUnenvelopedReading is the loud failure a page
+// running an older @sanderling/spec produces. Its readings are bare values, and
+// a bare value is indistinguishable from a reading whose getter returned that
+// value, so accepting them silently puts the two engines on different bundles.
+func TestEvaluateExtractors_RejectsAnUnenvelopedReading(t *testing.T) {
+	const page = `<body><script>
+	  window.__sanderlingExtractors__ = function () { return {0: "home"}; };
+	</script></body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	values, err := d.EvaluateExtractors(ctx)
+	if err == nil {
+		t.Fatalf("EvaluateExtractors accepted %v from a page whose readings are not "+
+			"enveloped; the page and the host are running different bundles", values)
+	}
+	if !strings.Contains(err.Error(), "different bundles") {
+		t.Errorf("EvaluateExtractors failed with %q, want it to name the bundle mismatch", err)
 	}
 }

@@ -787,14 +787,37 @@ func (d *Driver) EvaluateExtractors(ctx context.Context) (map[int]json.RawMessag
 		return nil, fmt.Errorf("decode extractor map: %w", err)
 	}
 	result := make(map[int]json.RawMessage, len(stringMap))
-	for key, value := range stringMap {
+	for key, entry := range stringMap {
 		index, err := strconv.Atoi(key)
 		if err != nil {
 			return nil, fmt.Errorf("non-integer extractor key %q", key)
 		}
-		result[index] = value
+		reading, err := extractorReading(entry)
+		if err != nil {
+			return nil, fmt.Errorf("extractor %d: %w", index, err)
+		}
+		result[index] = reading
 	}
 	return result, nil
+}
+
+// extractorReading unwraps one entry of the page's extractor table. The page
+// wraps every reading in a {"value": ...} envelope (evaluateExtractors in
+// pkg/spec/src/web-runtime.ts) because JSON has no undefined: an absent `value`
+// is the getter returning undefined, and returning it as an empty payload is
+// what makes the goja host record undefined too. Reading it as JSON null would
+// claim the getter returned null, so `x.current === undefined` would answer one
+// thing on native and another on web.
+func extractorReading(entry json.RawMessage) (json.RawMessage, error) {
+	var envelope struct {
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(entry, &envelope); err != nil {
+		return nil, fmt.Errorf(
+			"reading %s is not a {\"value\"} envelope; the page and the host are "+
+				"running different bundles: %w", entry, err)
+	}
+	return envelope.Value, nil
 }
 
 // SetLastAction installs the previous step's action as state.lastAction inside

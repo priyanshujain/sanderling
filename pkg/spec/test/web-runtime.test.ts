@@ -206,6 +206,13 @@ function withState(run: () => void) {
   }
 }
 
+// Every reading leaves the runtime inside a {value} envelope, so an extractor
+// whose getter returned undefined keeps its index instead of being dropped by
+// JSON.stringify.
+function readingOf(values: Record<number, { value?: unknown }>, index: number): unknown {
+  return values[index]!.value;
+}
+
 test("named() sets the extractor's display name", () => {
   const handle = __testing__.runtime.extract(() => "home").named("route");
   const entry = __testing__.extractors.find((e) => e.handle === handle);
@@ -251,6 +258,33 @@ test("an uncaught cross-extractor read aborts evaluateExtractors", () => {
   );
 });
 
+// JSON.stringify drops an undefined-valued key, so a reading written straight
+// into the table took the extractor's whole INDEX with it when the getter
+// returned undefined - folio's on(route, tag) off its own screen, which is most
+// of its extractors on most steps. The host then kept goja's dump-derived value
+// for those and the page's for the rest, and a property comparing previous to
+// current across that split convicts an app that did nothing wrong.
+test("an extractor that returned undefined keeps its index through JSON", () => {
+  __testing__.extractors.length = 0;
+  __testing__.runtime.extract(() => undefined);
+  __testing__.runtime.extract(() => null);
+  __testing__.runtime.extract(() => 5);
+  let table: Record<number, { value?: unknown }> = {};
+  withState(() => {
+    table = __testing__.evaluateExtractors();
+  });
+
+  const overTheWire = JSON.parse(JSON.stringify(table)) as Record<string, { value?: unknown }>;
+  assert.deepEqual(Object.keys(overTheWire), ["0", "1", "2"]);
+  // undefined and null have to stay distinguishable across the wire: the goja
+  // host records undefined for a getter that returned undefined, so reporting
+  // null instead would make `x.current === undefined` answer one thing on
+  // native and another on web.
+  assert.equal("value" in overTheWire["0"]!, false);
+  assert.equal(overTheWire["1"]!.value, null);
+  assert.equal(overTheWire["2"]!.value, 5);
+});
+
 // state.lastAction is the one piece of state the page cannot observe for
 // itself: only the runner knows which action it actually applied. While the web
 // runtime hardcoded null there, a spec property gated on the last action (e.g.
@@ -262,12 +296,12 @@ function lastActionSeenByASpec(pushed: unknown): unknown {
     .__sanderlingSetLastAction__ as (value: unknown) => void;
   __testing__.extractors.length = 0;
   __testing__.runtime.extract((state) => (state as { lastAction: unknown }).lastAction);
-  let out: Record<number, unknown> = {};
+  let out: Record<number, { value?: unknown }> = {};
   withState(() => {
     setLastAction(pushed);
     out = __testing__.evaluateExtractors();
   });
-  return out[0];
+  return readingOf(out, 0);
 }
 
 test("state.lastAction carries the action the host pushed", () => {
@@ -289,11 +323,11 @@ test("state.lastAction is null when the host pushed nothing", () => {
 function sanitizeViaExtract(value: unknown): unknown {
   __testing__.extractors.length = 0;
   __testing__.runtime.extract(() => value);
-  let out: Record<number, unknown> = {};
+  let out: Record<number, { value?: unknown }> = {};
   withState(() => {
     out = __testing__.evaluateExtractors();
   });
-  return out[0];
+  return readingOf(out, 0);
 }
 
 test("sanitize breaks a self-referential cycle instead of overflowing", () => {
@@ -471,7 +505,7 @@ test("ax.findAll resolves a selector path segment by segment", () => {
     const values = __testing__.evaluateExtractors();
     // Scoped to the head match: the cards come from the HomeScreen node, not
     // from a document-wide sweep for AccountCard.
-    assert.deepEqual(values[0], ["first", "second"]);
+    assert.deepEqual(readingOf(values, 0), ["first", "second"]);
   } finally {
     g.document = originalDocument;
     g.window = originalWindow;
@@ -506,11 +540,11 @@ test("ax.find and ax.findAll label the element with its selector", () => {
       return ax.findAll({ testTag: "TxnSubmit" });
     });
     const values = __testing__.evaluateExtractors();
-    const found = values[0] as Record<string, unknown>;
+    const found = readingOf(values, 0) as Record<string, unknown>;
     assert.equal(found.__sanderlingSelector, "testTag:TxnSubmit");
     // findAll passes each element through map(); passing the callback by
     // reference would hand the array INDEX to the runtime as the selector.
-    const all = values[1] as Record<string, unknown>[];
+    const all = readingOf(values, 1) as Record<string, unknown>[];
     assert.equal(all[0]!.__sanderlingSelector, "testTag:TxnSubmit");
   } finally {
     g.document = originalDocument;
