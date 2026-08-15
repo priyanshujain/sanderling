@@ -123,19 +123,53 @@ func antiFreezeCommands() [][]string {
 // reinstalling it. This replaces `pm clear` for clear-state: ColorOS and other
 // hardened OEM builds deny CLEAR_APP_USER_DATA even to the adb shell user, so a
 // clear aborts the launch, whereas uninstall+install is always permitted.
-// The uninstall is best effort so a not-installed app is not an error.
+// A failed uninstall is not passed over: `install -r` keeps the app's data, so
+// the reinstall would report a clear-state that never happened.
 func ReinstallApp(ctx context.Context, serial, bundleID, apkPath string, stdout io.Writer) error {
 	adb, err := AdbBinary()
 	if err != nil {
 		return err
 	}
 	if output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "uninstall", bundleID)...).CombinedOutput(); err != nil {
-		fmt.Fprintf(stdout, "clear-state: uninstall %s skipped (%v: %s)\n", bundleID, err, strings.TrimSpace(string(output)))
+		if err := clearDataUninstallLeftBehind(ctx, adb, serial, bundleID, strings.TrimSpace(string(output)), stdout); err != nil {
+			return err
+		}
 	}
 	if output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "install", "-r", apkPath)...).CombinedOutput(); err != nil {
 		return fmt.Errorf("install %s: %w: %s", apkPath, err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// clearDataUninstallLeftBehind reaches first-launch state after `adb uninstall`
+// failed. The failure text cannot say why: an API 34 emulator answers
+// "Failure [DELETE_FAILED_INTERNAL_ERROR]" both for a package that was never
+// installed and for one it refuses to remove. So ask the package manager which
+// happened. Nothing installed means nothing to clear. Still installed
+// means the data survives the reinstall, and `pm clear` is the one remaining
+// way to reach first-launch state; when that fails too, so does clear-state.
+func clearDataUninstallLeftBehind(ctx context.Context, adb, serial, bundleID, uninstallOutput string, stdout io.Writer) error {
+	if !packageInstalled(ctx, adb, serial, bundleID) {
+		return nil
+	}
+	output, err := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "pm", "clear", bundleID)...).CombinedOutput()
+	cleared := strings.TrimSpace(string(output))
+	if err != nil || !strings.Contains(cleared, "Success") {
+		return fmt.Errorf(
+			"clear-state: %s is still installed after `adb uninstall` said %q, and `pm clear` said %q: its data was not cleared",
+			bundleID, uninstallOutput, cleared,
+		)
+	}
+	fmt.Fprintf(stdout, "clear-state: uninstall %s said %q and left it installed; cleared its data with `pm clear` instead\n", bundleID, uninstallOutput)
+	return nil
+}
+
+// packageInstalled reports whether the package manager resolves an APK path for
+// bundleID. The printed path is the signal rather than the exit status, which
+// `adb shell` does not forward from devices below API 24.
+func packageInstalled(ctx context.Context, adb, serial, bundleID string) bool {
+	output, _ := exec.CommandContext(ctx, adb, adbArgs(serial, "shell", "pm", "path", bundleID)...).Output()
+	return strings.HasPrefix(strings.TrimSpace(string(output)), "package:")
 }
 
 const threeButtonNavOverlay = "com.android.internal.systemui.navbar.threebutton"

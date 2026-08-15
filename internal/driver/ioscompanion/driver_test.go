@@ -329,6 +329,68 @@ func TestNewRejectsClearStateWithoutBundleID(t *testing.T) {
 	}
 }
 
+// scriptedXcrun puts an xcrun on PATH that logs each invocation's arguments and
+// answers from replies, a `case "$*" in` body, so a reinstall runs its real
+// command sequence and the log holds what reached the tool.
+func scriptedXcrun(t *testing.T, replies string) string {
+	t.Helper()
+	directory := t.TempDir()
+	log := filepath.Join(directory, "xcrun.log")
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\ncase \"$*\" in\n" + replies + "\nesac\n"
+	if err := os.WriteFile(filepath.Join(directory, "xcrun"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write xcrun: %v", err)
+	}
+	t.Setenv("PATH", directory)
+	return log
+}
+
+func xcrunCalls(t *testing.T, log string) []string {
+	t.Helper()
+	contents, err := os.ReadFile(log)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("read %s: %v", log, err)
+	}
+	return strings.Split(strings.TrimSpace(string(contents)), "\n")
+}
+
+func TestSimctlReinstallStopsWhenTheUninstallFails(t *testing.T) {
+	log := scriptedXcrun(t, `"simctl uninstall "*) echo "Simulator device failed to uninstall app.example."; echo "Uninstall prohibited."; exit 22;;
+"simctl install "*) :;;`)
+	d := &Driver{udid: "SIM-UDID", bundleID: "app.example", appPath: "/tmp/Sample.app"}
+
+	err := d.simctlReinstall(context.Background())
+
+	if err == nil {
+		t.Fatal("simctlReinstall reported success while app.example kept the data clear-state was asked to remove")
+	}
+	for _, want := range []string{"app.example", "Uninstall prohibited."} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not quote %q", err, want)
+		}
+	}
+	if calls := xcrunCalls(t, log); slices.Contains(calls, "simctl install SIM-UDID /tmp/Sample.app") {
+		t.Errorf("xcrun calls = %v: installing over the app carries its data into the run", calls)
+	}
+}
+
+func TestSimctlReinstallProceedsWhenNothingIsInstalled(t *testing.T) {
+	log := scriptedXcrun(t, `"simctl uninstall "*) :;;
+"simctl install "*) :;;`)
+	d := &Driver{udid: "SIM-UDID", bundleID: "app.example", appPath: "/tmp/Sample.app"}
+
+	if err := d.simctlReinstall(context.Background()); err != nil {
+		t.Fatalf("simctlReinstall: %v", err)
+	}
+
+	want := []string{"simctl uninstall SIM-UDID app.example", "simctl install SIM-UDID /tmp/Sample.app"}
+	if got := xcrunCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("xcrun calls = %v, want %v", got, want)
+	}
+}
+
 func TestLaunchRejectsEnvironment(t *testing.T) {
 	d := newTestDriver(&fakeCompanion{accessibilityJSON: "[]"})
 	err := d.Launch(context.Background(), "", false, map[string]string{"K": "V"})

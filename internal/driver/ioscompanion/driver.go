@@ -615,8 +615,14 @@ func (d *Driver) clearAppState(ctx context.Context) error {
 // simctlReinstall uninstalls and reinstalls the app bundle via simctl. App
 // lifecycle stays with simctl: the companion's install RPC misreads current
 // simulator targets' architectures and rejects valid bundles.
+// A failed uninstall ends the reinstall: `simctl install` over an installed app
+// carries its data container across, so clear-state would be reported without
+// happening. Uninstalling an app that is not installed exits 0, so there is no
+// benign failure here to sort out from a real one.
 func (d *Driver) simctlReinstall(ctx context.Context) error {
-	_ = exec.CommandContext(ctx, "xcrun", "simctl", "uninstall", d.udid, d.bundleID).Run()
+	if output, err := exec.CommandContext(ctx, "xcrun", "simctl", "uninstall", d.udid, d.bundleID).CombinedOutput(); err != nil {
+		return fmt.Errorf("simctl uninstall %s: %w: %s", d.bundleID, err, strings.TrimSpace(string(output)))
+	}
 	output, err := exec.CommandContext(ctx, "xcrun", "simctl", "install", d.udid, d.appPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("simctl install: %w: %s", err, strings.TrimSpace(string(output)))
