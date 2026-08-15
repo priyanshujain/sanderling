@@ -30,6 +30,15 @@
     order to accommodate a signature change. Its original subject must survive.
   - Carry intent through test names and assertions rather than through prose comments.
 
+## Verification Targets
+
+  - All three targets run on this machine when it is macOS: the Android emulator, the iOS
+    simulator, and Chrome. A change to a driver, the runner, the verifier or the spec surface
+    is verified on every target it can affect, not on whichever one is already booted.
+  - If a simulator is not running, start it. "Nothing was booted" is not a reason to skip a
+    target, and neither is a missing tool on PATH: fix discovery or the install flow rather
+    than prefixing the run with environment variables.
+
 ## Git Branch Rules
 
   - No slashes in branch names (e.g., use `fix-something` not `fix/something`).
