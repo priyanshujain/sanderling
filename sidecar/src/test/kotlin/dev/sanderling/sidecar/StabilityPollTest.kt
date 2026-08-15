@@ -16,28 +16,68 @@ class StabilityPollTest {
         assertTrue(elapsed < 3000L, "should not run to cap when stable, elapsed=${elapsed}ms")
     }
 
+    @Test fun slowSnapshotReadsDoNotEatTheStreak() {
+        // Every other test here uses an instant lambda and so passes whether or
+        // not a read is charged to the streak; this one is the difference.
+        // StubDriverBackend's waitForIdle polls a real `uiautomator dump`,
+        // which costs hundreds of milliseconds, so the slow read is the case it
+        // runs in.
+        val readMillis = 400L
+        val sampleStarts = mutableListOf<Long>()
+        val sampleEnds = mutableListOf<Long>()
+        val start = System.currentTimeMillis()
+        pollUntilStable(5000L) {
+            sampleStarts += System.currentTimeMillis() - start
+            Thread.sleep(readMillis)
+            sampleEnds += System.currentTimeMillis() - start
+            "stable"
+        }
+
+        // What the poll actually watched: the last read began this long after
+        // the first one returned, and every sample in between matched.
+        val observedQuiet = sampleStarts.last() - sampleEnds.first()
+        assertTrue(
+            observedQuiet >= MIN_STABLE_STREAK_MILLIS,
+            "the poll returned having observed only ${observedQuiet}ms of quiet, not " +
+                "${MIN_STABLE_STREAK_MILLIS}ms; starts=$sampleStarts ends=$sampleEnds",
+        )
+        assertTrue(
+            sampleStarts.size >= 3,
+            "a ${readMillis}ms read cannot clear the streak in one pair, starts=$sampleStarts",
+        )
+    }
+
     @Test fun streakResetsOnAnyChange() {
         // A late transition that fires after the prior streak has already
         // begun must reset the clock: the post-transition stable window has
         // to start over and meet MIN_STABLE_STREAK_MILLIS from scratch.
         var calls = 0
-        val start = System.currentTimeMillis()
-        // First 4 samples are "calm", then 1 transient change, then "stable"
-        // forever - the calm prefix is meaningless because of the transition.
+        var transientAt = 0L
+        // A short "calm" prefix, one transient change, then "stable" forever.
+        // The prefix is meaningless because of the transition: only the streak
+        // that starts after it can end the wait.
         pollUntilStable(3000L) {
             calls++
             when {
-                calls <= 4 -> "calm"
-                calls == 5 -> "transient"
+                calls <= 2 -> "calm"
+                calls == 3 -> {
+                    transientAt = System.currentTimeMillis()
+                    "transient"
+                }
                 else -> "stable"
             }
         }
-        val elapsed = System.currentTimeMillis() - start
+        val sinceTransition = System.currentTimeMillis() - transientAt
         assertTrue(
-            elapsed >= MIN_STABLE_STREAK_MILLIS,
-            "post-transition streak must reach ${MIN_STABLE_STREAK_MILLIS}ms, elapsed=${elapsed}ms",
+            calls >= 8,
+            "after the transition the poll needs a fresh matching pair and then a full " +
+                "${MIN_STABLE_STREAK_MILLIS}ms of quiet, which is 8 samples, got $calls",
         )
-        assertTrue(calls >= 10, "expected enough samples to span calm + transient + stable streak, got $calls")
+        assertTrue(
+            sinceTransition >= MIN_STABLE_STREAK_MILLIS,
+            "the calm prefix must not count: a full ${MIN_STABLE_STREAK_MILLIS}ms streak has to " +
+                "start over after the transition, returned ${sinceTransition}ms after it",
+        )
     }
 
     @Test fun transitionalNullsForceLoopToKeepWaiting() {

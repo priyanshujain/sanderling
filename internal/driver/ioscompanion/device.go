@@ -109,6 +109,13 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 	d.restart = d.respawnDevice
 	d.processContext, d.processCancel = context.WithCancel(ctx)
 
+	lock, err := acquireDeviceLock(d.udid)
+	if err != nil {
+		d.processCancel()
+		return nil, err
+	}
+	d.deviceLock = lock
+
 	if err := d.bringUpDevice(ctx); err != nil {
 		d.Close()
 		return nil, err

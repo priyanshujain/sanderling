@@ -256,17 +256,34 @@ func (d *Driver) InputText(callerCtx context.Context, text string) error {
 	defer cancel()
 	return chromedp.Run(runCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			// Select any existing content so InsertText replaces rather than appends.
-			if err := chromedp.Evaluate(`
-				(function() {
-					const el = document.activeElement;
-					if (el && typeof el.select === 'function') el.select();
-				})()`, nil).Do(ctx); err != nil {
+			if err := selectFocusedText(ctx); err != nil {
 				return err
 			}
 			return input.InsertText(text).Do(ctx)
 		}),
 	)
+}
+
+// selectAllScript selects everything in the focused field so the InsertText
+// that follows replaces rather than appends.
+//
+// document.activeElement stops at a shadow boundary: it names the HOST, not the
+// focused node inside. Compose for Web focuses a hidden <input> inside the
+// shadow root it mounts, so the host answer has no select() and the selection
+// never happened - every InputText appended to the last one, and a fuzzer that
+// types into the same field twice built up garbage it could never clear.
+// Descending activeElement through each shadow root finds the real field.
+const selectAllScript = `
+	(function() {
+		let el = document.activeElement;
+		while (el && el.shadowRoot && el.shadowRoot.activeElement) {
+			el = el.shadowRoot.activeElement;
+		}
+		if (el && typeof el.select === 'function') el.select();
+	})()`
+
+func selectFocusedText(ctx context.Context) error {
+	return chromedp.Evaluate(selectAllScript, nil).Do(ctx)
 }
 
 // ReplacesTextOnInput reports that InputText replaces existing content via
@@ -282,11 +299,7 @@ func (d *Driver) EraseText(callerCtx context.Context, _ int) error {
 	defer cancel()
 	return chromedp.Run(runCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			if err := chromedp.Evaluate(`
-				(function() {
-					const el = document.activeElement;
-					if (el && typeof el.select === 'function') el.select();
-				})()`, nil).Do(ctx); err != nil {
+			if err := selectFocusedText(ctx); err != nil {
 				return err
 			}
 			return input.InsertText("").Do(ctx)
@@ -368,7 +381,11 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
 	defer cancel()
 	script := `
 (function() {
-  const route = window.location.hash.replace(/^#/, '').split('?')[0] || '/';
+  // Hash first (a HashRouter names the screen there), then the pathname, which
+  // is where a path-routed SPA keeps it. Reporting '/' for every step of a
+  // BrowserRouter app made every screen look like the same screen.
+  const route = window.location.hash.replace(/^#/, '').split('?')[0] ||
+    window.location.pathname || '/';
   // clickable and editable are resolved through the SAME selector sets
   // pkg/spec/src/web-runtime.ts uses, so the goja host (which reads this dump)
   // and the V8 host (which reads the DOM directly) cannot mean different things
@@ -376,6 +393,14 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
   // root a full-viewport tap target here and nowhere else.
   const NON_TEXT_INPUT_TYPES =
     ['button','submit','checkbox','radio','range','color','file','image','reset'];
+  // The disabled property belongs to real form controls only, so it reads
+  // undefined on the role-based controls the tappable set now covers, and every
+  // one of them looked enabled however plainly it was marked otherwise.
+  // isEnabled in pkg/spec/src/web-runtime.ts answers the same two ways.
+  function isEnabled(el) {
+    if (el.disabled) return false;
+    return el.getAttribute('aria-disabled') !== 'true';
+  }
   function isEditableElement(el) {
     if (el.isContentEditable) return true;
     const tag = el.tagName.toLowerCase();
@@ -383,10 +408,28 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     if (tag === 'input') return !NON_TEXT_INPUT_TYPES.includes((el.type || '').toLowerCase());
     return false;
   }
-  const clickableSet = new Set(document.querySelectorAll(
-    'a, button, input, select, textarea, [role="button"], [onclick]'));
-  const editableSet = new Set(Array.from(
-    document.querySelectorAll('input, textarea, [contenteditable]')).filter(isEditableElement));
+  // Shadow roots are part of the page a user sees, so they are part of the page
+  // we enumerate. Compose for Web mounts its canvas AND its accessibility tree
+  // inside a shadow root on the mount element, so a light-DOM-only walk reports
+  // four nodes for a whole app and offers no action on any of them.
+  function deepQuery(sel) {
+    const out = [];
+    const visit = (root) => {
+      for (const el of root.querySelectorAll(sel)) out.push(el);
+      for (const el of root.querySelectorAll('*')) if (el.shadowRoot) visit(el.shadowRoot);
+    };
+    visit(document);
+    return out;
+  }
+  const TAPPABLE_ROLES = [
+    'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'option',
+    'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem'];
+  const clickableSet = new Set(deepQuery(
+    'a, button, input, select, textarea, ' +
+    TAPPABLE_ROLES.map(role => '[role="' + role + '"]').join(', ') +
+    ', [onclick]'));
+  const editableSet = new Set(deepQuery(
+    'input, textarea, [contenteditable]').filter(isEditableElement));
   function buildTree(el, isRoot) {
     const rect = el.getBoundingClientRect();
     const attrs = {};
@@ -414,6 +457,14 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     const isClickable = clickableSet.has(el);
     const isEditable = editableSet.has(el);
     const children = [];
+    // Shadow content first, then light children: the shadow tree is what the
+    // host actually renders, and targetElements in web-runtime.ts walks the same
+    // order, which is the order the two enumerations are compared in.
+    if (el.shadowRoot) {
+      for (const child of el.shadowRoot.children) {
+        children.push(buildTree(child, false));
+      }
+    }
     for (const child of el.children) {
       if (child.tagName === 'HEAD') continue;
       children.push(buildTree(child, false));
@@ -422,7 +473,7 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
       attributes: attrs,
       children: children,
       clickable: isClickable || null,
-      enabled: (!el.disabled) || null,
+      enabled: isEnabled(el) || null,
       focused: document.activeElement === el || null,
       checked: el.checked || null,
       selected: el.selected || null,
@@ -498,10 +549,138 @@ func (d *Driver) RecentLogs(_ context.Context, since time.Time, minLevel string)
 	return result, nil
 }
 
-func (d *Driver) WaitForIdle(ctx context.Context, _ time.Duration) error {
+// domQuietPeriod is how long the DOM must stop changing before the page counts
+// as settled. Compose for Web syncs its accessibility DOM off the frame loop:
+// measured at ~136 ms behind an InputText on the folio wasm build, so waiting
+// for frames alone (~16 ms each) returns while the app still reports the old
+// text, and the next step types into a field it believes is still empty.
+const domQuietPeriod = 150 * time.Millisecond
+
+// transitionSettlePeriod is how much longer the settle waits for a route
+// transition to finish once the DOM has gone quiet. A canvas app's cross-fade
+// is invisible to a mutation observer: Compose splices the incoming screen's
+// accessibility nodes in when the animation STARTS and removes the outgoing
+// screen's when it ends, and nothing in between touches the DOM, so the tree
+// sits byte-identical (and quiet) with both routes live for the whole
+// animation. Settling on quiet alone returns there, and the next step then
+// verifies a tree that names the screen the app is leaving: on the folio wasm
+// build a submit that landed on Home was recorded as still being on the
+// transaction screen, so a property gated on where the action landed read the
+// wrong route and went vacuous. The wait is bounded so a page that genuinely
+// shows two *Screen ids at rest costs this much per step and no more.
+const transitionSettlePeriod = 800 * time.Millisecond
+
+// settleReturnMargin is what WaitForIdle holds back from the caller's timeout,
+// so returning late by our own doing surfaces as a settled page rather than a
+// context cancellation.
+const settleReturnMargin = 100 * time.Millisecond
+
+// settleScanMargin covers the in-page work the two waits do not themselves
+// account for: liveScreens() walks the document and every shadow root on each
+// 16 ms poll, and the whole script costs one CDP round trip.
+const settleScanMargin = 250 * time.Millisecond
+
+// MinIdleTimeout is the shortest timeout WaitForIdle can be handed and still
+// spend the waits it is built from: the DOM quiet period, the route-transition
+// window that only opens once that quiet period has elapsed, and the second
+// quiet period the transition's own closing mutation starts. A caller that
+// passes less caps the settle below its own budget, and the step then samples a
+// page that is still mid-transition - which is the exact failure the transition
+// wait exists to prevent. internal/runner raises a shorter caller timeout to
+// this value.
+func (d *Driver) MinIdleTimeout() time.Duration {
+	return 2*domQuietPeriod + transitionSettlePeriod +
+		settleScanMargin + settleReturnMargin
+}
+
+func (d *Driver) WaitForIdle(ctx context.Context, timeout time.Duration) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
-	return chromedp.Run(runCtx, chromedp.WaitReady("body", chromedp.ByQuery))
+	// Leave the caller's deadline some room: returning late by our own doing
+	// would surface as a context cancellation instead of a settled page.
+	budget := max(timeout-settleReturnMargin, domQuietPeriod)
+	script := fmt.Sprintf(settleScript,
+		domQuietPeriod.Milliseconds(),
+		budget.Milliseconds(),
+		transitionSettlePeriod.Milliseconds(),
+	)
+	return chromedp.Run(runCtx,
+		chromedp.WaitReady("body", chromedp.ByQuery),
+		chromedp.Evaluate(script, nil, awaitPromise),
+	)
+}
+
+// liveScreensFunction defines liveScreens(), the page-side count of live ids
+// ending in "Screen". More than one is a route transition in flight: the same
+// rule the tree parser applies (Transitional in internal/hierarchy), so the
+// driver and the runner agree on what a settled route looks like. It descends
+// shadow roots because a canvas app keeps its whole accessibility tree inside
+// one.
+const liveScreensFunction = `
+  const liveScreens = () => {
+    let count = 0;
+    const visit = (root) => {
+      count += root.querySelectorAll('[id$="Screen"]').length;
+      for (const element of root.querySelectorAll('*')) {
+        if (element.shadowRoot) visit(element.shadowRoot);
+      }
+    };
+    visit(document);
+    return count;
+  };`
+
+// settleScript resolves once the document has gone quiet for %d ms and is not
+// mid route transition, or after %d ms whatever happens; the transition wait
+// itself gives up after %d ms. Shadow roots get their own observer: a canvas
+// app keeps its whole accessibility tree inside one, and mutations there do not
+// reach an observer on the document.
+//
+// The transition window opens when the quiet period ends, not when the script
+// starts. Anchored at the start it is already spent by the time the check can
+// first run on any page that keeps mutating for longer than the window, so the
+// wait resolves immediately with both routes still live - the mid-transition
+// return this whole wait exists to prevent. Each mutation reopens it, and the
+// budget above bounds the total either way.
+const settleScript = `
+new Promise(resolve => {
+  const quietMillis = %d, budgetMillis = %d, transitionMillis = %d;
+  const observers = [];
+  let transitionDeadline = 0;
+  let timer = null;
+  const finish = () => {
+    clearTimeout(timer);
+    for (const observer of observers) observer.disconnect();
+    resolve();
+  };
+` + liveScreensFunction + `
+  const quiet = () => {
+    if (transitionDeadline === 0) transitionDeadline = Date.now() + transitionMillis;
+    if (liveScreens() > 1 && Date.now() < transitionDeadline) {
+      timer = setTimeout(quiet, 16);
+      return;
+    }
+    finish();
+  };
+  const restart = () => {
+    clearTimeout(timer);
+    transitionDeadline = 0;
+    timer = setTimeout(quiet, quietMillis);
+  };
+  const watch = (root) => {
+    const observer = new MutationObserver(restart);
+    observer.observe(root, {subtree: true, childList: true, attributes: true, characterData: true});
+    observers.push(observer);
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot) watch(element.shadowRoot);
+    }
+  };
+  watch(document);
+  setTimeout(finish, budgetMillis);
+  restart();
+})`
+
+func awaitPromise(params *runtime.EvaluateParams) *runtime.EvaluateParams {
+	return params.WithAwaitPromise(true)
 }
 
 func (d *Driver) Health(_ context.Context) (driver.Health, error) {
@@ -596,12 +775,21 @@ func (d *Driver) InstallBundle(ctx context.Context, source []byte) error {
 
 // EvaluateExtractors invokes the bundle-installed extractor table and returns
 // each extractor's JSON-encoded current value keyed by its registration index.
+//
+// The read waits out a route transition first, bounded by
+// transitionSettlePeriod. The hierarchy fetch already re-fetches a transitional
+// tree (fetchSyncedState in internal/runner); without the same rule here the
+// two halves of one step describe different moments, and the spec's own
+// extractors are the half that loses: on the folio wasm build the extractors
+// sampled mid cross-fade and reported the route the app was leaving, so a
+// property gated on where the action landed skipped the only step that action
+// could be judged on.
 func (d *Driver) EvaluateExtractors(ctx context.Context) (map[int]json.RawMessage, error) {
-	const script = `JSON.stringify(window.__sanderlingExtractors__ ? window.__sanderlingExtractors__() : {})`
+	script := fmt.Sprintf(extractorScript, transitionSettlePeriod.Milliseconds())
 	var encoded string
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
-	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded, awaitPromise)); err != nil {
 		return nil, fmt.Errorf("evaluate extractors: %w", err)
 	}
 	if encoded == "" || encoded == "{}" {
@@ -612,15 +800,89 @@ func (d *Driver) EvaluateExtractors(ctx context.Context) (map[int]json.RawMessag
 		return nil, fmt.Errorf("decode extractor map: %w", err)
 	}
 	result := make(map[int]json.RawMessage, len(stringMap))
-	for key, value := range stringMap {
+	for key, entry := range stringMap {
 		index, err := strconv.Atoi(key)
 		if err != nil {
 			return nil, fmt.Errorf("non-integer extractor key %q", key)
 		}
-		result[index] = value
+		reading, err := extractorReading(entry)
+		if err != nil {
+			return nil, fmt.Errorf("extractor %d: %w", index, err)
+		}
+		result[index] = reading
 	}
 	return result, nil
 }
+
+// extractorReading unwraps one entry of the page's extractor table. The page
+// wraps every reading in a {"value": ...} envelope (evaluateExtractors in
+// pkg/spec/src/web-runtime.ts) because JSON has no undefined: an absent `value`
+// is the getter returning undefined, and returning it as an empty payload is
+// what makes the goja host record undefined too. Reading it as JSON null would
+// claim the getter returned null, so `x.current === undefined` would answer one
+// thing on native and another on web.
+func extractorReading(entry json.RawMessage) (json.RawMessage, error) {
+	var envelope struct {
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(entry, &envelope); err != nil {
+		return nil, fmt.Errorf(
+			"reading %s is not a {\"value\"} envelope; the page and the host are "+
+				"running different bundles: %w", entry, err)
+	}
+	return envelope.Value, nil
+}
+
+// SetLastAction installs the previous step's action as state.lastAction inside
+// the page runtime. The page cannot derive it: only the runner knows which
+// action was actually applied. Without this call every web state.lastAction is
+// null, so a property gated on what the last action did is vacuously true and
+// reports a green run while checking nothing.
+//
+// The call is deliberately unguarded. A `setter && setter(...)` form evaluates
+// to undefined on a page whose runtime does not define the setter, and chromedp
+// reports that as success, so "the page cannot accept lastAction" would be
+// indistinguishable from "installed". That page is reachable: a run resolving
+// its web runtime from an older published @sanderling/spec would silently no-op
+// every step. Unguarded, the missing global throws and the run fails loudly.
+func (d *Driver) SetLastAction(ctx context.Context, encoded json.RawMessage) error {
+	payload := strings.TrimSpace(string(encoded))
+	if payload == "" {
+		payload = "null"
+	}
+	script := fmt.Sprintf(`window.__sanderlingSetLastAction__(%s)`, payload)
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, nil)); err != nil {
+		return fmt.Errorf("set last action: %w", err)
+	}
+	return nil
+}
+
+// extractorScript resolves the extractor table once the page is not mid route
+// transition, giving up on that wait after %d ms.
+//
+// A missing table rejects rather than reporting {}, for the same reason
+// SetLastAction no longer guards its call: an empty override map is what a
+// spec with no extractors returns, so the guarded form made "this page has no
+// sanderling runtime" read as a normal step whose properties then ran on
+// goja's dump-derived values instead of the page's.
+const extractorScript = `
+new Promise((resolve, reject) => {
+  const deadline = Date.now() + %d;` + liveScreensFunction + `
+  const read = () => {
+    if (liveScreens() > 1 && Date.now() < deadline) {
+      setTimeout(read, 16);
+      return;
+    }
+    if (typeof window.__sanderlingExtractors__ !== "function") {
+      reject(new Error("__sanderlingExtractors__ is not installed in the page"));
+      return;
+    }
+    resolve(JSON.stringify(window.__sanderlingExtractors__()));
+  };
+  read();
+})`
 
 // NextActionFromV8 invokes the bundle-installed action generator and returns
 // the resulting Action JSON. Returns an empty json.RawMessage when the

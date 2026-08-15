@@ -22,10 +22,14 @@ Run a spec against an app for a fixed duration.
 | `--ios-device` | optional (ios) | iOS target: a simulator name/UDID to boot, or a connected device's name, UDID, or CoreDevice id. |
 | `--ios-app-path` | optional (ios) | Path to the `.app` bundle for clear-state reinstall (simulator via `simctl`, device via `devicectl`). |
 | `--duration` | `5m` | Total test duration (`30s`, `5m`, `2h`, `1d`). |
+| `--max-steps` | `0` | Stop after this many steps (`0` = no cap, the duration governs). A step budget is what makes two generators comparable. |
+| `--exit-on-violation` | `false` | Stop the run at the first property violation and exit `2`. |
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
 | `--generator` | `seeded` | Who picks each action: `seeded` (the run's PRNG) or `llm` (a vision model). See [the LLM generator](../spec-language/#llm-generator). |
 | `--output` | `./runs` | Output directory for traces. |
 | `--clear-data` | `true` | Clear app data before launching so the run starts from a fresh install. Pass `--clear-data=false` to resume prior state. |
+
+Exit codes: `0` the run finished (violations, if any, are in the summary), `2` the run stopped on a violation under `--exit-on-violation`, `1` something went wrong. CI reads the difference between `2` and `1` to tell a found bug from a broken harness.
 
 ## `sanderling replay [run-or-runs-dir]`
 
@@ -63,7 +67,5 @@ Print the CLI version.
 ## Flags coming in v0.1.0
 
 - `--permissions` to pre-set OS-level permissions (for example `--permissions location=allow,notifications=deny`).
-- `--max-steps` hard cap on step count.
-- `--exit-on-violation` stop the run on the first property violation.
 
 Tracked in the [v0.1.0 milestone](https://github.com/priyanshujain/sanderling/milestone/1).

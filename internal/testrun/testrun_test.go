@@ -1,12 +1,16 @@
 package testrun
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/priyanshujain/sanderling/internal/driver"
+	"github.com/priyanshujain/sanderling/internal/runner"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
@@ -229,5 +233,74 @@ func TestBuildRunMeta_OmitsModelWhenSpecDeclaresNoLLMGenerator(t *testing.T) {
 
 	if meta.Model != "" {
 		t.Errorf("model recorded without a spec-declared llm generator: %q", meta.Model)
+	}
+}
+
+// TestRunOutcome_ReportsViolationsOnlyUnderTheFlag pins the CI contract: the
+// typed error is what makes `sanderling test` exit 2, and it must appear only
+// when the caller asked for it. A run that finds violations without the flag
+// stays a successful run, which is what every existing invocation expects.
+func TestRunOutcome_ReportsViolationsOnlyUnderTheFlag(t *testing.T) {
+	violated := runner.Summary{
+		Steps:      7,
+		Violations: []runner.ViolationRecord{{StepIndex: 3, Properties: []string{"balanceMoves"}}},
+	}
+	clean := runner.Summary{Steps: 7}
+
+	if err := runOutcome(Options{}, violated); err != nil {
+		t.Errorf("without --exit-on-violation a violated run must succeed, got %v", err)
+	}
+	if err := runOutcome(Options{ExitOnViolation: true}, clean); err != nil {
+		t.Errorf("a clean run must succeed under --exit-on-violation, got %v", err)
+	}
+
+	err := runOutcome(Options{ExitOnViolation: true}, violated)
+	var violations ViolationsError
+	if !errors.As(err, &violations) {
+		t.Fatalf("expected a ViolationsError, got %v", err)
+	}
+	if violations.Count != 1 {
+		t.Errorf("count: got %d, want 1", violations.Count)
+	}
+}
+
+// wedgedLaunchDriver never returns from Launch, standing in for a driver whose
+// device-side session is stuck.
+type wedgedLaunchDriver struct {
+	driver.DeviceDriver
+	release chan struct{}
+}
+
+func (w *wedgedLaunchDriver) Launch(ctx context.Context, _ string, _ bool, _ map[string]string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.release:
+		return nil
+	}
+}
+
+// TestLaunchAppBoundsWedgedDriver proves the pre-run launch carries a deadline.
+// It runs before the runner starts, so --duration does not cover it and
+// Execute's root context has no deadline: unbounded, a wedged driver hangs the
+// run forever with no trace directory and no error.
+func TestLaunchAppBoundsWedgedDriver(t *testing.T) {
+	previous := launchTimeout
+	launchTimeout = 100 * time.Millisecond
+	defer func() { launchTimeout = previous }()
+
+	wedged := &wedgedLaunchDriver{release: make(chan struct{})}
+	defer close(wedged.release)
+
+	done := make(chan error, 1)
+	go func() { done <- launchApp(context.Background(), wedged, Options{BundleID: "com.example.app"}) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want a deadline-exceeded error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("launchApp never returned: the pre-run launch is unbounded, so a wedged driver hangs the run forever")
 	}
 }

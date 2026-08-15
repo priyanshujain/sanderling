@@ -851,3 +851,175 @@ func (s *sequencedDumpCompanion) AccessibilityInfo(context.Context) (string, err
 	*s.reads++
 	return s.dumps[index], nil
 }
+
+// wedgedLifecycleCompanion never answers a lifecycle RPC, standing in for a
+// runner whose XCTest session is stuck inside a rejected launch.
+type wedgedLifecycleCompanion struct {
+	fakeCompanion
+	release chan struct{}
+}
+
+func (w *wedgedLifecycleCompanion) block(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.release:
+		return nil
+	}
+}
+
+func (w *wedgedLifecycleCompanion) Launch(ctx context.Context, _ string, _ bool) error {
+	return w.block(ctx)
+}
+
+func (w *wedgedLifecycleCompanion) Terminate(ctx context.Context, _ string) error {
+	return w.block(ctx)
+}
+
+// TestLaunchBoundsWedgedLifecycleRPC proves the launch path carries its own
+// deadline. Callers hand Launch an undeadlined context, so without one a runner
+// that never answers hangs the run forever with nothing printed.
+func TestLaunchBoundsWedgedLifecycleRPC(t *testing.T) {
+	previous := launchTimeout
+	launchTimeout = 100 * time.Millisecond
+	defer func() { launchTimeout = previous }()
+
+	companion := &wedgedLifecycleCompanion{release: make(chan struct{})}
+	defer close(companion.release)
+	d := newTestDriver(companion)
+
+	done := make(chan error, 1)
+	go func() { done <- d.Launch(context.Background(), "com.example.app", false, nil) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("wedged launch returned nil; a stuck runner must surface an error")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want a deadline-exceeded error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Launch never returned: the lifecycle RPC is unbounded, so a stuck runner hangs the run forever")
+	}
+}
+
+// TestTerminateBoundsWedgedLifecycleRPC covers the same bound on the standalone
+// terminate, which the runner calls mid-run on an equally stuck session.
+func TestTerminateBoundsWedgedLifecycleRPC(t *testing.T) {
+	previous := launchTimeout
+	launchTimeout = 100 * time.Millisecond
+	defer func() { launchTimeout = previous }()
+
+	companion := &wedgedLifecycleCompanion{release: make(chan struct{})}
+	defer close(companion.release)
+	d := newTestDriver(companion)
+
+	done := make(chan error, 1)
+	go func() { done <- d.Terminate(context.Background()) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want a deadline-exceeded error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Terminate never returned: the lifecycle RPC is unbounded")
+	}
+}
+
+// TestLaunchLeavesATighterCallerDeadlineAlone confirms the bound narrows the
+// caller's context and never widens it, so a caller that wants to give up
+// sooner still does.
+func TestLaunchLeavesATighterCallerDeadlineAlone(t *testing.T) {
+	previous := launchTimeout
+	launchTimeout = 30 * time.Second
+	defer func() { launchTimeout = previous }()
+
+	companion := &wedgedLifecycleCompanion{release: make(chan struct{})}
+	defer close(companion.release)
+	d := newTestDriver(companion)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := d.Launch(ctx, "com.example.app", false, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a deadline-exceeded error", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Launch took %v; the driver's bound overrode the caller's tighter deadline", elapsed)
+	}
+}
+
+// newLockTestOptions builds New options that dial a seamed companion, so the
+// device-lock tests exercise New without spawning anything.
+func newLockTestOptions(t *testing.T, udid string) Options {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			connection, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			_ = connection.Close()
+		}
+	}()
+	return Options{
+		UniqueDeviceIdentifier: udid,
+		pickAddress:            func() (string, error) { return listener.Addr().String(), nil },
+		spawnChild:             func(context.Context, string) (*exec.Cmd, error) { return &exec.Cmd{}, nil },
+		dialCompanion: func(string) (transport.Companion, error) {
+			return &fakeCompanion{accessibilityJSON: "[]"}, nil
+		},
+	}
+}
+
+// TestNewRejectsConcurrentRunOnSameDevice proves a second run cannot claim a
+// device the first is driving. Two runs interleave app lifecycle on one
+// simulator: the second's reinstall lands under the first's automation session
+// and wedges it. Failing fast names the contended device; the claim is released
+// on Close so the next run is not locked out.
+func TestNewRejectsConcurrentRunOnSameDevice(t *testing.T) {
+	t.Setenv("SANDERLING_SIMULATOR_COMPANION", "legacy")
+	udid := "LOCK-TEST-" + t.Name()
+
+	first, err := New(context.Background(), newLockTestOptions(t, udid))
+	if err != nil {
+		t.Fatalf("first New: %v", err)
+	}
+
+	_, err = New(context.Background(), newLockTestOptions(t, udid))
+	if err == nil {
+		t.Fatal("second run claimed a device the first still drives; concurrent runs corrupt each other's session")
+	}
+	if !strings.Contains(err.Error(), udid) {
+		t.Fatalf("err = %v, want it to name the contended device %s", err, udid)
+	}
+
+	first.Close()
+	third, err := New(context.Background(), newLockTestOptions(t, udid))
+	if err != nil {
+		t.Fatalf("device stayed locked after Close: %v", err)
+	}
+	third.Close()
+}
+
+// TestAcquireDeviceLockKeepsDistinctDevicesIndependent guards against a lock
+// path that ignores the udid and serializes unrelated runs.
+func TestAcquireDeviceLockKeepsDistinctDevicesIndependent(t *testing.T) {
+	first, err := acquireDeviceLock("LOCK-TEST-DEVICE-A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := acquireDeviceLock("LOCK-TEST-DEVICE-B")
+	if err != nil {
+		t.Fatalf("a second device was refused while another was locked: %v", err)
+	}
+	defer second.Close()
+}

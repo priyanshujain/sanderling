@@ -53,6 +53,30 @@ func TestBrowserCounterInvariantHolds(t *testing.T) {
 	}
 }
 
+// TestBrowserShadowDOMIsReachable drives a page whose entire UI (canvas, the
+// button over it, and the counter) lives inside a shadow root, the shape
+// Compose for Web produces. Both the enumeration and the selector lookup have
+// to cross the boundary for the counter to move at all, so the property firing
+// is the end-to-end evidence.
+func TestBrowserShadowDOMIsReachable(t *testing.T) {
+	violations := runFixture(t, "shadow")
+	if !slices.Contains(violations, "counterNeverMoves") {
+		t.Fatalf("nothing inside the shadow root was ever tapped; violations=%v", violations)
+	}
+}
+
+// TestBrowserAriaRoleIsTappable drives a page whose only controls are
+// <li role="option"> rows, the shape the replay UI gives its step list. The
+// tappable set covered role="button" and nothing else, so a spec had to
+// hand-write an action to reach a row; with the standard interactive roles
+// covered, the default tap enumeration finds them and the counter moves.
+func TestBrowserAriaRoleIsTappable(t *testing.T) {
+	violations := runFixture(t, "aria-roles")
+	if !slices.Contains(violations, "noRowWasEverSelected") {
+		t.Fatalf("no role=\"option\" row was ever tapped; violations=%v", violations)
+	}
+}
+
 // runFixture serves the named testdata case over an in-process file server,
 // drives it through headless Chrome with a fixed seed and a bounded step count,
 // and returns every property name that was ever reported violated.
@@ -179,4 +203,22 @@ func testdataDir(t *testing.T) string {
 
 func specSrcDir(t *testing.T) string {
 	return filepath.Join(repoRoot(t), "pkg", "spec", "src")
+}
+
+// TestBrowserUndefinedExtractorStaysUndefined drives the four layers of the
+// undefined reading through one run: the page wraps each reading in a {value}
+// envelope, the driver unwraps an absent value to an empty payload, the runner
+// checks the page reported one reading per extractor, and the verifier decodes
+// the empty payload as undefined. Each layer has its own unit test; only a run
+// proves they compose. Written straight into the map instead, an undefined
+// reading lost its whole index to JSON.stringify and that extractor silently
+// kept goja's dump-derived value while its neighbours held the page's.
+func TestBrowserUndefinedExtractorStaysUndefined(t *testing.T) {
+	violations := runFixture(t, "undefined-extractor")
+	if slices.Contains(violations, "undefinedStaysUndefined") {
+		t.Error("a reading the page could not take did not reach the spec as undefined")
+	}
+	if !slices.Contains(violations, "counterNeverMoves") {
+		t.Fatalf("nothing was ever tapped, so the property above held vacuously; violations=%v", violations)
+	}
 }

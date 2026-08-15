@@ -132,6 +132,79 @@ func TestNonEmptyValueMapsToText(t *testing.T) {
 	}
 }
 
+func TestStaticTextLabelMapsToText(t *testing.T) {
+	dump := `[{"type":"StaticText","frame":{"x":0,"y":0,"width":50,"height":18},
+		"AXLabel":"$239.00","AXValue":null,"enabled":true}]`
+	element := parseSingle(t, dump)
+	// A StaticText renders its label, so a spec reading .text must see it.
+	if element.Text != "$239.00" {
+		t.Fatalf("text = %q, want $239.00", element.Text)
+	}
+	// The raw label stays available: desc:/label:/content-desc: selectors and
+	// the settle hash read it on the iOS path.
+	if element.Description != "$239.00" {
+		t.Fatalf("description = %q, want $239.00", element.Description)
+	}
+}
+
+func TestNonTextLabelStaysDescriptionOnly(t *testing.T) {
+	// An icon-only button's label is a VoiceOver annotation, and a container's
+	// is a comma-joined reading of its children. Neither is on screen, so
+	// neither may become text; Android reports both as description too.
+	cases := []struct{ elementType, label string }{
+		{"Button", "Log out"},
+		{"Image", "Avatar"},
+		{"Other", "CH, Checking, $0.00, 0 transactions"},
+	}
+	for _, testCase := range cases {
+		dump := `[{"type":"` + testCase.elementType + `","frame":{"x":0,"y":0,"width":10,"height":10},
+			"AXLabel":"` + testCase.label + `","AXValue":null,"enabled":true}]`
+		element := parseSingle(t, dump)
+		if element.Text != "" {
+			t.Errorf("%s text = %q, want empty", testCase.elementType, element.Text)
+		}
+		if element.Description != testCase.label {
+			t.Errorf("%s description = %q, want %q", testCase.elementType, element.Description, testCase.label)
+		}
+	}
+}
+
+// Mirrors the folio Home screen as the companion actually dumps it: each
+// AccountCard is a Button carrying a merged VoiceOver label, with the name and
+// balance as StaticText siblings that the flat tree re-parents by containment.
+// Reading a card's balance is what folio's totalBalance extractor does, and it
+// read nothing on iOS until StaticText labels became text.
+func TestGoldenHomeCardBalancesAreReadableAsText(t *testing.T) {
+	tree := mapAndParse(t, readDump(t, "home-cards-describe.json"), 402, 874)
+
+	cards := tree.FindAllNodes("id:HomeScreen > id:AccountCard")
+	if len(cards) != 2 {
+		t.Fatalf("account cards = %d, want 2", len(cards))
+	}
+	want := []struct{ name, balance string }{{"Checking", "$12.34"}, {"Savings", "$500.00"}}
+	for i, card := range cards {
+		balance := card.Find("id:AccountBalance")
+		if balance == nil {
+			t.Fatalf("card %d: id:AccountBalance did not resolve", i)
+		}
+		if balance.Text != want[i].balance {
+			t.Errorf("card %d: balance text = %q, want %q", i, balance.Text, want[i].balance)
+		}
+		name := card.Find("id:AccountName")
+		if name == nil {
+			t.Fatalf("card %d: id:AccountName did not resolve", i)
+		}
+		if name.Text != want[i].name {
+			t.Errorf("card %d: name text = %q, want %q", i, name.Text, want[i].name)
+		}
+		// The card's own merged label is not visible text; the web fallback in
+		// the folio spec parses cardText and must not see a VoiceOver reading.
+		if card.Element.Text != "" {
+			t.Errorf("card %d: card text = %q, want empty", i, card.Element.Text)
+		}
+	}
+}
+
 func TestEditableAndClickableFlags(t *testing.T) {
 	cases := []struct {
 		elementType   string

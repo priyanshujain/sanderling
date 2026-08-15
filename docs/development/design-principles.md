@@ -51,3 +51,25 @@ There is exactly one authoring surface: the TypeScript spec. There is no separat
 
 This is intentional. A test harness with two authoring languages (YAML plus code, JSON plus code) splits concerns in a way that always drifts. Something works in one surface and not the other, and debugging requires holding both in your head.
 
+
+## 8. A property that cannot fail is worse than one that fails
+
+A spec fails loudly when it is wrong about the app. It fails silently when it is wrong about
+itself, and that is the failure this project has to design against.
+
+Two shapes recur. A property is *vacuously true* when a fact it reads is missing, so it never
+fires and every run is green: `state.lastAction` was hardcoded null on web, `ax.findAll` on a
+selector path returned nothing there, and no element on iOS carried `text` because the mapping
+only ever read `AXValue`. In each case a correct property proved nothing. A property is
+*degenerately false* when a missing fact is read as a value instead: folio's balances parsed as
+`0` on web, so the check became `|0 - 0| === typedAmount` and fired on every healthy submit.
+Both shapes look exactly like a working property from the outside.
+
+So an unreadable fact is unknown, never a default. Extractors return null rather than zero or
+empty string, and a property given an unknown declines to judge instead of convicting. The same
+rule covers arithmetic the representation cannot hold: integer cents in a float64 stop being
+exact past 2^53, and a comparison that cannot pass is not a comparison that failed.
+
+Which means a green run is evidence only if you can point at a step where the property actually
+fired, and a red one only if the witness holds real values. Read the witness, not the exit code.
+Every bug listed above was found that way, and each had already survived a run that looked fine.

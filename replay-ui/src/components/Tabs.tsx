@@ -65,6 +65,7 @@ export default function Tabs({ tabs, defaultTabId, ariaLabel }: TabsProps) {
     <div className="tabs">
       <div
         className="tabs-header"
+        data-testid="tab-strip"
         role="tablist"
         aria-label={ariaLabel}
         onKeyDown={handleKeyDown}
@@ -82,6 +83,8 @@ export default function Tabs({ tabs, defaultTabId, ariaLabel }: TabsProps) {
                 }
               }}
               type="button"
+              data-testid="tab"
+              data-tab-id={tab.id}
               role="tab"
               id={`${panelId}-tab-${tab.id}`}
               className="tabs-tab"
