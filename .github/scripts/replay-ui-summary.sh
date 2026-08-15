@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Reads the replay-ui dogfood trace and reports, per property, how many steps
+# Reads the replay-ui fuzzing trace and reports, per property, how many steps
 # that property actually judged. Kept out of the workflow YAML so it can be run
 # by hand against a local run:
 #
-#   GITHUB_STEP_SUMMARY=/dev/stdout .github/scripts/replay-ui-summary.sh runs/dogfood
+#   GITHUB_STEP_SUMMARY=/dev/stdout .github/scripts/replay-ui-summary.sh runs/replay-ui
 #
 # `sanderling test` exiting 0 says only that no property returned false. Every
 # property in replay-ui/sanderling/spec.ts declines to judge when a reading it
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-output="${1:-runs/dogfood}"
+output="${1:-runs/replay-ui}"
 spec="${SPEC:-$root/replay-ui/sanderling/spec.ts}"
 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
@@ -23,7 +23,7 @@ run_dirs=("$output"/*/)
 shopt -u nullglob
 
 {
-  echo "### replay-ui dogfood"
+  echo "### the replay ui"
   echo
   echo "- seed \`${SEED:-unset}\`, budget ${MAX_STEPS:-unset} steps"
 } >> "$summary"
