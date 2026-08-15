@@ -96,6 +96,12 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			object:   objectSelector("desc", "customer_row_a1"),
 			want:     []string{"customer_row_a1"},
 		},
+		{
+			name:     "data-testid",
+			selector: "data-testid:customer-row",
+			object:   objectSelector("data-testid", "customer-row"),
+			want:     []string{"customer_row_a1", "customer_row_b2"},
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -120,6 +126,56 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 				t.Errorf("the web runtime object form matched %v, want %v", webObject, testCase.want)
 			}
 		})
+	}
+}
+
+// A third resolver reads the same selector: TapSelector hands it to CDP as the
+// CSS TranslateStringSelector builds. The runner uses both within one InputText
+// step, resolving the target in the dump and tapping it over CDP, so a selector
+// the two read differently taps one element and reads the text of another.
+func TestSelectors_DataTestIDNamesTheSameElementInTheDumpAndOverCDP(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+
+	const selector = "data-testid:summary"
+	element := tree.Find(selector)
+	if element == nil {
+		t.Fatalf("the dump resolves %s to nothing, so every step that names a target this way loses it", selector)
+	}
+	css, isXPath, err := TranslateStringSelector(selector)
+	if err != nil {
+		t.Fatalf("TranslateStringSelector(%q): %v", selector, err)
+	}
+	if isXPath {
+		t.Fatalf("TranslateStringSelector(%q) returned an XPath, want CSS", selector)
+	}
+	var overCDP string
+	script := `(document.querySelector(` + jsArgument(css) + `) || {}).id || ""`
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &overCDP)); err != nil {
+		t.Fatalf("resolve %q over CDP: %v", css, err)
+	}
+	if overCDP == "" {
+		t.Fatalf("the CDP selector %q matched nothing", css)
+	}
+	if element.ResourceID != overCDP {
+		t.Errorf("the dump resolves %s to %q, the CDP selector %q to %q",
+			selector, element.ResourceID, css, overCDP)
 	}
 }
 

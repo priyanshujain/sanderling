@@ -456,6 +456,12 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     const text = (el.textContent || '').trim().slice(0, 200);
     if (text) attrs.text = text;
     if (el.id) attrs['resource-id'] = el.id;
+    // The V8 host names a target by data-testid (IDENTITY_KEYS in
+    // pkg/spec/src/web-runtime.ts) and TapSelector translates the selector into
+    // a CSS attribute match, so a dump without this attribute leaves the goja
+    // host unable to resolve a target the other two resolve fine.
+    const testid = el.getAttribute('data-testid');
+    if (testid) attrs['data-testid'] = testid;
     const label = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '';
     if (label) attrs['content-desc'] = label;
     const tag = (el.tagName || '').toLowerCase();
