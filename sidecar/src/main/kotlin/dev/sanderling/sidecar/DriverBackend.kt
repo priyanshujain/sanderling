@@ -1044,15 +1044,75 @@ internal fun dadbTargetFor(serial: String?): DadbTarget {
     }
 }
 
+internal data class AdbServerEndpoint(val host: String, val port: Int)
+
+private const val ADB_SERVER_HOST = "localhost"
+private const val ADB_SERVER_PORT = 5037
+
+// adbServerEndpoint reads where the adb server listens the way the adb CLI
+// reads it: ADB_SERVER_SOCKET ("tcp:host:port", or "tcp:port" for a server on
+// this machine) outranks the older ANDROID_ADB_SERVER_ADDRESS /
+// ANDROID_ADB_SERVER_PORT pair, and unset means the loopback default.
+//
+// A value it cannot read throws instead of falling back to loopback. The
+// fallback is the dangerous answer: emulator serials are numbered per server,
+// so a run aimed at a remote emulator-5554 would quietly drive whatever this
+// machine calls emulator-5554 and report the results as the remote device's.
+internal fun adbServerEndpoint(
+    env: (String) -> String? = System::getenv,
+): AdbServerEndpoint {
+    val socket = env("ADB_SERVER_SOCKET")?.trim().orEmpty()
+    if (socket.isNotEmpty()) return parseAdbServerSocket(socket)
+    val host = env("ANDROID_ADB_SERVER_ADDRESS")?.trim().orEmpty()
+    val port = env("ANDROID_ADB_SERVER_PORT")?.trim().orEmpty()
+    return AdbServerEndpoint(
+        host.ifEmpty { ADB_SERVER_HOST },
+        if (port.isEmpty()) {
+            ADB_SERVER_PORT
+        } else {
+            adbServerPort(port, "ANDROID_ADB_SERVER_PORT=\"$port\"")
+        },
+    )
+}
+
+private fun parseAdbServerSocket(value: String): AdbServerEndpoint {
+    val named = "ADB_SERVER_SOCKET=\"$value\""
+    val address = value.removePrefix("tcp:")
+    if (address == value) rejectAdbServerSocket(named)
+    val colon = address.lastIndexOf(':')
+    if (colon < 0) {
+        return AdbServerEndpoint(
+            ADB_SERVER_HOST,
+            adbServerPort(address, named),
+        )
+    }
+    val host = address.substring(0, colon)
+    if (host.isEmpty()) rejectAdbServerSocket(named)
+    return AdbServerEndpoint(
+        host,
+        adbServerPort(address.substring(colon + 1), named),
+    )
+}
+
+private fun rejectAdbServerSocket(named: String): Nothing =
+    throw IllegalArgumentException("$named is not tcp:host:port")
+
+private fun adbServerPort(text: String, named: String): Int =
+    text.toIntOrNull()?.takeIf { it in 1..65535 }
+        ?: throw IllegalArgumentException("$named has no usable port")
+
 private fun buildDadb(serial: String?): dadb.Dadb =
     when (val target = dadbTargetFor(serial)) {
         is DadbTarget.Tcp -> dadb.Dadb.create(target.host, target.port)
 
-        is DadbTarget.Server -> dadb.adbserver.AdbServer.createDadb(
-            "localhost",
-            5037,
-            "host:transport:${target.serial}",
-        )
+        is DadbTarget.Server -> {
+            val server = adbServerEndpoint()
+            dadb.adbserver.AdbServer.createDadb(
+                server.host,
+                server.port,
+                "host:transport:${target.serial}",
+            )
+        }
     }
 
 internal fun findBoundsBySelector(
