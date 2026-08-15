@@ -121,20 +121,14 @@ jobs:
           SEED: ${{ inputs.seed }}
           MAX_STEPS: ${{ inputs.max-steps }}
 
+      # Exit 0 above means no property returned false. It does not mean any
+      # property was ever evaluated against real content: they all decline to
+      # judge when the elements they read are absent, so a run that never
+      # rendered the step page is green and worthless. This step is what tells
+      # the two apart, and it fails the job when nothing was judged.
       - name: Summarise
         if: always()
-        run: |
-          {
-            echo "### replay-ui dogfood"
-            echo
-            echo "- seed \`$SEED\`, budget $MAX_STEPS steps"
-            for dir in runs/dogfood/*/; do
-              [ -f "$dir/trace.jsonl" ] || continue
-              steps=$(wc -l < "$dir/trace.jsonl" | tr -d ' ')
-              violations=$(grep -c '"violations":\[' "$dir/trace.jsonl" || true)
-              echo "- $steps steps recorded, $violations step(s) with violations"
-            done
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: .github/scripts/replay-ui-summary.sh runs/dogfood
         env:
           SEED: ${{ inputs.seed }}
           MAX_STEPS: ${{ inputs.max-steps }}

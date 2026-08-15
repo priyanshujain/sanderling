@@ -29,7 +29,7 @@ WEB_DIST := replay-ui/dist
 
 GOLINES := $(shell $(GO) env GOPATH)/bin/golines
 
-.PHONY: bootstrap proto sidecar sanderling sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-spec-api spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
+.PHONY: bootstrap proto sidecar sanderling sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-spec-api test-ci-scripts spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
 
 bootstrap:
 	$(GO) mod download
@@ -117,7 +117,7 @@ fmt-ts:
 fmt-swift:
 	xcrun swift-format format -i -r companion/Sources
 
-test: test-go test-kotlin spec-typecheck test-spec-api web-typecheck web-test
+test: test-go test-kotlin spec-typecheck test-spec-api web-typecheck web-test test-ci-scripts
 
 test-go:
 	$(GO) test $(GO_PACKAGES)
@@ -140,6 +140,11 @@ test-companion: $(COMPANION_EMBED) $(RUNNER_EMBED)
 
 test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test
+
+# The CI scripts that read a trace and decide whether a green leg is
+# evidence. bash and python3 only, which is all a runner has.
+test-ci-scripts:
+	.github/scripts/replay-ui-summary-test.sh
 
 test-spec-api:
 	cd pkg/spec && npm test --silent

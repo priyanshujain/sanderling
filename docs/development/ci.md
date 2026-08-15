@@ -136,6 +136,24 @@ hold for any trace and need no recalibrating when the fixture changes. The
 seventh is the stock `noUncaughtExceptions`, which asks nothing of the panels
 and only fails if the UI throws. Any violation fails the job.
 
+So does a run that judged nothing. Exit 0 says no property returned false, which
+is not the same as any property having been evaluated: each one declines to
+judge when the elements it reads are absent, so a run where the trace failed to
+serve, or where the fuzzer sat on the run list, renders nothing and passes.
+`.github/scripts/replay-ui-summary.sh` reads the trace and puts a per-property
+count of judged against declined steps in the job summary. Run it by hand with
+`GITHUB_STEP_SUMMARY=/dev/stdout .github/scripts/replay-ui-summary.sh runs/dogfood`.
+
+It fails the job when any of the four properties that need nothing beyond the
+step page having rendered - `selectedStepIsInRange`, `exactlyOneStepIsSelected`,
+`stepCountMatchesTheList`, `screenshotShowsTheSelectedStep` - judged nothing at
+all. The other three are reported and not gated, because a zero on them is a
+seed getting unlucky rather than a broken leg: `switchingTabsKeepsTheStep` needs
+a tab switch between consecutive steps, and `badgeCountMatchesThePanel` needs the
+fuzzer to land on a violating step and open the violations tab in that same
+step. On the first run measured this way (seed 3, 80 steps) that last one judged
+nothing at all, so the fixture reaches it far too rarely to be worth gating on.
+
 ## Reading a failure
 
 Both workflows upload their run directories as artifacts, and write the step
