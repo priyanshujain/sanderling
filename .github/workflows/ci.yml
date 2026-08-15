@@ -27,11 +27,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up JDK 17
+      - name: Set up the JDKs
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          # The sidecar toolchain pins 17; the metro gradle plugin folio
+          # compiles with needs a 21 runtime. Both are installed so each
+          # gradle build can pick its own.
+          java-version: |
+            17
+            21
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -94,6 +99,12 @@ jobs:
 
       - name: Run tests
         run: make test
+
+      # folio's own gradle build, which `make test` does not reach. Its own
+      # step rather than part of `test` so the target developers run
+      # constantly keeps its 17 floor.
+      - name: Run folio's unit tests
+        run: make test-folio
 
   browser:
     runs-on: ubuntu-latest
