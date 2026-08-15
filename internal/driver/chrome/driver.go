@@ -393,6 +393,14 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
   // root a full-viewport tap target here and nowhere else.
   const NON_TEXT_INPUT_TYPES =
     ['button','submit','checkbox','radio','range','color','file','image','reset'];
+  // The disabled property belongs to real form controls only, so it reads
+  // undefined on the role-based controls the tappable set now covers, and every
+  // one of them looked enabled however plainly it was marked otherwise.
+  // isEnabled in pkg/spec/src/web-runtime.ts answers the same two ways.
+  function isEnabled(el) {
+    if (el.disabled) return false;
+    return el.getAttribute('aria-disabled') !== 'true';
+  }
   function isEditableElement(el) {
     if (el.isContentEditable) return true;
     const tag = el.tagName.toLowerCase();
@@ -465,7 +473,7 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
       attributes: attrs,
       children: children,
       clickable: isClickable || null,
-      enabled: (!el.disabled) || null,
+      enabled: isEnabled(el) || null,
       focused: document.activeElement === el || null,
       checked: el.checked || null,
       selected: el.selected || null,

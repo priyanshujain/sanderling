@@ -328,6 +328,16 @@ function selectorTag(selector: unknown): string {
   return "";
 }
 
+// isEnabled answers the `enabled` fact. `.disabled` is a property only real form
+// controls have, so it reads undefined on the role-based controls the tappable
+// set now covers, and every one of them looked enabled however plainly it was
+// marked otherwise. internal/driver/chrome/driver.go answers the same two ways
+// for the dump the goja host reads.
+function isEnabled(element: Element): boolean {
+  if ((element as HTMLButtonElement).disabled) return false;
+  return element.getAttribute("aria-disabled") !== "true";
+}
+
 function elementHandle(element: Element, selector: unknown): Record<string, unknown> {
   const rect = element.getBoundingClientRect();
   const x = Math.round(rect.left + rect.width / 2);
@@ -346,7 +356,7 @@ function elementHandle(element: Element, selector: unknown): Record<string, unkn
     desc: ariaLabel,
     class: (element as HTMLElement).className ?? "",
     clickable: true,
-    enabled: !(element as HTMLButtonElement).disabled,
+    enabled: isEnabled(element),
     focused: document.activeElement === element,
     x,
     y,
@@ -716,7 +726,7 @@ function collectTargets(): TargetElement[] {
     ...pointOf(element),
     selector: selectors[index],
     clickable: clickable.has(element),
-    enabled: !(element as HTMLButtonElement).disabled,
+    enabled: isEnabled(element),
     editable: editable.has(element),
     scrollable: isScrollable(element),
   }));
