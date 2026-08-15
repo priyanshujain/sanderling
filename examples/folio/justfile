@@ -130,6 +130,10 @@ ios:
       -destination 'platform=iOS Simulator,name={{ios_device}}' \
       -derivedDataPath app/iosApp/build \
       build | tail -5
+    # Installing over the top keeps the data container, and folio's signed-in
+    # session with it, so a run started straight after would open on the last
+    # run's Home screen instead of Login and diverge at step 1.
+    xcrun simctl uninstall booted app.folio || true
     xcrun simctl install booted "{{ios_app}}"
     xcrun simctl launch booted app.folio
 
