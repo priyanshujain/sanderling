@@ -903,8 +903,15 @@ func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int,
 		return 0, 0, false
 	}
 	if tree != nil {
-		if element := tree.Find(action.On); element != nil {
-			x, y := element.Bounds.Center()
+		// An ambiguous selector names several elements while the action's own
+		// coordinates name one, so the coordinates win. Attribute values match
+		// by substring, so a selector unique where the candidate was built can
+		// be ambiguous in the tree it resolves against. A bare-string target
+		// carries no coordinates, and there the name is all there is.
+		matches := tree.FindAll(action.On)
+		hasCoordinates := action.X > 0 && action.Y > 0
+		if len(matches) > 0 && (len(matches) == 1 || !hasCoordinates) {
+			x, y := matches[0].Bounds.Center()
 			if x > 0 && y > 0 {
 				return x, y, true
 			}

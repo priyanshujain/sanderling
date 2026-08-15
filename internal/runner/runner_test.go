@@ -1037,6 +1037,53 @@ func TestApplyAction_V8InputTextAtOriginStillTaps(t *testing.T) {
 	}
 }
 
+// Attribute values match by substring, so "data-testid:card" answers to
+// "card-1" and "card-10" alike. A candidate built where the selector named one
+// element can execute where it names several, and the tree lookup would send
+// every one of them to the first match.
+func TestApplyAction_AmbiguousSelectorTapsTheActionsOwnCoordinates(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"data-testid":"card-1","bounds":"[0,100,200,200]"},"children":[]},
+		{"attributes":{"data-testid":"card-10","bounds":"[0,300,200,400]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindTap, On: "data-testid:card-1", X: 100, Y: 350}
+
+	mustDispatch(t, driverMock, action, tree)
+	for _, dispatched := range driverMock.Actions() {
+		if dispatched.Kind == mockdriver.ActionTap && dispatched.X == 100 && dispatched.Y == 350 {
+			return
+		}
+	}
+	t.Errorf("tap reached the driver at %v, want the action's own (100,350)", driverMock.Actions())
+}
+
+// A bare-string target carries no coordinates of its own, so an ambiguous name
+// is all there is to act on and the first match stays the answer. Refusing it
+// would drop an authored action.
+func TestApplyAction_AmbiguousSelectorWithoutCoordinatesTapsTheFirstMatch(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"data-testid":"card-1","bounds":"[0,100,200,200]"},"children":[]},
+		{"attributes":{"data-testid":"card-10","bounds":"[0,300,200,400]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindTap, On: "data-testid:card-1"}
+
+	mustDispatch(t, driverMock, action, tree)
+	for _, dispatched := range driverMock.Actions() {
+		if dispatched.Kind == mockdriver.ActionTap && dispatched.X == 100 && dispatched.Y == 150 {
+			return
+		}
+	}
+	t.Errorf("tap reached the driver at %v, want the first match's centre (100,150)", driverMock.Actions())
+}
+
 func TestApplyAction_DoubleTapDispatchesDoubleTapAtCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, X: 100, Y: 200}
