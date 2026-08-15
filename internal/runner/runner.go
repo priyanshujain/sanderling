@@ -88,6 +88,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
+	_, pageExtractors := extractorSource.(webSource)
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -219,11 +220,17 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			}); err != nil {
 				return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 			}
-			// Both failures below leave some extractors holding the page's
+			// Every failure below leaves some extractors holding the page's
 			// value and the rest holding goja's reading of the dump, and a
 			// property comparing previous to current across that split fires
-			// on a healthy app. A skip also means the two engines loaded
+			// on a healthy app. Each also means the two engines loaded
 			// different bundles, which nothing downstream can reconcile.
+			if pageExtractors && len(v8Overrides) != options.Verifier.ExtractorCount() {
+				return summary, fmt.Errorf(
+					"step %d: the page reported values for %d of the spec's %d extractors; "+
+						"the page and the host are running different bundles",
+					stepIndex, len(v8Overrides), options.Verifier.ExtractorCount())
+			}
 			skipped, overrideErr := options.Verifier.OverrideExtractorValues(v8Overrides)
 			if overrideErr != nil {
 				return summary, fmt.Errorf("step %d apply extractor overrides: %w", stepIndex, overrideErr)
