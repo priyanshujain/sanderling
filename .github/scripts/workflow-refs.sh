@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Checks that everything the workflows name actually exists: composite actions,
-# make targets, and the scripts a run: block invokes.
+# Checks that everything the workflow names actually exists: composite actions,
+# make targets, and the scripts a run: block invokes. Then checks that no run:
+# block interpolates a `${{ }}`.
 #
 # This is the class actionlint does not cover. `uses: ./.github/actions/typo`
-# lints clean and fails only when the job runs, and these workflows are
-# dispatch-only or push-triggered, so that first run is after merge.
+# lints clean and fails only when the job runs, and the folio jobs and the
+# release job never run on a pull request, so that first run is after merge.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 ROOT="$root" python3 - <<'PY'
 import glob
-import json
 import os
 import re
 import sys
@@ -75,14 +75,6 @@ for path in sorted(glob.glob(os.path.join(root, ".github/workflows/*.yml"))):
     commands = re.sub(r"#[^\n]*", "", body)
     for name in re.findall(r"\bmake\s+([a-z][a-z0-9-]*)\b", commands):
         wanted.add(name)
-    # `make "sanderling-$SANDERLING"` is resolved from the matrix that feeds it
-    if "sanderling-$SANDERLING" in body:
-        table = re.search(r"examples='(\[.*?\])'", body, re.S)
-        if table is None:
-            sys.exit("workflow-refs: %s builds a make target from $SANDERLING but its "
-                     "examples table could not be read" % rel(path))
-        for entry in json.loads(table.group(1)):
-            wanted.add("sanderling-%s" % entry["sanderling"])
 for name in sorted(wanted):
     report(name in targets, "make %s" % name)
 
@@ -96,6 +88,51 @@ for name in sorted(scripts):
     report(os.path.isfile(full), name)
     if os.path.isfile(full):
         report(os.access(full, os.X_OK), "%s is executable" % name)
+
+# --- expressions in a run: block ---------------------------------------------
+# A `${{ }}` is substituted into the script text before bash reads the line, so
+# an expression carrying text someone else wrote runs as a command. Values reach
+# a run: block through env instead. actionlint flags only the contexts it knows
+# are attacker-controlled, and a matrix value or a dispatch input is not on that
+# list.
+print("\nrun: blocks free of ${{ }}:")
+
+
+def run_blocks(text):
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        head = re.match(r"^(\s*(?:-\s+)?)run:(.*)$", lines[i])
+        if head is None:
+            i += 1
+            continue
+        column, rest = len(head.group(1)), head.group(2).strip()
+        start, body = i + 1, []
+        if rest in ("|", "|-", "|+", ">", ">-", ">+", ""):
+            i += 1
+            while i < len(lines) and (not lines[i].strip()
+                                      or len(lines[i]) - len(lines[i].lstrip()) > column):
+                body.append(lines[i])
+                i += 1
+        else:
+            body.append(rest)
+            i += 1
+        yield start, "\n".join(body)
+
+
+blocks = 0
+for path in workflow_files():
+    hits = []
+    for line, body in run_blocks(open(path).read()):
+        blocks += 1
+        hits += ["line %d: %s" % (line, hit) for hit in re.findall(r"\$\{\{.*?\}\}", body, re.S)]
+    report(not hits, rel(path), "  (%s)" % ("; ".join(hits) if hits else "clean"))
+
+# Same reason as the local action count above: a scanner that reads no run:
+# block at all would pass every file it never looked at.
+if blocks == 0:
+    sys.exit("workflow-refs: found no run: block at all, so this check is not "
+             "reading the workflows it claims to read")
 
 print("\n%d references checked" % checked)
 if problems:
