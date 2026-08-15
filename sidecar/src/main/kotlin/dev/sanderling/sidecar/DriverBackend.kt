@@ -128,15 +128,11 @@ internal fun awaitSettledTree(read: () -> String): String {
 // streak resets and the loop keeps polling instead of declaring a partial
 // state stable.
 //
-// The streak is measured from the start of the read that opened the current
-// run of identical snapshots, not from when that read returned, so a slow read
-// is charged to the streak. That is a deliberate trade and not a free one: the
-// quiet the poll actually OBSERVED spans the last read's start back to the
-// first read's return, which is shorter than streakMillis by up to the two
-// reads' durations. On Android a hierarchy fetch costs more than the poll
-// interval, so charging it is the difference between two reads and four, and a
-// caller wanting the full streak observed has to widen streakMillis rather than
-// assume it. StabilityPollTest.slowSnapshotReadsCountTowardTheStreak pins this.
+// streakMillis is quiet the poll OBSERVED: the clock starts when the read that
+// first matched its predecessor returns, so the reads spanning it are not
+// charged to it. A hierarchy fetch on Android costs more than the poll
+// interval, and charging it would let a 500ms read clear the default 750ms
+// streak having watched 250ms of quiet.
 internal fun pollUntilStable(
     timeoutMillis: Long,
     streakMillis: Long = MIN_STABLE_STREAK_MILLIS,
@@ -145,24 +141,25 @@ internal fun pollUntilStable(
 ) {
     if (timeoutMillis <= 0) return
     val deadline = System.currentTimeMillis() + timeoutMillis
-    var runStart = System.currentTimeMillis()
     var prior = try {
         snapshot()
     } catch (_: Exception) {
         null
     }
+    var streakStart = 0L
     while (System.currentTimeMillis() < deadline) {
         Thread.sleep(intervalMillis)
-        val currentStart = System.currentTimeMillis()
         val current = try {
             snapshot()
         } catch (_: Exception) {
             null
         }
+        val now = System.currentTimeMillis()
         if (prior != null && current != null && prior == current) {
-            if (System.currentTimeMillis() - runStart >= streakMillis) return
+            if (streakStart == 0L) streakStart = now
+            if (now - streakStart >= streakMillis) return
         } else {
-            runStart = currentStart
+            streakStart = 0L
         }
         prior = current
     }
