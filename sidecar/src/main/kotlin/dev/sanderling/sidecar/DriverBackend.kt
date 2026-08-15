@@ -185,7 +185,8 @@ private val ROUTE_TAG_KEYS = setOf(
     "accessibilityIdentifier",
 )
 
-private val jsonMapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+private val jsonMapper =
+    com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
 
 // countRouteScreens counts DISTINCT route-level destination tags, not the nodes
 // carrying them. A screen that nests a node repeating its own route id puts two
@@ -496,8 +497,8 @@ class StubDriverBackend(
                 when (ch) {
                     ' ' -> sb.append("%s")
 
-                    '\\', '"', '\'', '&', '|', ';', '<', '>', '(', ')', '*', '?',
-                    '$', '`', '[', ']', '{', '}', '~', '#',
+                    '\\', '"', '\'', '&', '|', ';', '<', '>', '(', ')', '*',
+                    '?', '$', '`', '[', ']', '{', '}', '~', '#',
                     -> sb.append(
                         '\\',
                     ).append(ch)
@@ -1115,7 +1116,8 @@ internal fun pngHeight(bytes: ByteArray): Int {
         (bytes[22].toInt() and 0xFF shl 8) or (bytes[23].toInt() and 0xFF)
 }
 
-internal const val IOS_XCTEST_RUNNER_BUNDLE_ID = "dev.mobile.maestro-driver-iosUITests.xctrunner"
+internal const val IOS_XCTEST_RUNNER_BUNDLE_ID =
+    "dev.mobile.maestro-driver-iosUITests.xctrunner"
 
 // reapOrphanIosRunners kills XCTest runner sessions left over from a prior
 // run. A sidecar that died without its shutdown hook leaves its xcodebuild
