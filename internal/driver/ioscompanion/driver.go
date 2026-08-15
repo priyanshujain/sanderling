@@ -157,23 +157,26 @@ type Driver struct {
 	// lifecycle, screenshot) with an in-simulator runner that serves
 	// collapse-free accessibility snapshots and native unicode typing.
 	// runnerClient is nil on the legacy-only path.
-	runnerClient      transport.Companion
-	runnerChild       *exec.Cmd
-	runnerAddress     string
-	spawnRunner       func(ctx context.Context, address string) (*exec.Cmd, error)
-	dialRunner        func(address string) (transport.Companion, error)
+	runnerClient  transport.Companion
+	runnerChild   *exec.Cmd
+	runnerAddress string
+	spawnRunner   func(ctx context.Context, address string) (*exec.Cmd, error)
+	dialRunner    func(address string) (transport.Companion, error)
+	hybrid        bool
+
+	// pickRunnerAddress hands every bring-up a free loopback port, on the
+	// simulator and the device alike. One field, so no path can be wired
+	// without it.
 	pickRunnerAddress func() (string, error)
-	hybrid            bool
 
 	// Device-mode fields. On the physical-device path d.companion is the runner
 	// dialed over a usbmux tunnel, hybrid is false, and runnerClient is nil.
 	// coreDeviceID feeds devicectl; tunnel is the in-process usbmux forwarder
 	// bridging the host loopback port to the runner's device-side port.
-	deviceMode        bool
-	coreDeviceID      string
-	tunnel            io.Closer
-	startTunnel       func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
-	pickDeviceAddress func() (string, error)
+	deviceMode   bool
+	coreDeviceID string
+	tunnel       io.Closer
+	startTunnel  func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
 
 	// processContext owns the companion child's lifetime: it is derived from
 	// New's context (so a canceled run still reaps the child) and canceled by

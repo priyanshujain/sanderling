@@ -103,9 +103,9 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 		}
 	}
 	if options.pickAddress != nil {
-		d.pickDeviceAddress = options.pickAddress
+		d.pickRunnerAddress = options.pickAddress
 	} else {
-		d.pickDeviceAddress = pickLoopbackAddress
+		d.pickRunnerAddress = pickLoopbackAddress
 	}
 
 	// Device seams: clear-state reinstalls via devicectl; the container reset and
@@ -159,7 +159,7 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 // health. The build runs inside spawnRunner under the process context, so the
 // startup timeout only bounds the post-spawn wait, not the build.
 func (d *Driver) bringUpDevice(ctx context.Context) error {
-	address, err := d.pickDeviceAddress()
+	address, err := d.pickRunnerAddress()
 	if err != nil {
 		return err
 	}
