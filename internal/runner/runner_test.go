@@ -196,6 +196,23 @@ func TestRenderSummary_OmitsUnsupportedLineWhenNone(t *testing.T) {
 	}
 }
 
+// A step nothing judged is not a step that passed. The run prints its count so
+// a green summary cannot hide a run that skipped most of its steps, which is
+// what a screen that keeps moving under the reads would produce.
+func TestRenderSummary_CountsTheStepsNothingJudged(t *testing.T) {
+	var out bytes.Buffer
+	RenderSummary(&out, Summary{Steps: 10, SkippedVerification: 4}, "android")
+	if !strings.Contains(out.String(), "4 step(s) judged by nothing") {
+		t.Errorf("expected the unjudged-step count, got:\n%s", out.String())
+	}
+
+	out.Reset()
+	RenderSummary(&out, Summary{Steps: 10}, "android")
+	if strings.Contains(out.String(), "judged by nothing") {
+		t.Errorf("a run that judged every step must not print the line, got:\n%s", out.String())
+	}
+}
+
 func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 
@@ -1073,8 +1090,15 @@ func TestRunner_UsesAtomicSnapshot(t *testing.T) {
 	if snapshotCalls == 0 {
 		t.Errorf("expected at least one Snapshot call, got %d", snapshotCalls)
 	}
-	if hierarchyCalls != 0 {
-		t.Errorf("expected zero standalone Hierarchy calls (runner must use Snapshot), got %d", hierarchyCalls)
+	// The recorded pair still comes from Snapshot. The standalone hierarchy
+	// reads are the composition detector (changedOnReread), one per step at
+	// most, and they are never the source of what the step records.
+	if hierarchyCalls > summary.Steps {
+		t.Errorf("expected at most one standalone Hierarchy call per step (runner must observe through Snapshot), got %d over %d steps",
+			hierarchyCalls, summary.Steps)
+	}
+	if snapshotCalls < summary.Steps {
+		t.Errorf("expected a Snapshot per step, got %d over %d steps", snapshotCalls, summary.Steps)
 	}
 	if screenshotCalls != 0 {
 		t.Errorf("expected zero standalone Screenshot calls (runner must use Snapshot), got %d", screenshotCalls)
@@ -1894,8 +1918,10 @@ func TestEnsureForeground_DismissesSystemOverlay(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	options := Options{BundleID: "app.folio", Driver: m, IdleTimeout: 10 * time.Millisecond}
 
-	if !ensureForeground(context.Background(), options, logger, 5) {
-		t.Fatal("expected the guard to act on the focus-stealing overlay")
+	got := ensureForeground(context.Background(), options, logger, 5)
+	if got != foregroundOverlayDismissed {
+		t.Fatalf("the guard reported %v, want foregroundOverlayDismissed; "+
+			"an obscured app is not a relaunched one", got)
 	}
 	backs, relaunches := 0, 0
 	for _, a := range m.Actions() {

@@ -169,6 +169,7 @@ func TestLastAction_WebJSONMatchesTheGojaObject(t *testing.T) {
 		{"nil", nil},
 		{"Tap", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", X: 12, Y: 34}},
 		{"TapApplied", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true}},
+		{"TapRelaunched", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true, Relaunched: true}},
 		{"TapWithoutSelector", &Action{Kind: ActionKindTap, X: 12, Y: 34}},
 		{"DoubleTap", &Action{Kind: ActionKindDoubleTap, On: `desc:say "hi" <b>`}},
 		{"InputText", &Action{Kind: ActionKindInputText, On: "id:field", Text: "50"}},
@@ -227,6 +228,54 @@ func TestLastAction_SeparatesNoActionFromAnActionOfUnknownFate(t *testing.T) {
 				t.Fatal(err)
 			}
 			handle := verifier.runtime.GlobalObject().Get("fate").ToObject(verifier.runtime)
+			if got := handle.Get("current").String(); got != testCase.want {
+				t.Errorf("the spec read %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// The runner relaunches the app when it leaves the foreground, which used to be
+// reported to the spec as "no action ran between these two readings". The
+// action did run; what a property cannot assume across it is that app state was
+// continuous, so the relaunch is its own fact on an action that keeps its
+// confirmed dispatch.
+func TestLastAction_ReportsARelaunchSeparatelyFromTheDispatch(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.continuity = __sanderling__.extract(state =>
+			state.lastAction === null ? "no action"
+			: state.lastAction.applied !== true ? "unconfirmed"
+			: state.lastAction.relaunched === true ? "applied across a relaunch"
+			: state.lastAction.relaunched === null ? "applied, no relaunch reported"
+			: "unreadable");
+	`)
+
+	for _, testCase := range []struct {
+		name   string
+		action *Action
+		want   string
+	}{
+		{"nothing ran", nil, "no action"},
+		{
+			"confirmed, app stayed",
+			&Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true},
+			"applied, no relaunch reported",
+		},
+		{
+			"confirmed, app relaunched after it",
+			&Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true, Relaunched: true},
+			"applied across a relaunch",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := verifier.PushSnapshot(SnapshotInput{
+				Snapshots:  Snapshots{},
+				LastAction: testCase.action,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			handle := verifier.runtime.GlobalObject().Get("continuity").ToObject(verifier.runtime)
 			if got := handle.Get("current").String(); got != testCase.want {
 				t.Errorf("the spec read %q, want %q", got, testCase.want)
 			}

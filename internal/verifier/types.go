@@ -38,6 +38,12 @@ type Action struct {
 	// when the apply call failed and nothing can say whether the action
 	// reached the app. The spec is told which of the two it is.
 	Applied bool
+	// Relaunched, like Applied, is meaningful only on state.lastAction: the
+	// runner brought the app back to the foreground after this action, so the
+	// two readings the spec compares straddle a restart. The action still
+	// happened; what a property cannot assume across it is that app state ran
+	// continuously from one reading to the next.
+	Relaunched bool
 }
 
 // LogEntry mirrors a logcat line captured between steps.

@@ -353,9 +353,20 @@ func lastActionFields(action *Action) []actionField {
 	if action.Applied {
 		applied = true
 	}
+	// A relaunch between two readings is not "no action happened", which is
+	// what dropping the action reported instead: the app restarted after an
+	// action that did run. Only the positive report is a fact the runner can
+	// vouch for, so the other side is null rather than false: a target whose
+	// foreground the runner cannot read (web, iOS) never relaunches the app and
+	// still cannot promise it never restarted.
+	var relaunched any
+	if action.Relaunched {
+		relaunched = true
+	}
 	fields := []actionField{
 		{key: "kind", value: string(action.Kind)},
 		{key: "applied", value: applied},
+		{key: "relaunched", value: relaunched},
 	}
 	if action.On != "" {
 		fields = append(fields, actionField{key: "on", value: action.On})
