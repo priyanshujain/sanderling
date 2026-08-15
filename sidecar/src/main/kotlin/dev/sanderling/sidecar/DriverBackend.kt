@@ -790,6 +790,14 @@ internal fun typeChunks(
 // The mInputShown guard is load-bearing rather than an optimisation: BACK is
 // what closes an open IME, and BACK with no IME open navigates out of the
 // screen, so an unguarded dismissal would make every InputText a back press.
+//
+// The flag trails the BACK it answers for, by about 0.6s on API 36, and a
+// second dismissal inside that window reads the stale true and back-presses an
+// IME that has already gone. What keeps that unreachable is the caller: one
+// dismissal per inputText, and the runner focuses the field with a tap before
+// every InputText, which raises the IME again long before this probe runs. A
+// caller that dismissed twice in a row, or typed without focusing first, would
+// lose that margin.
 internal fun dismissSoftKeyboard(shell: (String) -> String) {
     if (!shell("dumpsys input_method").contains("mInputShown=true")) return
     shell("input keyevent 4")
