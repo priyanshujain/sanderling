@@ -600,11 +600,11 @@ test("ax.find resolves the shadow-hosted match the hierarchy dump reaches first"
     __testing__.extractors.length = 0;
     __testing__.runtime.extract((state) => {
       const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
-      return ax.find({ id: "x" })?.text;
+      return ax.find("id:x")?.text;
     });
     __testing__.runtime.extract((state) => {
       const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
-      return ax.findAll({ id: "x" }).map((element) => element.text);
+      return ax.findAll("id:x").map((element) => element.text);
     });
     const values = __testing__.evaluateExtractors();
     assert.equal(readingOf(values, 0), "shadow");
