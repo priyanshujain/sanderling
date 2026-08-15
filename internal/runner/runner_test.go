@@ -974,6 +974,30 @@ func TestApplyAction_InputTextSkipsFocusCheckWhenNoOtherFieldHoldsFocus(t *testi
 	}
 }
 
+// A selector the hierarchy cannot resolve is the guard saying "I cannot tell",
+// not "another element holds focus". Answering the second manufactures an apply
+// error on every InputText the tree has no node for, and three in a row abort
+// the run.
+func TestApplyAction_InputTextTypesWhenTheTargetIsNotInTheHierarchy(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(loginFocusOnEmail)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.HierarchyJSON = loginFocusOnEmail
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "data-testid:LoginPassword",
+		Text: "ledger123",
+	}
+
+	mustDispatch(t, driverMock, action, tree)
+	if !typedText(driverMock.Actions(), "ledger123") {
+		t.Errorf("an unresolvable target must not block typing, got %v", driverMock.Actions())
+	}
+}
+
 func typedText(actions []mockdriver.Action, text string) bool {
 	for _, action := range actions {
 		if action.Kind == mockdriver.ActionInputText && action.Text == text {

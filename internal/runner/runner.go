@@ -827,13 +827,16 @@ func confirmFocus(
 
 // otherElementHoldsFocus reports whether the hierarchy shows focus on
 // something outside the selector's subtree, which is the state that sends
-// typed text to the wrong field.
+// typed text to the wrong field. A selector the hierarchy cannot resolve
+// answers false: not knowing where the target is says nothing about where the
+// text would land, and failing on it turns every step the dump has no node for
+// into an apply error, which is an aborted run three steps later.
 func otherElementHoldsFocus(tree *hierarchy.Tree, selector string) bool {
 	if tree == nil || focusedElement(tree) == nil {
 		return false
 	}
 	target := tree.FindNode(selector)
-	return target == nil || !holdsFocus(target)
+	return target != nil && !holdsFocus(target)
 }
 
 func focusedElement(tree *hierarchy.Tree) *hierarchy.Element {
