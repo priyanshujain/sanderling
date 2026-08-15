@@ -23,6 +23,7 @@ import (
 	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/driver/chrome"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 	chromerunner "github.com/priyanshujain/sanderling/internal/runner"
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
@@ -220,5 +221,82 @@ func TestBrowserUndefinedExtractorStaysUndefined(t *testing.T) {
 	}
 	if !slices.Contains(violations, "counterNeverMoves") {
 		t.Fatalf("nothing was ever tapped, so the property above held vacuously; violations=%v", violations)
+	}
+}
+
+// One page, one selector, two hosts, two answers.
+//
+// The V8 host resolves state.ax.find against the live DOM; the goja host
+// resolves the same selector against the hierarchy dump. The fixture puts a
+// shadow-hosted #x above a light-DOM #x, the one shape where the two walks can
+// disagree, and on web it is V8's answer that reaches the properties. Each host
+// is driven through its production path (EvaluateExtractors in the page,
+// PushSnapshot over the dump) and neither is asked what the other said, so the
+// comparison is evidence rather than an assertion about one of them.
+func TestBrowserAxFindAgreesAcrossHosts(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir(testdataDir(t))))
+	t.Cleanup(server.Close)
+
+	gojaBundle, webBundle := bundleSpec(t, filepath.Join(testdataDir(t), "find-order", "spec.ts"))
+
+	driverInstance := chrome.New()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = driverInstance.Terminate(ctx)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if err := driverInstance.Launch(ctx, server.URL+"/find-order/", false, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if err := driverInstance.InstallBundle(ctx, webBundle); err != nil {
+		t.Fatalf("install web bundle: %v", err)
+	}
+	readings, err := driverInstance.EvaluateExtractors(ctx)
+	if err != nil {
+		t.Fatalf("evaluate extractors in the page: %v", err)
+	}
+	fromV8 := string(readings[0])
+
+	dump, err := driverInstance.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+	verifierInstance, err := verifier.New(
+		verifier.WithSeed(fixtureSeed),
+		verifier.WithPlatform("web"),
+	)
+	if err != nil {
+		t.Fatalf("verifier: %v", err)
+	}
+	if err := verifierInstance.Load(string(gojaBundle)); err != nil {
+		t.Fatalf("load spec: %v", err)
+	}
+	if err := verifierInstance.PushSnapshot(verifier.SnapshotInput{Tree: tree}); err != nil {
+		t.Fatalf("push snapshot: %v", err)
+	}
+	change, ok := verifierInstance.ChangedExtractors()["found"]
+	if !ok {
+		t.Fatal("the goja host recorded no reading for the found extractor")
+	}
+	fromGoja := string(change.Curr)
+
+	// Pinned, not just compared: two hosts that both resolved nothing would
+	// agree on undefined and prove nothing about the walk.
+	if fromGoja != `"shadow"` {
+		t.Errorf("the goja host read %s off the dump, want the shadow-hosted %q", fromGoja, "shadow")
+	}
+	if fromV8 != fromGoja {
+		t.Fatalf(
+			"one page, one selector, two answers: the V8 host read %s and the goja host read %s",
+			fromV8,
+			fromGoja,
+		)
 	}
 }
