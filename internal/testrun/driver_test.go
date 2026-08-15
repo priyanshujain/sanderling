@@ -27,7 +27,7 @@ func TestBuildDriverRoutesPhysicalIOSToDeviceDriver(t *testing.T) {
 		return stubDeviceDriver{}, func() { closed = true }, nil
 	}
 
-	options := Options{Platform: "ios", BundleID: "app.folio", IosAppPath: "/tmp/iosApp.app"}
+	options := Options{Platform: "ios", BundleID: "app.folio", IosAppPath: "/tmp/iosApp.app", ClearData: true}
 	options.iosIsSimulator = false
 	options.iosUDID = "00008140-HW"
 	options.iosCoreDeviceID = "CORE-1"
@@ -45,9 +45,38 @@ func TestBuildDriverRoutesPhysicalIOSToDeviceDriver(t *testing.T) {
 	if got.BundleID != "app.folio" || got.AppPath != "/tmp/iosApp.app" {
 		t.Fatalf("DeviceOptions = %+v, want bundle and app path threaded through", got)
 	}
+	if !got.ClearState {
+		t.Fatalf("DeviceOptions = %+v, want clear-data threaded through: the driver clears before its session, so a launch cannot", got)
+	}
 	cleanup()
 	if !closed {
 		t.Fatal("cleanup must close the device driver")
+	}
+}
+
+func TestBuildDriverThreadsClearStateToTheSimulatorDriver(t *testing.T) {
+	stubPreflight(t)
+	original := newSimulatorDriver
+	t.Cleanup(func() { newSimulatorDriver = original })
+
+	var got ioscompanion.Options
+	newSimulatorDriver = func(_ context.Context, options ioscompanion.Options) (driver.DeviceDriver, func(), error) {
+		got = options
+		return stubDeviceDriver{}, func() {}, nil
+	}
+
+	options := Options{Platform: "ios", BundleID: "app.folio", IosAppPath: "/tmp/iosApp.app", ClearData: true}
+	options.iosIsSimulator = true
+	options.iosUDID = "SIM-UDID"
+
+	if _, _, err := buildDriver(context.Background(), options, io.Discard); err != nil {
+		t.Fatalf("buildDriver: %v", err)
+	}
+	if got.UniqueDeviceIdentifier != "SIM-UDID" || got.BundleID != "app.folio" || got.AppPath != "/tmp/iosApp.app" {
+		t.Fatalf("Options = %+v, want the resolved target, bundle and app path", got)
+	}
+	if !got.ClearState {
+		t.Fatalf("Options = %+v, want clear-data threaded through: the driver clears before its session, so a launch cannot", got)
 	}
 }
 
