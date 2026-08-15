@@ -901,7 +901,11 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         } else {
             driver.inputText(text)
         }
-        dismissSoftKeyboard { dadb.shell(it).allOutput }
+        // A probe that fails reads as "no IME open", which is the safe way to be
+        // wrong: it skips the dismissal rather than sending a stray BACK.
+        dismissSoftKeyboard {
+            runCatching { dadb.shell(it).allOutput }.getOrDefault("")
+        }
     }
 
     // typeShellSafe types shell-safe ASCII through adb `input text` in chunks,
