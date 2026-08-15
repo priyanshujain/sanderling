@@ -406,3 +406,53 @@ func TestResolveRuntimeSibling_PublishedPackageShipsTheRuntimes(t *testing.T) {
 		}
 	}
 }
+
+// TestPrepareBundleInputs_InstalledPackageSharesOneModuleGraph pins the
+// downstream case: with no sanderling checkout above the spec, the aliases and
+// the runtime entry must name the SAME installed copy. An unset alias let
+// esbuild resolve @sanderling/spec to dist/ while the runtime came from src/,
+// which loads sampler-rng.ts twice; from(), strings(), integers() and emails()
+// then read an rng the picker never set and collapse to a fixed default.
+func TestPrepareBundleInputs_InstalledPackageSharesOneModuleGraph(t *testing.T) {
+	root := t.TempDir()
+	installed := filepath.Join(root, "node_modules", "@sanderling", "spec")
+	installPublishedPackage(t, installed)
+	specPath := filepath.Join(root, "sanderling", "spec.ts")
+	if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(specPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+
+	prep, err := prepareBundleInputs(Options{Spec: specPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(installed, "src")
+	want := map[string]string{
+		"@sanderling/spec":                     filepath.Join(source, "index.ts"),
+		"@sanderling/spec/defaults":            filepath.Join(source, "defaults/index.ts"),
+		"@sanderling/spec/defaults/properties": filepath.Join(source, "defaults/properties.ts"),
+	}
+	for key, wantValue := range want {
+		if prep.aliases[key] != wantValue {
+			t.Errorf("alias %q = %q, want %q", key, prep.aliases[key], wantValue)
+		}
+	}
+	if got := prep.gojaRuntimePath; got != filepath.Join(source, "goja-runtime.ts") {
+		t.Errorf("gojaRuntimePath = %q, want it beside the aliased index.ts", got)
+	}
+	if got := resolveWebRuntimePath(prep.specAPIPath, specPath); got != filepath.Join(source, "web-runtime.ts") {
+		t.Errorf("webRuntimePath = %q, want it beside the aliased index.ts", got)
+	}
+}

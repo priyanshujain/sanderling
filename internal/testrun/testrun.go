@@ -350,16 +350,20 @@ func resolveRuntimeSibling(specAPIPath, userSpecPath, filename string) string {
 	return ""
 }
 
-// resolveSpecAPIPath returns the path to pkg/spec/src/index.ts inside
-// a sanderling source checkout, searched upward from the spec file and the cwd.
-// Returns "" when not found, in which case esbuild resolves @sanderling/spec via
-// node_modules the way a downstream user's project would.
+// resolveSpecAPIPath returns the path to the spec API's index.ts: a sanderling
+// source checkout first, searched upward from the spec file and the cwd, then
+// an installed node_modules/@sanderling/spec. Aliasing the installed copy is
+// what keeps the spec and the runtime entry on one module graph; resolving the
+// bare specifier through package.json "exports" would load dist/ alongside the
+// runtime's src/ and give sampler-rng.ts two instances.
 func resolveSpecAPIPath(specPath string) string {
-	var candidates []string
+	var checkout, installed []string
 	if absoluteSpec, err := filepath.Abs(specPath); err == nil {
 		directory := filepath.Dir(absoluteSpec)
 		for {
-			candidates = append(candidates, filepath.Join(directory, "pkg/spec/src/index.ts"))
+			checkout = append(checkout, filepath.Join(directory, "pkg/spec/src/index.ts"))
+			installed = append(installed,
+				filepath.Join(directory, "node_modules/@sanderling/spec/src/index.ts"))
 			parent := filepath.Dir(directory)
 			if parent == directory {
 				break
@@ -368,9 +372,9 @@ func resolveSpecAPIPath(specPath string) string {
 		}
 	}
 	if cwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(cwd, "pkg/spec/src/index.ts"))
+		checkout = append(checkout, filepath.Join(cwd, "pkg/spec/src/index.ts"))
 	}
-	for _, candidate := range candidates {
+	for _, candidate := range append(checkout, installed...) {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}
