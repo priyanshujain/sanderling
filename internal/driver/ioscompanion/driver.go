@@ -91,6 +91,7 @@ type Options struct {
 	dialRunner     func(address string) (transport.Companion, error)
 	reinstallApp   func(ctx context.Context) error
 	resetContainer func(ctx context.Context) error
+	terminateApp   func(ctx context.Context) error
 }
 
 // Driver implements driver.DeviceDriver against an iOS simulator companion.
@@ -135,6 +136,10 @@ type Driver struct {
 	// reinstallApp uninstalls and reinstalls the app bundle for clear-state.
 	// A seam so tests skip the simctl shell-outs.
 	reinstallApp func(ctx context.Context) error
+
+	// terminateApp stops the app before its state is cleared. A seam so tests
+	// skip the simctl shell-out.
+	terminateApp func(ctx context.Context) error
 
 	// grantPaste pre-authorizes the app's pasteboard access. A seam so tests
 	// skip the sqlite shell-out.
@@ -237,6 +242,7 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 		dialRunner:               options.dialRunner,
 		reinstallApp:             options.reinstallApp,
 		resetContainer:           options.resetContainer,
+		terminateApp:             options.terminateApp,
 		hybrid:                   hybridCompanionEnabled(),
 	}
 	if driverInstance.spawnChild == nil {
@@ -270,6 +276,9 @@ func New(ctx context.Context, options Options) (*Driver, error) {
 	}
 	if driverInstance.reinstallApp == nil {
 		driverInstance.reinstallApp = driverInstance.simctlReinstall
+	}
+	if driverInstance.terminateApp == nil {
+		driverInstance.terminateApp = driverInstance.simctlTerminate
 	}
 	driverInstance.grantPaste = driverInstance.grantPasteboardAccess
 	driverInstance.processContext, driverInstance.processCancel = context.WithCancel(ctx)
@@ -619,6 +628,11 @@ func (d *Driver) lifecycleCompanion() transport.Companion {
 // container and warns once that a full reinstall needs the app path. Called
 // only from construction, before any automation session is attached to the app.
 func (d *Driver) clearAppState(ctx context.Context) error {
+	// Nothing may be writing to the state while it goes, which is the ordering
+	// Launch used to hold: uninstall copes with a running app, deleting the
+	// data container out from under one does not. Best effort, because an app
+	// that is not running reports a failure that means nothing here.
+	_ = d.terminateApp(ctx)
 	if d.appPath != "" {
 		if err := d.reinstallApp(ctx); err != nil {
 			return fmt.Errorf("reinstall %s: %w", d.appPath, err)
@@ -646,6 +660,18 @@ func (d *Driver) simctlReinstall(ctx context.Context) error {
 	output, err := exec.CommandContext(ctx, "xcrun", "simctl", "install", d.udid, d.appPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("simctl install: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// simctlTerminate stops the app under test. Launch used to terminate through
+// the automation session before clearing; the clear now runs before any session
+// exists, so simctl is what is left to stop the app with. An app that is not
+// running reports a failure that means nothing to the caller, which is why
+// clearAppState treats this as best effort.
+func (d *Driver) simctlTerminate(ctx context.Context) error {
+	if output, err := exec.CommandContext(ctx, "xcrun", "simctl", "terminate", d.udid, d.bundleID).CombinedOutput(); err != nil {
+		return fmt.Errorf("simctl terminate %s: %w: %s", d.bundleID, err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }

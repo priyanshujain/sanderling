@@ -111,13 +111,17 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 
 	// Device seams: clear-state reinstalls via devicectl; the container reset and
 	// paste grant are simulator-only and become no-ops. The runner types
-	// natively, so no paste prompt is ever hit.
+	// natively, so no paste prompt is ever hit. Stopping the app before the
+	// clear is a no-op too: devicectl addresses processes by pid rather than by
+	// bundle, and the uninstall that is the device's only clear takes the
+	// running app with it, which is what a terminate here would be for.
 	d.reinstallApp = options.reinstallApp
 	if d.reinstallApp == nil {
 		d.reinstallApp = d.devicectlReinstall
 	}
 	d.resetContainer = d.deviceResetContainerUnsupported
 	d.grantPaste = func(context.Context) error { return nil }
+	d.terminateApp = func(context.Context) error { return nil }
 	d.restart = d.respawnDevice
 	d.processContext, d.processCancel = context.WithCancel(ctx)
 
