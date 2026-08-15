@@ -736,13 +736,19 @@ export function submitChangesBalanceByAtMostTypedAmount(args: {
 
   if (route !== "home") return true;
   if (!isTxnSubmitTap(lastAction)) return true;
-  // The whole rule is that the delta belongs to THIS submit. A submit the
-  // runner could not confirm may have committed nothing, and a balance that
-  // did not move is then exactly what a healthy app looks like.
-  if (!confirmedApplied(lastAction)) return true;
-  // The runner restarted the app after this tap, so the process may have died
-  // between the commit and the sqlite write. A balance that did not move is
-  // then a healthy app, exactly as it is for a submit that may not have landed.
+  // The two totals were read from two different processes. SqlLedgerStore
+  // starts each one on stateIn(Eagerly, emptyList()) and HomeScreen composes
+  // formatCents(total) off whatever the flow holds, so a restarted app draws
+  // $0.00 into TotalBalance until sqlite answers, and that number is as far
+  // from the last one as the accounts are rich. There is no submit anywhere
+  // that explains it.
+  //
+  // A submit the runner could not confirm needs no guard of its own: it may
+  // have committed nothing, and a balance that did not move is under any bound.
+  // countSubmitsInWindow counts it exactly like a confirmed one, so a total
+  // that moved by more than one typed amount is the same double commit either
+  // way. Under the equality this used to be, that case had to be excused; a
+  // guard for it here now only drops the convictions it exists to make.
   if (acrossRelaunch(lastAction)) return true;
   if (submitsInWindow !== 1) return true;
   if (typedAmount === 0) return true;

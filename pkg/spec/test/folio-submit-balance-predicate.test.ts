@@ -504,20 +504,23 @@ test("freshness boundary: a window with no submit in it is vacuous", () => {
 });
 
 // applied: null is the runner saying it dispatched the tap and never learned
-// whether it landed. A submit that committed nothing leaves the balance where
-// it was, so demanding the typed amount of movement for it convicts an app that
-// did exactly what it should have.
-test("a submit the runner could not confirm demands no balance move", () => {
+// whether it landed. Under the bound that buys the app nothing it did not
+// already have: a submit that committed nothing leaves the balance where it
+// was, and a balance that has not moved is under any bound. What the window
+// still promises is that no OTHER submit action could have moved it, because
+// countSubmitsInWindow counts an unconfirmed tap exactly like a confirmed one.
+// So a move of twice the typed amount is the same double commit either way.
+test("a submit the runner could not confirm is still held to the bound", () => {
   assert.equal(
     submitChangesBalanceByAtMostTypedAmount({
       route: "home",
-      lastAction: { kind: "Tap", on: submitOn, applied: null },
+      lastAction: { kind: "DoubleTap", on: submitOn, applied: null },
       submitsInWindow: 1,
       typedAmount: 500,
       prevTotalBalance: 1000,
-      currTotalBalance: 1000,
+      currTotalBalance: 2000,
     }),
-    true,
+    false,
   );
 });
 
@@ -583,20 +586,21 @@ test("the measured double submit still fires under the bound", () => {
 });
 
 // relaunched: true is the runner saying its foreground guard restarted the app
-// after this action. The tap landed, so the window still counts it, but nobody
-// can promise the process lived long enough for the write to reach sqlite. A
-// balance still sitting where it was is exactly what a healthy app looks like
-// across a relaunch, and demanding the typed amount of movement convicts it for
-// the runner's own restart.
-test("a submit the runner relaunched across demands no balance move", () => {
+// after this action, so the two totals being compared were read from two
+// different processes. SqlLedgerStore starts every one of them on
+// stateIn(Eagerly, emptyList()) and HomeScreen composes formatCents(total) off
+// whatever the flow holds, so the restarted app draws $0.00 into TotalBalance
+// until sqlite answers. That reading is not a total this tap moved, and it is
+// as far from the last one as the account is rich.
+test("a total drawn by a restarted process is not compared with the old one", () => {
   assert.equal(
     submitChangesBalanceByAtMostTypedAmount({
       route: "home",
       lastAction: { kind: "Tap", on: submitOn, applied: true, relaunched: true },
       submitsInWindow: 1,
       typedAmount: 500,
-      prevTotalBalance: 1000,
-      currTotalBalance: 1000,
+      prevTotalBalance: 455800,
+      currTotalBalance: 0,
     }),
     true,
   );
