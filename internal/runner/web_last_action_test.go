@@ -26,7 +26,8 @@ globalThis.properties = {};
 // control, so the runner has a real applied action to report on the next step.
 type tappingWebDriver struct {
 	*mockdriver.Driver
-	installed []string
+	installed     []string
+	installedLogs []string
 }
 
 func (d *tappingWebDriver) InstallBundle(context.Context, []byte) error { return nil }
@@ -41,6 +42,11 @@ func (d *tappingWebDriver) NextActionFromV8(context.Context) (json.RawMessage, e
 
 func (d *tappingWebDriver) SetLastAction(_ context.Context, encoded json.RawMessage) error {
 	d.installed = append(d.installed, string(encoded))
+	return nil
+}
+
+func (d *tappingWebDriver) SetLogs(_ context.Context, encoded json.RawMessage) error {
+	d.installedLogs = append(d.installedLogs, string(encoded))
 	return nil
 }
 

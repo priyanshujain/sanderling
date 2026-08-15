@@ -75,6 +75,8 @@ func (d *carrierWebDriver) NextActionFromV8(context.Context) (json.RawMessage, e
 
 func (d *carrierWebDriver) SetLastAction(context.Context, json.RawMessage) error { return nil }
 
+func (d *carrierWebDriver) SetLogs(context.Context, json.RawMessage) error { return nil }
+
 // TestRunner_TransitionalStepNeverAdvancesThePageCarrier pins the ordering the
 // web path depends on. The page-side extractors must run only on steps the
 // verifier accepts: their getters advance spec state every time they evaluate,
@@ -171,6 +173,8 @@ func (d *installFailsWebDriver) NextActionFromV8(context.Context) (json.RawMessa
 func (d *installFailsWebDriver) SetLastAction(context.Context, json.RawMessage) error {
 	return errors.New("__sanderlingSetLastAction__ is not a function")
 }
+
+func (d *installFailsWebDriver) SetLogs(context.Context, json.RawMessage) error { return nil }
 
 // TestRunner_LastActionInstallFailureFailsTheRun covers the other half of the
 // same trust boundary. A run that cannot install lastAction in the page cannot
