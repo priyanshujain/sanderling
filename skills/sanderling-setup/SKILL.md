@@ -123,14 +123,17 @@ agreement properties possible.
 **iOS.** `accessibilityIdentifier`, set via `.accessibilityIdentifier` in
 SwiftUI or UIKit. Compose Multiplatform maps `testTag` to it for you.
 
-Two rules about the names themselves. Non-boolean attribute matching is
-substring, so `{testTag: "Sub"}` matches `AddAccountSubmit` by accident: make
-each hook a whole distinct name and match the whole thing. And give every screen
-a marker of its own, because a route extractor is what lets a property decline
-on the screens it has nothing to say about.
+Two rules about the names themselves. A `testTag` selector falls through to a
+substring compare, so `{testTag: "Sub"}` matches `AddAccountSubmit`: make each
+hook a whole distinct name rather than a fragment of another. And give every
+screen a marker of its own, because a route extractor is what lets a property
+decline on the screens it has nothing to say about.
 
 The check that a hook exists is not that you added it. It is that you can point
 at a step in a real trace where a selector over it resolved to a value.
+`sanderling-spec-authoring` covers which hooks a spec needs and in what order to
+add them; this section is about what each platform requires before any of that
+reaches the tree.
 
 ## 4. A run must start from a known state
 
@@ -252,6 +255,6 @@ and the `nodes=` figure from the first run, and for each hook you added, the ste
 in a real trace where a selector over it resolved. Name what you could not
 establish, particularly any platform you did not run on.
 
-Setup is finished when a property can be written that could fail. Read
-`sanderling-spec-review` before trusting the first spec you write over these
-hooks.
+Setup is finished when a property can be written that could fail. Write it with
+`sanderling-spec-authoring`, review it with `sanderling-spec-review`, and read
+the run it produces with `sanderling-run-triage`.
