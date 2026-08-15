@@ -54,9 +54,8 @@ fun parseCents(input: String): Long? {
     val fracPadded = (frac + "00").substring(0, 2)
     val wholeLong = whole.toLongOrNull() ?: return null
     val fracLong = fracPadded.toLongOrNull() ?: return null
-    val total = wholeLong * 100 + fracLong
-    if (total < 0) return null
-    return total
+    if (wholeLong > (Long.MAX_VALUE - fracLong) / 100) return null
+    return wholeLong * 100 + fracLong
 }
 
 fun signedAmount(t: Transaction): Long = if (t.type == TxnType.credit) t.amount else -t.amount
