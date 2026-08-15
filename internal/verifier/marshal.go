@@ -26,7 +26,7 @@ type stateInput struct {
 }
 
 // stateObject builds the JS-side `state` object matching the State type from
-// pkg/spec-api. Fields beyond snapshots/ax are included when the caller
+// pkg/spec. Fields beyond snapshots/ax are included when the caller
 // populated them on stateInput.
 func stateObject(runtime *goja.Runtime, input stateInput) (*goja.Object, error) {
 	state := runtime.NewObject()
