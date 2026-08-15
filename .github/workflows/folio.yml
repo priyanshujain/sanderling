@@ -181,9 +181,8 @@ jobs:
         env:
           IOS_DEVICE: iPhone 16 Pro
 
-      # `just ios` leaves the app running, and the run's own clear-data
-      # reinstall on top of a live app has raced FrontBoard into refusing the
-      # launch ("app.folio is unknown to FrontBoard") with the run then hanging.
+      # `just ios` leaves the app running, and the run's first act is to clear
+      # its state. Stopping it here means the run always opens the same way.
       - name: Stop the app before the run
         run: xcrun simctl terminate booted app.folio || true
 
