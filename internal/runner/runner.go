@@ -318,10 +318,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		applySkipped := held
-		if held {
-			// lastAction is left exactly as it is: it is still the action the
-			// next verified step has to be told about.
-		} else if nextErr == nil && !appIsForeground(ctx, options) {
+		if nextErr == nil && !appIsForeground(ctx, options) {
 			// The app left the foreground between observe and apply (a prior
 			// action's gesture settling late, or an async navigation). The
 			// chosen action's coordinates reference a tree that no longer
@@ -365,9 +362,12 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				applied.Applied = true
 				lastAction = &applied
 			}
-		} else {
+		} else if !held {
 			lastAction = nil
 		}
+		// A held step leaves lastAction alone on purpose: nothing ran here, and
+		// the action it points at is still the one the next verified step has to
+		// be told about.
 
 		step := trace.Step{
 			Index:               stepIndex,
