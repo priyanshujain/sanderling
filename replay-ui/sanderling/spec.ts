@@ -143,8 +143,10 @@ export const properties = {
   badgeCountMatchesThePanel,
 };
 
-// Step rows are <li role="option">, which is not in the tappable selector set
-// the default enumeration draws from, so selecting a step needs its own action.
+// Step rows get their own weight for the same reason tabs do below: the default
+// enumeration reaches them now that role="option" is in the tappable set, but
+// one row out of the page's clickable elements is a thin chance, and both
+// step-facing properties are vacuous on a run that never selects one.
 const rowElements = extract("rowElements", (s) => s.ax.findAll({ "data-testid": "step-row" }));
 
 const selectAStep = actions(() => {
