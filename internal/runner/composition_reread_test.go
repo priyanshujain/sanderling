@@ -133,6 +133,147 @@ func TestRunner_AStepWhoseTreeChangedBetweenReadsIsNotVerified(t *testing.T) {
 	})
 }
 
+// submitsOnTapDriver commits a transaction on every tap, shows the running
+// total in the tree, and grows a row under the hierarchy read that follows the
+// paired Snapshot on one chosen step.
+type submitsOnTapDriver struct {
+	*mockdriver.Driver
+	composingRead int64
+	everyRead     bool
+	reads         atomic.Int64
+	committed     atomic.Int64
+}
+
+func (d *submitsOnTapDriver) Tap(context.Context, int, int) error       { return d.commit() }
+func (d *submitsOnTapDriver) TapSelector(context.Context, string) error { return d.commit() }
+
+func (d *submitsOnTapDriver) commit() error {
+	d.committed.Add(1)
+	return nil
+}
+
+func (d *submitsOnTapDriver) Snapshot(context.Context) (string, driver.Image, error) {
+	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), driver.Image{}, nil
+}
+
+func (d *submitsOnTapDriver) Hierarchy(context.Context) (string, error) {
+	if read := d.reads.Add(1); d.everyRead || read == d.composingRead {
+		return fmt.Sprintf(homeWithTxnCountComposing, d.committed.Load()), nil
+	}
+	return fmt.Sprintf(homeWithTxnCount, d.committed.Load()), nil
+}
+
+// The same tree with one more row in it, which is what the reread sees while
+// the screen is still filling in.
+const homeWithTxnCountComposing = `{"attributes":{"resource-id":"HomeScreen"},"children":[
+	{"attributes":{"resource-id":"TxnCount","text":"%d"},"children":[]},
+	{"attributes":{"resource-id":"TxnSubmit","bounds":"[40,80,240,160]"},"children":[],"clickable":true,"enabled":true},
+	{"attributes":{"resource-id":"TxnRowLate"},"children":[]}
+]}`
+
+// Skipping a step is only free if nothing the spec needs goes missing with it.
+// The action a step applies is reported to the spec on the NEXT step the
+// verifier accepts, so a skipped step in between swallows the action before it:
+// the transaction it committed still turns up in the next reading, and
+// submitCommitsOneTransactionPerAction sees a rise nothing in its window
+// accounts for. That is the conviction #77 and #78 are about, arriving through
+// the skip rather than through the runner's report.
+//
+// So a frame the verifier will not look at is not one to act on either, which
+// is also what #75 asked for: the fuzzer must not tap into a screen that is
+// still filling in.
+func TestRunner_ASkippedStepDoesNotSwallowTheActionBeforeIt(t *testing.T) {
+	spec := specWithFolioPredicates(t)
+
+	run := func(t *testing.T, composingRead int64) (Summary, int64) {
+		t.Helper()
+		state := newHarnessWithSpec(t, spec)
+		device := &submitsOnTapDriver{Driver: state.mock, composingRead: composingRead}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		summary, err := Run(ctx, Options{
+			Duration:    time.Hour,
+			IdleTimeout: 20 * time.Millisecond,
+			MaxSteps:    3,
+			Driver:      device,
+			Verifier:    state.verifier,
+			TraceWriter: state.writer,
+		})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if summary.Steps != 3 {
+			t.Fatalf("steps = %d, want 3", summary.Steps)
+		}
+		return summary, device.committed.Load()
+	}
+
+	t.Run("a submit is not lost to the step that follows it", func(t *testing.T) {
+		summary, committed := run(t, 2)
+		if summary.SkippedVerification != 1 {
+			t.Fatalf("the run skipped %d step(s), want 1; the reread never fired, so this "+
+				"proves nothing", summary.SkippedVerification)
+		}
+		if committed == 0 {
+			t.Fatal("the device committed nothing; a runner that never acts passes this " +
+				"test without meaning anything")
+		}
+		if len(summary.Violations) != 0 {
+			t.Errorf("the counting property convicted a healthy app: %v\n"+
+				"one transaction per submit rose, and a submit went unreported because "+
+				"the step after it was skipped", summary.Violations)
+		}
+	})
+
+	// The control: with nothing composing, every step is verified and the same
+	// app is judged clean, so the case above is not just a runner that stopped
+	// judging.
+	t.Run("every step verified, same app, no violation", func(t *testing.T) {
+		summary, committed := run(t, 0)
+		if summary.SkippedVerification != 0 {
+			t.Fatalf("the run skipped %d step(s), want 0", summary.SkippedVerification)
+		}
+		if committed != 3 {
+			t.Fatalf("the device committed %d transaction(s), want 3", committed)
+		}
+		if len(summary.Violations) != 0 {
+			t.Errorf("the counting property convicted a healthy app: %v", summary.Violations)
+		}
+	})
+}
+
+// Holding an action back is bounded. A screen that changes shape under every
+// pair of reads (a live list, a spinner mounting and unmounting) would
+// otherwise take the whole run: nothing verified, nothing tapped, and a green
+// summary at the end of it.
+func TestRunner_AScreenThatNeverSettlesDoesNotStallTheRun(t *testing.T) {
+	state := newHarnessWithSpec(t, specWithFolioPredicates(t))
+	device := &submitsOnTapDriver{Driver: state.mock, everyRead: true}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    5,
+		Driver:      device,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.SkippedVerification != 5 {
+		t.Fatalf("the run verified some step of a screen that never settled: skipped %d of 5",
+			summary.SkippedVerification)
+	}
+	if device.committed.Load() == 0 {
+		t.Error("the fuzzer never acted across 5 steps; a screen that keeps moving must " +
+			"cost the run a step or two, not all of them")
+	}
+}
+
 type traceLine struct {
 	Step       int      `json:"step"`
 	Violations []string `json:"violations"`
