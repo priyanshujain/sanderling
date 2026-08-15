@@ -148,11 +148,17 @@ the list renders rows; a badge counts violation records and the panel counts the
 rows it can show for them. Those hold on any run, so they never need
 recalibrating against a fixture, and an app that gets the fact wrong in one of
 the two places cannot satisfy them however it was driven there.
-`replay-ui/sanderling/spec.ts` is six of these plus `noUncaughtExceptions`, and
-its header explains the choice.
+Three of the seven properties in `replay-ui/sanderling/spec.ts` are this shape:
+`stepCountMatchesTheList`, `screenshotShowsTheSelectedStep` and
+`badgeCountMatchesThePanel`. The rest of that spec shows what to write when no
+second panel derives the fact: a range invariant on user input
+(`selectedStepIsInRange`), a counting invariant inside one panel
+(`exactlyOneStepIsSelected`), a no-effect property across an action
+(`switchingTabsKeepsTheStep`), and the stock `noUncaughtExceptions`. All of them
+still hold on any run, which is the property worth keeping.
 
 Contrast a property that needs the fuzzer to reach a specific state, like
-folio's "a submit moves the balance by exactly the amount typed". That is where
+folio's "a submit moves the balance by no more than the amount typed". That is where
 the real bugs are, and it is the harder thing to keep honest: it needs an action
 tree that reaches the state, a window that closes often enough to bound what
 happened inside it, and attribution that cannot blame the wrong action. Folio's
