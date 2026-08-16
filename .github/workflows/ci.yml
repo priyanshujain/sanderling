@@ -51,10 +51,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
 
-      - name: Set up Node 22
+      - name: Set up Node 24
         uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: pkg/spec/package-lock.json
 
@@ -521,20 +521,19 @@ jobs:
           # this job needs the git credential afterwards.
           persist-credentials: false
 
-      - name: Set up Node 22
+      # registry-url below writes an `_authToken=${NODE_AUTH_TOKEN}` line into
+      # .npmrc whether or not a token exists, and an npm older than 11.5.1 reads
+      # that empty line as "auth is configured" and never asks for an OIDC
+      # token, so the publish fails needing auth. 24 is the oldest Node whose
+      # bundled npm clears that floor (11.17.0), which is why it is pinned here
+      # rather than upgrading npm over the top of an older one.
+      - name: Set up Node 24
         uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
           cache: npm
           cache-dependency-path: pkg/spec/package-lock.json
-
-      # registry-url above writes an `_authToken=${NODE_AUTH_TOKEN}` line into
-      # .npmrc whether or not a token exists, and an npm older than 11.5.1 reads
-      # that empty line as "auth is configured" and never asks for an OIDC
-      # token, so the publish fails needing auth. Node 22 ships npm 10.
-      - name: Install an npm that can publish over OIDC
-        run: npm install -g npm@latest
 
       - name: Install dependencies
         working-directory: pkg/spec
