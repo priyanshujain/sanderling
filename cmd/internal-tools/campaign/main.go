@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/priyanshujain/sanderling/internal/seedspec"
 )
 
 type config struct {
@@ -118,7 +120,7 @@ func parseArguments(arguments []string, stderr io.Writer) (config, error) {
 		return config{}, fmt.Errorf("--run-timeout %s must exceed --duration %s, or every run is killed before it finishes",
 			configuration.runTimeout, configuration.duration)
 	}
-	seeds, err := parseSeeds(seedSpecification)
+	seeds, err := seedspec.Parse(seedSpecification)
 	if err != nil {
 		return config{}, fmt.Errorf("--seeds: %w", err)
 	}
