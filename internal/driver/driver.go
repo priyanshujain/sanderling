@@ -4,8 +4,22 @@ package driver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
+
+// ErrGestureUndelivered reports a coordinate gesture that reached no element at
+// all, so the app cannot have responded to it. It is not a device fault and
+// says nothing about the device's health: the runner records it on the step
+// rather than counting it toward the apply-failure streak, which is what makes
+// a gesture that did nothing distinguishable from one the app ignored.
+var ErrGestureUndelivered = errors.New("gesture reached no element")
+
+// ErrSelectorMatchedNothing reports an action dispatched by selector whose
+// selector named nothing on the current screen. It is a resolution failure, not
+// a delivery one: no point was ever computed, so it stays separate from
+// ErrGestureUndelivered and the runner records it as an unresolved selector.
+var ErrSelectorMatchedNothing = errors.New("selector matched no element")
 
 // DeviceDriver abstracts the platform-specific UI automation backend. v0.1
 // surface matches proto/driverpb/driver.proto. The sidecar implementation
@@ -60,6 +74,20 @@ type ForegroundChecker interface {
 	ForegroundApp(ctx context.Context) (string, error)
 }
 
+// Scroller is the optional capability for drivers whose scroll interaction is
+// not a finger drag. On a touch device the two are the same gesture, so a
+// driver that does not implement this gets its Scroll actions as a Swipe. A
+// browser scrolls on wheel input instead, and treats a drag as a drag.
+type Scroller interface {
+	// Scroll moves the content under (fromX, fromY) by the vector to the
+	// destination point, the same endpoints Swipe takes.
+	Scroll(
+		ctx context.Context,
+		fromX, fromY, toX, toY int,
+		duration time.Duration,
+	) error
+}
+
 // TextReplacer is the optional capability for drivers whose InputText already
 // replaces the field's content instead of appending to it. The runner must
 // skip its pre-erase for such drivers: the erase would be a redundant
@@ -87,6 +115,37 @@ type LogEntry struct {
 	Level      string
 	Tag        string
 	Message    string
+}
+
+// ExceptionReporter is the optional capability for reporting the uncaught
+// errors an app has captured so far. The runner feeds them to state.exceptions,
+// which the default noUncaughtExceptions property reads. Drivers with no way to
+// observe them simply do not implement it and the property stays vacuous there.
+type ExceptionReporter interface {
+	Exceptions(ctx context.Context) ([]Exception, error)
+}
+
+// NavigationReporter is the optional capability for reporting the
+// document-replacing navigations seen since the last call. A navigation
+// restarts the app's own runtime, so a trace without them cannot separate an
+// app that reloaded from a generator that repeated itself.
+type NavigationReporter interface {
+	Navigations(ctx context.Context) ([]Navigation, error)
+}
+
+// Navigation is one document-replacing navigation: a reload, a form submit, a
+// route change that swapped the document.
+type Navigation struct {
+	URL        string
+	UnixMillis int64
+}
+
+// Exception is one uncaught throwable the app captured.
+type Exception struct {
+	Class      string
+	Message    string
+	StackTrace string
+	UnixMillis int64
 }
 
 type Image struct {
