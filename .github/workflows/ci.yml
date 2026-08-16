@@ -433,6 +433,29 @@ jobs:
           path: runs/
           retention-days: 14
 
+  # Every merge to master cuts a patch release: 0.1.4 becomes 0.1.5, published
+  # to npm and to GitHub Releases. It waits on the device legs as well as the
+  # checks, so nothing reaches a registry that the emulators and the simulator
+  # have not agreed on. `release.yml` promotes a run of these to a minor or a
+  # major by hand, and shares the steps below rather than holding a second copy.
+  release:
+    name: Release
+    needs:
+      - checks
+      - folio
+      - replay-ui
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    uses: ./.github/workflows/release-publish.yml
+    permissions:
+      contents: write
+    with:
+      bump: patch
+      # The commit that triggered the run is the one to release: master may have
+      # moved on in the hour the device legs take.
+      sha: ${{ github.sha }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   # The docs used to build only when docs/ or the Makefile changed. A path
   # filter here would have to sit on the whole workflow, so the site is rebuilt
   # on every merge instead: it is pandoc over a few pages, and a deploy of bytes
@@ -484,6 +507,7 @@ jobs:
       - checks
       - folio
       - replay-ui
+      - release
       - docs
     runs-on: ubuntu-latest
     steps:
