@@ -148,6 +148,23 @@ jobs:
       - name: Check that the workflow references resolve
         run: .github/scripts/workflow-refs.sh
 
+  # The run graph boxes jobs together when they share the same dependencies
+  # and the same dependents, so a group only draws as its own box if one job
+  # depends on exactly that group. That is what these three gates are for.
+  # They also collapse a group to one status to read.
+  checks:
+    name: Checks
+    if: always()
+    needs:
+      - check-tests
+      - check-browser
+      - check-workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the group passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
   folio-android:
     name: Folio (android)
     runs-on: ubuntu-latest
@@ -296,6 +313,19 @@ jobs:
           path: runs/
           retention-days: 14
 
+  folio:
+    name: Folio
+    if: always()
+    needs:
+      - folio-android
+      - folio-ios
+      - folio-web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the group passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
   replay-ui:
     name: Replay UI
     runs-on: ubuntu-latest
@@ -409,6 +439,7 @@ jobs:
   # publishes the version the tag names.
   release-npm:
     name: Release (npm)
+    needs: checks
     if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -515,6 +546,7 @@ jobs:
   # contents: write, and it holds no publish credential of its own.
   release-cli:
     name: Release (cli)
+    needs: checks
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -578,12 +610,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  release:
+    name: Release
+    if: always()
+    needs:
+      - release-npm
+      - release-cli
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the group passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
   # The docs used to build only when docs/ or the Makefile changed. A path
   # filter here would have to sit on the whole workflow, so the site is rebuilt
   # on every merge instead: it is pandoc over a few pages, and a deploy of bytes
   # that did not change is a no-op.
   docs:
     name: Docs
+    needs: checks
     if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -625,15 +670,10 @@ jobs:
     name: All checks passed
     if: always()
     needs:
-      - check-tests
-      - check-browser
-      - check-workflows
-      - folio-android
-      - folio-ios
-      - folio-web
+      - checks
+      - folio
       - replay-ui
-      - release-npm
-      - release-cli
+      - release
       - docs
     runs-on: ubuntu-latest
     steps:
