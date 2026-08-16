@@ -12,10 +12,6 @@ on:
         description: Which part of MAJOR.MINOR.PATCH to advance
         type: string
         default: patch
-      version:
-        description: Release this version outright, overriding the bump
-        type: string
-        default: ""
       sha:
         description: >-
           The commit to release. Empty means the commit the last release was cut
@@ -49,6 +45,7 @@ jobs:
     outputs:
       version: ${{ steps.next.outputs.version }}
       tag: ${{ steps.next.outputs.tag }}
+      previous_tag: ${{ steps.next.outputs.previous_tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -60,7 +57,6 @@ jobs:
         run: .github/scripts/next-version.sh
         env:
           BUMP: ${{ inputs.bump }}
-          VERSION: ${{ inputs.version }}
 
       # A promotion re-cuts the commit that is already released, so it needs no
       # ci run of its own: that commit is only tagged because ci went green on
@@ -141,18 +137,10 @@ jobs:
       - name: Publish @sanderling/spec to npm
         if: steps.published.outputs.publish == 'true'
         working-directory: pkg/spec
-        # A pre-release is tagged `next` so `npm install @sanderling/spec` keeps
-        # resolving the latest stable.
-        run: |
-          if [[ "$VERSION" == *-* ]]; then
-            npm publish --access public --tag next
-          else
-            npm publish --access public
-          fi
+        run: npm publish --access public
         # The publish credential is scoped to the one step that publishes rather
         # than to the job, so no other step runs with it in reach.
         env:
-          VERSION: ${{ needs.tag.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   cli:
@@ -196,6 +184,12 @@ jobs:
       - name: Build sidecar JAR
         run: make sidecar
 
+      # GoReleaser reaches back to the release before this one on its own, which
+      # is right for a patch and wrong for a milestone: a promotion tags a commit
+      # that is already tagged, so the notes would cover the single merge that
+      # produced the last patch. GORELEASER_PREVIOUS_TAG moves that boundary back
+      # to the last release at this one's level, and an empty value leaves
+      # GoReleaser on its own default, which is what a patch passes.
       - name: Publish the sanderling CLI to GitHub Releases
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -203,3 +197,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_PREVIOUS_TAG: ${{ needs.tag.outputs.previous_tag }}

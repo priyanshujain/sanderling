@@ -2,26 +2,26 @@ name: release
 
 # Promotes the last release to a milestone. ci cuts a patch on every merge, so
 # the released versions run 0.1.4, 0.1.5, 0.1.6; this marks the one you have
-# been running as 0.2.0 and publishes it under that name.
+# been running as 0.2.0 and publishes it under that name. The release notes
+# reach back over every patch being consolidated.
 #
 # It runs no checks of its own and needs none. The commit it releases is the one
 # the last release was cut from, and that commit only carries a tag because a
 # whole ci run went green on it.
+#
+# There is no box to type a version into. The two entries below are the only two
+# things a promotion can mean, and a version named by hand is the one way to get
+# a release that does not follow from the tag before it.
 on:
   workflow_dispatch:
     inputs:
       bump:
-        description: Which part of MAJOR.MINOR.PATCH to advance
+        description: Consolidate the patches since the last release at this level
         type: choice
         options:
           - minor
           - major
-          - patch
         default: minor
-      version:
-        description: Release this version outright, e.g. 1.0.0 or 1.0.0-rc1. Overrides the bump.
-        type: string
-        required: false
 
 permissions:
   contents: read
@@ -36,6 +36,5 @@ jobs:
       contents: write
     with:
       bump: ${{ inputs.bump }}
-      version: ${{ inputs.version }}
     secrets:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
