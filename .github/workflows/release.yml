@@ -1,0 +1,213 @@
+name: release
+
+# Two ways in, one workflow file. npm's trusted publisher is configured against
+# the filename of the workflow that *starts* the run, so a publish reached
+# through `workflow_call` from ci.yml would present ci.yml's name and be
+# refused, and a package carries only one trusted publisher. That is why the
+# merge path arrives as a `workflow_run` off a green ci rather than as a job
+# inside it.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of MAJOR.MINOR.PATCH to advance
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      version:
+        description: Release this version outright, e.g. 1.0.0 or 1.0.0-rc1. Overrides the bump.
+        type: string
+        required: false
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    # ci runs on every pull request too, and each of those completing would
+    # otherwise start a run here only to skip every job in it.
+    branches: [master]
+
+permissions:
+  contents: read
+
+# Two releases must not overlap: both would count a version off the same tag
+# and both would try to cut it.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Nothing is published until the tag is pushed, so a version that cannot be
+  # tagged never reaches a registry. npm is the irreversible half of a release
+  # and a tag is the cheap half to redo.
+  tag:
+    name: Tag
+    # A dispatch is a deliberate release. A workflow_run is one only when ci
+    # went green on a push to master: ci also runs on pull requests, and a red
+    # run is not something to publish.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      tag: ${{ steps.next.outputs.tag }}
+    steps:
+      # A workflow_run reports the commit ci ran on, which is the one to
+      # release: master may have moved on since it went green.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # The version is counted off the tags, so the tags have to be here.
+          fetch-depth: 0
+
+      # `inputs` is empty on a workflow_run, which leaves the script on its
+      # default of a patch: that is the bump a merge to master cuts.
+      - name: Resolve the version
+        id: next
+        run: .github/scripts/next-version.sh
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+
+      - name: Tag the commit
+        run: |
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+
+  npm:
+    name: Release (npm)
+    needs: tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm authenticates this publish over OIDC against the trusted publisher
+      # configured for @sanderling/spec, so the job holds no token at all and
+      # there is none to expire. It is also what makes npm attach provenance.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.tag }}
+          # `npm ci` below runs dependency lifecycle scripts, and no step in
+          # this job needs the git credential afterwards.
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+          cache-dependency-path: pkg/spec/package-lock.json
+
+      # registry-url above writes an `_authToken=${NODE_AUTH_TOKEN}` line into
+      # .npmrc whether or not a token exists, and an npm older than 11.5.1 reads
+      # that empty line as "auth is configured" and never asks for an OIDC
+      # token, so the publish fails needing auth. Node 22 ships npm 10.
+      - name: Install an npm that can publish over OIDC
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        working-directory: pkg/spec
+        run: npm ci
+
+      # The repo keeps package.json at 0.0.0-dev. The tags are the record of
+      # what has been released, and a version committed to master would be a
+      # second record to hold in step with them.
+      - name: Stamp the version
+        working-directory: pkg/spec
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+        env:
+          VERSION: ${{ needs.tag.outputs.version }}
+
+      # A publish that already landed and then failed on its way out leaves npm
+      # holding the version, and re-running the job must not be red for it. The
+      # registry is asked rather than the tags: only npm knows what npm has.
+      # Only stdout decides, because `npm view` on a version that does not exist
+      # is empty on some npm releases and an error on others, and an unreachable
+      # registry must end in a publish that fails loudly rather than a skip that
+      # reads as success.
+      - name: Ask npm whether this version is already published
+        id: published
+        run: |
+          if [ -n "$(npm view "@sanderling/spec@$VERSION" version 2>/dev/null || true)" ]; then
+            echo "npm already has @sanderling/spec@$VERSION, nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          VERSION: ${{ needs.tag.outputs.version }}
+
+      - name: Publish @sanderling/spec to npm
+        if: steps.published.outputs.publish == 'true'
+        working-directory: pkg/spec
+        # A pre-release is tagged `next` so `npm install @sanderling/spec` keeps
+        # resolving the latest stable.
+        run: |
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --access public --tag next
+          else
+            npm publish --access public
+          fi
+        env:
+          VERSION: ${{ needs.tag.outputs.version }}
+
+  cli:
+    name: Release (cli)
+    needs: tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.tag }}
+          # GoReleaser reads the tag history for its changelog.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+
+      - name: Cache Gradle
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Build sidecar JAR
+        run: make sidecar
+
+      - name: Publish the sanderling CLI to GitHub Releases
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
