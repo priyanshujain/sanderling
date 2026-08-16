@@ -253,50 +253,71 @@ window looked like and not only that the conviction happened.
 
 ## Releases
 
-Every merge to master cuts a release. `release.yml` watches ci with a
-`workflow_run` trigger, and when a push to master finishes green it advances the
-patch: `0.1.3` becomes `0.1.4`. That publishes `@sanderling/spec` to npm and a
-GitHub Release carrying the CLI binaries, both from the commit ci went green on
-rather than from whatever master has drifted to since.
+Two pipelines, and they are independent of each other.
 
-For a minor or major release, Actions -> release -> Run workflow. The `bump`
-dropdown picks which part of `MAJOR.MINOR.PATCH` to advance, and `version`
-overrides it with a version named outright, which is how a pre-release like
-`1.0.0-rc1` gets cut. A pre-release publishes under npm's `next` tag so
-`npm install @sanderling/spec` keeps resolving the latest stable.
+**Every merge to master cuts a patch.** The `Release` jobs sit in `ci.yml`
+alongside everything else, waiting on `Checks`, `Folio` and `Replay UI`, so
+nothing reaches a registry that the emulators and the simulator have not agreed
+on. `0.1.4` becomes `0.1.5`: published to npm, and to GitHub Releases with the
+CLI binaries. It releases the commit that triggered the run rather than master's
+head, because master can move in the hour the device legs take.
 
-**The tags are the version.** Nothing in the tree holds it: `pkg/spec/package.json`
-stays at `0.0.0-dev` and CI stamps the real version in before it publishes. So
-there is no version-bump commit to land on master, nothing to conflict on, and
-no second record to hold in step with the tags. `.github/scripts/next-version.sh`
-is the whole rule, and it counts off stable tags only, because `v0.0.1-rc4` is a
-candidate for `0.0.1` and a patch counted off it would skip the version it was a
-candidate for. Run it anywhere to see what the next release would be:
+**`release.yml` promotes that to a milestone.** Actions -> release -> Run
+workflow, pick `minor` or `major`, and the version you have been running as
+`0.1.6` is republished as `0.2.0`. The `version` box overrides the dropdown with
+a version named outright, which is how a pre-release like `1.0.0-rc1` gets cut;
+a pre-release publishes under npm's `next` tag so `npm install @sanderling/spec`
+keeps resolving the latest stable.
+
+It runs no checks and needs none. The commit it releases is the one the last
+release was cut from, and that commit only carries a tag because a whole ci run
+went green on it. Re-running the device legs to republish bytes that already
+passed them would prove nothing. Afterwards the patch line continues from the
+milestone: the next merge counts off `0.2.0` and cuts `0.2.1`.
+
+Both call `release-publish.yml`, which is where the tagging, the npm publish and
+GoReleaser actually live. Two copies of a publish drift, and the drift only
+shows up on a release.
+
+**The tags are the version.** Nothing in the tree holds it:
+`pkg/spec/package.json` stays at `0.0.0-dev` and CI stamps the real version in
+before it publishes. So there is no version-bump commit to land on master,
+nothing to conflict on, and no second record to hold in step with the tags.
+`.github/scripts/next-version.sh` is the whole rule, and it counts off stable
+tags only, because `v0.0.1-rc4` is a candidate for `0.0.1` and a patch counted
+off it would skip the version it was a candidate for. Run it anywhere to see
+what the next release would be:
 
 ```
 BUMP=minor .github/scripts/next-version.sh
 ```
 
 The tag is pushed before anything is published, because npm is the half of a
-release that cannot be taken back and a tag is the half that can.
+release that cannot be taken back and a tag is the half that can. Both pipelines
+resolve their version under one `release-tag` concurrency group, so a promotion
+and a merge can never count off the same tag at once.
 
-### Why the release is its own workflow
+### The npm credential
 
-npm authenticates the publish over OIDC, against a trusted publisher configured
-for `@sanderling/spec` on npmjs.com. There is no token in the repo and none to
-expire, which is what took the pipeline down in August 2026: the `NPM_TOKEN`
-secret behind the old tag-driven release had expired, and npm answers an
-unauthorised publish with a 404 that reads as "no such package".
+`NPM_TOKEN` is a classic automation token. Those do not expire, which is the
+whole point: what took the pipeline down in August 2026 was a *granular* token,
+and granular tokens default to a 30-day life. npm answers a publish it will not
+authorise with `404`, so the failure read as "package does not exist" while
+`@sanderling/spec` was sitting in the registry the whole time.
 
-npm matches that trusted publisher against the filename of the workflow that
-*starts* the run, and a package carries only one. So the publish has to live in
-one entry-point workflow: a job inside ci.yml would present `ci.yml`, and a
-reusable workflow called from ci.yml would present the caller's name too. That
-is why the merge path arrives at `release.yml` as a `workflow_run` rather than
-as a job at the end of ci.
+Trusted publishing over OIDC would remove the token, and it is the better
+mechanism, but it cannot express this shape: a package carries exactly one
+trusted publisher, matched against the filename of the workflow that *starts*
+the run, and there are two workflows here that publish. A reusable workflow does
+not help, because npm sees the caller's name. Collapsing the two pipelines into
+one is the price of OIDC, and it is not worth paying.
 
-Setting that up again, or moving the package, means npmjs.com -> the package ->
-Settings -> Trusted publisher: repository `priyanshujain/sanderling`, workflow
-`release.yml`. It needs npm 11.5.1 or newer, which the job installs, because
-`actions/setup-node` writes an empty `_authToken` line into `.npmrc` and an
-older npm reads that as "auth is configured" and never asks for an OIDC token.
+### A promoted release has thin release notes
+
+GoReleaser builds its changelog from the commits between the previous tag and
+this one. A promotion tags a commit that is already tagged, so `v0.2.0` and
+`v0.1.6` sit on the same commit and there is nothing between them to list. The
+binaries and the npm tarball are correct; only the generated notes are empty.
+Setting `GORELEASER_PREVIOUS_TAG` to the previous milestone would make the notes
+span the patches being consolidated, and is the obvious thing to add if those
+notes start mattering.
