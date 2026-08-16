@@ -482,6 +482,11 @@ const iosAttrDump = `{
       "attributes": {"accessibilityText": "Close", "title": "Settings", "bounds": "[0,0,100,50]"},
       "children": [],
       "enabled": true
+    },
+    {
+      "attributes": {"identifier": "Feed", "scrollable": "true", "bounds": "[0,120,390,700]"},
+      "children": [],
+      "enabled": true
     }
   ]
 }`
@@ -548,11 +553,14 @@ func TestTitleReturnsNilForAndroid(t *testing.T) {
 	}
 }
 
-func TestScrollableGracefulIgnoreOnIOS(t *testing.T) {
+func TestScrollableMatchesOnIOS(t *testing.T) {
 	tree, _ := Parse(iosAttrDump)
 	el := tree.Find("scrollable:true")
-	if el != nil {
-		t.Fatal("expected scrollable:true to return nil on iOS hierarchy (graceful ignore)")
+	if el == nil {
+		t.Fatal("expected scrollable:true to match the iOS scroll container")
+	}
+	if el.Attributes["identifier"] != "Feed" {
+		t.Fatalf("got %q, want Feed", el.Attributes["identifier"])
 	}
 }
 

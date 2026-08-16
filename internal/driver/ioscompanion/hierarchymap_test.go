@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -329,5 +330,61 @@ func TestDumpIsCollapsed(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func scrollableBounds(tree *hierarchy.Tree) []hierarchy.Bounds {
+	var bounds []hierarchy.Bounds
+	for _, element := range tree.FindAllNodes("scrollable:true") {
+		bounds = append(bounds, element.Bounds)
+	}
+	return bounds
+}
+
+func TestScrollableMarksTheContainerThatClipsOverflowingContent(t *testing.T) {
+	tree := mapAndParse(
+		t,
+		readDump(t, "home-scrolling-describe.json"),
+		402,
+		874,
+	)
+	got := scrollableBounds(tree)
+	want := []hierarchy.Bounds{{Left: 0, Top: 122, Right: 402, Bottom: 699}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("scrollable containers = %+v, want %+v", got, want)
+	}
+}
+
+func TestScrollableIsAbsentWhenNothingOverflows(t *testing.T) {
+	tree := mapAndParse(t, readDump(t, "home-fixed-describe.json"), 402, 874)
+	if got := scrollableBounds(tree); len(got) != 0 {
+		t.Fatalf(
+			"scrollable containers = %+v, want none on a screen that does not scroll",
+			got,
+		)
+	}
+}
+
+func TestScrollableIsAbsentWithoutTreeDepth(t *testing.T) {
+	tree := mapAndParse(t, readDump(t, "accounts-describe.json"), 402, 874)
+	if got := scrollableBounds(tree); len(got) != 0 {
+		t.Fatalf(
+			"scrollable containers = %+v, want none from a dump that carries no depth",
+			got,
+		)
+	}
+}
+
+func TestScrollableIgnoresAContainerOffTheScreen(t *testing.T) {
+	// The dismissed keyboard is reported below the screen, and its prediction
+	// bar clips a much taller child, so it satisfies every other condition.
+	dump := `[
+		{"type":"Application","depth":0,"frame":{"x":0,"y":0,"width":402,"height":874},"enabled":true},
+		{"type":"Other","depth":1,"frame":{"x":0,"y":874,"width":402,"height":54},"enabled":true},
+		{"type":"Other","depth":2,"frame":{"x":0,"y":274,"width":402,"height":1254},"enabled":true}
+	]`
+	tree := mapAndParse(t, []byte(dump), 402, 874)
+	if got := scrollableBounds(tree); len(got) != 0 {
+		t.Fatalf("scrollable containers = %+v, want none off the screen", got)
 	}
 }

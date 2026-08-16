@@ -42,6 +42,7 @@ type rawElement struct {
 	AXLabel    *string  `json:"AXLabel"`
 	AXValue    *string  `json:"AXValue"`
 	Type       string   `json:"type"`
+	Depth      int      `json:"depth"`
 	Enabled    bool     `json:"enabled"`
 }
 
@@ -76,12 +77,18 @@ func MapHierarchy(dump []byte, screenWidth, screenHeight int) ([]byte, error) {
 	if len(dump) > 0 {
 		_ = json.Unmarshal(dump, &rawElements)
 	}
+	elements := make([]rawElement, 0, len(rawElements))
 	for _, raw := range rawElements {
 		var element rawElement
 		if err := json.Unmarshal(raw, &element); err != nil {
 			continue
 		}
-		if child, ok := mapElement(&element); ok {
+		elements = append(elements, element)
+	}
+
+	scrollable := scrollableElements(elements, screenWidth, screenHeight)
+	for index := range elements {
+		if child, ok := mapElement(&elements[index], scrollable[index]); ok {
 			root.Children = append(root.Children, child)
 		}
 	}
@@ -89,7 +96,84 @@ func MapHierarchy(dump []byte, screenWidth, screenHeight int) ([]byte, error) {
 	return json.Marshal(root)
 }
 
-func mapElement(element *rawElement) (treeNode, bool) {
+// frameTolerance absorbs the sub-point rounding in companion frames, so a child
+// that sits flush against its container's edge does not read as escaping it.
+const frameTolerance = 0.5
+
+// scrollableElements reports, per element, whether it is a container that clips
+// content reaching past its own frame. That is the same fact Android reads off
+// uiautomator's scrollable attribute and the web driver derives from overflow:
+// the container can actually scroll, because there is content it is not showing.
+//
+// Three conditions together, because the snapshot has no clipping flag. The
+// element must sit strictly inside its parent on at least one edge, which
+// separates a real container from the stack of full-screen wrappers that
+// inherit its overflow; some element in its subtree must lie outside it; and it
+// must be on the screen, since a dismissed keyboard is reported below the screen
+// and clips a much taller child without any gesture being able to reach it.
+// A dump without depth (the legacy accessibility bridge) makes every element a
+// root, and roots are never marked, so that path reports no scroll rather than
+// a guessed one.
+func scrollableElements(elements []rawElement, screenWidth, screenHeight int) []bool {
+	screen := rawFrame{Width: float64(screenWidth), Height: float64(screenHeight)}
+	scrollable := make([]bool, len(elements))
+	var ancestors []int
+	for index, element := range elements {
+		for len(ancestors) > 0 && elements[ancestors[len(ancestors)-1]].Depth >= element.Depth {
+			ancestors = ancestors[:len(ancestors)-1]
+		}
+		if len(ancestors) > 0 && hasArea(element.Frame) &&
+			overlaps(element.Frame, screen) &&
+			sitsInside(element.Frame, elements[ancestors[len(ancestors)-1]].Frame) &&
+			subtreeEscapes(elements, index) {
+			scrollable[index] = true
+		}
+		ancestors = append(ancestors, index)
+	}
+	return scrollable
+}
+
+// overlaps reports whether two frames share any area.
+func overlaps(frame, other rawFrame) bool {
+	return frame.X < other.X+other.Width && other.X < frame.X+frame.Width &&
+		frame.Y < other.Y+other.Height && other.Y < frame.Y+frame.Height
+}
+
+// sitsInside reports whether frame is strictly smaller than container on at
+// least one edge.
+func sitsInside(frame, container rawFrame) bool {
+	return frame.X > container.X+frameTolerance ||
+		frame.Y > container.Y+frameTolerance ||
+		frame.X+frame.Width < container.X+container.Width-frameTolerance ||
+		frame.Y+frame.Height < container.Y+container.Height-frameTolerance
+}
+
+// subtreeEscapes reports whether any descendant of the element at index is
+// positioned outside its frame. Descendants are the run that follows it while
+// the depth stays greater, which is the pre-order walk the companion emits.
+func subtreeEscapes(elements []rawElement, index int) bool {
+	frame := elements[index].Frame
+	for next := index + 1; next < len(elements) && elements[next].Depth > elements[index].Depth; next++ {
+		child := elements[next].Frame
+		if !hasArea(child) {
+			continue
+		}
+		if child.X < frame.X-frameTolerance ||
+			child.Y < frame.Y-frameTolerance ||
+			child.X+child.Width > frame.X+frame.Width+frameTolerance ||
+			child.Y+child.Height > frame.Y+frame.Height+frameTolerance {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArea(frame rawFrame) bool {
+	return finite(frame.X) && finite(frame.Y) && finite(frame.Width) &&
+		finite(frame.Height) && frame.Width > 0 && frame.Height > 0
+}
+
+func mapElement(element *rawElement, scrollable bool) (treeNode, bool) {
 	if element.Type == "" {
 		return treeNode{}, false
 	}
@@ -104,6 +188,10 @@ func mapElement(element *rawElement) (treeNode, bool) {
 	attributes := map[string]string{
 		"bounds": boundsString(left, top, left+roundCoord(frame.Width), top+roundCoord(frame.Height)),
 		"class":  element.Type,
+	}
+
+	if scrollable {
+		attributes["scrollable"] = "true"
 	}
 
 	if id := stringValue(element.AXUniqueID); id != "" {

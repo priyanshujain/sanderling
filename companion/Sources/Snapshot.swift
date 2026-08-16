@@ -33,27 +33,28 @@ enum Snapshot {
         let application = XCUIApplication(bundleIdentifier: bundleIdentifier)
         let root = try application.snapshot()
         var result: [[String: Any]] = []
-        walk(root, into: &result)
+        walk(root, depth: 0, into: &result)
         return result
     }
 
-    private static func walk(_ node: XCUIElementSnapshot, into result: inout [[String: Any]]) {
+    private static func walk(_ node: XCUIElementSnapshot, depth: Int, into result: inout [[String: Any]]) {
         // The keyboard subtree is pruned: the legacy accessibility bridge
         // never exposed it, its key frames are unreliable as tap targets, and
         // its shift-state churn destabilizes settle hashing.
         if node.elementType == .keyboard {
             return
         }
-        result.append(serialize(node))
+        result.append(serialize(node, depth: depth))
         for child in node.children {
-            walk(child, into: &result)
+            walk(child, depth: depth + 1, into: &result)
         }
     }
 
-    private static func serialize(_ node: XCUIElementSnapshot) -> [String: Any] {
+    private static func serialize(_ node: XCUIElementSnapshot, depth: Int) -> [String: Any] {
         let frame = node.frame
         return [
             "type": elementTypeName(node.elementType),
+            "depth": depth,
             "frame": [
                 "x": Double(frame.origin.x),
                 "y": Double(frame.origin.y),
