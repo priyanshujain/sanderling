@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"time"
@@ -51,17 +52,57 @@ type pairwiseResult struct {
 }
 
 type analysis struct {
-	GeneratedAt time.Time        `json:"generated_at"`
-	Outcome     string           `json:"outcome"`
-	Arms        []armSummary     `json:"arms"`
-	LogRank     *logRankResult   `json:"log_rank"`
-	Pairwise    []pairwiseResult `json:"pairwise"`
-	Notes       []string         `json:"notes,omitempty"`
+	GeneratedAt time.Time `json:"generated_at"`
+	Outcome     string    `json:"outcome"`
+	// Question names the family Holm corrects within. The correction is applied
+	// across the comparisons of one research question and never across the
+	// paper, so the family a p-value was adjusted in has to be recorded next to
+	// it rather than left to the reader to reconstruct.
+	Question       string            `json:"question,omitempty"`
+	HolmFamilySize int               `json:"holm_family_size"`
+	Arms           []armSummary      `json:"arms"`
+	LogRank        *logRankResult    `json:"log_rank"`
+	Pairwise       []pairwiseResult  `json:"pairwise"`
+	Paired         *pairedComparison `json:"paired,omitempty"`
+	Notes          []string          `json:"notes,omitempty"`
 }
 
 const outcomeDescription = "steps to first violation, right-censored at the step budget"
 
 func analyse(arms []arm, now time.Time) analysis {
+	result, testable := baseAnalysis(arms, now)
+	if len(testable) >= 2 {
+		result.Pairwise = comparePairs(testable)
+		result.HolmFamilySize = countCorrected(result.Pairwise)
+	}
+	return result
+}
+
+// analysePaired is the seed-matched design of the actuation ablation: two arms
+// running the same seeds, contrasted seed by seed rather than as two
+// independent samples.
+func analysePaired(arms []arm, now time.Time) (analysis, error) {
+	result, testable := baseAnalysis(arms, now)
+	if len(testable) != 2 {
+		return analysis{}, fmt.Errorf("a paired comparison needs exactly two arms with usable runs, found %d", len(testable))
+	}
+	comparison, err := pairArms(testable[0], testable[1])
+	if err != nil {
+		return analysis{}, err
+	}
+	if comparison.Pairs == 0 {
+		return analysis{}, fmt.Errorf("arms %q and %q share no seed with a usable run in both",
+			testable[0].Name, testable[1].Name)
+	}
+	if !math.IsNaN(comparison.PValue) {
+		comparison.HolmPValue = holm([]float64{comparison.PValue})[0]
+		result.HolmFamilySize = 1
+	}
+	result.Paired = &comparison
+	return result, nil
+}
+
+func baseAnalysis(arms []arm, now time.Time) (analysis, []arm) {
 	result := analysis{GeneratedAt: now, Outcome: outcomeDescription}
 	for _, current := range arms {
 		result.Arms = append(result.Arms, summarize(current))
@@ -86,9 +127,18 @@ func analyse(arms []arm, now time.Time) analysis {
 		}
 		test := logRank(names, groups)
 		result.LogRank = &test
-		result.Pairwise = comparePairs(testable)
 	}
-	return result
+	return result, testable
+}
+
+func countCorrected(pairs []pairwiseResult) int {
+	corrected := 0
+	for _, pair := range pairs {
+		if !math.IsNaN(pair.PValue) {
+			corrected++
+		}
+	}
+	return corrected
 }
 
 func comparePairs(arms []arm) []pairwiseResult {

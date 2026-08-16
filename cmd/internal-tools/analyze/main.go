@@ -25,6 +25,9 @@ Usage:
 Each directory is one produced by the campaign tool and must hold campaign.json
 and runs.jsonl. Directories sharing an arm label are pooled and must agree on
 the step budget.
+
+One invocation is one research question: Holm corrects across the comparisons it
+produces and across nothing else.
 `
 
 type stringList []string
@@ -48,8 +51,12 @@ func run(arguments []string, stdout, stderr io.Writer) error {
 	}
 	var directories stringList
 	var jsonPath string
+	var question string
+	var paired bool
 	flagSet.Var(&directories, "campaign", "campaign directory to read; repeat for more, or pass them as arguments")
 	flagSet.StringVar(&jsonPath, "json", "", "write the machine-readable summary here, or - for stdout")
+	flagSet.StringVar(&question, "question", "", "the research question these campaigns answer; Holm corrects within one invocation, and this records which family that was")
+	flagSet.BoolVar(&paired, "paired", false, "the two arms ran the same seeds: contrast them seed by seed with the Wilcoxon signed-rank test instead of the rank-sum test")
 	if err := flagSet.Parse(arguments); err != nil {
 		return err
 	}
@@ -73,7 +80,16 @@ func run(arguments []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	result := analyse(arms, time.Now().UTC())
+	var result analysis
+	if paired {
+		result, err = analysePaired(arms, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+	} else {
+		result = analyse(arms, time.Now().UTC())
+	}
+	result.Question = question
 	writeReport(result, stdout)
 
 	if jsonPath == "" {

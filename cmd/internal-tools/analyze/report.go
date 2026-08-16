@@ -94,6 +94,10 @@ func writeReport(result analysis, out io.Writer) {
 		})
 	}
 
+	if result.Paired != nil {
+		writePaired(out, *result.Paired)
+	}
+
 	if len(result.Pairwise) > 0 {
 		fmt.Fprintln(out, "\npairwise wilcoxon rank-sum, censored runs held at the budget")
 		fmt.Fprintln(out, "a12 above 0.5 means the first arm takes more steps to its first violation")
@@ -112,8 +116,32 @@ func writeReport(result analysis, out io.Writer) {
 		})
 	}
 
+	if result.HolmFamilySize > 0 {
+		family := "this invocation"
+		if result.Question != "" {
+			family = result.Question
+		}
+		fmt.Fprintf(out, "\nholm correction applied within %s, over %d comparison(s)\n", family, result.HolmFamilySize)
+	}
+
 	for _, note := range result.Notes {
 		fmt.Fprintf(out, "\nnote: %s\n", note)
+	}
+}
+
+func writePaired(out io.Writer, comparison pairedComparison) {
+	fmt.Fprintf(out, "\npaired per-seed difference, %s minus %s, censored runs held at the budget\n",
+		comparison.First, comparison.Second)
+	fmt.Fprintf(out, "%d seed pair(s): %s sooner in %d, %s sooner in %d, tied in %d\n",
+		comparison.Pairs, comparison.First, comparison.FirstSooner,
+		comparison.Second, comparison.SecondSooner, comparison.Tied)
+	fmt.Fprintf(out, "median difference %+.1f steps, sign %+d, a12 within pairs %.3f\n",
+		comparison.MedianDifference, comparison.Sign, comparison.A12)
+	fmt.Fprintf(out, "wilcoxon signed-rank v %.1f, p %s, holm p %s\n",
+		comparison.Statistic, formatPValue(comparison.PValue), formatPValue(comparison.HolmPValue))
+	if len(comparison.UnpairedSeeds) > 0 {
+		fmt.Fprintf(out, "%d seed(s) usable in one arm only and left out of the pairing: %v\n",
+			len(comparison.UnpairedSeeds), comparison.UnpairedSeeds)
 	}
 }
 
