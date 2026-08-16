@@ -432,6 +432,34 @@ func (v *Verifier) ExtractorCount() int {
 	return len(v.extractors)
 }
 
+// ExtractorNames returns every extractor's name in registration order, which is
+// the order OverrideExtractorValues is keyed by. A trace records extractor
+// values by name, so replaying one offline needs the name-to-index mapping the
+// spec fixed at load.
+func (v *Verifier) ExtractorNames() []string {
+	names := make([]string, 0, len(v.extractors))
+	for _, extractor := range v.extractors {
+		names = append(names, extractor.name)
+	}
+	return names
+}
+
+// PropertyFormulas rebuilds each registered property's formula. The thunks are
+// this verifier's own predicates, reading this verifier's extractor state, so
+// an evaluator built over a rewritten formula observes exactly what the
+// engine's evaluator does.
+func (v *Verifier) PropertyFormulas() (map[string]ltl.Formula, error) {
+	formulas := make(map[string]ltl.Formula, len(v.properties))
+	for name, specIndex := range v.properties {
+		formula, err := v.buildFormula(specIndex)
+		if err != nil {
+			return nil, fmt.Errorf("property %q: %w", name, err)
+		}
+		formulas[name] = formula
+	}
+	return formulas, nil
+}
+
 // OverrideExtractorValues replaces each extractor's `current` slot with a
 // caller-supplied value, keyed by registration index. Used by the web tick
 // path so extractor bodies that ran in V8 (against the real DOM) drive the
