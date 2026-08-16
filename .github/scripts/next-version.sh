@@ -4,10 +4,9 @@
 # nothing in the tree holds it: no commit has to land on master to advance a
 # version, and a release cannot disagree with a package.json someone edited.
 #
-# BUMP is major, minor or patch. Writes `version`, `tag`, `released_tag` and
-# `previous_tag` to $GITHUB_OUTPUT when it is set. `released_tag` is the release
-# this one follows, and is the commit a promotion re-cuts. `previous_tag` is how
-# far back the release notes should reach.
+# BUMP is major, minor or patch. Writes `version`, `tag` and `previous_tag` to
+# $GITHUB_OUTPUT when it is set. `previous_tag` is how far back the release
+# notes should reach.
 set -euo pipefail
 
 bump="${BUMP:-patch}"
@@ -22,11 +21,8 @@ releases() { # <sed script selecting the tags to consider>
 }
 
 stable='s/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p'
-released="$(releases "$stable" | tail -1)"
-released_tag=""
-if [ -n "$released" ]; then released_tag="v$released"; fi
-
-base="${released:-0.0.0}"
+base="$(releases "$stable" | tail -1)"
+base="${base:-0.0.0}"
 IFS=. read -r major minor patch <<<"$base"
 
 case "$bump" in
@@ -71,7 +67,6 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
     echo "version=$version"
     echo "tag=$tag"
-    echo "released_tag=$released_tag"
     echo "previous_tag=$previous_tag"
   } >> "$GITHUB_OUTPUT"
 fi

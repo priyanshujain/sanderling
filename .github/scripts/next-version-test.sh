@@ -44,12 +44,6 @@ expect_version() { # <want> <case>
   [ "$status" = 0 ] || fail "$2: exit $status, want 0"
 }
 
-# The manual pipeline re-cuts the commit this tag points at, so a wrong answer
-# here releases the wrong code under the right version.
-expect_released_tag() { # <want, empty for none> <case>
-  grep -qxF -- "released_tag=$1" "$outputs" \
-    || fail "$2: $(grep '^released_tag=' "$outputs" || echo 'no released_tag'), want released_tag=$1"
-}
 
 # How far back GoReleaser reaches for the notes. Empty leaves it on its own
 # default, which is the release immediately before this one.
@@ -65,28 +59,23 @@ expect_refused() { # <case> <message fragment>
 }
 
 # A repository with nothing released yet starts the line at 0.0.1 rather than
-# reissuing 0.0.0, and has no release to promote or to write notes against.
+# reissuing 0.0.0, and has no earlier release to write notes against.
 resolve first patch
 expect_version 0.0.1 first
-expect_released_tag "" first
 expect_previous_tag "" first
 
 # The rc tags this repository carries are candidates for 0.0.1, so the first
-# stable release is 0.0.1 and not 0.0.2, and a candidate is not a release to
-# promote.
+# stable release is 0.0.1 and not 0.0.2.
 resolve rcs patch v0.0.1-rc1 v0.0.1-rc4
 expect_version 0.0.1 rcs
-expect_released_tag "" rcs
 
 resolve patch patch v1.2.3
 expect_version 1.2.4 patch
-expect_released_tag v1.2.3 patch
 # A patch already follows the release before it, so GoReleaser is left alone.
 expect_previous_tag "" patch
 
 resolve minor minor v1.2.3
 expect_version 1.3.0 minor
-expect_released_tag v1.2.3 minor
 
 resolve major major v1.2.3
 expect_version 2.0.0 major
@@ -95,12 +84,10 @@ expect_version 2.0.0 major
 # next patch off the wrong release and hand back 0.9.1.
 resolve ordering patch v0.9.0 v0.10.0
 expect_version 0.10.1 ordering
-expect_released_tag v0.10.0 ordering
 
 # A tag that is not a release is not a base to count from.
 resolve noise patch v1.2.3 nightly v2.0.0-rc1 vfoo
 expect_version 1.2.4 noise
-expect_released_tag v1.2.3 noise
 
 # A bump counts off the highest release, so releasing twice in a row advances
 # twice rather than landing on the tag the first one just cut.
