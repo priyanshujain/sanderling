@@ -144,14 +144,12 @@ jobs:
 
       # actionlint reads a local action's inputs but never checks that its path
       # exists: `uses: ./.github/actions/typo` lints clean and fails only when
-      # the job runs, and the folio jobs and the release job never run on a
-      # pull request.
+      # the job runs, and the release and docs jobs never run on a pull request.
       - name: Check that the workflow references resolve
         run: .github/scripts/workflow-refs.sh
 
   folio-android:
     name: Folio (android)
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -200,7 +198,6 @@ jobs:
 
   folio-ios:
     name: Folio (ios)
-    if: github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 90
     env:
@@ -257,7 +254,6 @@ jobs:
 
   folio-web:
     name: Folio (web)
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
