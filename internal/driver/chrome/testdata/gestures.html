@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+<style>
+  :root { --frame-w: 390; --frame-h: 640; }
+  body { margin: 0; font: 16px sans-serif; }
+  #row { height: 80px; background: #eef; touch-action: pan-y; }
+  #inner { height: 200px; overflow-y: scroll; border: 2px solid #333; }
+  #inner div { height: 60px; }
+  #filler div { height: 60px; border-bottom: 1px solid #ccc; }
+</style>
+</head>
+<body>
+<div id="row" data-testid="row">swipe me</div>
+<div id="status" data-testid="status">idle</div>
+<div id="inner" data-testid="inner"></div>
+<div id="filler"></div>
+<script>
+  const inner = document.getElementById('inner');
+  for (let i = 0; i < 30; i++) {
+    const item = document.createElement('div');
+    item.textContent = 'inner ' + i;
+    inner.appendChild(item);
+  }
+  const filler = document.getElementById('filler');
+  for (let i = 0; i < 40; i++) {
+    const item = document.createElement('div');
+    item.textContent = 'page ' + i;
+    filler.appendChild(item);
+  }
+  const row = document.getElementById('row');
+  const status = document.getElementById('status');
+  let startX = 0, startY = 0, tracking = false;
+  row.addEventListener('pointerdown', function(e) {
+    startX = e.clientX;
+    startY = e.clientY;
+    tracking = true;
+    row.setPointerCapture(e.pointerId);
+  });
+  row.addEventListener('pointermove', function(e) {
+    if (!tracking) return;
+    const dx = e.clientX - startX, dy = e.clientY - startY;
+    if (Math.abs(dx) <= 40 || Math.abs(dx) <= Math.abs(dy)) return;
+    tracking = false;
+    status.textContent =
+      (dx < 0 ? 'dismissed left' : 'dismissed right') +
+      (e.isTrusted ? ' trusted' : ' untrusted');
+  });
+  row.addEventListener('pointerup', function() { tracking = false; });
+</script>
+</body>
+</html>

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
@@ -201,12 +202,84 @@ func (d *Driver) Terminate(_ context.Context) error {
 	return nil
 }
 
+// pointInViewScript scrolls a point the caller took from the hierarchy back
+// inside the viewport and reports where to dispatch at, plus whether anything
+// is there to receive it.
+//
+// The emulated viewport is sized once at launch, but getBoundingClientRect goes
+// on reporting elements the growing document has pushed below it, so the two
+// disagree the moment an app adds content. Input coordinates are
+// viewport-relative: a click below the fold is hit-tested to the document root,
+// which delivers it to <html> and never to the element the caller named. No
+// error is raised on any layer, so the step reads as an action that landed and
+// changed nothing.
+//
+// Only a point outside the viewport is moved, so a gesture that already had a
+// reachable target dispatches exactly where it did before.
+const pointInViewScript = `
+(function(x, y) {
+  const root = document.scrollingElement || document.documentElement;
+  let shiftX = 0, shiftY = 0;
+  if (x < 0 || x >= window.innerWidth) shiftX = Math.round(x - window.innerWidth / 2);
+  if (y < 0 || y >= window.innerHeight) shiftY = Math.round(y - window.innerHeight / 2);
+  if (shiftX || shiftY) {
+    const fromX = root.scrollLeft, fromY = root.scrollTop;
+    root.scrollLeft = fromX + shiftX;
+    root.scrollTop = fromY + shiftY;
+    shiftX = root.scrollLeft - fromX;
+    shiftY = root.scrollTop - fromY;
+  }
+  const atX = x - shiftX, atY = y - shiftY;
+  return [atX, atY, document.elementFromPoint(atX, atY) ? 1 : 0];
+})(%d, %d)`
+
+// pointInView returns the point to dispatch a gesture at for the point the
+// caller named, having scrolled it into view. It fails with
+// driver.ErrGestureUndelivered when no scroll can put an element under it.
+func pointInView(runCtx context.Context, x, y int) (int, int, error) {
+	var point [3]int
+	script := fmt.Sprintf(pointInViewScript, x, y)
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &point)); err != nil {
+		return 0, 0, err
+	}
+	if point[2] == 0 {
+		return 0, 0, fmt.Errorf(
+			"%w: (%d,%d)",
+			driver.ErrGestureUndelivered,
+			x,
+			y,
+		)
+	}
+	return point[0], point[1], nil
+}
+
 func (d *Driver) Tap(ctx context.Context, x, y int) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
+	atX, atY, err := pointInView(runCtx, x, y)
+	if err != nil {
+		return err
+	}
 	return chromedp.Run(runCtx,
-		chromedp.MouseClickXY(float64(x), float64(y)),
+		chromedp.MouseClickXY(float64(atX), float64(atY)),
 	)
+}
+
+// requireSelectorMatch reports driver.ErrSelectorMatchedNothing when the
+// selector names no node on the page right now. chromedp.Click waits instead,
+// so without this the caller hears a deadline (or nothing at all) for an action
+// that had no target.
+func requireSelectorMatch(runCtx context.Context, target, selector string) error {
+	var nodes []*cdp.Node
+	if err := chromedp.Run(runCtx,
+		chromedp.Nodes(target, &nodes, chromedp.BySearch, chromedp.AtLeast(0)),
+	); err != nil {
+		return err
+	}
+	if len(nodes) == 0 {
+		return fmt.Errorf("%w: %q", driver.ErrSelectorMatchedNothing, selector)
+	}
+	return nil
 }
 
 func (d *Driver) TapSelector(ctx context.Context, selector string) error {
@@ -217,6 +290,9 @@ func (d *Driver) TapSelector(ctx context.Context, selector string) error {
 		// Fall back to passing the string straight through; chromedp will
 		// reject it loudly if it isn't a valid CSS selector.
 		target = selector
+	}
+	if err := requireSelectorMatch(runCtx, target, selector); err != nil {
+		return err
 	}
 	if isXPath {
 		return chromedp.Run(runCtx, chromedp.Click(target, chromedp.NodeVisible, chromedp.BySearch))
@@ -229,16 +305,55 @@ func (d *Driver) TapSelector(ctx context.Context, selector string) error {
 // primitive, so the gesture is two taps with this gap.
 const doubleTapGap = 50 * time.Millisecond
 
+// DoubleTap resolves the point once and dispatches both taps there: resolving
+// per tap would scroll the second one away from the element the first hit.
 func (d *Driver) DoubleTap(ctx context.Context, x, y int) error {
-	return webDoubleTap(ctx, func() error { return d.Tap(ctx, x, y) })
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	atX, atY, err := pointInView(runCtx, x, y)
+	if err != nil {
+		return err
+	}
+	return webDoubleTap(ctx, func(clickCount int) error {
+		return chromedp.Run(
+			runCtx,
+			chromedp.MouseClickXY(
+				float64(atX),
+				float64(atY),
+				chromedp.ClickCount(clickCount),
+			),
+		)
+	})
 }
 
 func (d *Driver) DoubleTapSelector(ctx context.Context, selector string) error {
-	return webDoubleTap(ctx, func() error { return d.TapSelector(ctx, selector) })
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	target, isXPath, err := TranslateStringSelector(selector)
+	if err != nil {
+		target = selector
+	}
+	if err := requireSelectorMatch(runCtx, target, selector); err != nil {
+		return err
+	}
+	options := []chromedp.QueryOption{chromedp.NodeVisible}
+	if isXPath {
+		options = append(options, chromedp.BySearch)
+	}
+	return webDoubleTap(ctx, func(clickCount int) error {
+		if clickCount < 2 {
+			return chromedp.Run(runCtx, chromedp.Click(target, options...))
+		}
+		return chromedp.Run(runCtx, chromedp.DoubleClick(target, options...))
+	})
 }
 
-func webDoubleTap(ctx context.Context, tap func() error) error {
-	if err := tap(); err != nil {
+// webDoubleTap dispatches the pair a browser reads as one double click. Blink
+// raises dblclick off the click count the second event carries, so two taps
+// that both say "first click" arrive at a dblclick handler as two ordinary
+// clicks and the gesture never happens at all.
+func webDoubleTap(ctx context.Context, tap func(clickCount int) error) error {
+	if err := tap(1); err != nil {
 		return err
 	}
 	timer := time.NewTimer(doubleTapGap)
@@ -248,7 +363,7 @@ func webDoubleTap(ctx context.Context, tap func() error) error {
 		return ctx.Err()
 	case <-timer.C:
 	}
-	return tap()
+	return tap(2)
 }
 
 func (d *Driver) InputText(callerCtx context.Context, text string) error {
@@ -307,31 +422,69 @@ func (d *Driver) EraseText(callerCtx context.Context, _ int) error {
 	)
 }
 
+// Swipe drags a finger across the page as a trusted touch stream. Events
+// synthesized in the page carry isTrusted false: they reach a handler that
+// happens to listen, but never enter the input pipeline that scrolls, honours
+// touch-action or resolves a gesture.
 func (d *Driver) Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
-	millis := max(duration.Milliseconds(), 50)
-	script := fmt.Sprintf(`
-(function() {
-  const el = document.elementFromPoint(%d, %d);
-  if (!el) return;
-  const steps = Math.max(1, Math.floor(%d / 16));
-  const dx = (%d - %d) / steps;
-  const dy = (%d - %d) / steps;
-  el.dispatchEvent(new PointerEvent('pointerdown', {clientX: %d, clientY: %d, bubbles: true}));
-  for (let i = 1; i <= steps; i++) {
-    el.dispatchEvent(new PointerEvent('pointermove', {clientX: %d + dx*i, clientY: %d + dy*i, bubbles: true}));
-  }
-  el.dispatchEvent(new PointerEvent('pointerup', {clientX: %d, clientY: %d, bubbles: true}));
-})();`,
-		fromX, fromY,
-		millis,
-		toX, fromX, toY, fromY,
-		fromX, fromY,
-		fromX, fromY,
-		toX, toY,
+	atX, atY, err := pointInView(runCtx, fromX, fromY)
+	if err != nil {
+		return err
+	}
+	toX, toY = toX-(fromX-atX), toY-(fromY-atY)
+	steps := max(int(duration.Milliseconds())/16, 1)
+	actions := []chromedp.Action{touchAt(input.TouchStart, atX, atY)}
+	for i := 1; i <= steps; i++ {
+		actions = append(actions, touchAt(input.TouchMove,
+			atX+(toX-atX)*i/steps, atY+(toY-atY)*i/steps))
+	}
+	actions = append(
+		actions,
+		input.DispatchTouchEvent(input.TouchEnd, []*input.TouchPoint{}),
 	)
-	return chromedp.Run(runCtx, chromedp.Evaluate(script, nil))
+	return chromedp.Run(runCtx, actions...)
+}
+
+func touchAt(kind input.TouchType, x, y int) *input.DispatchTouchEventParams {
+	return input.DispatchTouchEvent(
+		kind,
+		[]*input.TouchPoint{{X: float64(x), Y: float64(y)}},
+	)
+}
+
+// Scroll moves the content under the point with a trusted wheel, which is how a
+// browser scrolls.
+//
+// A finger drag scrolls too, but it ends in a fling whose distance follows the
+// release velocity: five identical 240 px drags moved the page 354 to 616 px,
+// so two runs of one seed would explore different screens. A wheel delta lands
+// exactly, and chains from the element under the point out to its scrollable
+// ancestors, which is what scrolling a named container means. The drag stays as
+// Swipe, the verb for the gestures only a finger reaches.
+func (d *Driver) Scroll(
+	ctx context.Context,
+	fromX, fromY, toX, toY int,
+	_ time.Duration,
+) error {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	atX, atY, err := pointInView(runCtx, fromX, fromY)
+	if err != nil {
+		return err
+	}
+	wheel := input.DispatchMouseEvent(input.MouseWheel, float64(atX), float64(atY)).
+		WithDeltaX(float64(fromX - toX)).
+		WithDeltaY(float64(fromY - toY))
+	// The wheel is applied off the CDP round trip, so without this the next
+	// read races it: a step could observe the page before its own scroll, and
+	// the pending scroll then lands during the following one.
+	return chromedp.Run(runCtx, wheel, chromedp.Evaluate(
+		`new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))`,
+		nil,
+		awaitPromise,
+	))
 }
 
 func (d *Driver) PressKey(ctx context.Context, key string) error {
@@ -347,6 +500,10 @@ func (d *Driver) PressKey(ctx context.Context, key string) error {
 func (d *Driver) LongPress(ctx context.Context, x, y int) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
+	x, y, err := pointInView(runCtx, x, y)
+	if err != nil {
+		return err
+	}
 	script := fmt.Sprintf(`
 (function() {
   const el = document.elementFromPoint(%d, %d);
