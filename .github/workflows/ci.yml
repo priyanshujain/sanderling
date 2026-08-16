@@ -271,9 +271,16 @@ jobs:
       # 26.4 and 26.5. Booting by name is therefore booting on whichever one
       # simctl happens to list first, and a seed only means something against a
       # fixed runtime. So the pair is resolved to a UDID here and every step
-      # after this is handed that. An image that stops carrying the pair fails
-      # here naming what it does carry, rather than as a `bootstatus` error to
-      # read backwards from.
+      # after this boots that one simulator. An image that stops carrying the
+      # pair fails here naming what it does carry, rather than as a
+      # `bootstatus` error to read backwards from.
+      #
+      # The UDID stays in this step. IOS_DEVICE has to keep holding the name,
+      # because `just ios` spends it as xcodebuild's `-destination name=`, which
+      # matches on the display name and rejects a UDID. Nothing downstream needs
+      # it anyway: the install, the launch and the terminate all address
+      # `booted`, and sanderling resolves --ios-device against booted simulators
+      # before available ones, so the one booted here is the one they all get.
       - name: Boot a simulator
         run: |
           udid="$(python3 <<'PY'
@@ -306,7 +313,6 @@ jobs:
           echo "booting $IOS_DEVICE on $IOS_RUNTIME ($udid)"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
-          echo "IOS_DEVICE=$udid" >> "$GITHUB_ENV"
 
       - name: Build and install folio
         working-directory: examples/folio
