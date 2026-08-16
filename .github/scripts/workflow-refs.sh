@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks that everything the workflow names actually exists: composite actions,
-# make targets, and the scripts a run: block invokes. Then checks that no run:
-# block interpolates a `${{ }}`.
+# reusable workflows, make targets, and the scripts a run: block invokes. Then
+# checks that no run: block interpolates a `${{ }}`.
 #
 # This is the class actionlint does not cover. `uses: ./.github/actions/typo`
 # lints clean and fails only when the job runs, and the folio jobs and the
@@ -38,8 +38,8 @@ def rel(path):
     return os.path.relpath(path, root)
 
 
-# --- composite actions -------------------------------------------------------
-print("local action references:")
+# --- composite actions and reusable workflows --------------------------------
+print("local action and reusable workflow references:")
 local_refs = 0
 for path in workflow_files():
     # Comments are not references. They mention paths as examples, and a version
@@ -48,14 +48,19 @@ for path in workflow_files():
     found = re.findall(r"^\s*-?\s*uses:\s*(\./\S+)\s*$", body, re.M)
     local_refs += len(found)
     for ref in found:
-        target = os.path.join(root, ref[2:], "action.yml")
+        # A reusable workflow is named by its own file. A composite action is
+        # named by the directory holding it, and the file inside is action.yml.
+        target = os.path.join(root, ref[2:])
+        if not target.endswith((".yml", ".yaml")):
+            target = os.path.join(target, "action.yml")
         report(os.path.isfile(target), ref, "  (from %s)" % rel(path))
     # A checker that silently matches nothing reports a safety it never looked
     # for. If the file names a local action in a form the pattern above does not
     # read, that is a broken checker, not a clean file.
-    mentions = len(re.findall(r"\./\.github/actions/", body))
+    mentions = len(re.findall(r"\./\.github/(?:actions|workflows)/", body))
     if mentions > len(found):
-        sys.exit("workflow-refs: %s mentions ./.github/actions/ %d time(s) but this "
+        sys.exit("workflow-refs: %s mentions ./.github/actions/ or ./.github/workflows/ "
+                 "%d time(s) but this "
                  "check only parsed %d `uses:` reference(s) out of it, so it is not "
                  "reading the file it claims to read" % (rel(path), mentions, len(found)))
 
