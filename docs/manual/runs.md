@@ -13,7 +13,7 @@ A run is not a unit test. The closer picture is: boot a fuzzer for an hour and s
 ```
 sanderling test --spec spec.ts --bundle-id com.example.app --duration 30m
   │
-  ├── launch the app under test (pass --clear-data to wipe app data first)
+  ├── launch the app under test (wipes app data first unless --clear-data=false)
   ├── boot the sidecar (or connect to Chrome on web)
   ├── bundle the spec, load it into the JS runtime
   │
@@ -64,4 +64,6 @@ A run ends when:
 - `--duration` elapses, or
 - the process is interrupted (Ctrl+C).
 
-Additional conditions (`--max-steps`, `--exit-on-violation`, hard crash handling) land in the [v0.1.0 milestone](https://github.com/priyanshujain/sanderling/milestone/1).
+- `--max-steps` is reached, or `--exit-on-violation` was passed and a property was violated.
+
+Hard crash handling lands in the [v0.1.0 milestone](https://github.com/priyanshujain/sanderling/milestone/1).

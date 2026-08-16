@@ -170,11 +170,44 @@ const switchATab = actions(() => {
   return tabs.length === 0 ? [] : [Tap({ on: from(tabs).generate() })];
 });
 
+// badgeCountMatchesThePanel needs two readings on ONE step: the badge, which a
+// tab strip renders only for a step that HAS a violation, and a violations
+// panel to compare it against, which exists while the properties or violations
+// tab is selected. Undirected actions put both on the same step 0 times in the
+// 80 of the first dogfood run: the property was reachable in principle and
+// judged nothing in practice.
+//
+// Both halves have to be aimed at. Aiming at the step alone just moved the
+// misses to the other side, 0 judged either way. So this selects a step the
+// list marks as violating, and once standing on one, opens a panel if none is
+// up. It opens the AFTER panel's, because the before panel's screenshot is what
+// screenshotShowsTheSelectedStep reads and covering that up trades one
+// property's evidence for another's.
+const violatingRows = extract("violatingRows", (s) =>
+  s.ax.findAll({ "data-testid": "step-row" }).filter((row) => dataOf(row, "violations") === "true"),
+);
+const afterPropertiesTabs = extract("afterPropertiesTabs", (s) =>
+  s.ax
+    .findAll([{ "data-testid": "state-after" }, { "data-testid": "tab" }])
+    .filter((tab) => dataOf(tab, "tabId") === "properties"),
+);
+
+const showAViolatingStepWithItsPanel = actions(() => {
+  const rows = violatingRows.current;
+  if (!rows.some((row) => dataOf(row, "active") === "true")) {
+    return rows.length === 0 ? [] : [Tap({ on: from(rows).generate() })];
+  }
+  if (violationPanelCounts.current.length > 0) return [];
+  const tabs = afterPropertiesTabs.current;
+  return tabs.length === 0 ? [] : [Tap({ on: from(tabs).generate() })];
+});
+
 // defaultActions carries the rest: the jump-to-violation button, the theme
 // toggle, the link back to the run list, and the scrolling.
 export const actionsRoot = weighted(
   [30, selectAStep],
   [20, navigateByKeyboard],
   [25, switchATab],
+  [20, showAViolatingStepWithItsPanel],
   [25, defaultActions],
 );

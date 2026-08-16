@@ -13,10 +13,13 @@ class RouteTransitionTest {
     private fun screen(id: String, child: String = "") =
         """{"attributes":{"resource-id":"$id"},"children":[$child]}"""
 
-    private fun tree(vararg children: String) =
-        """{"attributes":{"resource-id":"root"},"children":[${children.joinToString(",")}]}"""
+    private fun tree(vararg children: String): String {
+        val joined = children.joinToString(",")
+        return """{"attributes":{"resource-id":"root"},"children":[$joined]}"""
+    }
 
-    private val crossFade = tree(screen("LedgerScreen"), screen("AddTransactionScreen"))
+    private val crossFade =
+        tree(screen("LedgerScreen"), screen("AddTransactionScreen"))
     private val landed = tree(screen("AddTransactionScreen"))
 
     @Test fun waitsForTheCrossFadeToLandAndReturnsTheLandedTree() {
@@ -29,8 +32,15 @@ class RouteTransitionTest {
             reads++
             if (reads <= 3) crossFade else landed
         }
-        assertTrue(reads > 3, "must keep reading until the fade lands, reads=$reads")
-        assertEquals(1, countRouteScreens(settled), "must return a tree with one route")
+        assertTrue(
+            reads > 3,
+            "must keep reading until the fade lands, reads=$reads",
+        )
+        assertEquals(
+            1,
+            countRouteScreens(settled),
+            "must return a tree with one route",
+        )
     }
 
     @Test fun settledFrameCostsExactlyOneRead() {
@@ -54,13 +64,21 @@ class RouteTransitionTest {
         // would burn the whole poll budget and still hand over a frame the
         // runner refuses to act on.
         val nested = tree(screen("HomeScreen", screen("HomeScreen")))
-        assertEquals(1, countRouteScreens(nested), "the same id twice is one route")
+        assertEquals(
+            1,
+            countRouteScreens(nested),
+            "the same id twice is one route",
+        )
         var reads = 0
         awaitSettledTree {
             reads++
             nested
         }
-        assertEquals(1, reads, "a repeated route id must not be treated as a transition")
+        assertEquals(
+            1,
+            reads,
+            "a repeated route id must not be treated as a transition",
+        )
     }
 
     @Test fun aLayoutThatKeepsTwoRoutesIsBoundedByTheCap() {
@@ -78,7 +96,11 @@ class RouteTransitionTest {
             elapsed < TRANSITION_POLL_CAP_MILLIS + 1000L,
             "must stop at the cap, elapsed=${elapsed}ms",
         )
-        assertEquals(crossFade, settled, "the caller still gets a tree to record")
+        assertEquals(
+            crossFade,
+            settled,
+            "the caller still gets a tree to record",
+        )
     }
 
     @Test fun capCoversTheNavHostFadePlusTheStreak() {
@@ -89,20 +111,29 @@ class RouteTransitionTest {
         val fadeMillis = 700L
         val start = System.currentTimeMillis()
         val settled = awaitSettledTree {
-            if (System.currentTimeMillis() - start < fadeMillis) crossFade else landed
+            if (System.currentTimeMillis() - start < fadeMillis) {
+                crossFade
+            } else {
+                landed
+            }
         }
         val elapsed = System.currentTimeMillis() - start
 
-        assertEquals(landed, settled, "must hand back the landed tree, not the fade")
+        assertEquals(
+            landed,
+            settled,
+            "must hand back the landed tree, not the fade",
+        )
         assertTrue(
             elapsed >= fadeMillis,
             "cannot have settled before the fade ended, elapsed=${elapsed}ms",
         )
         assertTrue(
             elapsed < TRANSITION_POLL_CAP_MILLIS,
-            "the ${TRANSITION_POLL_CAP_MILLIS}ms cap has to leave room for a ${fadeMillis}ms " +
-                "fade and the ${TRANSITION_STABLE_STREAK_MILLIS}ms streak after it, but the " +
-                "wait ran to the cap instead, elapsed=${elapsed}ms",
+            "the ${TRANSITION_POLL_CAP_MILLIS}ms cap has to leave room for " +
+                "a ${fadeMillis}ms fade and the " +
+                "${TRANSITION_STABLE_STREAK_MILLIS}ms streak after it, but " +
+                "the wait ran to the cap instead, elapsed=${elapsed}ms",
         )
     }
 }

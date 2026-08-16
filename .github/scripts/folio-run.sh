@@ -18,8 +18,76 @@ max_steps="${MAX_STEPS:-240}"
 duration="${DURATION:-20m}"
 sanderling="${SANDERLING:-./bin/sanderling}"
 output="runs/folio-$platform"
-spec="examples/folio/sanderling/spec.ts"
+spec="${SPEC:-examples/folio/sanderling/spec.ts}"
 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+# The two properties that state folio's double-submit. Anything else the spec
+# proves false is a different finding, and this leg has nothing to say about it.
+GATED_PROPERTIES="submitMovesBalanceByAtMostTypedAmount,submitCommitsOneTransactionPerAction"
+
+# The route android's health gate needs the run to have reached. This is a key
+# of SCREENS in the spec, which is also where the spec's `route` extractor gets
+# its answer, so the gate and the app agree on what "on that screen" means.
+TRANSACTION_ROUTE="add-transaction"
+
+# A gate is only as good as these names, and nothing else ties them to the spec.
+# Rename a property there and the classification below matches nothing: ios and
+# web blame the spec for finding a different bug, and android reclassifies a
+# real conviction as "judging health only" and stays green. Checked before the
+# run so a rename costs seconds rather than the whole budget.
+SPEC="$spec" GATED="$GATED_PROPERTIES" ROUTE="$TRANSACTION_ROUTE" SELF="$0" \
+  python3 - <<'PY' || exit 1
+import os, re, sys
+
+spec_path = os.environ["SPEC"]
+gated = [name for name in os.environ["GATED"].split(",") if name]
+route = os.environ["ROUTE"]
+try:
+    with open(spec_path, encoding="utf-8") as handle:
+        source = handle.read()
+except OSError as error:
+    sys.exit("folio: cannot read %s to check the gated properties still exist: %s"
+             % (spec_path, error))
+
+block = re.search(r"export\s+const\s+properties\s*=\s*\{(.*?)\}", source, re.S)
+if block is None:
+    sys.exit("folio: %s declares no `export const properties = {...}`, so the gated "
+             "properties cannot be checked against it" % spec_path)
+
+declared = set()
+for entry in re.sub(r"//[^\n]*", "", block.group(1)).split(","):
+    name = entry.split(":")[0].strip()
+    if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", name):
+        declared.add(name)
+
+missing = [name for name in gated if name not in declared]
+if missing:
+    sys.exit("folio: %s no longer declares %s, so this leg gates on a property that "
+             "cannot be violated and every real conviction would read as a different "
+             "finding. Update GATED_PROPERTIES in %s."
+             % (spec_path, ", ".join(missing), os.environ["SELF"]))
+
+# The android health gate reads the `route` extractor and asks whether it ever
+# reported TRANSACTION_ROUTE. Both names come from the spec, so both are checked
+# here: a renamed extractor or a renamed SCREENS key would otherwise make every
+# android run report a transaction screen it never failed to reach.
+if not re.search(r'extract\s*(?:<[^>]*>)?\s*\(\s*"route"', source):
+    sys.exit("folio: %s no longer declares extract(\"route\", ...), so the android "
+             "health gate has nothing to read. Update %s."
+             % (spec_path, os.environ["SELF"]))
+
+screens = re.search(r"const\s+SCREENS\s*=\s*\{(.*?)\}", source, re.S)
+if screens is None:
+    sys.exit("folio: %s declares no `const SCREENS = {...}`, so the route the android "
+             "health gate wants cannot be checked against it" % spec_path)
+
+routes = set(re.findall(r'["\']?([A-Za-z0-9_-]+)["\']?\s*:',
+                        re.sub(r"//[^\n]*", "", screens.group(1))))
+if route not in routes:
+    sys.exit("folio: %s SCREENS declares %s, not %r, so the android health gate waits "
+             "for a route the app never reports. Update TRANSACTION_ROUTE in %s."
+             % (spec_path, ", ".join(sorted(routes)), route, os.environ["SELF"]))
+PY
 
 folio_args=(--bundle-id app.folio)
 case "$platform" in
@@ -28,15 +96,12 @@ case "$platform" in
       examples/folio/app/androidApp/build/outputs/apk/debug/androidApp-debug.apk)
     ;;
   ios)
-    # --clear-data=false because the caller has just installed a fresh build (a
-    # freshly installed app IS clear state). The in-run reinstall path is worth
-    # avoiding here: `simctl uninstall` + `install` immediately followed by the
-    # XCTest runner's own launch hits "app.folio is unknown to FrontBoard"
-    # perhaps half the time. The launch RPC is bounded now, so that surfaces
-    # as an error rather than an indefinite hang, but a failed leg is still a
-    # failed leg and a fresh install is already clear state.
+    # Clear state is left at its default, and no --ios-app-path is passed, so
+    # the driver wipes the app's data container rather than reinstalling. That
+    # is what the calibrated numbers were measured from, and it keeps the run
+    # away from the `simctl uninstall` + `install` path that races FrontBoard
+    # ("app.folio is unknown to FrontBoard"), which needs an app path to reach.
     folio_args+=(--platform ios
-      --clear-data=false
       --ios-device "${IOS_DEVICE:-iPhone 16 Pro}")
     ;;
   web)
@@ -92,13 +157,13 @@ esac
 code=$?
 
 run_dir="$(ls -d "$output"/*/ 2>/dev/null | tail -1)"
-trace="${run_dir:-.}/trace.jsonl"
+# No run directory means no trace. Defaulting the directory to `.` here reads a
+# stray ./trace.jsonl and reports it as this run's evidence, which is how a run
+# that wrote nothing at all reached "found the submit bug" and exit 0.
+trace=""
+[ -n "$run_dir" ] && trace="${run_dir}trace.jsonl"
 steps=0
 [ -f "$trace" ] && steps=$(wc -l < "$trace" | tr -d ' ')
-
-# The two properties that state folio's double-submit. Anything else the spec
-# proves false is a different finding, and this leg has nothing to say about it.
-GATED_PROPERTIES="submitMovesBalanceByTypedAmount,submitCommitsOneTransactionPerAction"
 
 # Exit 2 means "the run recorded a violation", and that is NOT the same as "the
 # run convicted folio". A predicate that THROWS is recorded as a violation too,
@@ -111,11 +176,14 @@ GATED_PROPERTIES="submitMovesBalanceByTypedAmount,submitCommitsOneTransactionPer
 #   line 1  convictions: a gated property that was proved false
 #   line 2  thrown: a predicate that blew up, with the reason it gave
 #   line 3  other: a real violation of some property this leg does not gate on
+#   line 4  routes: every value the spec's `route` extractor reported, in the
+#           order it first reported them, which is what android's health gate
+#           reads instead of grepping the hierarchy dump for a screen marker
 classified=$(TRACE="$trace" GATED="$GATED_PROPERTIES" python3 - <<'PY'
 import json, os
 
 gated = set(os.environ["GATED"].split(","))
-convictions, thrown, other = [], [], []
+convictions, thrown, other, routes = [], [], [], []
 try:
     lines = open(os.environ["TRACE"], encoding="utf-8", errors="replace")
 except OSError:
@@ -125,6 +193,13 @@ for line in lines:
         step = json.loads(line)
     except ValueError:
         continue
+    # Only the extractors that changed are recorded, so a route appears at the
+    # step it was first reached and never again until it changes.
+    change = (step.get("extractor_changes") or {}).get("route")
+    if isinstance(change, dict):
+        value = change.get("curr")
+        if isinstance(value, str) and value not in routes:
+            routes.append(value)
     witnesses = step.get("witnesses") or {}
     for name in step.get("violations") or []:
         witness = witnesses.get(name) or {}
@@ -135,7 +210,7 @@ for line in lines:
             convictions.append(name)
         else:
             other.append(name)
-for names in (convictions, thrown, other):
+for names in (convictions, thrown, other, routes):
     print(", ".join(names))
 PY
 ) || {
@@ -145,6 +220,7 @@ PY
 convicted=$(printf '%s\n' "$classified" | sed -n '1p')
 thrown=$(printf '%s\n' "$classified" | sed -n '2p')
 other=$(printf '%s\n' "$classified" | sed -n '3p')
+routes=$(printf '%s\n' "$classified" | sed -n '4p')
 
 {
   echo "### folio on $platform"
@@ -191,10 +267,16 @@ if [ "$platform" = "android" ]; then
       ;;
     *) echo "folio/android: the harness failed with exit $code" >&2; exit "$code" ;;
   esac
-  if ! grep -q '"AddTransactionScreen"' "$trace"; then
-    echo "folio/android: the run never reached AddTransactionScreen, so it never got past login" >&2
-    exit 1
-  fi
+  case ", $routes, " in
+    *", $TRANSACTION_ROUTE, "*) ;;
+    *)
+      # Where it stopped is a much longer question than this gate answers, so
+      # name the routes the trace holds and leave the diagnosis to the reader.
+      echo "folio/android: the run never reached the $TRANSACTION_ROUTE route over $steps steps" >&2
+      echo "folio/android: routes the trace does record: ${routes:-none}" >&2
+      exit 1
+      ;;
+  esac
   echo "folio/android: healthy run over $steps steps, reached the transaction screen"
   exit 0
 fi
@@ -210,7 +292,7 @@ case "$code" in
     ;;
   0)
     echo "folio/$platform: the run finished clean; the double-submit bug was NOT found in $steps steps (seed $seed)" >&2
-    echo "folio/$platform: the spec ran without throwing, so this is the fuzzer no longer reaching the bug, not a broken spec" >&2
+    echo "folio/$platform: the spec ran without throwing, so this is the run no longer reaching the bug, not a broken spec" >&2
     exit 1
     ;;
   *) echo "folio/$platform: the harness failed with exit $code" >&2; exit "$code" ;;

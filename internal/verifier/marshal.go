@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -29,7 +27,7 @@ type stateInput struct {
 }
 
 // stateObject builds the JS-side `state` object matching the State type from
-// pkg/spec-api. Fields beyond snapshots/ax are included when the caller
+// pkg/spec. Fields beyond snapshots/ax are included when the caller
 // populated them on stateInput.
 func stateObject(runtime *goja.Runtime, input stateInput) (*goja.Object, error) {
 	state := runtime.NewObject()
@@ -400,7 +398,30 @@ func lastActionFields(action *Action) []actionField {
 	point := func(x, y int) []actionField {
 		return []actionField{{key: "x", value: x}, {key: "y", value: y}}
 	}
-	fields := []actionField{{key: "kind", value: string(action.Kind)}}
+	// An action whose apply call failed is not an action that did not happen:
+	// the dispatch may have landed before the error. That is unknown, and
+	// unknown is null here for the same reason every other absence in the spec
+	// surface is, so a property decides for itself instead of being handed a
+	// "nothing happened" the runner cannot vouch for.
+	var applied any
+	if action.Applied {
+		applied = true
+	}
+	// A relaunch between two readings is not "no action happened", which is
+	// what dropping the action reported instead: the app restarted after an
+	// action that did run. Only the positive report is a fact the runner can
+	// vouch for, so the other side is null rather than false: a target whose
+	// foreground the runner cannot read (web, iOS) never relaunches the app and
+	// still cannot promise it never restarted.
+	var relaunched any
+	if action.Relaunched {
+		relaunched = true
+	}
+	fields := []actionField{
+		{key: "kind", value: string(action.Kind)},
+		{key: "applied", value: applied},
+		{key: "relaunched", value: relaunched},
+	}
 	if action.On != "" {
 		fields = append(fields, actionField{key: "on", value: action.On})
 	}
@@ -453,7 +474,7 @@ func objectFromFields(runtime *goja.Runtime, fields []actionField) *goja.Object 
 // has no Go-side state object to read: the runner pushes this JSON into the
 // page before each extractor evaluation. A nil action encodes as JSON null,
 // the same value the goja host reports on the first step of a run and after a
-// step whose action was never applied.
+// step whose action was never dispatched.
 func EncodeLastAction(action *Action) json.RawMessage {
 	if action == nil {
 		return json.RawMessage("null")
@@ -501,17 +522,42 @@ func runtimeMillis(stepTime, runStart time.Time) int64 {
 	return stepTime.Sub(runStart).Milliseconds()
 }
 
+// logFields is the ONE description of a state.logs entry, for the same reason
+// lastActionFields is: the goja host turns it into a JS object (logsArray) and
+// the web host receives the same fields as JSON (EncodeLogs), so a property
+// counting error-level lines cannot read one shape on native and another on web.
+func logFields(entry LogEntry) []actionField {
+	return []actionField{
+		{key: "unixMillis", value: entry.UnixMillis},
+		{key: "level", value: entry.Level},
+		{key: "tag", value: entry.Tag},
+		{key: "message", value: entry.Message},
+	}
+}
+
 func logsArray(runtime *goja.Runtime, logs []LogEntry) *goja.Object {
 	array := runtime.NewArray()
 	for index, entry := range logs {
-		item := runtime.NewObject()
-		_ = item.Set("unixMillis", entry.UnixMillis)
-		_ = item.Set("level", entry.Level)
-		_ = item.Set("tag", entry.Tag)
-		_ = item.Set("message", entry.Message)
-		_ = array.Set(fmt.Sprintf("%d", index), item)
+		_ = array.Set(fmt.Sprintf("%d", index), objectFromFields(runtime, logFields(entry)))
 	}
 	return array
+}
+
+// EncodeLogs renders this step's log entries for the web host, which has no
+// Go-side state object to read: the runner pushes this JSON into the page
+// before each extractor evaluation. No entries encodes as an empty array, the
+// same value the goja host reports for a step whose log fetch found nothing.
+func EncodeLogs(logs []LogEntry) json.RawMessage {
+	var buffer bytes.Buffer
+	buffer.WriteByte('[')
+	for index, entry := range logs {
+		if index > 0 {
+			buffer.WriteByte(',')
+		}
+		buffer.Write(encodeFields(logFields(entry)))
+	}
+	buffer.WriteByte(']')
+	return buffer.Bytes()
 }
 
 func exceptionsArray(runtime *goja.Runtime, exceptions []Exception) *goja.Object {
@@ -527,106 +573,6 @@ func exceptionsArray(runtime *goja.Runtime, exceptions []Exception) *goja.Object
 		_ = array.Set(fmt.Sprintf("%d", index), item)
 	}
 	return array
-}
-
-// traceValueMaxDepth bounds how far recordableValue walks. It mirrors
-// SANITIZE_MAX_DEPTH in pkg/spec/src/web-runtime.ts, whose sanitize does this
-// same job for the values the page reports, so both hosts record the same JSON
-// for the same extractor.
-const traceValueMaxDepth = 32
-
-// recordableValue rewrites an exported goja value into one json.Marshal
-// accepts. An accessibility element is a plain object carrying two host
-// functions (find/findAll); marshalling it fails on those alone, so the whole
-// element used to go unrecorded. Dropping them leaves the element's data (id,
-// text, desc, class, the flags, bounds, attrs), which is what a trace reader
-// wants and is a subset of the hierarchy the same step already records.
-//
-// ok is false for a value with no JSON form at all: callers drop that key from
-// its object, matching the web host, where a function-valued property is
-// skipped and a function inside an array stringifies to null.
-func recordableValue(value any, depth int, seen map[uintptr]bool) (any, bool) {
-	if value == nil {
-		return nil, true
-	}
-	switch typed := value.(type) {
-	case float64:
-		return finiteOrNull(typed), true
-	case float32:
-		return finiteOrNull(float64(typed)), true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Func:
-		return nil, false
-	case reflect.Map:
-		if reflected.Type().Key().Kind() != reflect.String || !holdsAny(reflected.Type().Elem()) {
-			return value, true
-		}
-		if depth >= traceValueMaxDepth || !firstVisit(reflected, seen) {
-			return nil, true
-		}
-		out := make(map[string]any, reflected.Len())
-		iterator := reflected.MapRange()
-		for iterator.Next() {
-			entry, ok := recordableValue(iterator.Value().Interface(), depth+1, seen)
-			if !ok {
-				continue
-			}
-			out[iterator.Key().String()] = entry
-		}
-		return out, true
-	case reflect.Slice, reflect.Array:
-		if !holdsAny(reflected.Type().Elem()) {
-			return value, true
-		}
-		if depth >= traceValueMaxDepth || !firstVisit(reflected, seen) {
-			return nil, true
-		}
-		out := make([]any, reflected.Len())
-		for index := range out {
-			entry, ok := recordableValue(reflected.Index(index).Interface(), depth+1, seen)
-			if !ok {
-				entry = nil
-			}
-			out[index] = entry
-		}
-		return out, true
-	default:
-		return value, true
-	}
-}
-
-// holdsAny reports whether a container's elements can hide a host function or
-// a cycle. Concretely typed containers ([]string, []byte, map[string]string)
-// can hold neither, and walking them would rewrite shapes json.Marshal already
-// handles, such as []byte's base64 form.
-func holdsAny(elem reflect.Type) bool {
-	return elem.Kind() == reflect.Interface
-}
-
-// firstVisit reports whether a container has not been walked yet, so a cyclic
-// value terminates. Empty containers are never recorded: they cannot close a
-// cycle, and Go may hand every one of them the same address.
-func firstVisit(container reflect.Value, seen map[uintptr]bool) bool {
-	if container.Kind() == reflect.Array || container.Len() == 0 {
-		return true
-	}
-	address := container.Pointer()
-	if seen[address] {
-		return false
-	}
-	seen[address] = true
-	return true
-}
-
-// finiteOrNull maps NaN and the infinities to JSON null, which is what
-// JSON.stringify does with them on the web host.
-func finiteOrNull(value float64) any {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return nil
-	}
-	return value
 }
 
 func jsonToJSValue(runtime *goja.Runtime, raw json.RawMessage) (goja.Value, error) {

@@ -6,6 +6,8 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.flow.StateFlow
 
+const val MAX_TRANSACTION_AMOUNT_CENTS = 100_000_000L
+
 @SingleIn(AppScope::class)
 @Inject
 class Repository(private val store: LedgerStore) {
@@ -27,6 +29,7 @@ class Repository(private val store: LedgerStore) {
 
     suspend fun createTransaction(accountId: String, type: TxnType, amount: Long, note: String): Transaction {
         require(amount > 0) { "Amount must be greater than zero" }
+        require(amount <= MAX_TRANSACTION_AMOUNT_CENTS) { "Amount is too large (max \$1,000,000.00)" }
         requireNotNull(getAccount(accountId)) { "Account not found" }
         val txn = Transaction(
             id = Platform.makeId(),

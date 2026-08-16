@@ -57,6 +57,11 @@ type Summary struct {
 	EndTime    time.Time
 	Steps      int
 	Violations []ViolationRecord
+	// SkippedVerification counts the steps whose tree was still moving when it
+	// was read, so no property judged them. A green run that skipped most of
+	// its steps checked almost nothing, and nothing else in the output would
+	// say so.
+	SkippedVerification int
 	// UnsupportedVerbs lists verbs the picker requested that the platform
 	// could not dispatch, deduped, so the report can flag a spec exercising
 	// gestures this target does not support.
@@ -105,6 +110,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	_, pageExtractors := extractorSource.(webSource)
 	exceptionReporter, _ := options.Driver.(driver.ExceptionReporter)
 	navigationReporter, _ := options.Driver.(driver.NavigationReporter)
+	rereadHierarchy := driverIsAndroid(ctx, options, logger)
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -126,8 +132,23 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// backed out of (or otherwise left) the app, relaunch it before we
 		// observe or act, so properties never evaluate against a foreign app
 		// and actions never land outside the app.
-		if ensureForeground(ctx, options, logger, stepIndex) {
-			lastAction = nil
+		//
+		// What the guard did is reported to the spec on the action it followed,
+		// because dropping that action says "nothing ran between these two
+		// readings" and the runner has no business saying that: the action ran,
+		// and a property told otherwise convicts the app of an effect with no
+		// cause. See foreground_guard_last_action_test.go.
+		guard := ensureForeground(ctx, options, logger, stepIndex)
+		if lastAction != nil {
+			switch guard {
+			case foregroundRelaunched:
+				lastAction.Relaunched = true
+			case foregroundOverlayDismissed:
+				// A system window owned the focused window, so whether the app
+				// itself ever received this action is exactly the unknown
+				// Applied already has a state for.
+				lastAction.Applied = false
+			}
 		}
 
 		// Hierarchy, metrics, and logs are independent device reads. Run
@@ -150,7 +171,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// screenshot describe the same frame, then re-fetches the pair
 		// while the tree still looks transitional.
 		g.Go(func() error {
-			tree, screenshotPNG, transitional, hierarchyErr = fetchSyncedState(gctx, options, logger, si)
+			tree, screenshotPNG, transitional, hierarchyErr = fetchSyncedState(
+				gctx, options, logger, si, rereadHierarchy)
 			return nil
 		})
 		g.Go(func() error {
@@ -159,7 +181,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		})
 		logSince := lastLogTime
 		g.Go(func() error {
-			logs = collectLogs(gctx, options.Driver, logSince)
+			logs = collectLogs(gctx, options.Driver, logger, si, logSince)
 			return nil
 		})
 		// All goroutines write to local variables and return nil, so the Wait
@@ -197,8 +219,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			screen = tree.Elements[0].Screen
 		}
 
-		// Transitional trees describe a NavHost mid cross-fade. Pushing
-		// one would poison the verifier's previous/current extractor
+		// A transitional tree is one nothing can vouch for: a NavHost mid
+		// cross-fade, a screen that changed shape between two reads, or a
+		// hierarchy that came back empty. Pushing one would poison the
+		// verifier's previous/current extractor
 		// advance, so the next clean step would compare against this
 		// transient state and emit false-positive violations. We still
 		// record the step (hierarchy + screenshot) for replay-side
@@ -223,10 +247,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			// behind the hierarchy fetch; the fetch is what decides whether this
 			// step counts at all, so it has to go first.
 			//
-			// lastAction is the same value PushSnapshot hands the goja state
-			// below: the two engines evaluate this step against one action.
+			// lastAction and logs are the same values PushSnapshot hands the
+			// goja state below: the two engines evaluate this step against one
+			// action and one set of log entries.
 			overridesCtx, overridesCancel := context.WithTimeout(ctx, observationTimeout)
-			v8Overrides, overridesErr := extractorSource.ExtractorOverrides(overridesCtx, lastAction)
+			v8Overrides, overridesErr := extractorSource.ExtractorOverrides(overridesCtx, lastAction, logs)
 			overridesCancel()
 			if overridesErr != nil {
 				// Not a warning. Without the page's values this step's
@@ -281,18 +306,44 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			extractorChanges = encodeExtractorChanges(options.Verifier.ChangedExtractors())
 		} else {
 			skippedVerification = true
-			logger.Warn("transitional tree after retry budget; skipping verifier",
+			summary.SkippedVerification++
+			logger.Warn("unsettled tree; skipping verifier",
 				"step", stepIndex, "screen", screen, "nodes", treeSize)
 		}
 		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
 
-		nextAction, nextErr := actionSource.NextAction(ctx, stepIndex)
+		// A frame the verifier would not look at is not one to act on either.
+		// #75 is the fuzzer tapping into a screen that is still filling in, and
+		// holding the action back is also what keeps the spec's view of the run
+		// continuous: the action a step applies is reported on the NEXT step the
+		// verifier accepts, so acting here would leave the action applied last
+		// step unreported for good, and a property counting actions against
+		// their effects would then see an effect whose cause the runner
+		// swallowed. See TestRunner_ASkippedStepDoesNotSwallowTheActionBeforeIt.
+		//
+		// Unbounded, because lastAction holds exactly one action: any bound that
+		// let the runner act again while the verifier was still being skipped
+		// would overwrite the action the hold was carrying, and that is the same
+		// swallow arriving one step later. A screen that keeps moving therefore
+		// costs the run its actions rather than its soundness, and a run that
+		// verified nothing says so in its outcome (internal/testrun).
+		held := skippedVerification
+		if held {
+			logger.Warn("screen still moving; holding this step's action back",
+				"step", stepIndex)
+		}
+
+		var nextAction verifier.Action
+		nextErr := verifier.ErrNoAction
 		var traceAction *trace.Action
-		if nextErr == nil {
-			traceAction = traceActionFor(nextAction, tree)
-			stampActionSource(traceAction, actionSource)
-		} else if !errors.Is(nextErr, verifier.ErrNoAction) {
-			return summary, fmt.Errorf("step %d next action: %w", stepIndex, nextErr)
+		if !held {
+			nextAction, nextErr = actionSource.NextAction(ctx, stepIndex)
+			if nextErr == nil {
+				traceAction = traceActionFor(nextAction, tree)
+				stampActionSource(traceAction, actionSource)
+			} else if !errors.Is(nextErr, verifier.ErrNoAction) {
+				return summary, fmt.Errorf("step %d next action: %w", stepIndex, nextErr)
+			}
 		}
 
 		residuals, residualErr := encodeResiduals(options.Verifier.Residuals())
@@ -300,7 +351,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			logger.Warn("residual encode failed", "step", stepIndex, "err", residualErr)
 		}
 
-		applySkipped := false
+		applySkipped := held
 		var actionSkipped actionSkipReason
 		if nextErr == nil && !appIsForeground(ctx, options) {
 			// The app left the foreground between observe and apply (a prior
@@ -365,7 +416,13 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 					"step", stepIndex, "reason", actionSkipped, "err", err)
 				transitional = true
 				applySkipped = true
-				lastAction = nil
+				// The error says the call failed, not that the gesture never
+				// reached the app: a deadline that fires after dispatch leaves
+				// the effect committed. Reporting no action here would let a
+				// property convict the app for an effect with no cause, so the
+				// action is reported with its fate unknown instead.
+				unconfirmed := nextAction
+				lastAction = &unconfirmed
 			} else if notDispatched != "" {
 				// The action was chosen but nothing reached the driver, so the
 				// screen is exactly the one already verified: the step stays
@@ -379,12 +436,16 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				lastAction = nil
 			} else {
 				consecutiveApplyFailures = 0
-				actionCopy := nextAction
-				lastAction = &actionCopy
+				applied := nextAction
+				applied.Applied = true
+				lastAction = &applied
 			}
-		} else {
+		} else if !held {
 			lastAction = nil
 		}
+		// A held step leaves lastAction alone on purpose: nothing ran here, and
+		// the action it points at is still the one the next verified step has to
+		// be told about.
 
 		step := trace.Step{
 			Index:               stepIndex,
@@ -429,7 +490,16 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// concurrent fetches observe a stable post-action state. A transient
 		// apply error means nothing landed, so the idle poll has nothing to
 		// settle and may itself hang on the same device condition.
-		if nextErr == nil && !applySkipped && nextAction.Kind != verifier.ActionKindWait {
+		//
+		// A held step settles too, and it is the only case here that waits with
+		// nothing applied. The reread that held it takes its two reads a round
+		// trip apart, which is a tighter window than the one the detector was
+		// measured over (an action and a settle); looping straight back into it
+		// would compare two reads of a composing screen closer together still,
+		// so the screen that most needs to settle is the one given least room.
+		mutated := nextErr == nil && !applySkipped &&
+			nextAction.Kind != verifier.ActionKindWait
+		if held || mutated {
 			idleCtx, idleCancel := context.WithTimeout(ctx, options.IdleTimeout)
 			idleErr := options.Driver.WaitForIdle(idleCtx, options.IdleTimeout)
 			if idleErr != nil && idleCtx.Err() == nil {
@@ -493,6 +563,10 @@ func RenderSummary(w io.Writer, summary Summary, platform string) {
 		fmt.Fprintf(w, "%d step(s) observed nothing: the device state could not be read\n",
 			summary.FailedObservations)
 	}
+	if summary.SkippedVerification > 0 {
+		fmt.Fprintf(w, "%d step(s) judged by nothing: the screen was still moving when it was read\n",
+			summary.SkippedVerification)
+	}
 	if len(summary.UnsupportedVerbs) > 0 {
 		fmt.Fprintf(w, "unsupported on %s: %s\n",
 			platform, strings.Join(summary.UnsupportedVerbs, ", "))
@@ -542,20 +616,38 @@ func resolveIdleTimeout(options Options) time.Duration {
 	return timeout
 }
 
+// foregroundGuard is what ensureForeground had to do to put the app back in
+// front. The two interventions are separate values because they are separate
+// facts about the action they follow: a relaunch leaves it confirmed but
+// straddling a restart, while a system window holding the focus leaves it
+// dispatched with no way to tell whether the app received it.
+type foregroundGuard int
+
+const (
+	foregroundIntact foregroundGuard = iota
+	foregroundOverlayDismissed
+	foregroundRelaunched
+)
+
 // ensureForeground keeps the app under test in the foreground. When the driver
 // can report the foreground app and it no longer matches the bundle under test,
-// the app is relaunched. Returns true when a relaunch happened so the caller
-// can drop the now-stale lastAction. Drivers without ForegroundChecker (web,
+// the app is relaunched. Reports what it did so the caller can pass that on to
+// the spec through the previous action. Drivers without ForegroundChecker (web,
 // iOS) are a no-op.
-func ensureForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) bool {
+func ensureForeground(
+	ctx context.Context,
+	options Options,
+	logger *slog.Logger,
+	stepIndex int,
+) foregroundGuard {
 	checker, ok := options.Driver.(driver.ForegroundChecker)
 	if !ok || options.BundleID == "" {
-		return false
+		return foregroundIntact
 	}
 	foreground, err := checker.ForegroundApp(ctx)
 	if err != nil {
 		logger.Warn("foreground check failed", "step", stepIndex, "err", err)
-		return false
+		return foregroundIntact
 	}
 	if foreground != "" && foreground != options.BundleID {
 		logger.Warn("app left foreground; relaunching",
@@ -568,7 +660,7 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 		// window, so it never acts outside the app no matter how slow the
 		// relaunch settles.
 		awaitForeground(ctx, options, logger, stepIndex)
-		return true
+		return foregroundRelaunched
 	}
 	// The app is the resumed activity, but a system overlay can still own the
 	// focused window while the app stays resumed: a fuzzer swipe starting in the
@@ -578,15 +670,15 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 	// the app again.
 	focusChecker, hasFocus := options.Driver.(driver.FocusedWindowChecker)
 	if !hasFocus {
-		return false
+		return foregroundIntact
 	}
 	focused, err := focusChecker.FocusedWindowApp(ctx)
 	if err != nil {
 		logger.Warn("focus check failed", "step", stepIndex, "err", err)
-		return false
+		return foregroundIntact
 	}
 	if focused == "" || focused == options.BundleID {
-		return false
+		return foregroundIntact
 	}
 	logger.Warn("system window obscuring app; dismissing",
 		"step", stepIndex, "focused", focused, "want", options.BundleID)
@@ -594,7 +686,7 @@ func ensureForeground(ctx context.Context, options Options, logger *slog.Logger,
 		logger.Warn("dismiss overlay failed", "step", stepIndex, "err", err)
 	}
 	settleForForeground(ctx, options)
-	return true
+	return foregroundOverlayDismissed
 }
 
 // appIsForeground reports whether the app under test currently owns the
@@ -840,11 +932,23 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 }
 
 // collectLogs pulls recent error-level log entries from the driver since the
-// previous fetch. A failure is warned-on but not fatal: log capture is a
-// best-effort observability channel, not a correctness dependency.
-func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) []verifier.LogEntry {
+// previous fetch. A failure is warned-on but not fatal: one unreadable fetch on
+// a flaky device should not end a run. It is not free either. This fetch is the
+// whole evidence base for state.logs, so a step that could not make it leaves
+// every log property (the default noLogcatErrors included) holding on an empty
+// slice, and that has to be visible in the run's output rather than read as the
+// app having logged nothing.
+func collectLogs(
+	ctx context.Context,
+	drv driver.DeviceDriver,
+	logger *slog.Logger,
+	step int,
+	since time.Time,
+) []verifier.LogEntry {
 	entries, err := drv.RecentLogs(ctx, since, "E")
 	if err != nil {
+		logger.Warn("log fetch failed; log properties hold vacuously this step",
+			"step", step, "err", err)
 		return nil
 	}
 	result := make([]verifier.LogEntry, 0, len(entries))
@@ -1200,10 +1304,17 @@ const (
 // orthogonal case where the frame itself is transitional.
 //
 // The transitional return reports whether the retry budget was exhausted
-// on a still-transitional tree. Callers use it to skip the verifier for
-// that step so the previous/current extractor advance does not absorb
+// on a still-transitional tree, or (when reread is set) whether a second
+// hierarchy read disagreed with the first. Callers use it to skip the verifier
+// for that step so the previous/current extractor advance does not absorb
 // transient state.
-func fetchSyncedState(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (tree *hierarchy.Tree, png []byte, transitional bool, err error) {
+func fetchSyncedState(
+	ctx context.Context,
+	options Options,
+	logger *slog.Logger,
+	stepIndex int,
+	reread bool,
+) (tree *hierarchy.Tree, png []byte, transitional bool, err error) {
 	var pngBytes []byte
 	var previousJSON string
 retryLoop:
@@ -1239,12 +1350,107 @@ retryLoop:
 		case <-timer.C:
 		}
 	}
+	if reread && err == nil && !transitional && changedOnReread(ctx, options, logger, stepIndex, tree) {
+		transitional = true
+	}
 	if len(pngBytes) > 0 {
 		if writeErr := options.TraceWriter.WriteScreenshot(stepIndex, pngBytes); writeErr != nil {
 			logger.Warn("screenshot write failed", "step", stepIndex, "err", writeErr)
 		}
 	}
 	return tree, pngBytes, transitional, err
+}
+
+// changedOnReread reads the hierarchy once more and reports whether the screen
+// changed shape while we were looking at it. A Compose route can settle before
+// its content composes (a lazy list mounts over several frames, a query lands a
+// frame late), and a tree read in that window describes a screen that is still
+// filling in. Two reads a read apart are the cheapest thing that can see it
+// happening: the round trip IS the interval, so there is no sleep here.
+//
+// The comparison only means anything because the Hierarchy RPC serves the tree
+// the snapshot's own read produces (see snapshotTree in the sidecar). Off the
+// bare device read it does not: with an IME standing open, the snapshot answers
+// with 134 nodes and the bare read with 489, and the pair then differs over
+// whether the sidecar closed a keyboard between them rather than over anything
+// the app did.
+//
+// Waiting for the change to stop was measured on an API 34 device and refused:
+// a 750ms-quiet poll capped at 2s cost a median 1434ms against 76ms for one
+// read, hit its cap on every frame it fired for, and still handed back a frame
+// that might be filling. Detecting is what the runner can act on, because a
+// step it declines to verify is at worst a missed conviction, never a false
+// one.
+//
+// A read that fails reports no change. Nothing about a dropped RPC says the
+// screen was moving, and skipping verification on it would quietly spend the
+// run's evidence on a flaky link.
+func changedOnReread(
+	ctx context.Context,
+	options Options,
+	logger *slog.Logger,
+	stepIndex int,
+	first *hierarchy.Tree,
+) bool {
+	// An empty tree is skipped by the caller anyway, so the read buys nothing.
+	if first == nil || len(first.Elements) == 0 {
+		return false
+	}
+	hierarchyJSON, err := options.Driver.Hierarchy(ctx)
+	if err != nil {
+		logger.Warn("second hierarchy read failed", "step", stepIndex, "err", err)
+		return false
+	}
+	second, err := hierarchy.Parse(hierarchyJSON)
+	if err != nil || second == nil {
+		logger.Warn("second hierarchy parse failed", "step", stepIndex, "err", err)
+		return false
+	}
+	if structuralShape(first) == structuralShape(second) {
+		return false
+	}
+	logger.Warn("screen changed between two reads; skipping verifier",
+		"step", stepIndex, "nodes", len(first.Elements), "then", len(second.Elements))
+	return true
+}
+
+// structuralShape renders what is on screen as its nodes' identities in tree
+// order: how many there are, and which ids and classes they carry.
+//
+// Text and bounds are deliberately absent. A measure pass that moves pixels is
+// not a screen still composing, and neither is a value arriving into a node
+// that already exists, which this cannot tell apart from a clock ticking. This
+// decides whether a property gets to judge at all, so it reads only what a
+// change in what is on screen can move: a detector that fires on every step of
+// a screen with a timer on it would leave the run green and vacuous, which is
+// worse than the composition it set out to catch. The trade is measured rather
+// than assumed: over 100 folio steps on an API 35 emulator, text moved under
+// an unchanged shape on 1 step, and the shape itself moved on 1 other.
+//
+// TestRunner_OnlyAChangeOfShapeCostsAStepItsVerdict is what holds the line:
+// adding either field back to the shape turns one of its cases red.
+func structuralShape(tree *hierarchy.Tree) string {
+	var shape strings.Builder
+	for _, element := range tree.Elements {
+		shape.WriteString(element.ResourceID)
+		shape.WriteByte(0x1f)
+		shape.WriteString(element.Class)
+		shape.WriteByte(0x1e)
+	}
+	return shape.String()
+}
+
+// driverIsAndroid asks the driver what it is, once per run, so the step loop
+// never repeats the RPC. It gates the reread: #75 is about Compose composition,
+// and web and iOS have their own settle paths and no measurement saying an
+// extra hierarchy read there is cheap. An unreadable answer is not android.
+func driverIsAndroid(ctx context.Context, options Options, logger *slog.Logger) bool {
+	health, err := options.Driver.Health(ctx)
+	if err != nil {
+		logger.Warn("health read failed; not rereading the hierarchy", "err", err)
+		return false
+	}
+	return health.Platform == "android"
 }
 
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {

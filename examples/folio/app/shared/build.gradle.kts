@@ -49,6 +49,9 @@ kotlin {
             implementation(libs.lifecycle.viewmodel.compose)
             implementation(libs.navigation.compose)
         }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
         }

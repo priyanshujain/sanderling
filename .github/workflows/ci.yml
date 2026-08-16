@@ -1,55 +1,70 @@
 name: ci
 
 on:
-  # Runs on PRs (opened / synchronize / reopened, which are the defaults) and
-  # manual dispatch only. We deliberately don't run on direct pushes to master:
-  # master is PR-merge-only, and PR validation already covers the merge
-  # commit via the `synchronize` event on the PR branch.
   pull_request:
+  push:
+    branches: [master]
+  # `none` is an ordinary ci run. minor and major consolidate every patch
+  # released since the last milestone into one, and run the whole suite first:
+  # a release that skipped the device legs would be the only release nobody
+  # checked. The default is what stops a dispatch meant to re-run the tests
+  # from cutting a release by accident.
   workflow_dispatch:
+    inputs:
+      promote:
+        description: Consolidate the released patches into a milestone
+        type: choice
+        options:
+          - none
+          - minor
+          - major
+        default: none
 
 permissions:
   contents: read
 
+# A superseded pull request run is waste. A run that publishes is not, so only
+# a pull request cancels.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  check-tests:
+    name: Check (tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: pkg/spec/package-lock.json
 
       - name: Set up bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.3.13"
 
       - name: Cache bun store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('replay-ui/bun.lock') }}
@@ -74,7 +89,7 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -95,39 +110,588 @@ jobs:
       - name: Run tests
         run: make test
 
-  browser:
+      # folio is its own gradle build, and the metro plugin it compiles with
+      # needs a 21 runtime where the sidecar toolchain pins 17. Switching
+      # JAVA_HOME after `make test` rather than installing both up front
+      # leaves every step above this one on exactly the JDK it ran on before.
+      - name: Set up JDK 21 for folio
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Run folio's unit tests
+        run: make test-folio
+
+  check-browser:
+    name: Check (browser)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
 
-      # Pin stable: the action's default (latest) pulls a dev Chromium whose
-      # remote-debugging socket is flaky under the driver, even though the
-      # browser otherwise launches headless.
-      - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
-
-      # Ubuntu 24.04 (current ubuntu-latest) restricts unprivileged user
-      # namespaces via AppArmor, which stops headless Chrome from starting even
-      # with --no-sandbox: the process launches but never opens its DevTools
-      # socket. Re-enable them so the driver's Chrome can come up.
-      - name: Allow Chrome under unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      # Fail here with Chrome's own stderr if the browser can't launch, instead
-      # of letting the driver report an opaque DevTools timeout downstream.
-      - name: Verify headless Chrome starts
-        run: |
-          chrome --version
-          chrome --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
-            --dump-dom 'data:text/html,<title>ok</title>'
+      - name: Set up headless Chrome
+        uses: ./.github/actions/headless-chrome
 
       - name: Drive web fixtures through headless Chrome
         run: make test-browser
+
+  check-workflows:
+    name: Check (workflows)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned so a new actionlint release cannot change what CI enforces,
+      # for the same reason the buf version above is spelled out. shellcheck
+      # runs over every run: block by default.
+      - name: Lint the workflow
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+        with:
+          version: 1.7.12
+
+      # actionlint reads a local action's inputs but never checks that its path
+      # exists: `uses: ./.github/actions/typo` lints clean and fails only when
+      # the job runs, and the release and docs jobs never run on a pull request.
+      - name: Check that the workflow references resolve
+        run: .github/scripts/workflow-refs.sh
+
+  # The run graph boxes jobs together when they share the same dependencies
+  # and the same dependents, so a group only draws as its own box if one job
+  # depends on exactly that group. That is what these three gates are for.
+  # They also collapse a group to one status to read.
+  checks:
+    name: Checks
+    if: always()
+    needs:
+      - check-tests
+      - check-browser
+      - check-workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the group passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
+  folio-android:
+    name: Folio (android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SEED: "9"
+      MAX_STEPS: "200"
+      DURATION: 20m
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+
+      - name: Build the folio app
+        uses: ./.github/actions/folio-app
+        with:
+          platform: android
+
+      - name: Build sanderling
+        run: make sanderling-android
+
+      - name: Run the spec on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: .github/scripts/folio-run.sh android
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: folio-android
+          path: runs/
+          retention-days: 14
+
+  folio-ios:
+    name: Folio (ios)
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      SEED: "7"
+      MAX_STEPS: "240"
+      DURATION: 20m
+      IOS_DEVICE: iPhone 16 Pro
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+
+      - name: Build the folio app
+        uses: ./.github/actions/folio-app
+        with:
+          platform: ios
+
+      - name: Build sanderling
+        run: make sanderling-ios
+
+      - name: Boot a simulator
+        run: |
+          xcrun simctl boot "$IOS_DEVICE" || true
+          xcrun simctl bootstatus "$IOS_DEVICE" -b
+
+      - name: Build and install folio
+        working-directory: examples/folio
+        run: just ios
+
+      # `just ios` leaves the app running, and the run's first act is to clear
+      # its state. Stopping it here means the run always opens the same way.
+      - name: Stop the app before the run
+        run: xcrun simctl terminate booted app.folio || true
+
+      - name: Run the spec
+        run: .github/scripts/folio-run.sh ios
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: folio-ios
+          path: runs/
+          retention-days: 14
+
+  folio-web:
+    name: Folio (web)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SEED: "3"
+      MAX_STEPS: "240"
+      DURATION: 20m
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+
+      - name: Set up headless Chrome
+        uses: ./.github/actions/headless-chrome
+
+      - name: Build the folio app
+        uses: ./.github/actions/folio-app
+        with:
+          platform: web
+
+      - name: Build sanderling
+        run: make sanderling-web
+
+      - name: Run the spec
+        run: .github/scripts/folio-run.sh web
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: folio-web
+          path: runs/
+          retention-days: 14
+
+  folio:
+    name: Folio
+    if: always()
+    needs:
+      - folio-android
+      - folio-ios
+      - folio-web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the group passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
+  replay-ui:
+    name: Replay UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SEED: "3"
+      MAX_STEPS: "80"
+      DURATION: 10m
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+
+      - name: Set up headless Chrome
+        uses: ./.github/actions/headless-chrome
+
+      # The UI the spec drives is the one embedded in this binary, so the build
+      # has to come after any change to replay-ui/src.
+      - name: Build sanderling
+        run: make sanderling-web
+
+      # A trace with a violation and uncaught exceptions in it, so the UI has
+      # something to render in every panel the spec looks at. No
+      # --exit-on-violation here: the run is the fixture, and stopping it at the
+      # first violation would leave a four-step trace to run against.
+      - name: Record a fixture trace
+        run: |
+          python3 -m http.server 8792 --bind 127.0.0.1 \
+            --directory test/browser/testdata/throwing &
+          ready=""
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8792/ >/dev/null && { ready=1; break; }
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "the fixture http server never answered on 127.0.0.1:8792" >&2
+            exit 1
+          fi
+          ./bin/sanderling test \
+            --platform web \
+            --spec test/browser/testdata/throwing/spec.ts \
+            --bundle-id http://127.0.0.1:8792/ \
+            --duration 5m --max-steps 25 --seed 7 \
+            --output runs/fixture
+
+      - name: Serve the trace with sanderling replay
+        id: fixture
+        run: |
+          # Flags before the positional argument: Go's flag package stops
+          # parsing at the first non-flag word.
+          ./bin/sanderling replay --port 8793 --no-open runs/fixture &
+          ready=""
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8793/api/runs >/dev/null && { ready=1; break; }
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "sanderling replay never served /api/runs on 127.0.0.1:8793" >&2
+            exit 1
+          fi
+          run_id="$(basename "$(find runs/fixture -mindepth 1 -maxdepth 1 | head -1)")"
+          echo "url=http://127.0.0.1:8793/runs/$run_id/steps/1" >> "$GITHUB_OUTPUT"
+          curl -sf "http://127.0.0.1:8793/runs/$run_id/steps/1" >/dev/null
+
+      # The url goes through env rather than into the script text: a `${{ }}` is
+      # substituted before bash ever sees the line.
+      - name: Run the spec
+        run: |
+          ./bin/sanderling test \
+            --platform web \
+            --spec replay-ui/sanderling/spec.ts \
+            --bundle-id "$RUN_URL" \
+            --duration "$DURATION" \
+            --max-steps "$MAX_STEPS" \
+            --seed "$SEED" \
+            --exit-on-violation \
+            --output runs/replay-ui
+        env:
+          RUN_URL: ${{ steps.fixture.outputs.url }}
+
+      # Exit 0 above means no property returned false. It does not mean any
+      # property was ever evaluated against real content: they all decline to
+      # judge when the elements they read are absent, so a run that never
+      # rendered the step page is green and worthless. This step is what tells
+      # the two apart, and it fails the job when nothing was judged. folio
+      # makes the same call inside folio-run.sh, where the exit code it is
+      # judging is in scope.
+      - name: Classify the run
+        if: always()
+        run: .github/scripts/replay-ui-summary.sh runs/replay-ui
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: replay-ui-runs
+          path: runs/
+          retention-days: 14
+
+  # Every merge to master cuts a patch: 0.1.4 becomes 0.1.5. A dispatch with
+  # `promote` set cuts the milestone that consolidates them instead. Both wait on
+  # the device legs as well as the checks, so nothing reaches a registry that the
+  # emulators and the simulator have not agreed on, and both release the commit
+  # this run tested rather than whatever master drifted to while it ran.
+  #
+  # These jobs live here rather than in a workflow of their own because npm
+  # matches a package's one trusted publisher against the filename of the
+  # workflow that starts the run. See docs/development/ci.md.
+  release-tag:
+    name: Tag
+    needs:
+      - checks
+      - folio
+      - replay-ui
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'workflow_dispatch' && inputs.promote != 'none')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      tag: ${{ steps.next.outputs.tag }}
+      previous_tag: ${{ steps.next.outputs.previous_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The version is counted off the tags, so the tags have to be here.
+          fetch-depth: 0
+
+      # `inputs` is empty on a push, which leaves the resolver on its default of
+      # a patch: that is the bump a merge cuts.
+      - name: Resolve the version
+        id: next
+        run: .github/scripts/next-version.sh
+        env:
+          BUMP: ${{ inputs.promote }}
+
+      # Nothing is published until this lands, so a version that cannot be
+      # tagged never reaches a registry. npm is the half of a release that
+      # cannot be taken back and a tag is the half that can.
+      - name: Tag the commit
+        run: |
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+
+  release-npm:
+    name: Release (npm)
+    needs: release-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm authenticates this publish over OIDC against the trusted publisher
+      # configured for @sanderling/spec, so the job holds no token and there is
+      # none to expire. npm revoked every classic token in December 2025 and
+      # caps a granular one at 90 days, so a token here would break quarterly.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-tag.outputs.tag }}
+          # `npm ci` below runs dependency lifecycle scripts, and no step in
+          # this job needs the git credential afterwards.
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+          cache-dependency-path: pkg/spec/package-lock.json
+
+      # registry-url above writes an `_authToken=${NODE_AUTH_TOKEN}` line into
+      # .npmrc whether or not a token exists, and an npm older than 11.5.1 reads
+      # that empty line as "auth is configured" and never asks for an OIDC
+      # token, so the publish fails needing auth. Node 22 ships npm 10.
+      - name: Install an npm that can publish over OIDC
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        working-directory: pkg/spec
+        run: npm ci
+
+      # The repo keeps package.json at 0.0.0-dev. The tags are the record of
+      # what has been released, and a version committed to master would be a
+      # second record to hold in step with them.
+      - name: Stamp the version
+        working-directory: pkg/spec
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+        env:
+          VERSION: ${{ needs.release-tag.outputs.version }}
+
+      # A publish that landed and then failed on its way out leaves npm holding
+      # the version, and re-running the job must not be red for it. The registry
+      # is asked rather than the tags: only npm knows what npm has. Only stdout
+      # decides, because `npm view` on a version that does not exist is empty on
+      # some npm releases and an error on others, and an unreachable registry
+      # must end in a publish that fails loudly rather than a skip that reads as
+      # success.
+      - name: Ask npm whether this version is already published
+        id: published
+        run: |
+          if [ -n "$(npm view "@sanderling/spec@$VERSION" version 2>/dev/null || true)" ]; then
+            echo "npm already has @sanderling/spec@$VERSION, nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          VERSION: ${{ needs.release-tag.outputs.version }}
+
+      - name: Publish @sanderling/spec to npm
+        if: steps.published.outputs.publish == 'true'
+        working-directory: pkg/spec
+        run: npm publish --access public
+
+  release-cli:
+    name: Release (cli)
+    needs: release-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-tag.outputs.tag }}
+          # GoReleaser reads the tag history for its changelog.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+
+      - name: Cache Gradle
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Build sidecar JAR
+        run: make sidecar
+
+      # GoReleaser reaches back to the release before this one on its own, which
+      # is right for a patch and wrong for a milestone: the notes on a 0.2.0
+      # consolidating six patches would cover the last merge only.
+      # GORELEASER_PREVIOUS_TAG moves that boundary back to the last release at
+      # this one's level, and an empty value leaves GoReleaser on its own
+      # default, which is what a patch passes.
+      - name: Publish the sanderling CLI to GitHub Releases
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_PREVIOUS_TAG: ${{ needs.release-tag.outputs.previous_tag }}
+
+  release:
+    name: Release
+    if: always()
+    needs:
+      - release-npm
+      - release-cli
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the group passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
+  # The docs used to build only when docs/ or the Makefile changed. A path
+  # filter here would have to sit on the whole workflow, so the site is rebuilt
+  # on every merge instead: it is pandoc over a few pages, and a deploy of bytes
+  # that did not change is a no-op.
+  docs:
+    name: Docs
+    needs: checks
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    # Pages takes one deployment at a time.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+
+      - name: Build site
+        run: make docs
+
+      # No include-hidden-files: v4 stopped uploading dot-files by default, and
+      # build/site has none. It is pandoc output plus a copy of docs/_assets,
+      # which holds three ordinary files. _assets is underscore-prefixed, not
+      # hidden, and deploy-pages serves the artifact without running Jekyll, so
+      # it needs no .nojekyll either.
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: build/site
+
+      - uses: actions/deploy-pages@v5
+        id: deployment
+
+  # The one status check to point branch protection at. Without `if: always()`
+  # this would be skipped along with anything that skipped, and a skipped
+  # required check reads as a pass.
+  all-checks-passed:
+    name: All checks passed
+    if: always()
+    needs:
+      - checks
+      - folio
+      - replay-ui
+      - release
+      - docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

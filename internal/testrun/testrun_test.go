@@ -2,7 +2,9 @@ package testrun
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -287,6 +289,31 @@ func TestRunOutcome_ReportsViolationsOnlyUnderTheFlag(t *testing.T) {
 	}
 }
 
+// A step the verifier skipped was judged by nothing, so a run whose every step
+// was skipped holds no verdict at all: "no violations" there is the absence of
+// an answer rather than a clean one. Reporting it as a successful run is the
+// green and vacuous outcome structuralShape's own design notes call worse than
+// the composition it catches, and the runner's hold is what makes a fully
+// skipped run reachable.
+func TestRunOutcome_ARunThatJudgedNothingIsNotASuccess(t *testing.T) {
+	nothingJudged := runner.Summary{Steps: 6, SkippedVerification: 6}
+	err := runOutcome(Options{}, nothingJudged)
+	var vacuous VacuousRunError
+	if !errors.As(err, &vacuous) {
+		t.Fatalf("a run that judged none of its 6 steps came back %v, want a VacuousRunError", err)
+	}
+	if vacuous.Steps != 6 {
+		t.Errorf("steps: got %d, want 6", vacuous.Steps)
+	}
+
+	// A screen that composes now and then costs a run steps, not its verdict. A
+	// check that fired here would turn every healthy android run red.
+	mostlyJudged := runner.Summary{Steps: 6, SkippedVerification: 5}
+	if err := runOutcome(Options{}, mostlyJudged); err != nil {
+		t.Errorf("a run that judged one of its 6 steps must succeed, got %v", err)
+	}
+}
+
 // wedgedLaunchDriver never returns from Launch, standing in for a driver whose
 // device-side session is stuck.
 type wedgedLaunchDriver struct {
@@ -325,5 +352,155 @@ func TestLaunchAppBoundsWedgedDriver(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("launchApp never returned: the pre-run launch is unbounded, so a wedged driver hangs the run forever")
+	}
+}
+
+// repoFile walks up from the test's working directory and returns the absolute
+// path of rel inside the sanderling checkout.
+func repoFile(t *testing.T, rel string) string {
+	t.Helper()
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		candidate := filepath.Join(directory, rel)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			t.Fatalf("%s not found above the test directory", rel)
+		}
+		directory = parent
+	}
+}
+
+// publishedFiles returns the "files" entries of pkg/spec/package.json, the
+// exact set npm ships in the @sanderling/spec tarball.
+func publishedFiles(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(repoFile(t, "pkg/spec/package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	return manifest.Files
+}
+
+// installPublishedPackage reproduces what `npm install @sanderling/spec`
+// unpacks into node_modules: only the paths package.json publishes.
+func installPublishedPackage(t *testing.T, dest string) {
+	t.Helper()
+	specDir := filepath.Dir(repoFile(t, "pkg/spec/package.json"))
+	for _, entry := range publishedFiles(t) {
+		source := filepath.Join(specDir, entry)
+		if _, err := os.Stat(source); err != nil {
+			continue
+		}
+		copyTree(t, source, filepath.Join(dest, entry))
+	}
+}
+
+func copyTree(t *testing.T, source, dest string) {
+	t.Helper()
+	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dest, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestResolveRuntimeSibling_PublishedPackageShipsTheRuntimes pins npm's "files"
+// list against the resolver that consumes it. The tarball shipped dist/ alone
+// while the node_modules fallback looks for src/goja-runtime.ts, so every
+// `npm install @sanderling/spec` user hit "goja-runtime.ts not found".
+func TestResolveRuntimeSibling_PublishedPackageShipsTheRuntimes(t *testing.T) {
+	root := t.TempDir()
+	installPublishedPackage(t, filepath.Join(root, "node_modules", "@sanderling", "spec"))
+	specPath := filepath.Join(root, "spec.ts")
+	if err := os.WriteFile(specPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, filename := range []string{"goja-runtime.ts", "web-runtime.ts"} {
+		if resolveRuntimeSibling("", specPath, filename) == "" {
+			t.Errorf("%s unreachable from a published install; package.json publishes %v",
+				filename, publishedFiles(t))
+		}
+	}
+}
+
+// TestPrepareBundleInputs_InstalledPackageSharesOneModuleGraph pins the
+// downstream case: with no sanderling checkout above the spec, the aliases and
+// the runtime entry must name the SAME installed copy. An unset alias let
+// esbuild resolve @sanderling/spec to dist/ while the runtime came from src/,
+// which loads sampler-rng.ts twice; from(), strings(), integers() and emails()
+// then read an rng the picker never set and collapse to a fixed default.
+func TestPrepareBundleInputs_InstalledPackageSharesOneModuleGraph(t *testing.T) {
+	root := t.TempDir()
+	installed := filepath.Join(root, "node_modules", "@sanderling", "spec")
+	installPublishedPackage(t, installed)
+	specPath := filepath.Join(root, "sanderling", "spec.ts")
+	if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(specPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+
+	prep, err := prepareBundleInputs(Options{Spec: specPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(installed, "src")
+	want := map[string]string{
+		"@sanderling/spec":                     filepath.Join(source, "index.ts"),
+		"@sanderling/spec/defaults":            filepath.Join(source, "defaults/index.ts"),
+		"@sanderling/spec/defaults/properties": filepath.Join(source, "defaults/properties.ts"),
+	}
+	for key, wantValue := range want {
+		if prep.aliases[key] != wantValue {
+			t.Errorf("alias %q = %q, want %q", key, prep.aliases[key], wantValue)
+		}
+	}
+	if got := prep.gojaRuntimePath; got != filepath.Join(source, "goja-runtime.ts") {
+		t.Errorf("gojaRuntimePath = %q, want it beside the aliased index.ts", got)
+	}
+	if got := resolveWebRuntimePath(prep.specAPIPath, specPath); got != filepath.Join(source, "web-runtime.ts") {
+		t.Errorf("webRuntimePath = %q, want it beside the aliased index.ts", got)
 	}
 }

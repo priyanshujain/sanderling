@@ -15,6 +15,7 @@ import {
   cardAccountName,
   cardBalanceText,
   cardTxnCount,
+  committedAmountExceedsOneSubmit,
   committedTransactionsExceedSubmits,
   countSubmitsInWindow,
   createdAccountHasNonZeroBalance,
@@ -23,10 +24,11 @@ import {
   oncePerFrame,
   parseDollarCents,
   parseTypedAmount,
+  readAccountBalance,
   readHomeCards,
   readHomeTotalBalance,
   routeOfFrame,
-  submitChangesBalanceByTypedAmount,
+  submitChangesBalanceByAtMostTypedAmount,
 } from "./predicates";
 import type { Account, CardReading, TxnCount } from "./predicates";
 
@@ -100,6 +102,11 @@ const homeCards = oncePerFrame((s: State): CardReading[] =>
 // the last-read Home total so `previous` and `current` stay on the same scale.
 const homeTotalText = (s: State) => on("home", "TotalBalance")(s)?.text;
 
+// The amount field as the frame a submit landed on shows it, which is the form
+// state that submit read. Every window below asks, because a submit the app
+// must have refused raises no bound: see submitCouldCommit.
+const txnAmountText = oncePerFrame((s: State) => on("add-transaction", "TxnAmountField")(s)?.text);
+
 let lastHomeTotal: number | null = null;
 const totalBalance = extract<number | null>("totalBalance", s => {
   const reading = readHomeTotalBalance({
@@ -125,6 +132,7 @@ const submitsInWindow = extract("submitsInWindow", s => {
   const window = countSubmitsInWindow({
     previousCount: submitsSinceHomeTotal,
     lastAction: s.lastAction,
+    amountText: txnAmountText(s),
     fresh,
   });
   submitsSinceHomeTotal = window.next;
@@ -173,9 +181,49 @@ const submitsSinceCounts = extract("submitsSinceCounts", s => {
   const window = countSubmitsInWindow({
     previousCount: submitsSinceHomeCards,
     lastAction: s.lastAction,
+    amountText: txnAmountText(s),
     fresh,
   });
   submitsSinceHomeCards = window.next;
+  return window.reported;
+});
+
+// The account's own balance, off whichever of its two screens is up. The routes
+// are exclusive, so at most one of these resolves and the reading is always one
+// account's number. Its carrier is dropped on every other route, which is what
+// keeps two readings from spanning two accounts: see readAccountBalance.
+const accountBalanceText = (s: State) =>
+  on("ledger", "LedgerBalance")(s)?.text ?? on("add-transaction", "TxnCurrentBalance")(s)?.text;
+
+let lastAccountBalance: number | null = null;
+const accountBalance = extract<number | null>("accountBalance", s => {
+  const reading = readAccountBalance({
+    route: routeOf(s),
+    balanceText: accountBalanceText(s),
+    previousCarrier: lastAccountBalance,
+  });
+  lastAccountBalance = reading.carrier;
+  return reading.value;
+});
+
+// A third window, for the same reason the counting invariant has its own: it
+// closes on this reading's freshness, which is a different event again. The
+// transaction flow redraws this balance on nearly every frame, so this window
+// is the narrow one, usually a single action wide.
+let submitsSinceAccountBalance = 0;
+const submitsSinceBalance = extract("submitsSinceAccountBalance", s => {
+  const fresh = readAccountBalance({
+    route: routeOf(s),
+    balanceText: accountBalanceText(s),
+    previousCarrier: null,
+  }).fresh;
+  const window = countSubmitsInWindow({
+    previousCount: submitsSinceAccountBalance,
+    lastAction: s.lastAction,
+    amountText: txnAmountText(s),
+    fresh,
+  });
+  submitsSinceAccountBalance = window.next;
   return window.reported;
 });
 
@@ -208,13 +256,18 @@ const newAccountBalanceIsZero = always(
   ),
 );
 
-// Property 2: a tap on TxnSubmit must move the total balance by exactly the
-// typed amount. A double-submit lands two transactions, so the balance shifts
-// by twice the typed amount and the check fires. The route gate inside the
+// Property 2: a tap on TxnSubmit cannot move the total balance by more than the
+// typed amount. A double-submit lands two transactions, so the balance shifts by
+// twice the typed amount and the check fires. The route gate inside the
 // predicate skips off-Home landings where totalBalance.current is the carrier.
-const submitMovesBalanceByTypedAmount = always(
+//
+// The name is the property's, and the gate keys on it, so it stays; what it
+// demands is the bound, for the reason submitChangesBalanceByAtMostTypedAmount gives:
+// a total that has not re-rendered yet has not moved, and an equality convicts a
+// healthy app for a frame that has not caught up.
+const submitMovesBalanceByAtMostTypedAmount = always(
   next(() =>
-    submitChangesBalanceByTypedAmount({
+    submitChangesBalanceByAtMostTypedAmount({
       route: route.current,
       lastAction: lastAction.current,
       submitsInWindow: submitsInWindow.current,
@@ -230,13 +283,39 @@ const submitMovesBalanceByTypedAmount = always(
 // stays sound however wide the window between two Home readings gets, because
 // both sides of the comparison accumulate over the same window. It is the
 // double-submit stated directly: one tap, two rows.
+//
+// One rule, two windows, and they judge different frames rather than the same
+// frame twice. The counting form compares two Home readings, which is where a
+// double tap lands: submit() pops one entry per commit, so two commits walk the
+// stack back past the ledger to Home. What used to defeat it there was the
+// width of the window, not the window's screen, and what fixed it is
+// submitCouldCommit refusing to count submits the app cannot have accepted.
+// Replaying the iOS run at runs/folio-ios/20260815-102711 through this file
+// measures it: the three double taps sit in windows of 2, 1 and 2 submits with
+// that rule and 5, 4 and 7 without, and the run convicts 4 times with it and 0
+// times without.
+//
+// The second form says the same thing in money about the one account whose
+// screen the walk is on, and that window is usually a single action. It judges
+// the frames the counting form cannot see between two Home visits, and catches
+// the double submit whose second pop never ran: see
+// committedAmountExceedsOneSubmit.
 const submitCommitsOneTransactionPerAction = always(
-  next(() =>
-    !committedTransactionsExceedSubmits({
-      countsBefore: homeTxnCounts.previous ?? null,
-      countsAfter: homeTxnCounts.current,
-      submitsInWindow: submitsSinceCounts.current,
-    }),
+  next(
+    () =>
+      !committedTransactionsExceedSubmits({
+        countsBefore: homeTxnCounts.previous ?? null,
+        countsAfter: homeTxnCounts.current,
+        submitsInWindow: submitsSinceCounts.current,
+      }) &&
+      !committedAmountExceedsOneSubmit({
+        route: route.current,
+        lastAction: lastAction.current,
+        submitsInWindow: submitsSinceBalance.current,
+        typedAmount: parseTypedAmount(txnAmountField.previous?.text),
+        prevAccountBalance: accountBalance.previous ?? null,
+        currAccountBalance: accountBalance.current,
+      }),
   ),
 );
 
@@ -303,7 +382,7 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
 
 export const properties = {
   newAccountBalanceIsZero,
-  submitMovesBalanceByTypedAmount,
+  submitMovesBalanceByAtMostTypedAmount,
   submitCommitsOneTransactionPerAction,
 };
 

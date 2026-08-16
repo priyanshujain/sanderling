@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  committedTransactionsExceedSubmits,
   countSubmitsInWindow,
   isTxnSubmitTap,
   readHomeTotalBalance,
@@ -63,6 +64,117 @@ test("a second submit with no Home reading between them counts two", () => {
   assert.deepEqual(
     countSubmitsInWindow({ previousCount: 1, lastAction: { kind: "DoubleTap", on: submitOn }, fresh: true }),
     { reported: 2, next: 0 },
+  );
+});
+
+// The window is a budget: an upper bound on the transactions the interval could
+// hold. A tap the app's own parser must have refused spends none of it, and on
+// android it does not even reach the parser, because TxnSubmit is
+// clickable(enabled = amount.isNotBlank()). Measured over four recorded android
+// runs, 19, 11, 25 and 25 of 35, 26, 42 and 42 submit taps landed on the
+// transaction screen with the amount field empty, so more than half the budget
+// was being spent on taps that cannot commit anything.
+test("a submit the app must have refused does not spend the window's budget", () => {
+  for (const amountText of ["", "   ", "0", "0.00", "00", "5.", "abc"]) {
+    assert.deepEqual(
+      countSubmitsInWindow({
+        previousCount: 0,
+        lastAction: { kind: "Tap", on: submitOn },
+        amountText,
+        fresh: false,
+      }),
+      { reported: 0, next: 0 },
+      `amount ${JSON.stringify(amountText)} was counted as a possible commit`,
+    );
+  }
+});
+
+// Folio caps a transaction at $1,000,000.00 (MAX_TRANSACTION_AMOUNT_CENTS, in
+// core/data/Repository.kt), and AddTransactionViewModel.submit refuses anything
+// over it before a coroutine starts. The fuzzer's corpus carries
+// "999999999999999999999", AMOUNT_REGEX lets it into the field and it reaches
+// the button, so this is a refusal the window used to pay for.
+test("an amount over the app's cap cannot commit", () => {
+  for (const amountText of ["1000000.01", "1,000,001", "999999999999999999999"]) {
+    assert.deepEqual(
+      countSubmitsInWindow({
+        previousCount: 0,
+        lastAction: { kind: "Tap", on: submitOn },
+        amountText,
+        fresh: false,
+      }),
+      { reported: 0, next: 0 },
+      `amount ${JSON.stringify(amountText)} was counted as a possible commit`,
+    );
+  }
+});
+
+// The field as the landing frame shows it, which is the form state the tap read:
+// nothing between the two changes it. Anywhere but the transaction screen there
+// is no field to read, and unknown has to count. The cap itself is an amount the
+// app takes, so it counts too.
+test("an amount that could commit, or that nobody could read, spends the budget", () => {
+  for (const amountText of ["5", "0.01", "1,000", "1000000.00", "999999.99", undefined]) {
+    assert.deepEqual(
+      countSubmitsInWindow({
+        previousCount: 0,
+        lastAction: { kind: "Tap", on: submitOn },
+        amountText,
+        fresh: false,
+      }),
+      { reported: 1, next: 1 },
+      `amount ${JSON.stringify(amountText)} was dropped from the budget`,
+    );
+  }
+});
+
+// The one thing that can put a different form state on screen than the one the
+// tap read: the runner restarting the app, which the tap survives and the typed
+// amount does not. The field a fresh process draws is empty whatever was
+// submitted, so it proves nothing and the submit keeps its place in the budget.
+test("a submit across a relaunch spends the budget whatever the field shows", () => {
+  assert.deepEqual(
+    countSubmitsInWindow({
+      previousCount: 0,
+      lastAction: { kind: "Tap", on: submitOn, applied: true, relaunched: true },
+      amountText: "",
+      fresh: false,
+    }),
+    { reported: 1, next: 1 },
+  );
+});
+
+// What the budget costs the counting invariant, in the shape of the iOS run in
+// #78: a stretch of the walk that never went Home, most of it taps on a submit
+// button with nothing typed into the form, and one double tap that committed
+// twice. Counting the refused taps hands the app five transactions of slack it
+// never used, and two rows against six actions is no violation.
+test("refused submits used to hide a double submit behind their own budget", () => {
+  const frames = [
+    { amountText: "", lastAction: { kind: "Tap", on: submitOn } },
+    { amountText: "", lastAction: { kind: "Tap", on: submitOn } },
+    { amountText: "", lastAction: { kind: "Tap", on: submitOn } },
+    { amountText: "", lastAction: { kind: "Tap", on: submitOn } },
+    { amountText: "", lastAction: { kind: "Tap", on: submitOn } },
+    { amountText: undefined, lastAction: { kind: "DoubleTap", on: submitOn } },
+  ];
+  let budget = 0;
+  for (const frame of frames) {
+    budget = countSubmitsInWindow({
+      previousCount: budget,
+      lastAction: frame.lastAction,
+      amountText: frame.amountText,
+      fresh: false,
+    }).next;
+  }
+  assert.equal(budget, 1);
+  assert.equal(
+    committedTransactionsExceedSubmits({
+      countsBefore: { Checking: 3 },
+      countsAfter: { Checking: 5 },
+      submitsInWindow: budget,
+    }),
+    true,
   );
 });
 
@@ -148,4 +260,26 @@ test("an unreadable Home does not close the window", () => {
   ]);
   assert.equal(trace[2]?.total, null);
   assert.equal(trace[3]?.submits, 2);
+});
+
+// The window is an upper bound on the submits it holds, so a submit whose
+// dispatch the runner could not confirm belongs in it: the tap may well have
+// landed, and a bound that leaves it out is one the transaction it committed
+// exceeds. That is the false conviction, a rise of one against a window of
+// zero, on the property carrying most of the detection on android.
+test("a submit the runner could not confirm still counts toward the window", () => {
+  const window = countSubmitsInWindow({
+    previousCount: 0,
+    lastAction: { kind: "Tap", on: submitOn, applied: null },
+    fresh: true,
+  });
+  assert.equal(window.reported, 1);
+  assert.equal(
+    committedTransactionsExceedSubmits({
+      countsBefore: { Travel: 3 },
+      countsAfter: { Travel: 4 },
+      submitsInWindow: window.reported,
+    }),
+    false,
+  );
 });

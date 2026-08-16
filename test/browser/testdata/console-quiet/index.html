@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>console-quiet</title>
+  </head>
+  <body>
+    <button id="press" style="width:200px;height:80px">press</button>
+    <div id="count">0</div>
+    <script>
+      // Noisy below the error level. A run that reports these as errors is
+      // reporting a healthy page as broken.
+      console.warn("a warning");
+      console.log("a plain log");
+      console.info("an info line");
+      let presses = 0;
+      document.getElementById("press").addEventListener("click", function () {
+        presses += 1;
+        document.getElementById("count").textContent = String(presses);
+      });
+    </script>
+  </body>
+</html>

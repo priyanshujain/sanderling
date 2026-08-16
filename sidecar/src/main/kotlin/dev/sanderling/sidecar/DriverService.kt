@@ -31,7 +31,10 @@ class DriverService(
     private val launchedBundleId = AtomicReference<String?>(null)
     private val snapshotLock = Any()
 
-    override fun launch(request: LaunchRequest, responseObserver: StreamObserver<Empty>) {
+    override fun launch(
+        request: LaunchRequest,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             backend.launch(request.bundleId, request.clearState, request.envMap)
             launchedBundleId.set(request.bundleId)
@@ -39,7 +42,10 @@ class DriverService(
         }
     }
 
-    override fun terminate(request: Empty, responseObserver: StreamObserver<Empty>) {
+    override fun terminate(
+        request: Empty,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             launchedBundleId.get()?.let { backend.terminate(it) }
             launchedBundleId.set(null)
@@ -54,42 +60,60 @@ class DriverService(
         }
     }
 
-    override fun doubleTap(request: Point, responseObserver: StreamObserver<Empty>) {
+    override fun doubleTap(
+        request: Point,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             backend.doubleTap(request.x, request.y)
             Empty.getDefaultInstance()
         }
     }
 
-    override fun longPress(request: Point, responseObserver: StreamObserver<Empty>) {
+    override fun longPress(
+        request: Point,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             backend.longPress(request.x, request.y)
             Empty.getDefaultInstance()
         }
     }
 
-    override fun tapSelector(request: Selector, responseObserver: StreamObserver<Empty>) {
+    override fun tapSelector(
+        request: Selector,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             backend.tapSelector(request.value)
             Empty.getDefaultInstance()
         }
     }
 
-    override fun inputText(request: Text, responseObserver: StreamObserver<Empty>) {
+    override fun inputText(
+        request: Text,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             backend.inputText(request.value)
             Empty.getDefaultInstance()
         }
     }
 
-    override fun eraseText(request: EraseTextRequest, responseObserver: StreamObserver<Empty>) {
+    override fun eraseText(
+        request: EraseTextRequest,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             backend.eraseText(request.characterCount)
             Empty.getDefaultInstance()
         }
     }
 
-    override fun swipe(request: SwipeRequest, responseObserver: StreamObserver<Empty>) {
+    override fun swipe(
+        request: SwipeRequest,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             val from = request.from
             val to = request.to
@@ -98,16 +122,25 @@ class DriverService(
         }
     }
 
-    override fun pressKey(request: PressKeyRequest, responseObserver: StreamObserver<Empty>) {
+    override fun pressKey(
+        request: PressKeyRequest,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             backend.pressKey(request.key)
             Empty.getDefaultInstance()
         }
     }
 
-    override fun recentLogs(request: RecentLogsRequest, responseObserver: StreamObserver<LogEntries>) {
+    override fun recentLogs(
+        request: RecentLogsRequest,
+        responseObserver: StreamObserver<LogEntries>,
+    ) {
         runRpc(responseObserver) {
-            val entries = backend.recentLogs(request.sinceUnixMillis, request.levelAtLeast)
+            val entries = backend.recentLogs(
+                request.sinceUnixMillis,
+                request.levelAtLeast,
+            )
             val builder = LogEntries.newBuilder()
             for (entry in entries) {
                 builder.addEntries(
@@ -123,7 +156,10 @@ class DriverService(
         }
     }
 
-    override fun screenshot(request: Empty, responseObserver: StreamObserver<Image>) {
+    override fun screenshot(
+        request: Empty,
+        responseObserver: StreamObserver<Image>,
+    ) {
         runRpc(responseObserver) {
             val (png, width, height) = backend.screenshot()
             Image.newBuilder()
@@ -134,18 +170,34 @@ class DriverService(
         }
     }
 
-    override fun hierarchy(request: Empty, responseObserver: StreamObserver<HierarchyJSON>) {
+    // The runner reads this a second time per step to see whether the screen
+    // changed while it was looking, so it has to describe the same thing the
+    // snapshot's tree describes: same settle, same keyboard handling, same
+    // lock. Served off the bare backend read, the pair differed over what the
+    // backend did between them rather than over what the app did.
+    override fun hierarchy(
+        request: Empty,
+        responseObserver: StreamObserver<HierarchyJSON>,
+    ) {
         runRpc(responseObserver) {
-            HierarchyJSON.newBuilder().setJson(backend.hierarchy()).build()
+            val tree = synchronized(snapshotLock) { backend.snapshotTree() }
+            HierarchyJSON.newBuilder().setJson(tree).build()
         }
     }
 
-    override fun snapshot(request: Empty, responseObserver: StreamObserver<SnapshotResponse>) {
+    override fun snapshot(
+        request: Empty,
+        responseObserver: StreamObserver<SnapshotResponse>,
+    ) {
         runRpc(responseObserver) {
             val sample = synchronized(snapshotLock) { backend.snapshot() }
             val (png, width, height) = sample.screenshot
             SnapshotResponse.newBuilder()
-                .setHierarchy(HierarchyJSON.newBuilder().setJson(sample.hierarchyJson).build())
+                .setHierarchy(
+                    HierarchyJSON.newBuilder()
+                        .setJson(sample.hierarchyJson)
+                        .build(),
+                )
                 .setScreenshot(
                     Image.newBuilder()
                         .setPng(ByteString.copyFrom(png))
@@ -157,14 +209,20 @@ class DriverService(
         }
     }
 
-    override fun waitForIdle(request: Duration, responseObserver: StreamObserver<Empty>) {
+    override fun waitForIdle(
+        request: Duration,
+        responseObserver: StreamObserver<Empty>,
+    ) {
         runRpc(responseObserver) {
             backend.waitForIdle(request.millis)
             Empty.getDefaultInstance()
         }
     }
 
-    override fun health(request: Empty, responseObserver: StreamObserver<HealthStatus>) {
+    override fun health(
+        request: Empty,
+        responseObserver: StreamObserver<HealthStatus>,
+    ) {
         runRpc(responseObserver) {
             HealthStatus.newBuilder()
                 .setReady(backend.healthy())
@@ -174,9 +232,16 @@ class DriverService(
         }
     }
 
-    override fun metrics(request: MetricsRequest, responseObserver: StreamObserver<MetricsResponse>) {
+    override fun metrics(
+        request: MetricsRequest,
+        responseObserver: StreamObserver<MetricsResponse>,
+    ) {
         runRpc(responseObserver) {
-            val bundleId = if (request.bundleId.isNotEmpty()) request.bundleId else launchedBundleId.get().orEmpty()
+            val bundleId = if (request.bundleId.isNotEmpty()) {
+                request.bundleId
+            } else {
+                launchedBundleId.get().orEmpty()
+            }
             val sample = backend.metrics(bundleId)
             MetricsResponse.newBuilder()
                 .setCpuPercent(sample.cpuPercent)
@@ -191,7 +256,9 @@ class DriverService(
     // stale session, then closes the backend so the iOS XCTest runner process
     // dies with us instead of being orphaned.
     fun shutdown() {
-        runCatching { launchedBundleId.getAndSet(null)?.let { backend.terminate(it) } }
+        runCatching {
+            launchedBundleId.getAndSet(null)?.let { backend.terminate(it) }
+        }
         runCatching { backend.close() }
     }
 
@@ -209,8 +276,10 @@ class DriverService(
             // failures that do not extend Exception, and an uncaught one
             // kills the RPC as a channel-level Unknown instead of a status
             // the runner can classify.
-            observer.onError(io.grpc.Status.INTERNAL.withDescription(cause.toString())
-                .withCause(cause).asRuntimeException())
+            observer.onError(
+                io.grpc.Status.INTERNAL.withDescription(cause.toString())
+                    .withCause(cause).asRuntimeException(),
+            )
         }
     }
 

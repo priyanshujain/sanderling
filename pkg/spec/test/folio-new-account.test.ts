@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createdAccountHasNonZeroBalance } from "../../../examples/folio/sanderling/predicates.ts";
+import {
+  createdAccountHasNonZeroBalance,
+  initialsOf,
+} from "../../../examples/folio/sanderling/predicates.ts";
 
-const created = { kind: "Tap", on: "testTag:AddAccountScreen > testTag:AddAccountSubmit" };
-const idle = { kind: "Tap", on: "testTag:HomeScreen > testTag:AccountCard" };
+const created = {
+  kind: "Tap",
+  on: "testTag:AddAccountScreen > testTag:AddAccountSubmit",
+  applied: true as const,
+};
+const idle = { kind: "Tap", on: "testTag:HomeScreen > testTag:AccountCard", applied: true as const };
 
 const account = (name: string, balance: number | null) => ({ name, balance });
 
@@ -27,7 +34,7 @@ test("a double-tapped create is judged the same way", () => {
   assert.equal(
     createdAccountHasNonZeroBalance({
       route: "home",
-      lastAction: { kind: "DoubleTap", on: "id:AddAccountSubmit" },
+      lastAction: { kind: "DoubleTap", on: "id:AddAccountSubmit", applied: true },
       typedName: "Travel",
       before: [account("Checking", 0)],
       after: [account("Checking", 0), account("Travel", 5000)],
@@ -205,9 +212,90 @@ test("the merged web key still matches the name that was typed", () => {
   );
 });
 
-// Two cards answering to one typed name leave the appearance unattributable:
-// the fuzzer creates duplicates from a five-name list, and the tree has been
-// seen exposing the same card twice on a transition frame.
+// The avatar the merged web key opens with, hand-computed off Format.kt rather
+// than off the mirror, because a mirror checked against itself checks nothing.
+// A single word gives its first two characters, several give the first letter
+// of the first and of the last, and an empty name gives "?".
+test("the initials a merged key opens with are the app's", () => {
+  const named: [string, string][] = [
+    ["CH", "Checking"],
+    ["SA", "Savings"],
+    ["TR", "Travel"],
+    ["EF", "Emergency Fund"],
+    ["IN", "Investments"],
+    ["FU", "Fund"],
+    ["T2", "Travel 2024"],
+    ["A", "a"],
+    ["X9", "x9"],
+    ["-1", "-1"],
+    ["?", ""],
+    ["?", "   "],
+  ];
+  for (const [initials, name] of named) {
+    assert.equal(initialsOf(name), initials, `initials for ${JSON.stringify(name)}`);
+  }
+});
+
+// The attribution used to be a suffix test, and a suffix test hands the verdict
+// to whichever OTHER account happens to end with the typed name. Home lists
+// what fits the viewport, so the card that was just created is clipped out of
+// the reading exactly as easily as any other, and the older account left in it
+// is then judged for money it has held all along.
+test("an older account whose name ends with the typed one is not the created one", () => {
+  assert.equal(
+    createdAccountHasNonZeroBalance({
+      route: "home",
+      lastAction: created,
+      typedName: "Fund",
+      before: [account("Checking", 0)],
+      after: [account("Checking", 0), account("Emergency Fund", 461012300)],
+    }),
+    false,
+  );
+});
+
+test("the merged web key is matched whole too, not by its ending", () => {
+  assert.equal(
+    createdAccountHasNonZeroBalance({
+      route: "home",
+      lastAction: created,
+      typedName: "Fund",
+      before: [account("CHChecking", 0)],
+      after: [account("CHChecking", 0), account("EFEmergency Fund", 461012300)],
+    }),
+    false,
+  );
+});
+
+// The card that was actually asked for is still judged, standing next to the
+// account that merely ends with its name.
+test("the created card is judged beside an account whose name ends with it", () => {
+  assert.equal(
+    createdAccountHasNonZeroBalance({
+      route: "home",
+      lastAction: created,
+      typedName: "Fund",
+      before: [account("Emergency Fund", 461012300)],
+      after: [account("Emergency Fund", 461012300), account("Fund", 5000)],
+    }),
+    true,
+  );
+  assert.equal(
+    createdAccountHasNonZeroBalance({
+      route: "home",
+      lastAction: created,
+      typedName: "Fund",
+      before: [account("EFEmergency Fund", 461012300)],
+      after: [account("EFEmergency Fund", 461012300), account("FUFund", 5000)],
+    }),
+    true,
+  );
+});
+
+// Two cards answering to one typed name leave the appearance unattributable.
+// Accounts.name is UNIQUE and Repository.createAccount rejects a name already
+// taken, so the pair is one card the tree exposed twice on a transition frame,
+// or two names the merged web key cannot tell apart.
 test("two cards matching the typed name are not attributable to the creation", () => {
   assert.equal(
     createdAccountHasNonZeroBalance({
@@ -215,7 +303,7 @@ test("two cards matching the typed name are not attributable to the creation", (
       lastAction: created,
       typedName: "Travel",
       before: [account("Checking", 0)],
-      after: [account("Checking", 0), account("Travel", 5000), account("MyTravel", 900)],
+      after: [account("Checking", 0), account("Travel", 5000), account("Travel", 900)],
     }),
     false,
   );
@@ -229,6 +317,57 @@ test("a card that was already there is not a card that was just created", () => 
       typedName: "Travel",
       before: [account("Checking", 0), account("Travel", 2411200)],
       after: [account("Checking", 0), account("Travel", 2411200)],
+    }),
+    false,
+  );
+});
+
+// The runner's foreground guard restarted the app after the create. A fresh
+// launch draws Home from the top, so the visible set is whatever the new layout
+// fits rather than what was there a step ago, and "appeared in the reading" is
+// even less like "was created" than usual. The process may also have died
+// before the write landed, which makes the card that carries the typed name an
+// older account of that name coming into view.
+test("a create the runner relaunched across attributes nothing", () => {
+  assert.equal(
+    createdAccountHasNonZeroBalance({
+      route: "home",
+      lastAction: { ...created, relaunched: true },
+      typedName: "Travel",
+      before: [account("Checking", 0)],
+      after: [account("Checking", 0), account("Travel", 5000)],
+    }),
+    false,
+  );
+});
+
+test("no relaunch reported still judges the account that was created", () => {
+  for (const relaunched of [null, undefined]) {
+    assert.equal(
+      createdAccountHasNonZeroBalance({
+        route: "home",
+        lastAction: { ...created, relaunched },
+        typedName: "Travel",
+        before: [account("Checking", 0)],
+        after: [account("Checking", 0), account("Travel", 5000)],
+      }),
+      true,
+    );
+  }
+});
+
+// The apply call failed with the gesture possibly already delivered, so nobody
+// knows whether that account was created. The card carrying the typed name may
+// be an older one that scrolled into view, and attributing it to a creation
+// that may never have happened is a conviction built on a guess.
+test("a create the runner could not confirm attributes nothing", () => {
+  assert.equal(
+    createdAccountHasNonZeroBalance({
+      route: "home",
+      lastAction: { ...created, applied: null },
+      typedName: "Travel",
+      before: [account("Checking", 0)],
+      after: [account("Checking", 0), account("Travel", 5000)],
     }),
     false,
   );

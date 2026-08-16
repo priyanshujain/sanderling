@@ -5,10 +5,10 @@ project_name: sanderling
 before:
   hooks:
     # The Go binary embeds the sidecar fat JAR via //go:embed gated by the
-    # `withsidecar` build tag. Rebuild the JAR and stage it at the embed
-    # path so the `go build` below picks up fresh bytes.
-    - make sidecar
-    - sh -c 'mkdir -p internal/sidecar/assets && cp sidecar/build/libs/sidecar-all.jar internal/sidecar/assets/sidecar-all.jar'
+    # `withsidecar` build tag. The Makefile target rebuilds the JAR and stages
+    # it at the embed path, so the `go build` below picks up fresh bytes and
+    # that path stays spelled out in exactly one place.
+    - make sidecar-embed
 
 builds:
   - id: sanderling

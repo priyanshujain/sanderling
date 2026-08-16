@@ -110,6 +110,12 @@ type FocusedWindowChecker interface {
 	FocusedWindowApp(ctx context.Context) (string, error)
 }
 
+// LogEntry is one line of device log. Level is logcat's single-letter scale on
+// every platform: "V", "D", "I", "W", "E", "F", ordered as written. The runner
+// fetches at "E" and the default properties count entries whose level equals
+// "E", so a driver that spells a level any other way empties the channel
+// without failing anything: the entries never arrive and every property reading
+// state.logs holds vacuously.
 type LogEntry struct {
 	UnixMillis int64
 	Level      string

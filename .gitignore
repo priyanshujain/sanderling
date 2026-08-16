@@ -50,7 +50,7 @@ internal/driver/ioscompanion/companionassets/assets/companion-*.tar.gz
 # before `go build -tags withcompanion`. Never commit: it's ~5 MB.
 internal/driver/ioscompanion/runnerassets/assets/runner-*.tar.gz
 
-# spec-api compiled output
+# spec package compiled output
 pkg/spec/dist/
 
 # goreleaser local output

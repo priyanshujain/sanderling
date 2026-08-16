@@ -1471,3 +1471,83 @@ func TestParseUnreadableFlagKeepsTheRestOfTheTree(t *testing.T) {
 		t.Errorf("stored UnreadableFlags = %d, want 1: the trace has to carry it", decoded.UnreadableFlags)
 	}
 }
+
+// selectorFormsDump carries one node per id shape a real dump produces, plus
+// nodes carrying a description in the ", " form the desc rule knows about and a
+// text the text rule matches on a substring.
+const selectorFormsDump = `{
+  "attributes": {"resource-id": "root", "bounds": "[0,0,400,800]"},
+  "children": [
+    {"attributes": {"resource-id": "BareThing", "bounds": "[0,0,100,50]"}, "children": []},
+    {"attributes": {"resource-id": "com.example.app:id/AndroidThing", "bounds": "[0,50,100,100]"},
+     "children": []},
+    {"attributes": {"accessibilityIdentifier": "IosThing", "bounds": "[0,100,100,150]"},
+     "children": []},
+    {"attributes": {"resource-id": "Described", "content-desc": "Save, button", "bounds": "[0,150,100,200]"},
+     "children": []},
+    {"attributes": {"resource-id": "Labelled", "text": "Total balance", "bounds": "[0,200,100,250]"},
+     "children": []}
+  ]
+}`
+
+// TestSelectorFormsResolveTheSameElement holds the two selector forms a spec can
+// write to ONE rule per key. A spec reaches these through state.ax.find: a
+// string goes to FindNode, an object to FindBySelector, and the two ran
+// different matchers. `id` has a kind arm that knows an Android resource id is
+// package-qualified (com.example.app:id/Thing) and that a spec names the bare
+// tail; the object form had no such arm and looked for a literal `id` attribute
+// no producer writes, so {id: "Thing"} silently matched nothing on every
+// platform while "id:Thing" matched. `desc` and `descPrefix` had the same
+// split. A selector that resolves nothing makes every property over it
+// vacuously true, which is the failure that reports a green run while checking
+// nothing.
+func TestSelectorFormsResolveTheSameElement(t *testing.T) {
+	tree, err := Parse(selectorFormsDump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		key   string
+		value string
+		want  string
+	}{
+		{"id", "BareThing", "BareThing"},
+		// A spec names the tail; an Android dump carries the package prefix.
+		{"id", "AndroidThing", "com.example.app:id/AndroidThing"},
+		{"id", "com.example.app:id/AndroidThing", "com.example.app:id/AndroidThing"},
+		{"id", "IosThing", "IosThing"},
+		{"desc", "Save, button", "Described"},
+		// The ", " form an accessibility label takes when a role is appended.
+		{"desc", "Save", "Described"},
+		{"descPrefix", "Sav", "Described"},
+		{"text", "Total", "Labelled"},
+		{"resource-id", "BareThing", "BareThing"},
+		{"testTag", "IosThing", "IosThing"},
+	} {
+		t.Run(test.key+":"+test.value, func(t *testing.T) {
+			stringForm := test.key + ":" + test.value
+			fromString := tree.FindNode(stringForm)
+			if fromString == nil {
+				t.Fatalf("the string form %q resolved nothing", stringForm)
+			}
+			if fromString.ResourceID != test.want {
+				t.Fatalf("the string form resolved %q, want %q", fromString.ResourceID, test.want)
+			}
+			fromObject := tree.Root.FindBySelector(
+				Selector{Filters: []AttrFilter{{Attr: test.key, Value: test.value}}},
+			)
+			if fromObject == nil {
+				t.Fatalf(
+					"the object form {%s: %q} resolved nothing while %q resolved %q",
+					test.key, test.value, stringForm, fromString.ResourceID,
+				)
+			}
+			if fromObject != fromString {
+				t.Errorf(
+					"one selector, two answers: {%s: %q} resolved %q and %q resolved %q",
+					test.key, test.value, fromObject.ResourceID, stringForm, fromString.ResourceID,
+				)
+			}
+		})
+	}
+}

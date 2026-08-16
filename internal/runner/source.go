@@ -26,14 +26,15 @@ type ActionSource interface {
 // PushSnapshot. The mobile path has none (returns nil); the web path returns the
 // values its extractors computed in V8 against the real DOM.
 //
-// lastAction is the action the previous step actually applied, the same value
-// PushSnapshot hands the goja state. The web path has to install it in the page
-// before its extractors run: a spec extractor reading state.lastAction runs in
-// V8 there, and V8 has no way to know what the runner dispatched.
+// lastAction and logs are what PushSnapshot hands the goja state. The web path
+// has to install both in the page before its extractors run: a spec extractor
+// reading state.lastAction or state.logs runs in V8 there, and V8 knows neither
+// what the runner dispatched nor what the driver's log fetch returned.
 type ExtractorSource interface {
 	ExtractorOverrides(
 		ctx context.Context,
 		lastAction *verifier.Action,
+		logs []verifier.LogEntry,
 	) (map[int]json.RawMessage, error)
 }
 
@@ -42,6 +43,13 @@ type ExtractorSource interface {
 // mobile drivers stay untouched; every web driver must implement it.
 type lastActionInstaller interface {
 	SetLastAction(ctx context.Context, encoded json.RawMessage) error
+}
+
+// logInstaller is the same channel for the entries this step's log fetch
+// returned. Console output reaches the driver over CDP, so the page can only
+// learn about it from the runner.
+type logInstaller interface {
+	SetLogs(ctx context.Context, encoded json.RawMessage) error
 }
 
 // gojaSource drives both action selection and (trivially) extractor overrides
@@ -58,6 +66,7 @@ func (s gojaSource) NextAction(context.Context, int) (verifier.Action, error) {
 func (gojaSource) ExtractorOverrides(
 	context.Context,
 	*verifier.Action,
+	[]verifier.LogEntry,
 ) (map[int]json.RawMessage, error) {
 	return nil, nil
 }
@@ -79,23 +88,34 @@ func (s webSource) NextAction(ctx context.Context, _ int) (verifier.Action, erro
 	return verifier.DecodeAction(raw)
 }
 
-// ExtractorOverrides installs the previous step's action in the page, then
-// reads back what the spec's extractors computed against the live DOM. The
-// install is not best-effort: a web driver that cannot take it leaves
-// state.lastAction null in V8, which silently turns every action-gated
-// property vacuously true, so it is reported as an error instead.
+// ExtractorOverrides installs the previous step's action and this step's log
+// entries in the page, then reads back what the spec's extractors computed
+// against the live DOM. Neither install is best-effort: a web driver that
+// cannot take them leaves state.lastAction null and state.logs empty in V8,
+// which silently turns every action-gated property and every log property
+// vacuously true, so both are reported as errors instead.
 func (s webSource) ExtractorOverrides(
 	ctx context.Context,
 	lastAction *verifier.Action,
+	logs []verifier.LogEntry,
 ) (map[int]json.RawMessage, error) {
-	installer, ok := s.web.(lastActionInstaller)
+	actions, ok := s.web.(lastActionInstaller)
 	if !ok {
 		return nil, fmt.Errorf(
 			"web driver %T cannot install state.lastAction; every property gated "+
 				"on the last action would be vacuously true", s.web)
 	}
-	if err := installer.SetLastAction(ctx, verifier.EncodeLastAction(lastAction)); err != nil {
+	if err := actions.SetLastAction(ctx, verifier.EncodeLastAction(lastAction)); err != nil {
 		return nil, fmt.Errorf("install last action: %w", err)
+	}
+	entries, ok := s.web.(logInstaller)
+	if !ok {
+		return nil, fmt.Errorf(
+			"web driver %T cannot install state.logs; every property reading the "+
+				"log stream would be vacuously true", s.web)
+	}
+	if err := entries.SetLogs(ctx, verifier.EncodeLogs(logs)); err != nil {
+		return nil, fmt.Errorf("install logs: %w", err)
 	}
 	return s.web.EvaluateExtractors(ctx)
 }

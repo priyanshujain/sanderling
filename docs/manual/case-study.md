@@ -24,10 +24,11 @@ Nobody writes this test. A manual tester taps submit once, sees the right number
 
 You do not script the double tap. You state the invariant and let sanderling find the inputs that break it.
 
-The amount the user types must equal the amount the balance moves:
+One submit commits one transaction, so the balance cannot move by more than the
+amount that submit typed:
 
 ```ts
-const submitMovesBalanceByTypedAmount = always(
+const submitMovesBalanceByAtMostTypedAmount = always(
   next(() => {
     if (route.current !== "home") return true;
     const action = lastAction.current;
@@ -38,16 +39,18 @@ const submitMovesBalanceByTypedAmount = always(
     if (typed === 0) return true;
     const before = totalBalance.previous;
     if (before === null || totalBalance.current === null) return true;
-    return Math.abs(totalBalance.current - before) === typed;
+    return Math.abs(totalBalance.current - before) <= typed;
   })
 );
 ```
 
-`always` checks the formula at every step; `next` lets it compare the step before a submit to the step after. The guards narrow it to the one transition that matters, a submit that lands back on home, and the last line states the rule: the balance moved by exactly the typed amount. Double-submit moves it by twice that, and the formula is false.
+`always` checks the formula at every step; `next` lets it compare the step before a submit to the step after. The guards narrow it to the one transition that matters, a submit that lands back on home, and the last line states the rule: the balance moved by no more than the typed amount. Double-submit moves it by twice that, and the formula is false.
 
-The window guard is the difference between a property and a false conviction. `totalBalance.previous` is the last total we read, not the total as of the last transaction, so the two numbers being compared can straddle any number of commits: a real run produced a delta of 13000 against a typed 19600, because the window held a double-submit's two 19600 debits and an unrelated 26200 credit. A delta like that is not evidence about the amount typed into any one submit. Exactly one submit action in the window still catches the bug, because the double tap is a single action.
+The obvious version of that last line is `=== typed`, and it is the version this spec used to ship. It was wrong. Folio's `createTransaction` runs in a coroutine and Home's total re-renders on the store's own schedule, so a total that has not caught up yet is what a healthy app looks like a frame after a submit, and an equality convicts it. So does a submit the app rejected, and so does a tap that never landed. The bound declines on all three without needing a case for any of them, and it still catches the bug, because twice the typed amount is more than the typed amount. What it gives up is worth naming: a transaction committed for less than the amount typed is a real ledger bug this property no longer sees. It cannot be told apart from a total one frame behind, and a check that fires on both is evidence about neither.
 
-The null guard is not defensive clutter either. Read a balance you could not parse as `0` and the comparison becomes `0 - 0 === typed`, which is false at every healthy submit. A reading you do not have is not evidence, so the property declines to judge. The real spec guards the same way against a balance too large for exact integer arithmetic.
+The window guard is what keeps the comparison about one submit. `totalBalance.previous` is the last total we read, not the total as of the last transaction, so the two numbers being compared can straddle any number of commits: a real run produced a delta of 13000 against a typed 19600, because the window held a double-submit's two 19600 debits and an unrelated 26200 credit. A delta over a window like that is not evidence about the amount typed into any one submit, whichever side of the bound it falls on. Exactly one submit action in the window still catches the bug, because the double tap is a single action.
+
+The null guard is not defensive clutter either, and under a bound its failure mode is the quiet one. Read a balance you could not parse as `0` and the comparison becomes `|0 - 0| <= typed`, which is true at every submit: the property stops judging and never says so. A reading you do not have is not evidence, so it has to decline in the open rather than pass by accident. The real spec guards the same way against a balance too large for exact integer arithmetic.
 
 The values it reads come from extractors, which pull state out of the UI tree once per step:
 
@@ -179,7 +182,7 @@ That is the whole input. Three invariants, a way in, and a weighted sense of whe
 
 ## What the run does
 
-sanderling launches Folio, logs in, and starts exploring. Most steps are unremarkable: open an account, add a transaction, watch the balance move by exactly what was typed, `submitMovesBalanceByTypedAmount` holds.
+sanderling launches Folio, logs in, and starts exploring. Most steps are unremarkable: open an account, add a transaction, watch the balance move by the amount that was typed, `submitMovesBalanceByAtMostTypedAmount` holds.
 
 Then a step lands two taps on submit before the first save settles. Two transactions post. The balance jumps by twice the typed amount. At that step the formula evaluates false and the run records a violation: the step, the screenshot, the offending action, and the residual formula that failed.
 

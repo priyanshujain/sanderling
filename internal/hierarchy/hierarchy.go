@@ -12,7 +12,8 @@
 //	  descPrefix:<prefix>  - starts-with on content-desc / accessibilityText
 //
 //	Object selectors (multi-attribute AND, element-scoped or global):
-//	  { attr: value, ... } - all key/value pairs must match; substring / boolean semantics
+//	  { attr: value, ... } - all key/value pairs must match, each key resolved by
+//	                         the same rule its string form above uses
 //
 //	Path queries (global scan only, string form):
 //	  <sel> > <sel> > ...  - each segment matched within subtree of previous match
@@ -445,7 +446,14 @@ func matchAttr(element *Element, attr, value string) bool {
 	return false
 }
 
-// matchSelector returns true when all filters in sel match the element (AND semantics).
+// matchSelector returns true when all filters in sel match the element (AND
+// semantics). Each filter goes through matchAttr, the same rule the string form
+// resolves a "kind:value" segment by, so {id: "Submit"} and "id:Submit" can
+// never resolve to different elements. Reaching the attribute map directly here
+// made the object form skip the kind arms entirely: id, desc and descPrefix
+// name no attribute any producer writes, so those keys matched NOTHING through
+// an object selector while the string form matched, and every property over the
+// missing element passed vacuously.
 func matchSelector(element *Element, sel Selector) bool {
 	for _, f := range sel.Filters {
 		if !matchAttr(element, f.Attr, f.Value) {

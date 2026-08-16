@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
+	"reflect"
 	"sort"
 	"time"
 
@@ -383,15 +385,68 @@ func encodeExtractorValue(value goja.Value) ([]byte, error) {
 	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
 		return []byte("null"), nil
 	}
-	recordable, ok := recordableValue(value.Export(), 0, map[uintptr]bool{})
-	if !ok {
-		return []byte("null"), nil
-	}
-	body, err := json.Marshal(recordable)
+	body, err := json.Marshal(recordableValue(value.Export(), 0, map[uintptr]bool{}))
 	if err != nil {
 		return nil, err
 	}
 	return body, nil
+}
+
+// recordableMaxDepth mirrors SANITIZE_MAX_DEPTH in pkg/spec/src/web-runtime.ts.
+const recordableMaxDepth = 32
+
+// recordableValue applies the web host's sanitize rule (web-runtime.ts) to an
+// exported goja value: function members are dropped, a cycle or a branch past
+// the depth cap becomes null, and a non-finite number becomes null. One rule on
+// both hosts is what lets the replay UI render a trace without the reader
+// having to know which host produced it. An ax element carries its find and
+// findAll host functions, and json.Marshal rejects the whole element over them,
+// so without this an element-valued extractor reached the trace as null.
+func recordableValue(value any, depth int, seen map[uintptr]bool) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		address := reflect.ValueOf(typed).Pointer()
+		if depth >= recordableMaxDepth || seen[address] {
+			return nil
+		}
+		seen[address] = true
+		members := make(map[string]any, len(typed))
+		for key, member := range typed {
+			if reflect.ValueOf(member).Kind() == reflect.Func {
+				continue
+			}
+			members[key] = recordableValue(member, depth+1, seen)
+		}
+		return members
+	case []any:
+		if depth >= recordableMaxDepth {
+			return nil
+		}
+		// Every zero-length allocation shares one address, so tracking an empty
+		// array would identify it as every other empty array. It cannot close a
+		// cycle either way.
+		if len(typed) > 0 {
+			address := reflect.ValueOf(typed).Pointer()
+			if seen[address] {
+				return nil
+			}
+			seen[address] = true
+		}
+		members := make([]any, len(typed))
+		for index, member := range typed {
+			members[index] = recordableValue(member, depth+1, seen)
+		}
+		return members
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return nil
+		}
+		return typed
+	}
+	if reflect.ValueOf(value).Kind() == reflect.Func {
+		return nil
+	}
+	return value
 }
 
 // ChangedExtractors returns the named extractors whose value changed between

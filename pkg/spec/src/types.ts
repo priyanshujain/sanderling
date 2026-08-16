@@ -115,10 +115,29 @@ export interface ExceptionRecord {
   unixMillis?: number;
 }
 
+/**
+ * The previous step's action as the runner reports it. `applied` is true when
+ * the runner saw the dispatch succeed and null when the apply call failed with
+ * the gesture possibly already delivered: an RPC deadline can fire after the
+ * tap landed. Null is unknown, not "it did not happen" (`state.lastAction` is
+ * itself null for that), so a property attributing an effect to this action
+ * has to decline unless `applied` is true.
+ *
+ * `relaunched` is true when the runner had to bring the app back to the
+ * foreground after this action, so the previous reading and the current one
+ * straddle a restart. The action itself still happened; what a property cannot
+ * assume across it is that app state ran continuously between the two readings,
+ * and one demanding an effect of this action has to decline. Null is "not
+ * reported", which is weaker than "the app never restarted": a target whose
+ * foreground the runner cannot read never relaunches the app and cannot promise
+ * that either.
+ */
+export type LastAction = Action & { applied: true | null; relaunched: true | null };
+
 export interface State {
   snapshots: Snapshots;
   ax: AccessibilityTree;
-  lastAction: Action | null;
+  lastAction: LastAction | null;
   time: number;
   logs: readonly LogEntry[];
   exceptions: readonly ExceptionRecord[];

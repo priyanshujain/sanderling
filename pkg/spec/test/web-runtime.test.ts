@@ -84,6 +84,7 @@ test("installRuntime defined the host-invoked globals", () => {
 });
 
 const { fakeElement, withFakeDocument } = await import("./web-dom-harness.ts");
+type FakeElementSpec = Parameters<typeof fakeElement>[0];
 
 // The host reports facts and never routes verbs: which of these a verb may act
 // on is decided by the shared rule in src/targets.ts, exercised across both
@@ -172,6 +173,55 @@ test("queryTargets leaves duplicated identities unnamed", () => {
     const targets = host.queryTargets();
     assert.equal(targets[0]!.selector, undefined);
     assert.equal(targets[1]!.selector, undefined);
+  });
+});
+
+// The enumeration ORDER is the parity contract. buildTree in
+// internal/driver/chrome/driver.go emits a host's shadow children before its
+// light ones, and TestHierarchy_DerivesTheSameFactsAsTheWebRuntime compares the
+// two enumerations position by position.
+test("queryTargets splices shadow content in before the host's light children", () => {
+  const page = fakeElement({
+    tag: "div", x: 0, y: 0, width: 400, height: 800, id: "page",
+    children: [
+      {
+        tag: "div", x: 0, y: 0, width: 400, height: 100, id: "mount",
+        shadow: [
+          { tag: "button", x: 0, y: 0, width: 40, height: 20, id: "shadow-save", clickable: true },
+        ],
+        children: [{ tag: "div", x: 0, y: 20, width: 40, height: 20, id: "mount-light-child" }],
+      },
+      { tag: "div", x: 0, y: 100, width: 400, height: 100, id: "after" },
+    ],
+  });
+  withFakeDocument([page], () => {
+    assert.deepEqual(
+      host.queryTargets().map((target) => target.selector),
+      ["id:page", "id:mount", "id:shadow-save", "id:mount-light-child", "id:after"],
+    );
+  });
+});
+
+// The tappable set is resolved by selector, and querySelectorAll stops dead at
+// a shadow boundary, so a control inside a shadow root carries the clickable
+// fact only if the selector sweep descends. A Compose for Web app keeps every
+// control it has on the far side of one boundary.
+test("queryTargets reports a shadow-hosted control as clickable", () => {
+  const mount = fakeElement({
+    tag: "div", x: 0, y: 0, width: 400, height: 100, id: "mount",
+    shadow: [
+      { tag: "button", x: 0, y: 0, width: 40, height: 20, id: "shadow-save", clickable: true },
+      { tag: "input", x: 0, y: 20, width: 40, height: 20, id: "shadow-amount", editable: true },
+    ],
+  });
+  withFakeDocument([mount], () => {
+    const targets = host.queryTargets();
+    assert.deepEqual(
+      targets.map((target) => target.selector),
+      ["id:mount", "id:shadow-save", "id:shadow-amount"],
+    );
+    assert.equal(targets[1]!.clickable, true);
+    assert.equal(targets[2]!.editable, true);
   });
 });
 
@@ -288,7 +338,7 @@ test("an extractor that returned undefined keeps its index through JSON", () => 
 // state.lastAction is the one piece of state the page cannot observe for
 // itself: only the runner knows which action it actually applied. While the web
 // runtime hardcoded null there, a spec property gated on the last action (e.g.
-// folio's submitMovesBalanceByTypedAmount, which only looks at taps on
+// folio's submitMovesBalanceByAtMostTypedAmount, which only looks at taps on
 // TxnSubmit) was vacuously true on web forever, and the run went green having
 // checked nothing.
 function lastActionSeenByASpec(pushed: unknown): unknown {
@@ -313,6 +363,35 @@ test("state.lastAction is null when the host pushed nothing", () => {
   // The first step of a run, and any step whose action was never applied: the
   // goja host reports null there, so the web host must too.
   assert.equal(lastActionSeenByASpec(null), null);
+});
+
+// state.logs is the same kind of hole. Console output reaches the runner over
+// CDP, so the page cannot read it back, and while the web runtime hardcoded []
+// there the default noLogcatErrors counted an empty array on every web run: a
+// page whose console was full of errors went green having checked nothing.
+function logsSeenByASpec(pushed: unknown): unknown {
+  const setLogs = (globalThis as Record<string, unknown>).__sanderlingSetLogs__ as (
+    value: unknown,
+  ) => void;
+  __testing__.extractors.length = 0;
+  __testing__.runtime.extract((state) => (state as { logs: unknown }).logs);
+  let out: Record<number, { value?: unknown }> = {};
+  withState(() => {
+    setLogs(pushed);
+    out = __testing__.evaluateExtractors();
+  });
+  return readingOf(out, 0);
+}
+
+test("state.logs carries the entries the host pushed", () => {
+  const entries = [
+    { unixMillis: 1700000000123, level: "E", tag: "console", message: "boom from the page" },
+  ];
+  assert.deepEqual(logsSeenByASpec(entries), entries);
+});
+
+test("state.logs is empty when the host pushed no entries", () => {
+  assert.deepEqual(logsSeenByASpec([]), []);
 });
 
 // sanitize runs over every extractor's return value before it leaves the
@@ -727,29 +806,23 @@ test("selectorTag renders the selector shapes the goja host renders", () => {
 // accounts/totalBalance extractors (findAll([{HomeScreen}, {AccountCard}]))
 // were empty on every web step and the properties over them checked nothing.
 test("ax.findAll resolves a selector path segment by segment", () => {
-  const rect = { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 };
-  const node = (id: string, answers: Record<string, unknown[]> = {}) => ({
-    id,
-    tagName: "DIV",
-    className: "",
-    textContent: id,
-    dataset: {},
-    getAttribute: () => null,
-    matches: (selector: string) => matchesAnyPart(selector, "div", {}),
-    getBoundingClientRect: () => rect,
-    querySelectorAll: (selector: string) => answers[selector] ?? [],
+  const card = (id: string, y: number): FakeElementSpec => ({
+    tag: "div", x: 0, y, width: 10, height: 10, testid: "AccountCard", text: id,
   });
-  const cardCss = `:is([data-testid="AccountCard"], [id="AccountCard"])`;
-  const screenCss = `:is([data-testid="HomeScreen"], [id="HomeScreen"])`;
-  const cards = [node("first"), node("second")];
-  const home = node("HomeScreen", { [cardCss]: cards });
+  // The stray card is outside HomeScreen, so a document-wide sweep for the
+  // second segment picks it up and the scoping assertion below fails.
+  const page = fakeElement({
+    tag: "div", x: 0, y: 0, width: 100, height: 100,
+    children: [
+      {
+        tag: "div", x: 0, y: 0, width: 100, height: 50, testid: "HomeScreen",
+        children: [card("first", 0), card("second", 10)],
+      },
+      card("stray", 60),
+    ],
+  });
 
-  const g = globalThis as Record<string, unknown>;
-  const originalDocument = g.document;
-  const originalWindow = g.window;
-  g.document = { querySelectorAll: (selector: string) => (selector === screenCss ? [home] : []) };
-  g.window = {};
-  try {
+  withFakeDocument([page], () => {
     __testing__.extractors.length = 0;
     __testing__.runtime.extract((state) => {
       const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
@@ -770,10 +843,7 @@ test("ax.findAll resolves a selector path segment by segment", () => {
     // Both cards answer to the same path, so neither may carry it: the runner
     // re-resolves a named target and would send both taps to the first card.
     assert.deepEqual(readingOf(values, 1), ["", ""]);
-  } finally {
-    g.document = originalDocument;
-    g.window = originalWindow;
-  }
+  });
 });
 
 // A selector is a name only while ONE element answers to it. The runner prefers
@@ -782,33 +852,19 @@ test("ax.findAll resolves a selector path segment by segment", () => {
 // testTag sends every one of their taps to the first sibling: on folio's Home
 // screen no account but the first could ever be opened.
 test("ax.find and ax.findAll label the element with the selector only when it names that element alone", () => {
-  const rect = (top: number) => ({ left: 0, top, right: 10, bottom: top + 10, width: 10, height: 10 });
-  const node = (id: string, top: number) => ({
-    id,
-    tagName: "DIV",
-    className: "",
-    textContent: id,
-    dataset: {},
-    getAttribute: () => null,
-    matches: (selector: string) => matchesAnyPart(selector, "div", {}),
-    getBoundingClientRect: () => rect(top),
+  const sibling = (text: string, y: number): FakeElementSpec => ({
+    tag: "div", x: 0, y, width: 10, height: 10, testid: "AccountCard", text,
   });
-  const submit = node("TxnSubmit", 0);
-  const cards = [node("Alpha", 20), node("Beta", 40), node("Gamma", 60)];
-  const matches = `:is([data-testid="TxnSubmit"], [id="TxnSubmit"])`;
-  const cardMatches = `:is([data-testid="AccountCard"], [id="AccountCard"])`;
-  const g = globalThis as Record<string, unknown>;
-  const originalDocument = g.document;
-  const originalWindow = g.window;
-  g.document = {
-    querySelectorAll: (selector: string) => {
-      if (selector === matches) return [submit];
-      if (selector === cardMatches) return cards;
-      return [];
-    },
-  };
-  g.window = {};
-  try {
+  const page = fakeElement({
+    tag: "div", x: 0, y: 0, width: 100, height: 100,
+    children: [
+      { tag: "div", x: 0, y: 0, width: 10, height: 10, id: "TxnSubmit", text: "Submit" },
+      sibling("Alpha", 20),
+      sibling("Beta", 40),
+      sibling("Gamma", 60),
+    ],
+  });
+  withFakeDocument([page], () => {
     __testing__.extractors.length = 0;
     __testing__.runtime.extract((state) => {
       const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
@@ -838,10 +894,7 @@ test("ax.find and ax.findAll label the element with the selector only when it na
       siblings.map((card) => card.y),
       [25, 45, 65],
     );
-  } finally {
-    g.document = originalDocument;
-    g.window = originalWindow;
-  }
+  });
 });
 
 // The same rule for a child lookup, which is the shape a spec reaches a row
@@ -849,38 +902,15 @@ test("ax.find and ax.findAll label the element with the selector only when it na
 // the whole dump, not the parent's subtree, so scoping does not make a shared
 // name safe.
 test("element.find and element.findAll label a child only when the selector names it alone", () => {
-  const rect = { left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 };
-  const node = (id: string, answers: Record<string, unknown[]> = {}) => ({
-    id,
-    tagName: "DIV",
-    className: "",
-    textContent: id,
-    dataset: {},
-    getAttribute: () => null,
-    matches: (selector: string) => matchesAnyPart(selector, "div", {}),
-    getBoundingClientRect: () => rect,
-    querySelectorAll: (selector: string) => answers[selector] ?? [],
+  const home = fakeElement({
+    tag: "div", x: 0, y: 0, width: 100, height: 100, testid: "HomeScreen",
+    children: [
+      { tag: "div", x: 0, y: 0, width: 10, height: 10, testid: "AccountCard", text: "first" },
+      { tag: "div", x: 0, y: 20, width: 10, height: 10, testid: "AccountCard", text: "second" },
+      { tag: "div", x: 0, y: 40, width: 10, height: 10, testid: "Total", text: "Total" },
+    ],
   });
-  const cardCss = `:is([data-testid="AccountCard"], [id="AccountCard"])`;
-  const totalCss = `:is([data-testid="Total"], [id="Total"])`;
-  const screenCss = `:is([data-testid="HomeScreen"], [id="HomeScreen"])`;
-  const cards = [node("first"), node("second")];
-  const total = node("Total");
-  const home = node("HomeScreen", { [cardCss]: cards, [totalCss]: [total] });
-
-  const g = globalThis as Record<string, unknown>;
-  const originalDocument = g.document;
-  const originalWindow = g.window;
-  g.document = {
-    querySelectorAll: (selector: string) => {
-      if (selector === screenCss) return [home];
-      if (selector === cardCss) return cards;
-      if (selector === totalCss) return [total];
-      return [];
-    },
-  };
-  g.window = {};
-  try {
+  withFakeDocument([home], () => {
     __testing__.extractors.length = 0;
     __testing__.runtime.extract((state) => {
       const ax = (state as {
@@ -900,8 +930,63 @@ test("element.find and element.findAll label a child only when the selector name
     const values = __testing__.evaluateExtractors();
     assert.deepEqual(readingOf(values, 0), ["", ""]);
     assert.equal(readingOf(values, 1), "testTag:Total");
-  } finally {
-    g.document = originalDocument;
-    g.window = originalWindow;
-  }
+  });
+});
+
+// One page, one selector, two hosts. The goja host resolves a selector against
+// the hierarchy dump, whose buildTree (internal/driver/chrome/driver.go) emits
+// a host's shadow children BEFORE its light ones, so a pre-order search there
+// reaches a shadow-hosted match first. deepQueryAll swept the whole light DOM
+// first and only then descended, so this page answered find({id:"x"}) with the
+// light node in V8 and the shadow node in goja, and on web V8's answer is the
+// one that reaches the properties.
+test("ax.find resolves the shadow-hosted match the hierarchy dump reaches first", () => {
+  const page = fakeElement({
+    tag: "div", x: 0, y: 0, width: 400, height: 800, id: "page",
+    children: [
+      {
+        tag: "div", x: 0, y: 0, width: 400, height: 100, id: "mount",
+        shadow: [{ tag: "span", x: 0, y: 0, width: 40, height: 20, id: "x", text: "shadow" }],
+      },
+      { tag: "span", x: 0, y: 100, width: 40, height: 20, id: "x", text: "light" },
+    ],
+  });
+  withFakeDocument([page], () => {
+    __testing__.extractors.length = 0;
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
+      return ax.find("id:x")?.text;
+    });
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
+      return ax.findAll("id:x").map((element) => element.text);
+    });
+    const values = __testing__.evaluateExtractors();
+    assert.equal(readingOf(values, 0), "shadow");
+    assert.deepEqual(readingOf(values, 1), ["shadow", "light"]);
+  });
+});
+
+// A nested undefined is the one reading shape the two hosts do NOT encode
+// alike, and this pins the split instead of hiding it. JSON has no undefined,
+// so the key goes with the value here; goja marshals the same member as null,
+// and it cannot do otherwise, because an exported goja object reports undefined
+// and null identically, so dropping those keys there would drop the genuine
+// nulls this host keeps. Carrying the member across would take a wire format
+// that can express undefined.
+//
+// What both hosts DO agree on is the member's value: reading it answers
+// undefined either way, and that is the guarantee a property may rely on. Key
+// presence (`in`, Object.keys) is not.
+// TestExtractorEncoding_NestedUndefinedIsNotOnTheWire in
+// internal/verifier/extractor_encoding_test.go pins the other half.
+test("a nested undefined leaves the page as a dropped key, a nested null does not", () => {
+  __testing__.extractors.length = 0;
+  __testing__.runtime.extract(() => ({ absent: undefined, empty: null, present: 1 }));
+  let wire = "";
+  withState(() => {
+    // Exactly what extractorScript in internal/driver/chrome/driver.go sends.
+    wire = JSON.stringify(__testing__.evaluateExtractors());
+  });
+  assert.equal(wire, `{"0":{"value":{"empty":null,"present":1}}}`);
 });

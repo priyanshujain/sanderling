@@ -19,14 +19,22 @@ class SnapshotHandlerTest {
 
     @get:Rule val grpcCleanup: GrpcCleanupRule = GrpcCleanupRule()
 
-    private fun newClient(backend: DriverBackend): DriverGrpc.DriverBlockingStub {
+    private fun newClient(
+        backend: DriverBackend,
+    ): DriverGrpc.DriverBlockingStub {
         val serverName = InProcessServerBuilder.generateName()
         val service = DriverService(platform = "android", backend = backend)
         grpcCleanup.register(
-            InProcessServerBuilder.forName(serverName).directExecutor().addService(service).build().start(),
+            InProcessServerBuilder.forName(serverName)
+                .directExecutor()
+                .addService(service)
+                .build()
+                .start(),
         )
         val channel: ManagedChannel = grpcCleanup.register(
-            InProcessChannelBuilder.forName(serverName).directExecutor().build(),
+            InProcessChannelBuilder.forName(serverName)
+                .directExecutor()
+                .build(),
         )
         return DriverGrpc.newBlockingStub(channel)
     }
@@ -37,8 +45,10 @@ class SnapshotHandlerTest {
         // forward those calls to the delegate, not these overrides. Override
         // snapshot() directly so the test exercises the wire path end-to-end.
         val backend = object : DriverBackend by StubDriverBackend("android") {
-            override fun snapshot(): SnapshotSample =
-                SnapshotSample("{\"x\":1}", Triple(byteArrayOf(7, 8, 9), 1080, 2340))
+            override fun snapshot(): SnapshotSample = SnapshotSample(
+                "{\"x\":1}",
+                Triple(byteArrayOf(7, 8, 9), 1080, 2340),
+            )
         }
         val client = newClient(backend)
 
@@ -55,13 +65,23 @@ class SnapshotHandlerTest {
         // aligned with the final hierarchy snapshot the runner accepts.
         val callOrder = mutableListOf<String>()
         val backend = object : DriverBackend {
-            override fun launch(bundleId: String, clearState: Boolean, env: Map<String, String>) {}
+            override fun launch(
+                bundleId: String,
+                clearState: Boolean,
+                env: Map<String, String>,
+            ) {}
             override fun terminate(bundleId: String) {}
             override fun tap(x: Int, y: Int) {}
             override fun tapSelector(selector: String) {}
             override fun inputText(text: String) {}
             override fun eraseText(characterCount: Int) {}
-            override fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMillis: Long) {}
+            override fun swipe(
+                fromX: Int,
+                fromY: Int,
+                toX: Int,
+                toY: Int,
+                durationMillis: Long,
+            ) {}
             override fun pressKey(key: String) {}
             override fun longPress(x: Int, y: Int) {}
             override fun screenshot(): Triple<ByteArray, Int, Int> {
@@ -72,10 +92,14 @@ class SnapshotHandlerTest {
                 callOrder.add("hierarchy")
                 return "{}"
             }
-            override fun recentLogs(sinceUnixMillis: Long, minLevel: String): List<LogLine> = emptyList()
+            override fun recentLogs(
+                sinceUnixMillis: Long,
+                minLevel: String,
+            ): List<LogLine> = emptyList()
             override fun waitForIdle(durationMillis: Long) {}
             override fun healthy(): Boolean = true
-            override fun metrics(bundleId: String): MetricsSample = MetricsSample(0.0, 0L, 0L)
+            override fun metrics(bundleId: String): MetricsSample =
+                MetricsSample(0.0, 0L, 0L)
         }
         backend.snapshot()
         assertEquals(listOf("hierarchy", "screenshot"), callOrder)
@@ -88,7 +112,8 @@ class SnapshotHandlerTest {
         val maxObserved = AtomicInteger(0)
         val callCount = AtomicInteger(0)
         val lock = ReentrantLock()
-        val recordingBackend = object : DriverBackend by StubDriverBackend("android") {
+        val delegate = StubDriverBackend("android")
+        val recordingBackend = object : DriverBackend by delegate {
             override fun snapshot(): SnapshotSample {
                 val now = inFlight.incrementAndGet()
                 try {
@@ -109,9 +134,13 @@ class SnapshotHandlerTest {
         // Use a real (multi-threaded) executor on the server side so the service
         // is not artificially serialized by directExecutor.
         val serverName = InProcessServerBuilder.generateName()
-        val service = DriverService(platform = "android", backend = recordingBackend)
+        val service =
+            DriverService(platform = "android", backend = recordingBackend)
         grpcCleanup.register(
-            InProcessServerBuilder.forName(serverName).addService(service).build().start(),
+            InProcessServerBuilder.forName(serverName)
+                .addService(service)
+                .build()
+                .start(),
         )
         val channel: ManagedChannel = grpcCleanup.register(
             InProcessChannelBuilder.forName(serverName).build(),

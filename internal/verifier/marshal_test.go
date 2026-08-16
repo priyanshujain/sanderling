@@ -175,6 +175,8 @@ func TestLastAction_WebJSONMatchesTheGojaObject(t *testing.T) {
 	}{
 		{"nil", nil},
 		{"Tap", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", X: 12, Y: 34}},
+		{"TapApplied", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true}},
+		{"TapRelaunched", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true, Relaunched: true}},
 		{"TapWithoutSelector", &Action{Kind: ActionKindTap, X: 12, Y: 34}},
 		{"DoubleTap", &Action{Kind: ActionKindDoubleTap, On: `desc:say "hi" <b>`}},
 		{"InputText", &Action{Kind: ActionKindInputText, On: "id:field", Text: "50"}},
@@ -196,6 +198,140 @@ func TestLastAction_WebJSONMatchesTheGojaObject(t *testing.T) {
 			web := string(EncodeLastAction(testCase.action))
 			if goja != web {
 				t.Errorf("the two hosts disagree on state.lastAction\n goja: %s\n  web: %s", goja, web)
+			}
+		})
+	}
+}
+
+// A spec has to be able to tell three things apart: no action ran, an action
+// ran, and an action was dispatched whose fate the runner cannot vouch for.
+// The third used to be reported as the first, which is how a property that
+// reasons "an effect landed with no action to cause it" convicts an app over
+// an RPC deadline.
+func TestLastAction_SeparatesNoActionFromAnActionOfUnknownFate(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.fate = __sanderling__.extract(state =>
+			state.lastAction === null ? "no action"
+			: state.lastAction.applied === true ? "applied"
+			: state.lastAction.applied === null ? "unknown"
+			: "unreadable");
+	`)
+
+	for _, testCase := range []struct {
+		name   string
+		action *Action
+		want   string
+	}{
+		{"nothing ran", nil, "no action"},
+		{"dispatch confirmed", &Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true}, "applied"},
+		{"dispatch unconfirmed", &Action{Kind: ActionKindTap, On: "id:TxnSubmit"}, "unknown"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := verifier.PushSnapshot(SnapshotInput{
+				Snapshots:  Snapshots{},
+				LastAction: testCase.action,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			handle := verifier.runtime.GlobalObject().Get("fate").ToObject(verifier.runtime)
+			if got := handle.Get("current").String(); got != testCase.want {
+				t.Errorf("the spec read %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// The runner relaunches the app when it leaves the foreground, which used to be
+// reported to the spec as "no action ran between these two readings". The
+// action did run; what a property cannot assume across it is that app state was
+// continuous, so the relaunch is its own fact on an action that keeps its
+// confirmed dispatch.
+func TestLastAction_ReportsARelaunchSeparatelyFromTheDispatch(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.continuity = __sanderling__.extract(state =>
+			state.lastAction === null ? "no action"
+			: state.lastAction.applied !== true ? "unconfirmed"
+			: state.lastAction.relaunched === true ? "applied across a relaunch"
+			: state.lastAction.relaunched === null ? "applied, no relaunch reported"
+			: "unreadable");
+	`)
+
+	for _, testCase := range []struct {
+		name   string
+		action *Action
+		want   string
+	}{
+		{"nothing ran", nil, "no action"},
+		{
+			"confirmed, app stayed",
+			&Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true},
+			"applied, no relaunch reported",
+		},
+		{
+			"confirmed, app relaunched after it",
+			&Action{Kind: ActionKindTap, On: "id:TxnSubmit", Applied: true, Relaunched: true},
+			"applied across a relaunch",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := verifier.PushSnapshot(SnapshotInput{
+				Snapshots:  Snapshots{},
+				LastAction: testCase.action,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			handle := verifier.runtime.GlobalObject().Get("continuity").ToObject(verifier.runtime)
+			if got := handle.Get("current").String(); got != testCase.want {
+				t.Errorf("the spec read %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestLogs_WebJSONMatchesTheGojaObject pins state.logs to ONE shape across the
+// two hosts, for the same reason lastAction is pinned. On web the page's
+// reading of every extractor replaces the host's, so state.logs is whatever
+// EncodeLogs put in the page: a field this side renames or cases differently
+// leaves the default noLogcatErrors counting nothing on web while it counts on
+// native, with nothing reporting that it never saw an entry.
+func TestLogs_WebJSONMatchesTheGojaObject(t *testing.T) {
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.lines = __sanderling__.extract(state => JSON.stringify(state.logs));
+	`)
+
+	for _, testCase := range []struct {
+		name string
+		logs []LogEntry
+	}{
+		{"none", nil},
+		{"empty", []LogEntry{}},
+		{
+			"one error",
+			[]LogEntry{{UnixMillis: 1700000000123, Level: "E", Tag: "console", Message: "boom from the page"}},
+		},
+		{
+			"mixed levels",
+			[]LogEntry{
+				{UnixMillis: 1, Level: "E", Tag: "console", Message: `say "hi" <b> & co`},
+				{UnixMillis: 2, Level: "W", Tag: "AndroidRuntime", Message: "a warning"},
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := verifier.PushSnapshot(SnapshotInput{
+				Snapshots: Snapshots{},
+				Logs:      testCase.logs,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			handle := verifier.runtime.GlobalObject().Get("lines").ToObject(verifier.runtime)
+			goja := handle.Get("current").String()
+			web := string(EncodeLogs(testCase.logs))
+			if goja != web {
+				t.Errorf("the two hosts disagree on state.logs\n goja: %s\n  web: %s", goja, web)
 			}
 		})
 	}

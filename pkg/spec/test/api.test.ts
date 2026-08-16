@@ -29,6 +29,12 @@ import {
   weighted,
   whenRoute,
 } from "../src/index.ts";
+import type {
+  Action,
+  Direction,
+  LongPressAction,
+  ScrollAction,
+} from "../src/index.ts";
 import { setSamplerRng } from "../src/actions.ts";
 import { SAMPLER_REFUSAL_NAME, setEnumeratingCandidates } from "../src/sampler-rng.ts";
 import { Pcg } from "../src/pcg.ts";
@@ -445,4 +451,19 @@ test("whenRoute body is skipped for a null route", () => {
   const route = { current: null as string | null };
   const node = whenRoute(route, ["home"], () => [Tap({ on: "id:x" })]);
   assert.deepEqual((node as { generate: () => unknown }).generate(), []);
+});
+
+// The package entry is the only module a spec author can import from, so every
+// member of the exported Action union, and the Direction needed to build a
+// Scroll, has to be reachable there rather than only from src/types.ts.
+test("index exports every action type a spec author annotates with", () => {
+  const direction: Direction = "down";
+  const scroll: ScrollAction = Scroll({ direction, in: "id:list" });
+  const longPress: LongPressAction = LongPress({ on: "id:row" });
+  const built: Action[] = [scroll, longPress];
+
+  assert.deepEqual(
+    built.map(action => action.kind),
+    ["Scroll", "LongPress"],
+  );
 });
