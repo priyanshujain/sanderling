@@ -46,12 +46,14 @@ enum TextInput {
         try typeOnFocus(deletes, bundleIdentifier: bundleIdentifier)
     }
 
-    // pressKey types a single logical key into the focused field. Only return is
-    // supported, matching the simulator companion's key surface.
+    // pressKey types a single logical key into the focused field, matching the
+    // simulator companion's key surface.
     static func pressKey(key: String, bundleIdentifier: String) throws {
         switch key {
         case "return", "enter", "Return", "Enter":
             try typeOnFocus(XCUIKeyboardKey.return.rawValue, bundleIdentifier: bundleIdentifier)
+        case "escape", "Escape":
+            try typeOnFocus(XCUIKeyboardKey.escape.rawValue, bundleIdentifier: bundleIdentifier)
         default:
             throw TextInputError.typingFailed("unsupported key \(key)")
         }

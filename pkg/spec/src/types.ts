@@ -184,6 +184,7 @@ export type Key =
   | "home"
   | "enter"
   | "tab"
+  | "escape"
   | "up"
   | "down"
   | "left"

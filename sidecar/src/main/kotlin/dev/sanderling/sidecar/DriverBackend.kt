@@ -513,6 +513,7 @@ class StubDriverBackend(
             "home" to "KEYCODE_HOME",
             "enter" to "KEYCODE_ENTER",
             "tab" to "KEYCODE_TAB",
+            "escape" to "KEYCODE_ESCAPE",
             "up" to "KEYCODE_DPAD_UP",
             "down" to "KEYCODE_DPAD_DOWN",
             "left" to "KEYCODE_DPAD_LEFT",
@@ -1207,6 +1208,7 @@ private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? =
         "KEYCODE_HOME" -> maestro.KeyCode.HOME
         "KEYCODE_ENTER" -> maestro.KeyCode.ENTER
         "KEYCODE_TAB" -> maestro.KeyCode.TAB
+        "KEYCODE_ESCAPE" -> maestro.KeyCode.ESCAPE
         "KEYCODE_DPAD_UP" -> maestro.KeyCode.REMOTE_UP
         "KEYCODE_DPAD_DOWN" -> maestro.KeyCode.REMOTE_DOWN
         "KEYCODE_DPAD_LEFT" -> maestro.KeyCode.REMOTE_LEFT

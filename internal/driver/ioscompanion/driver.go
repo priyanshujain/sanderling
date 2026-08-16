@@ -664,12 +664,15 @@ func (d *Driver) runnerTyper() transport.TextTyper {
 }
 
 // pressKeyUsage maps the logical key names mobile runs emit to a HID usage.
-// Only Return/Enter has a hardware-keyboard equivalent on the simulator; other
-// names (notably "back" and "home") have no HID key and report unsupported.
+// Return/Enter and Escape are the hardware-keyboard keys the simulator has;
+// other names (notably "back" and "home") have no HID key and report
+// unsupported.
 func pressKeyUsage(key string) (uint32, bool) {
 	switch key {
 	case "enter", "return", "Enter", "Return":
 		return usageReturn, true
+	case "escape", "Escape":
+		return usageEscape, true
 	default:
 		return 0, false
 	}

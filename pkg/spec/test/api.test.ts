@@ -38,6 +38,7 @@ import type {
   EventuallyFormula,
   Extracted,
   Formula,
+  Key,
   State,
   SanderlingRuntime,
 } from "../src/types.ts";
@@ -271,6 +272,26 @@ test("Swipe returns a SwipeAction descriptor", () => {
 
 test("PressKey returns a PressKeyAction descriptor", () => {
   assert.deepEqual(PressKey({ key: "back" }), { kind: "PressKey", key: "back" });
+});
+
+// Every key docs/manual/spec-language.md documents has to be authorable. A key
+// the type rejects cannot appear in a spec at all, so the requirement it stands
+// for ("escape discards the edit in progress") is never actuated anywhere.
+test("PressKey accepts every documented key", () => {
+  const keys: Key[] = [
+    "back",
+    "home",
+    "enter",
+    "tab",
+    "escape",
+    "up",
+    "down",
+    "left",
+    "right",
+  ];
+  for (const key of keys) {
+    assert.deepEqual(PressKey({ key }), { kind: "PressKey", key });
+  }
 });
 
 test("Wait returns a WaitAction descriptor", () => {

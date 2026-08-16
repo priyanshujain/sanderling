@@ -9,6 +9,7 @@ const (
 	usage1            = 30
 	usage0            = 39
 	usageReturn       = 40
+	usageEscape       = 41
 	usageTab          = 43
 	usageSpace        = 44
 	usageBackspace    = 42

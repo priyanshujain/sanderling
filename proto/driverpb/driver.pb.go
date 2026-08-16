@@ -623,8 +623,8 @@ func (x *SwipeRequest) GetDurationMillis() int64 {
 
 type PressKeyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Logical key name. Supported: "back", "home", "enter", "tab", "up",
-	// "down", "left", "right".
+	// Logical key name. Supported: "back", "home", "enter", "tab", "escape",
+	// "up", "down", "left", "right".
 	Key           string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

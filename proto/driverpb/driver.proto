@@ -95,8 +95,8 @@ message SwipeRequest {
 }
 
 message PressKeyRequest {
-  // Logical key name. Supported: "back", "home", "enter", "tab", "up",
-  // "down", "left", "right".
+  // Logical key name. Supported: "back", "home", "enter", "tab", "escape",
+  // "up", "down", "left", "right".
   string key = 1;
 }
 
