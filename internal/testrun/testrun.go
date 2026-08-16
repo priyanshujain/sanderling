@@ -266,6 +266,23 @@ func (e ViolationsError) Error() string {
 	return fmt.Sprintf("%d violation record(s)", e.Count)
 }
 
+// BundleSpec produces the goja bundle a run of this spec loaded, seeded as that
+// run was. An offline replay of the run's trace has to load the same JavaScript
+// the run did, and the seed is one of the bundle's defines, so it is part of
+// the bundle's identity.
+func BundleSpec(specPath string, seed int64) (bundler.Result, error) {
+	inputs, err := prepareBundleInputs(Options{Spec: specPath, Seed: seed})
+	if err != nil {
+		return bundler.Result{}, err
+	}
+	return bundler.Bundle(bundler.Options{
+		EntryFile:   specPath,
+		RuntimeFile: inputs.gojaRuntimePath,
+		Defines:     inputs.defines,
+		Aliases:     inputs.aliases,
+	})
+}
+
 // bundleInputs holds the pre-driver assembly: alias map, seed, esbuild defines,
 // and the resolved spec-API/goja-runtime paths the bundler consumes.
 type bundleInputs struct {
