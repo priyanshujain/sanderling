@@ -29,7 +29,7 @@ WEB_DIST := replay-ui/dist
 
 GOLINES := $(shell $(GO) env GOPATH)/bin/golines
 
-.PHONY: bootstrap proto sidecar sidecar-embed sanderling sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-spec-api test-ci-scripts spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
+.PHONY: bootstrap proto sidecar sidecar-embed sanderling sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-folio test-spec-api test-ci-scripts spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
 
 bootstrap:
 	$(GO) mod download
@@ -145,10 +145,19 @@ test-companion: $(COMPANION_EMBED) $(RUNNER_EMBED)
 test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test
 
+# folio is its own gradle build, so nothing in the root build runs its tests.
+# Kept out of `test` because the metro plugin folio compiles with needs a 21+
+# runtime, where the sidecar toolchain pins 17: folding this in would raise the
+# JDK floor of the target everyone runs constantly. CI runs it as its own step.
+test-folio:
+	cd examples/folio && ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) \
+		:core:testDebugUnitTest :app:shared:testDebugUnitTest
+
 # The CI scripts that read a trace and decide whether a green leg is
 # evidence. bash and python3 only, which is all a runner has.
 test-ci-scripts:
 	.github/scripts/replay-ui-summary-test.sh
+	.github/scripts/folio-run-test.sh
 
 test-spec-api:
 	cd pkg/spec && npm test --silent

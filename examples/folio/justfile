@@ -78,6 +78,13 @@ _ensure-device:
     echo "emulator did not finish booting in time (see /tmp/folio-emulator.log)" >&2
     exit 1
 
+# Run folio's own unit tests. Named test-unit because `test` is the fuzz run.
+test-unit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ANDROID_HOME="$(just _android-home)"
+    ./gradlew :core:testDebugUnitTest :app:shared:testDebugUnitTest
+
 # Build the folio debug APK without installing it.
 build:
     #!/usr/bin/env bash
@@ -130,6 +137,10 @@ ios:
       -destination 'platform=iOS Simulator,name={{ios_device}}' \
       -derivedDataPath app/iosApp/build \
       build | tail -5
+    # Installing over the top keeps the data container, and folio's signed-in
+    # session with it, so a run started straight after would open on the last
+    # run's Home screen instead of Login and diverge at step 1.
+    xcrun simctl uninstall booted app.folio || true
     xcrun simctl install booted "{{ios_app}}"
     xcrun simctl launch booted app.folio
 

@@ -1,6 +1,8 @@
 package android
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -133,6 +135,114 @@ func TestPickAVD_NoneAvailable(t *testing.T) {
 	_, err := pickAVD("", nil)
 	if err == nil {
 		t.Fatal("expected error when no AVDs exist")
+	}
+}
+
+// fakeSDK writes an SDK layout holding only the named tools ("emulator/emulator"),
+// so a lookup test never resolves against the host's own SDK.
+func fakeSDK(t *testing.T, tools ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, tool := range tools {
+		path := filepath.Join(root, filepath.FromSlash(tool))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, nil, 0o755); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return root
+}
+
+// isolateSDKLookup closes every route to the host's own SDK: an empty PATH, no
+// root variables, a home with nothing under it, and the standard install
+// locations replaced by the given roots. It returns the fake home directory.
+func isolateSDKLookup(t *testing.T, roots ...string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+	t.Setenv("HOME", home)
+	original := standardSDKRoots
+	t.Cleanup(func() { standardSDKRoots = original })
+	standardSDKRoots = roots
+	return home
+}
+
+func TestAdbBinary_ResolvesUnderStandardSDKRootWithAndroidHomeUnset(t *testing.T) {
+	sdk := fakeSDK(t, "platform-tools/adb")
+	isolateSDKLookup(t, sdk)
+
+	adb, err := AdbBinary()
+	if err != nil {
+		t.Fatalf("AdbBinary: %v", err)
+	}
+	if want := filepath.Join(sdk, "platform-tools", "adb"); adb != want {
+		t.Errorf("AdbBinary() = %q, want %q", adb, want)
+	}
+}
+
+func TestEmulatorBinary_ResolvesUnderStandardSDKRootWithAndroidHomeUnset(t *testing.T) {
+	sdk := fakeSDK(t, "emulator/emulator")
+	isolateSDKLookup(t, sdk)
+
+	emulator, err := EmulatorBinary()
+	if err != nil {
+		t.Fatalf("EmulatorBinary: %v", err)
+	}
+	if want := filepath.Join(sdk, "emulator", "emulator"); emulator != want {
+		t.Errorf("EmulatorBinary() = %q, want %q", emulator, want)
+	}
+}
+
+func TestAdbBinary_UsesAndroidHome(t *testing.T) {
+	sdk := fakeSDK(t, "platform-tools/adb")
+	isolateSDKLookup(t)
+	t.Setenv("ANDROID_HOME", sdk)
+
+	adb, err := AdbBinary()
+	if err != nil {
+		t.Fatalf("AdbBinary: %v", err)
+	}
+	if want := filepath.Join(sdk, "platform-tools", "adb"); adb != want {
+		t.Errorf("AdbBinary() = %q, want %q", adb, want)
+	}
+}
+
+func TestAdbBinary_NoSDKAnywhereReportsWhereItLooked(t *testing.T) {
+	empty := t.TempDir()
+	home := isolateSDKLookup(t, empty)
+
+	_, err := AdbBinary()
+	if err == nil {
+		t.Fatal("expected an error with no SDK anywhere")
+	}
+	for _, want := range []string{
+		"adb not found: not on PATH",
+		filepath.Join(home, "Library", "Android", "sdk", "platform-tools", "adb"),
+		filepath.Join(empty, "platform-tools", "adb"),
+		"$ANDROID_HOME and $ANDROID_SDK_ROOT are unset",
+		"put adb on PATH, or point $ANDROID_HOME at an Android SDK that has platform-tools/adb",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+}
+
+func TestAdbBinary_AndroidHomePointingNowhereIsNamed(t *testing.T) {
+	isolateSDKLookup(t, t.TempDir())
+	missing := filepath.Join(t.TempDir(), "no-such-sdk")
+	t.Setenv("ANDROID_HOME", missing)
+
+	_, err := AdbBinary()
+	if err == nil {
+		t.Fatal("expected an error when ANDROID_HOME points nowhere")
+	}
+	if want := "$ANDROID_HOME=" + missing + " does not exist"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q must say %q rather than leaving it in the tried list", err, want)
 	}
 }
 
@@ -329,5 +439,136 @@ func TestNavModeToRestore(t *testing.T) {
 		if got := navModeToRestore(original); got != want {
 			t.Errorf("navModeToRestore(%q) = %q, want %q", original, got, want)
 		}
+	}
+}
+
+// scriptedAdb puts an adb under a fake SDK root that logs each invocation's
+// arguments and answers from replies, a `case "$*" in` body. SDK lookup is
+// isolated onto that root, so ReinstallApp runs its real command sequence
+// against the script and the log holds what reached adb.
+func scriptedAdb(t *testing.T, replies string) string {
+	t.Helper()
+	root := t.TempDir()
+	log := filepath.Join(root, "adb.log")
+	adb := filepath.Join(root, "platform-tools", "adb")
+	if err := os.MkdirAll(filepath.Dir(adb), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(adb), err)
+	}
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\ncase \"$*\" in\n" + replies + "\nesac\n"
+	if err := os.WriteFile(adb, []byte(script), 0o755); err != nil {
+		t.Fatalf("write %s: %v", adb, err)
+	}
+	isolateSDKLookup(t, root)
+	return log
+}
+
+func adbCalls(t *testing.T, log string) []string {
+	t.Helper()
+	contents, err := os.ReadFile(log)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("read %s: %v", log, err)
+	}
+	return strings.Split(strings.TrimSpace(string(contents)), "\n")
+}
+
+const (
+	uninstallFails  = `"uninstall "*) echo "Failure [DELETE_FAILED_INTERNAL_ERROR]"; exit 1;;`
+	stillInstalled  = `"shell pm path "*) echo "package:/data/app/app.example-1/base.apk";;`
+	notInstalled    = `"shell pm path "*) exit 1;;`
+	installSucceeds = `"install "*) echo "Success";;`
+)
+
+func TestReinstallApp_RefusedUninstallClearsTheDataItLeftBehind(t *testing.T) {
+	log := scriptedAdb(t, strings.Join([]string{
+		uninstallFails,
+		stillInstalled,
+		`"shell pm clear "*) echo "Success";;`,
+		installSucceeds,
+	}, "\n"))
+	output := &strings.Builder{}
+
+	if err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", output); err != nil {
+		t.Fatalf("ReinstallApp: %v", err)
+	}
+
+	want := []string{
+		"uninstall app.example",
+		"shell pm path app.example",
+		"shell pm clear app.example",
+		"install -r /tmp/app.apk",
+	}
+	if got := adbCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("adb calls = %v, want %v", got, want)
+	}
+	if !strings.Contains(output.String(), "pm clear") {
+		t.Errorf("output %q does not say the data was cleared some other way", output.String())
+	}
+}
+
+func TestReinstallApp_RefusedUninstallThatCannotBeClearedIsFatal(t *testing.T) {
+	log := scriptedAdb(t, strings.Join([]string{
+		uninstallFails,
+		stillInstalled,
+		`"shell pm clear "*) echo "Failed"; exit 1;;`,
+		installSucceeds,
+	}, "\n"))
+
+	err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", &strings.Builder{})
+
+	if err == nil {
+		t.Fatal("ReinstallApp reported success while app.example kept the data clear-state was asked to remove")
+	}
+	for _, want := range []string{"app.example", "DELETE_FAILED_INTERNAL_ERROR", "Failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not quote %q", err, want)
+		}
+	}
+	if slices.Contains(adbCalls(t, log), "install -r /tmp/app.apk") {
+		t.Error("installed over an app whose data survived, which is the reinstall reporting a clear it did not perform")
+	}
+}
+
+func TestReinstallApp_UninstallFailureWithNothingInstalledIsQuiet(t *testing.T) {
+	log := scriptedAdb(t, strings.Join([]string{
+		uninstallFails,
+		notInstalled,
+		installSucceeds,
+	}, "\n"))
+	output := &strings.Builder{}
+
+	if err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", output); err != nil {
+		t.Fatalf("ReinstallApp: %v", err)
+	}
+
+	calls := adbCalls(t, log)
+	if !slices.Contains(calls, "install -r /tmp/app.apk") {
+		t.Fatalf("adb calls = %v, want the install to go ahead: a first run has no app to uninstall", calls)
+	}
+	if slices.Contains(calls, "shell pm clear app.example") {
+		t.Errorf("adb calls = %v, want no data clear: there was no app holding data", calls)
+	}
+	if output.String() != "" {
+		t.Errorf("output = %q, want nothing: a first run has no app to uninstall", output.String())
+	}
+}
+
+func TestReinstallApp_SuccessfulUninstallNeedsNoFallback(t *testing.T) {
+	log := scriptedAdb(t, strings.Join([]string{
+		`"uninstall "*) echo "Success";;`,
+		stillInstalled,
+		`"shell pm clear "*) echo "Success";;`,
+		installSucceeds,
+	}, "\n"))
+
+	if err := ReinstallApp(t.Context(), "", "app.example", "/tmp/app.apk", &strings.Builder{}); err != nil {
+		t.Fatalf("ReinstallApp: %v", err)
+	}
+
+	want := []string{"uninstall app.example", "install -r /tmp/app.apk"}
+	if got := adbCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("adb calls = %v, want %v", got, want)
 	}
 }

@@ -84,8 +84,9 @@ type NextFormula struct {
 }
 
 // EventuallyFormula obliges its inner formula to hold at some step within the
-// given bound. An unbounded eventually never triggers a violation within a
-// finite run.
+// given bound. An unbounded eventually that never fires is violated when the
+// run ends, with the reason "eventually never satisfied", so an eventually over
+// a state the run may not reach is red on every run that does not reach it.
 //
 // When Duration is non-zero and Deadline is the zero time, the evaluator
 // resolves the absolute deadline on first reduction using the observation

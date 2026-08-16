@@ -107,6 +107,7 @@ function run(steps: { route: string | null; cards: CardReading[]; lastAction: un
 
 const idle = { kind: "Tap", on: "testTag:AccountCard" };
 const doubleSubmit = { kind: "DoubleTap", on: "testTag:AddTransactionScreen > testTag:TxnSubmit" };
+const submit = { kind: "Tap", on: "testTag:AddTransactionScreen > testTag:TxnSubmit" };
 
 test("an un-laid-out Home no longer kills the counting invariant", () => {
   const trace = run([
@@ -153,6 +154,48 @@ test("an un-laid-out Home does not close the counting window", () => {
       countsBefore: { Checking: "3" },
       countsAfter: trace[3]?.counts ?? null,
       submitsInWindow: trace[3]?.submits ?? 0,
+    }),
+    true,
+  );
+});
+
+// What keeps a healthy submit from ever arriving as a rise nobody paid for. The
+// reading banked here also resets the submit window, so a Home card list drawn
+// before the store caught up with a commit would bank stale counts, start the
+// next window empty, and leave the rise turning up with no budget to cover it.
+// The app cannot put that frame in front of the spec: submit() pops one entry,
+// so a commit lands back on the ledger it came from and the first Home reading
+// is a whole action later, with the submit still in the window when the rise
+// does show up.
+test("a submit landing on the ledger is still in the window when Home reads it", () => {
+  const trace = run([
+    { route: "home", cards: [card("Checking", 0, "3")], lastAction: idle },
+    { route: "ledger", cards: [], lastAction: submit },
+    { route: "home", cards: [card("Checking", 5000, "4")], lastAction: idle },
+  ]);
+  assert.equal(trace[2]?.submits, 1);
+  assert.equal(
+    committedTransactionsExceedSubmits({
+      countsBefore: trace[1]?.counts ?? null,
+      countsAfter: trace[2]?.counts ?? null,
+      submitsInWindow: trace[2]?.submits ?? 0,
+    }),
+    false,
+  );
+});
+
+test("and a double submit down that same path still convicts", () => {
+  const trace = run([
+    { route: "home", cards: [card("Checking", 0, "3")], lastAction: idle },
+    { route: "ledger", cards: [], lastAction: doubleSubmit },
+    { route: "home", cards: [card("Checking", 10000, "5")], lastAction: idle },
+  ]);
+  assert.equal(trace[2]?.submits, 1);
+  assert.equal(
+    committedTransactionsExceedSubmits({
+      countsBefore: trace[1]?.counts ?? null,
+      countsAfter: trace[2]?.counts ?? null,
+      submitsInWindow: trace[2]?.submits ?? 0,
     }),
     true,
   );

@@ -860,6 +860,54 @@ func TestSetLastAction_ReportsAPageThatCannotTakeIt(t *testing.T) {
 	}
 }
 
+// TestSetLogs_ReportsAPageThatCannotTakeThem is the same install on the channel
+// the log properties hang off. The driver holding a console error changes
+// nothing on web: the page's reading of every extractor replaces the host's, so
+// unless the entries are put back into the page, noLogcatErrors counts an empty
+// array and stays green through a run full of errors.
+func TestSetLogs_ReportsAPageThatCannotTakeThem(t *testing.T) {
+	const withSetter = `<body><script>
+	  window.__logsSeen = null;
+	  window.__sanderlingSetLogs__ = function (value) { window.__logsSeen = value; };
+	</script></body>`
+	const withoutSetter = `<body><div id="app">no sanderling runtime here</div></body>`
+	pages := map[string]string{"/with": withSetter, "/without": withoutSetter}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(pages[r.URL.Path]))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := d.Launch(ctx, server.URL+"/with", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	logs := json.RawMessage(`[{"unixMillis":1,"level":"E","tag":"console","message":"boom"}]`)
+	if err := d.SetLogs(ctx, logs); err != nil {
+		t.Fatalf("SetLogs on a page that defines the setter: %v", err)
+	}
+	var seen []map[string]any
+	if err := chromedp.Run(d.tabCtx,
+		chromedp.Evaluate(`window.__logsSeen`, &seen)); err != nil {
+		t.Fatalf("read installed logs: %v", err)
+	}
+	if len(seen) != 1 || seen[0]["level"] != "E" || seen[0]["message"] != "boom" {
+		t.Errorf("the page received %v, want the error-level entry the driver captured", seen)
+	}
+
+	if err := d.Launch(ctx, server.URL+"/without", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.SetLogs(ctx, logs); err == nil {
+		t.Error("SetLogs reported success on a page with no setter; " +
+			"a runtime that cannot take the step's logs is indistinguishable from one that did")
+	}
+}
+
 // TestEvaluateExtractors_ReportsAMissingTable is the same failure on the other
 // sampler. An empty override map is what a spec with no extractors returns, so
 // treating a missing table as {} makes "this page has no sanderling runtime"

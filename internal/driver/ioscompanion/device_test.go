@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"os/exec"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion/transport"
@@ -81,6 +83,25 @@ func TestNewDeviceWiresRunnerOnlyMode(t *testing.T) {
 	}
 }
 
+// TestNewDeviceWiresTheAddressPickerEveryBringUpUses keeps the device driver
+// whole. bringUpRunner reads its picker from a field rather than calling the
+// package function, and NewDevice left that field nil, so the only thing
+// standing between a device run and a nil call was which restart path ran.
+func TestNewDeviceWiresTheAddressPickerEveryBringUpUses(t *testing.T) {
+	address := startLoopbackListener(t)
+	options := testDeviceOptions(address, newDeviceCompanion())
+	options.HardwareUDID = "00008140-PICKER"
+	d, err := NewDevice(context.Background(), options)
+	if err != nil {
+		t.Fatalf("NewDevice: %v", err)
+	}
+	defer d.Close()
+
+	if err := d.bringUpRunner(context.Background()); err != nil {
+		t.Fatalf("bringUpRunner: %v", err)
+	}
+}
+
 func TestNewDeviceRequiresIdentifiers(t *testing.T) {
 	if _, err := NewDevice(context.Background(), DeviceOptions{CoreDeviceID: "x"}); err == nil {
 		t.Fatal("missing HardwareUDID must error")
@@ -152,17 +173,100 @@ func TestDeviceEraseAndPressKeyRouteThroughEditor(t *testing.T) {
 	}
 }
 
-func TestDeviceClearStateWithoutAppPathWarnsOnce(t *testing.T) {
-	output := &bytes.Buffer{}
-	d := &Driver{output: output, deviceMode: true}
-	d.resetContainer = d.deviceResetContainerUnsupported
-	for i := 0; i < 2; i++ {
-		if err := d.deviceResetContainerUnsupported(context.Background()); err != nil {
-			t.Fatal(err)
+func TestNewDeviceReinstallsOnceBeforeTheRunnerSession(t *testing.T) {
+	address := startLoopbackListener(t)
+	probe := &clearStateProbe{}
+	options := testDeviceOptions(address, newDeviceCompanion())
+	options.HardwareUDID = "00008140-CLEAR"
+	options.AppPath = "/tmp/Sample.app"
+	options.ClearState = true
+	options.reinstallApp = func(context.Context) error { probe.record("reinstall"); return nil }
+	spawn := options.spawnRunner
+	options.spawnRunner = func(ctx context.Context, runnerAddress string) (*exec.Cmd, error) {
+		probe.record("runner session")
+		return spawn(ctx, runnerAddress)
+	}
+
+	d, err := NewDevice(context.Background(), options)
+	if err != nil {
+		t.Fatalf("NewDevice: %v", err)
+	}
+	defer d.Close()
+	if err := d.Launch(context.Background(), "", true, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	want := []string{"reinstall", "runner session"}
+	if got := probe.recorded(); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v: devicectl must reinstall once, before the runner's test session attaches", got, want)
+	}
+}
+
+func TestDevicectlReinstallStopsWhenTheUninstallFails(t *testing.T) {
+	log := scriptedXcrun(t, `"devicectl device uninstall "*) echo "ERROR: Internal logic error: Connection was invalidated"; exit 1;;
+"devicectl device install "*) :;;`)
+	d := &Driver{coreDeviceID: "CORE-DEVICE", bundleID: "app.example", appPath: "/tmp/Sample.app"}
+
+	err := d.devicectlReinstall(context.Background())
+
+	if err == nil {
+		t.Fatal("devicectlReinstall reported success while app.example kept the data clear-state was asked to remove")
+	}
+	for _, want := range []string{"app.example", "Connection was invalidated"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not quote %q", err, want)
 		}
 	}
-	if got := bytes.Count(output.Bytes(), []byte("requires --ios-app-path")); got != 1 {
-		t.Fatalf("warning emitted %d times, want once", got)
+	calls := xcrunCalls(t, log)
+	if slices.ContainsFunc(calls, func(call string) bool { return strings.HasPrefix(call, "devicectl device install") }) {
+		t.Errorf("xcrun calls = %v: installing over the app carries its data into the run", calls)
+	}
+}
+
+func TestDevicectlReinstallProceedsWhenNothingIsInstalled(t *testing.T) {
+	log := scriptedXcrun(t, `"devicectl device uninstall "*) echo "App uninstalled.";;
+"devicectl device install "*) :;;`)
+	d := &Driver{coreDeviceID: "CORE-DEVICE", bundleID: "app.example", appPath: "/tmp/Sample.app"}
+
+	if err := d.devicectlReinstall(context.Background()); err != nil {
+		t.Fatalf("devicectlReinstall: %v", err)
+	}
+
+	want := []string{
+		"devicectl device uninstall app --device CORE-DEVICE app.example",
+		"devicectl device install app --device CORE-DEVICE /tmp/Sample.app",
+	}
+	if got := xcrunCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("xcrun calls = %v, want %v", got, want)
+	}
+}
+
+// TestNewDeviceRefusesClearStateWithoutAnAppPath keeps the device from starting
+// a run whose clear-state cannot happen. There is no data-container wipe on a
+// physical device, so without an app path to reinstall from, carrying on hands
+// the run every previous run's data under a flag that says otherwise.
+func TestNewDeviceRefusesClearStateWithoutAnAppPath(t *testing.T) {
+	address := startLoopbackListener(t)
+	options := testDeviceOptions(address, newDeviceCompanion())
+	options.HardwareUDID = "00008140-NO-APP-PATH"
+	options.ClearState = true
+	spawned := false
+	spawn := options.spawnRunner
+	options.spawnRunner = func(ctx context.Context, runnerAddress string) (*exec.Cmd, error) {
+		spawned = true
+		return spawn(ctx, runnerAddress)
+	}
+
+	d, err := NewDevice(context.Background(), options)
+	if err == nil {
+		d.Close()
+		t.Fatal("NewDevice returned a driver whose clear-state never happened")
+	}
+	if !strings.Contains(err.Error(), "--ios-app-path") {
+		t.Fatalf("err = %v, want it to name the flag that makes the clear possible", err)
+	}
+	if spawned {
+		t.Fatal("the run started anyway; a clear-state that cannot happen must end the run, not open it")
 	}
 }
 

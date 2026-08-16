@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+
+	"github.com/priyanshujain/sanderling/internal/android"
 )
 
 // Preflight runs platform-specific host checks before sidecar/driver setup.
@@ -18,7 +20,15 @@ func Preflight(ctx context.Context, platform string) error {
 
 type preflightFunc func(name string) error
 
+// preflightCheck resolves adb through the same helper every adb call in a run
+// uses, so a host whose SDK is only reachable through $ANDROID_HOME or a
+// standard install location is not turned away here and then driven fine by
+// the rest of the pipeline.
 func preflightCheck(name string) error {
+	if name == "adb" {
+		_, err := android.AdbBinary()
+		return err
+	}
 	if _, err := exec.LookPath(name); err != nil {
 		return fmt.Errorf("%s not found on PATH: %w", name, err)
 	}

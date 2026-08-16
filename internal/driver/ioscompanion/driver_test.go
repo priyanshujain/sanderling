@@ -12,15 +12,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
+	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion/companionpb"
 	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion/transport"
 )
 
@@ -182,47 +185,280 @@ func TestLaunchContinuesWhenGrantFails(t *testing.T) {
 	}
 }
 
-func TestLaunchClearStateReinstallsWithAppPath(t *testing.T) {
+// clearStateProbe records, in order, the calls a run makes to reset the app and
+// to bring the runner's automation session up. A reinstall recorded after the
+// session is the ordering that races FrontBoard.
+type clearStateProbe struct {
+	mutex  sync.Mutex
+	events []string
+}
+
+func (p *clearStateProbe) record(event string) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.events = append(p.events, event)
+}
+
+func (p *clearStateProbe) recorded() []string {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	out := make([]string, len(p.events))
+	copy(out, p.events)
+	return out
+}
+
+// clearStateOptions wires every seam a hybrid bring-up needs, so New runs its
+// real sequence against fakes: no simulator, no simctl, no XCTest session.
+func clearStateOptions(t *testing.T, probe *clearStateProbe, udid string, clearState bool) Options {
+	t.Helper()
+	t.Setenv("SANDERLING_SIMULATOR_COMPANION", "")
+	address := startLoopbackListener(t)
+	return Options{
+		UniqueDeviceIdentifier: udid,
+		BundleID:               "com.example.app",
+		ClearState:             clearState,
+		Output:                 &bytes.Buffer{},
+		pickAddress:            func() (string, error) { return address, nil },
+		spawnChild:             func(context.Context, string) (*exec.Cmd, error) { return &exec.Cmd{}, nil },
+		dialCompanion: func(string) (transport.Companion, error) {
+			return &fakeCompanion{accessibilityJSON: "[]"}, nil
+		},
+		spawnRunner: func(context.Context, string) (*exec.Cmd, error) {
+			probe.record("runner session")
+			return &exec.Cmd{}, nil
+		},
+		dialRunner: func(string) (transport.Companion, error) {
+			return &fakeCompanion{accessibilityJSON: "[]"}, nil
+		},
+		reinstallApp:   func(context.Context) error { probe.record("reinstall"); return nil },
+		resetContainer: func(context.Context) error { probe.record("reset container"); return nil },
+		terminateApp:   func(context.Context) error { probe.record("stop app"); return nil },
+	}
+}
+
+func TestClearStateReinstallsOnceBeforeTheRunnerSession(t *testing.T) {
+	probe := &clearStateProbe{}
+	options := clearStateOptions(t, probe, "CLEAR-REINSTALL-UDID", true)
+	options.AppPath = "/tmp/Sample.app"
+
+	d, err := New(context.Background(), options)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer d.Close()
+	if err := d.Launch(context.Background(), "", true, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	want := []string{"stop app", "reinstall", "runner session"}
+	if got := probe.recorded(); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v: the reinstall must run once, on a stopped app, before the automation session attaches", got, want)
+	}
+}
+
+func TestClearStateWithoutAppPathWipesContainerBeforeTheRunnerSession(t *testing.T) {
+	probe := &clearStateProbe{}
+	output := &bytes.Buffer{}
+	options := clearStateOptions(t, probe, "CLEAR-CONTAINER-UDID", true)
+	options.Output = output
+
+	d, err := New(context.Background(), options)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer d.Close()
+	if err := d.Launch(context.Background(), "", true, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	want := []string{"stop app", "reset container", "runner session"}
+	if got := probe.recorded(); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v: the fallback must wipe a stopped app's container once, before the session, and never reinstall", got, want)
+	}
+	if warnings := strings.Count(output.String(), "resetting the data container only"); warnings != 1 {
+		t.Fatalf("warning emitted %d times, want once", warnings)
+	}
+}
+
+func TestWithoutClearStateTheAppIsLeftAlone(t *testing.T) {
+	probe := &clearStateProbe{}
+	options := clearStateOptions(t, probe, "NO-CLEAR-UDID", false)
+	options.AppPath = "/tmp/Sample.app"
+
+	d, err := New(context.Background(), options)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer d.Close()
+	if err := d.Launch(context.Background(), "", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	want := []string{"runner session"}
+	if got := probe.recorded(); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v: a run that did not ask for clear state must not touch the install", got, want)
+	}
+}
+
+func TestLaunchRefusesClearStateTheDriverWasNotBuiltFor(t *testing.T) {
 	companion := &fakeCompanion{accessibilityJSON: "[]"}
 	d := newTestDriver(companion)
 	d.appPath = "/tmp/Sample.app"
 	reinstalls := 0
 	d.reinstallApp = func(context.Context) error { reinstalls++; return nil }
-	if err := d.Launch(context.Background(), "", true, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
+
+	err := d.Launch(context.Background(), "", true, nil)
+	if err == nil || !strings.Contains(err.Error(), "clear-state") {
+		t.Fatalf("Launch err = %v, want a refusal naming clear-state", err)
 	}
-	if reinstalls != 1 {
-		t.Fatalf("clear-state with app path must reinstall exactly once; got %d", reinstalls)
+	if reinstalls != 0 {
+		t.Fatalf("reinstalls = %d, want 0: a live session must never have the app reinstalled under it", reinstalls)
 	}
-	if indexOf(companion.calls, "launch") < indexOf(companion.calls, "terminate") {
-		t.Fatalf("launch must still follow terminate; got %v", companion.calls)
+	if indexOf(companion.recorded(), "launch") >= 0 {
+		t.Fatalf("a refused launch must not reach the companion; got %v", companion.recorded())
 	}
 }
 
-func TestLaunchClearStateFallbackWarnsOnce(t *testing.T) {
+// TestLaunchRefusesClearStateForABundleItDidNotClear holds the guard to the
+// fact it is guarding. A driver built to clear one bundle has cleared nothing
+// for another, so reporting that launch as a clear-state launch is a reset the
+// caller was told happened and did not.
+func TestLaunchRefusesClearStateForABundleItDidNotClear(t *testing.T) {
 	companion := &fakeCompanion{accessibilityJSON: "[]"}
-	output := &bytes.Buffer{}
 	d := newTestDriver(companion)
-	d.output = output
-	resets := 0
-	d.resetContainer = func(context.Context) error { resets++; return nil }
+	d.clearedBundleID = "com.example.app"
 
-	for i := 0; i < 2; i++ {
-		if err := d.Launch(context.Background(), "", true, nil); err != nil {
-			t.Fatalf("Launch %d: %v", i, err)
+	err := d.Launch(context.Background(), "com.other.app", true, nil)
+
+	if err == nil || !strings.Contains(err.Error(), "clear-state") {
+		t.Fatalf("Launch err = %v, want a refusal naming clear-state: com.other.app was never cleared", err)
+	}
+	if indexOf(companion.recorded(), "launch") >= 0 {
+		t.Fatalf("a launch reporting a clear that never happened must not reach the companion; got %v", companion.recorded())
+	}
+}
+
+func TestNewRejectsClearStateWithoutBundleID(t *testing.T) {
+	probe := &clearStateProbe{}
+	options := clearStateOptions(t, probe, "NO-BUNDLE-UDID", true)
+	options.BundleID = ""
+
+	if _, err := New(context.Background(), options); err == nil || !strings.Contains(err.Error(), "BundleID") {
+		t.Fatalf("New err = %v, want a refusal naming BundleID", err)
+	}
+	if got := probe.recorded(); len(got) != 0 {
+		t.Fatalf("calls = %v, want none: clearing an unnamed bundle would reinstall without resetting anything", got)
+	}
+}
+
+// scriptedXcrun puts an xcrun on PATH that logs each invocation's arguments and
+// answers from replies, a `case "$*" in` body, so a reinstall runs its real
+// command sequence and the log holds what reached the tool.
+func scriptedXcrun(t *testing.T, replies string) string {
+	t.Helper()
+	directory := t.TempDir()
+	log := filepath.Join(directory, "xcrun.log")
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\ncase \"$*\" in\n" + replies + "\nesac\n"
+	if err := os.WriteFile(filepath.Join(directory, "xcrun"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write xcrun: %v", err)
+	}
+	t.Setenv("PATH", directory)
+	return log
+}
+
+func xcrunCalls(t *testing.T, log string) []string {
+	t.Helper()
+	contents, err := os.ReadFile(log)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("read %s: %v", log, err)
+	}
+	return strings.Split(strings.TrimSpace(string(contents)), "\n")
+}
+
+func TestSimctlReinstallStopsWhenTheUninstallFails(t *testing.T) {
+	log := scriptedXcrun(t, `"simctl uninstall "*) echo "Simulator device failed to uninstall app.example."; echo "Uninstall prohibited."; exit 22;;
+"simctl install "*) :;;`)
+	d := &Driver{udid: "SIM-UDID", bundleID: "app.example", appPath: "/tmp/Sample.app"}
+
+	err := d.simctlReinstall(context.Background())
+
+	if err == nil {
+		t.Fatal("simctlReinstall reported success while app.example kept the data clear-state was asked to remove")
+	}
+	for _, want := range []string{"app.example", "Uninstall prohibited."} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not quote %q", err, want)
 		}
 	}
-	if resets != 2 {
-		t.Fatalf("resetContainer called %d times, want 2", resets)
+	if calls := xcrunCalls(t, log); slices.Contains(calls, "simctl install SIM-UDID /tmp/Sample.app") {
+		t.Errorf("xcrun calls = %v: installing over the app carries its data into the run", calls)
 	}
-	warnings := strings.Count(output.String(), "resetting the data container only")
-	if warnings != 1 {
-		t.Fatalf("warning emitted %d times, want once", warnings)
+}
+
+func TestSimctlReinstallProceedsWhenNothingIsInstalled(t *testing.T) {
+	log := scriptedXcrun(t, `"simctl uninstall "*) :;;
+"simctl install "*) :;;`)
+	d := &Driver{udid: "SIM-UDID", bundleID: "app.example", appPath: "/tmp/Sample.app"}
+
+	if err := d.simctlReinstall(context.Background()); err != nil {
+		t.Fatalf("simctlReinstall: %v", err)
 	}
-	for _, call := range companion.calls {
-		if call == "install" || call == "uninstall" {
-			t.Fatalf("fallback path must not install/uninstall; got %v", companion.calls)
-		}
+
+	want := []string{"simctl uninstall SIM-UDID app.example", "simctl install SIM-UDID /tmp/Sample.app"}
+	if got := xcrunCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("xcrun calls = %v, want %v", got, want)
+	}
+}
+
+// TestClearStateStopsTheAppBeforeWipingItsContainer covers the ordering Launch
+// used to hold. simctl uninstall copes with a running app; deleting the data
+// container out from under one does not, and the CI iOS leg passes no app path
+// so it is the wipe that runs. A run whose previous run was interrupted finds
+// the app still up.
+func TestClearStateStopsTheAppBeforeWipingItsContainer(t *testing.T) {
+	container := t.TempDir()
+	stale := filepath.Join(container, "Documents")
+	if err := os.Mkdir(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := scriptedXcrun(t, `"simctl terminate "*) :;;
+"simctl get_app_container "*) echo `+container+`;;`)
+	d := &Driver{udid: "SIM-UDID", bundleID: "app.example", output: &bytes.Buffer{}}
+	d.terminateApp = d.simctlTerminate
+	d.resetContainer = d.resetDataContainer
+
+	if err := d.clearAppState(context.Background()); err != nil {
+		t.Fatalf("clearAppState: %v", err)
+	}
+
+	want := []string{
+		"simctl terminate SIM-UDID app.example",
+		"simctl get_app_container SIM-UDID app.example data",
+	}
+	if got := xcrunCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("xcrun calls = %v, want %v: the app was still writing to the container being deleted", got, want)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stat %s = %v, want the previous run's state gone", stale, err)
+	}
+}
+
+// TestClearStateSurvivesAnAppThatIsNotRunning holds the terminate to best
+// effort. simctl exits non-zero when there is nothing to stop, and a first run
+// on a fresh simulator must not fail on it.
+func TestClearStateSurvivesAnAppThatIsNotRunning(t *testing.T) {
+	container := t.TempDir()
+	scriptedXcrun(t, `"simctl terminate "*) echo "No matching processes belonging to bundle identifier app.example"; exit 3;;
+"simctl get_app_container "*) echo `+container+`;;`)
+	d := &Driver{udid: "SIM-UDID", bundleID: "app.example", output: &bytes.Buffer{}}
+	d.terminateApp = d.simctlTerminate
+	d.resetContainer = d.resetDataContainer
+
+	if err := d.clearAppState(context.Background()); err != nil {
+		t.Fatalf("clearAppState: %v: an app that is not running is not a failure to clear", err)
 	}
 }
 
@@ -948,6 +1184,301 @@ func TestLaunchLeavesATighterCallerDeadlineAlone(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("Launch took %v; the driver's bound overrode the caller's tighter deadline", elapsed)
+	}
+}
+
+// blownBudgetShape is one way a transport the driver launches through reports
+// a lifecycle call outliving its budget.
+type blownBudgetShape struct {
+	name string
+	err  error
+}
+
+// blownBudgetShapes drives every such transport against a server that never
+// answers and returns the error each one really produces. The runner transport
+// has two: wrapTransport wraps the context's own error once cancellation has
+// landed, and the connection's i/o timeout when the deadline it armed from
+// that context fires first. The legacy transport reports the same expiry as a
+// gRPC status. Only the first satisfies errors.Is(err, context.DeadlineExceeded),
+// so a fake that returns ctx.Err() raw shows the driver a recovery that two
+// thirds of production can never reach.
+func blownBudgetShapes(t *testing.T) []blownBudgetShape {
+	t.Helper()
+	return []blownBudgetShape{
+		{"runner context deadline", runnerContextDeadlineError(t)},
+		{"runner connection deadline", silentRunnerLaunchError(t, connectionDeadlineOnly{time.Now().Add(100 * time.Millisecond)})},
+		{"legacy grpc deadline", silentGRPCLaunchError(t)},
+	}
+}
+
+// runnerContextDeadlineError is the shape the runner transport produces once
+// the context's own cancellation has landed.
+func runnerContextDeadlineError(t *testing.T) error {
+	t.Helper()
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	return silentRunnerLaunchError(t, ctx)
+}
+
+// connectionDeadlineOnly carries a deadline the runner transport arms the
+// connection with, while its own cancellation never lands. That is the race
+// wrapTransport's second branch exists for: the connection's deadline fires
+// while ctx.Err() is still nil.
+type connectionDeadlineOnly struct{ deadline time.Time }
+
+func (c connectionDeadlineOnly) Deadline() (time.Time, bool) { return c.deadline, true }
+func (c connectionDeadlineOnly) Done() <-chan struct{}       { return nil }
+func (c connectionDeadlineOnly) Err() error                  { return nil }
+func (c connectionDeadlineOnly) Value(any) any               { return nil }
+
+// silentRunnerLaunchError returns what the real runner transport produces for a
+// launch nobody ever answers.
+func silentRunnerLaunchError(t *testing.T, ctx context.Context) error {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{})
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		<-closed
+	}()
+	companion, err := transport.DialRunner(listener.Addr().String(), "SIM-UDID", "com.example.app")
+	if err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		close(closed)
+		_ = companion.Close()
+		listener.Close()
+	})
+
+	launchErr := companion.Launch(ctx, "com.example.app", true)
+	if launchErr == nil {
+		t.Fatal("the runner transport reported a launch no server ever answered")
+	}
+	return launchErr
+}
+
+// silentCompanionServer is the legacy companion with a launch that never
+// answers, so the caller's own deadline is what ends the call.
+type silentCompanionServer struct {
+	companionpb.UnimplementedCompanionServiceServer
+}
+
+func (silentCompanionServer) Launch(stream grpc.BidiStreamingServer[companionpb.LaunchRequest, companionpb.LaunchResponse]) error {
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
+// silentGRPCLaunchError returns what the legacy transport produces for the same
+// launch, which SANDERLING_SIMULATOR_COMPANION=legacy still runs on.
+func silentGRPCLaunchError(t *testing.T) error {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	companionpb.RegisterCompanionServiceServer(server, silentCompanionServer{})
+	go server.Serve(listener)
+	t.Cleanup(server.Stop)
+
+	companion, err := transport.Dial(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { companion.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	launchErr := companion.Launch(ctx, "com.example.app", true)
+	if launchErr == nil {
+		t.Fatal("the legacy transport reported a launch the companion never answered")
+	}
+	return launchErr
+}
+
+// wedgedUntilRestartCompanion models the session a refused launch leaves
+// behind: the refusal is never reported, no later launch is answered until the
+// session itself is replaced, and the expired bound reaches the driver in
+// whatever shape its transport gives it.
+type wedgedUntilRestartCompanion struct {
+	fakeCompanion
+	blownBudget error
+	mutex       sync.Mutex
+	replaced    bool
+	attempted   int
+}
+
+func (w *wedgedUntilRestartCompanion) replaceSession() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.replaced = true
+}
+
+func (w *wedgedUntilRestartCompanion) launchAttempts() int {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	return w.attempted
+}
+
+func (w *wedgedUntilRestartCompanion) Launch(ctx context.Context, _ string, _ bool) error {
+	w.mutex.Lock()
+	w.attempted++
+	replaced := w.replaced
+	w.mutex.Unlock()
+	if replaced {
+		return nil
+	}
+	<-ctx.Done()
+	return w.blownBudget
+}
+
+// TestLaunchReplacesTheSessionAfterALaunchBlowsItsBound covers the FrontBoard
+// race: a clear-state reinstall the simulator has not finished registering
+// makes the session refuse the launch, and XCTest answers that refusal with
+// minutes of diagnostics instead of an error, so the bound expires and every
+// later call queues behind the same wedge. Calling launch again on that session
+// cannot work; the run only recovers if the session is replaced first. The
+// recovery has to fire on every shape the driver's transports report that
+// expiry in, because which one arrives is a race the driver does not control.
+func TestLaunchReplacesTheSessionAfterALaunchBlowsItsBound(t *testing.T) {
+	for _, shape := range blownBudgetShapes(t) {
+		t.Run(shape.name, func(t *testing.T) {
+			previous := launchTimeout
+			launchTimeout = 100 * time.Millisecond
+			defer func() { launchTimeout = previous }()
+
+			companion := &wedgedUntilRestartCompanion{blownBudget: shape.err}
+			output := &bytes.Buffer{}
+			d := newTestDriver(companion)
+			d.output = output
+			restarts := 0
+			d.restart = func(context.Context) error {
+				restarts++
+				companion.replaceSession()
+				return nil
+			}
+
+			if err := d.Launch(context.Background(), "", false, nil); err != nil {
+				t.Fatalf("Launch: %v", err)
+			}
+			if restarts != 1 {
+				t.Fatalf("session restarts = %d, want exactly 1 (the session reported %v)", restarts, shape.err)
+			}
+			if attempts := companion.launchAttempts(); attempts != 2 {
+				t.Fatalf("launch attempts = %d, want 2: one that wedged and one on the replaced session", attempts)
+			}
+			if !strings.Contains(output.String(), "restarting the session") {
+				t.Fatalf("the recovery was silent, so a run that needed it never says so; output was %q", output.String())
+			}
+		})
+	}
+}
+
+// TestLaunchBoundsTheSessionRestartItTriggers keeps the recovery inside a
+// budget of its own. The restart deliberately runs on the driver's lifetime
+// context rather than the caller's, so without a deadline a session that never
+// comes back would hang the launch path exactly the way #73 stopped it hanging.
+func TestLaunchBoundsTheSessionRestartItTriggers(t *testing.T) {
+	previousLaunch, previousRecovery := launchTimeout, launchRecoveryTimeout
+	launchTimeout = 100 * time.Millisecond
+	launchRecoveryTimeout = 200 * time.Millisecond
+	defer func() { launchTimeout, launchRecoveryTimeout = previousLaunch, previousRecovery }()
+
+	d := newTestDriver(&wedgedUntilRestartCompanion{blownBudget: runnerContextDeadlineError(t)})
+	d.restart = func(restartCtx context.Context) error {
+		<-restartCtx.Done()
+		return restartCtx.Err()
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- d.Launch(context.Background(), "", false, nil) }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "session restart failed") {
+			t.Fatalf("err = %v, want the failed restart named", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Launch never returned: a session that never comes back hangs the launch path")
+	}
+}
+
+// TestLaunchKeepsTheSessionWhenTheCallersOwnDeadlineExpires holds the recovery
+// to the driver's own bound. Spending a session restart on a caller that has
+// already run out of budget cannot produce a launch, only a later failure.
+func TestLaunchKeepsTheSessionWhenTheCallersOwnDeadlineExpires(t *testing.T) {
+	previous := launchTimeout
+	launchTimeout = 30 * time.Second
+	defer func() { launchTimeout = previous }()
+
+	companion := &wedgedUntilRestartCompanion{blownBudget: runnerContextDeadlineError(t)}
+	d := newTestDriver(companion)
+	restarts := 0
+	d.restart = func(context.Context) error {
+		restarts++
+		companion.replaceSession()
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := d.Launch(ctx, "", false, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a deadline-exceeded error", err)
+	}
+	if restarts != 0 {
+		t.Fatalf("session restarts = %d, want 0", restarts)
+	}
+}
+
+// refusedLaunchCompanion answers a launch the way the runner does once it
+// checks the app's state after activating it: promptly, naming the app and the
+// state it reached, over a session that is still serving.
+type refusedLaunchCompanion struct {
+	fakeCompanion
+	attempts int
+}
+
+func (r *refusedLaunchCompanion) Launch(context.Context, string, bool) error {
+	r.attempts++
+	return errors.New(`runner launch: failed("com.example.app is not running after launch")`)
+}
+
+// TestLaunchKeepsTheSessionWhenTheRunnerNamesTheRefusal separates a launch that
+// answers from a launch that never does. The session restart is the only
+// recovery from a wedged session, and it costs a cold start; a runner that
+// reports the app's state has already said what a fresh session would say, so
+// restarting to hear it again only delays the error and hides the app under it.
+func TestLaunchKeepsTheSessionWhenTheRunnerNamesTheRefusal(t *testing.T) {
+	companion := &refusedLaunchCompanion{}
+	output := &bytes.Buffer{}
+	d := newTestDriver(companion)
+	d.output = output
+	restarts := 0
+	d.restart = func(context.Context) error {
+		restarts++
+		return nil
+	}
+
+	err := d.Launch(context.Background(), "", false, nil)
+	if err == nil || !strings.Contains(err.Error(), "com.example.app is not running after launch") {
+		t.Fatalf("err = %v, want the runner's refusal reaching the caller intact", err)
+	}
+	if restarts != 0 {
+		t.Fatalf("session restarts = %d, want 0: a refusal the runner reported is not a wedged session", restarts)
+	}
+	if companion.attempts != 1 {
+		t.Fatalf("launch attempts = %d, want 1: relaunching an app the runner just refused cannot launch it", companion.attempts)
+	}
+	if strings.Contains(output.String(), "restarting the session") {
+		t.Fatalf("the driver announced a recovery it must not spend here; output was %q", output.String())
 	}
 }
 

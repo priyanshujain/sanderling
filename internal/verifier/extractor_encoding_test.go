@@ -177,3 +177,79 @@ func compactJSON(t *testing.T, source string) string {
 	}
 	return compact.String()
 }
+
+// TestExtractorEncoding_NestedUndefinedIsNotOnTheWire pins the one reading
+// shape the two hosts do NOT encode alike, rather than hiding it.
+//
+// JSON has no undefined, so the page loses the whole key (asserted in
+// pkg/spec/test/web-runtime.test.ts) while goja writes null. goja cannot mirror
+// the drop: Export reports an undefined member and a null member identically as
+// nil, so dropping those keys here would drop the genuine nulls the page keeps.
+// Mirroring the other way, by writing null on the page, would break the one
+// thing that does agree. Carrying the member across takes a wire format that
+// can express undefined, which is a change to every layer that parses a reading
+// and to the replay UI that renders one.
+//
+// So the guarantee is narrower than "the same object": both hosts answer
+// undefined when a property READS the member. Key presence (`in`, Object.keys)
+// is not part of it, and this test says so out loud, so closing the gap has to
+// be a deliberate change to both hosts at once.
+func TestExtractorEncoding_NestedUndefinedIsNotOnTheWire(t *testing.T) {
+	const reading = `({ absent: undefined, empty: null, present: 1 })`
+	const fromGoja = `{"absent":null,"empty":null,"present":1}`
+	// What the page sends for the same getter, with the key gone.
+	const fromWeb = `{"empty":null,"present":1}`
+
+	if got := encodeSpecValue(t, reading); got != fromGoja {
+		t.Errorf("goja encoded the reading as %s, want %s", got, fromGoja)
+	}
+
+	native := newVerifier(t)
+	mustLoad(t, native, "__sanderling__.extract(state => "+reading+", \"value\");\nglobalThis.properties = {};")
+	if err := native.PushSnapshot(SnapshotInput{}); err != nil {
+		t.Fatal(err)
+	}
+
+	web := newVerifier(t)
+	mustLoad(t, web, "__sanderling__.extract(state => null, \"value\");\nglobalThis.properties = {};")
+	if err := web.PushSnapshot(SnapshotInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := web.OverrideExtractorValues(map[int]json.RawMessage{0: json.RawMessage(fromWeb)}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, probe := range []struct {
+		expression string
+		native     bool
+		web        bool
+	}{
+		{"reading.absent === undefined", true, true},
+		{"reading.empty === null", true, true},
+		{"reading.present === 1", true, true},
+		// The half that does not survive the wire.
+		{`"absent" in reading`, true, false},
+	} {
+		if got := evaluateAgainstReading(t, native, probe.expression); got != probe.native {
+			t.Errorf("goja host: %s is %v, want %v", probe.expression, got, probe.native)
+		}
+		if got := evaluateAgainstReading(t, web, probe.expression); got != probe.web {
+			t.Errorf("web host: %s is %v, want %v", probe.expression, got, probe.web)
+		}
+	}
+}
+
+// evaluateAgainstReading answers a boolean expression over the value a property
+// would read out of the first extractor, which is where the two hosts have to
+// agree.
+func evaluateAgainstReading(t *testing.T, verifier *Verifier, expression string) bool {
+	t.Helper()
+	if err := verifier.runtime.GlobalObject().Set("reading", verifier.extractors[0].currentValue); err != nil {
+		t.Fatal(err)
+	}
+	value, err := verifier.runtime.RunString(expression)
+	if err != nil {
+		t.Fatalf("evaluate %s: %v", expression, err)
+	}
+	return value.ToBoolean()
+}

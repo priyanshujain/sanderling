@@ -31,17 +31,22 @@ type DeviceOptions struct {
 	BundleID string
 	// AppPath is the .app bundle installed via devicectl for clear-state.
 	AppPath string
+	// ClearState reinstalls the app while NewDevice runs, before the runner's
+	// test session exists. Clear state is a property of the driver rather than
+	// of a launch: see Launch.
+	ClearState bool
 	// Output receives the runner session log path and driver warnings.
 	Output io.Writer
 	// DoubleTapGapMilliseconds overrides the synthesized double-tap gap.
 	DoubleTapGapMilliseconds float64
 
 	// Test seams. Production leaves them nil and NewDevice wires the real
-	// build/spawn/tunnel/dial.
-	spawnRunner func(ctx context.Context, address string) (*exec.Cmd, error)
-	startTunnel func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
-	dialRunner  func(address string) (transport.Companion, error)
-	pickAddress func() (string, error)
+	// build/spawn/tunnel/dial/devicectl.
+	spawnRunner  func(ctx context.Context, address string) (*exec.Cmd, error)
+	startTunnel  func(ctx context.Context, hardwareUDID, localAddress, devicePort string) (io.Closer, error)
+	dialRunner   func(address string) (transport.Companion, error)
+	pickAddress  func() (string, error)
+	reinstallApp func(ctx context.Context) error
 }
 
 // deviceStartupTimeout bounds the runner's startup once its hosting test
@@ -60,6 +65,9 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 	}
 	if options.CoreDeviceID == "" {
 		return nil, errors.New("ios device: CoreDeviceID is required")
+	}
+	if options.ClearState && options.BundleID == "" {
+		return nil, errors.New("ios device: clear-state needs BundleID: there is nothing to uninstall without it")
 	}
 	output := options.Output
 	if output == nil {
@@ -95,17 +103,24 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 		}
 	}
 	if options.pickAddress != nil {
-		d.pickDeviceAddress = options.pickAddress
+		d.pickRunnerAddress = options.pickAddress
 	} else {
-		d.pickDeviceAddress = pickLoopbackAddress
+		d.pickRunnerAddress = pickLoopbackAddress
 	}
 
 	// Device seams: clear-state reinstalls via devicectl; the container reset and
 	// paste grant are simulator-only and become no-ops. The runner types
-	// natively, so no paste prompt is ever hit.
-	d.reinstallApp = d.devicectlReinstall
+	// natively, so no paste prompt is ever hit. Stopping the app before the
+	// clear is a no-op too: devicectl addresses processes by pid rather than by
+	// bundle, and the uninstall that is the device's only clear takes the
+	// running app with it, which is what a terminate here would be for.
+	d.reinstallApp = options.reinstallApp
+	if d.reinstallApp == nil {
+		d.reinstallApp = d.devicectlReinstall
+	}
 	d.resetContainer = d.deviceResetContainerUnsupported
 	d.grantPaste = func(context.Context) error { return nil }
+	d.terminateApp = func(context.Context) error { return nil }
 	d.restart = d.respawnDevice
 	d.processContext, d.processCancel = context.WithCancel(ctx)
 
@@ -115,6 +130,14 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 		return nil, err
 	}
 	d.deviceLock = lock
+
+	if options.ClearState {
+		if err := d.clearAppState(ctx); err != nil {
+			d.Close()
+			return nil, err
+		}
+		d.clearedBundleID = options.BundleID
+	}
 
 	if err := d.bringUpDevice(ctx); err != nil {
 		d.Close()
@@ -136,7 +159,7 @@ func NewDevice(ctx context.Context, options DeviceOptions) (*Driver, error) {
 // health. The build runs inside spawnRunner under the process context, so the
 // startup timeout only bounds the post-spawn wait, not the build.
 func (d *Driver) bringUpDevice(ctx context.Context) error {
-	address, err := d.pickDeviceAddress()
+	address, err := d.pickRunnerAddress()
 	if err != nil {
 		return err
 	}
@@ -205,8 +228,14 @@ func (d *Driver) respawnDevice(ctx context.Context) error {
 // devicectlReinstall uninstalls then installs the app bundle via devicectl,
 // keyed on the CoreDevice id. App lifecycle stays with devicectl: the runner's
 // own install path is simulator-specific.
+// A failed uninstall ends the reinstall: installing over an app keeps its data,
+// so clear-state would be reported without happening. Uninstalling an app that
+// is not installed exits 0 ("App uninstalled." on a paired iPhone running iOS
+// 26.5), so there is no benign failure here to sort out from a real one.
 func (d *Driver) devicectlReinstall(ctx context.Context) error {
-	_ = exec.CommandContext(ctx, "xcrun", "devicectl", "device", "uninstall", "app", "--device", d.coreDeviceID, d.bundleID).Run()
+	if output, err := exec.CommandContext(ctx, "xcrun", "devicectl", "device", "uninstall", "app", "--device", d.coreDeviceID, d.bundleID).CombinedOutput(); err != nil {
+		return fmt.Errorf("devicectl uninstall %s: %w: %s", d.bundleID, err, strings.TrimSpace(string(output)))
+	}
 	output, err := exec.CommandContext(ctx, "xcrun", "devicectl", "device", "install", "app", "--device", d.coreDeviceID, d.appPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("devicectl install: %w: %s", err, strings.TrimSpace(string(output)))
@@ -214,13 +243,11 @@ func (d *Driver) devicectlReinstall(ctx context.Context) error {
 	return nil
 }
 
-// deviceResetContainerUnsupported warns once that device clear-state needs an
-// app path for a devicectl reinstall: there is no simulator-style data-container
-// wipe on a physical device.
+// deviceResetContainerUnsupported ends the run: there is no simulator-style
+// data-container wipe on a physical device, so a clear-state with no app path
+// to reinstall from cannot happen. Warning and carrying on hands the run every
+// previous run's data while the flag says it started clean.
 func (d *Driver) deviceResetContainerUnsupported(context.Context) error {
-	if !d.clearStateWarned {
-		fmt.Fprintln(d.output, "clear-state on a physical device requires --ios-app-path for a reinstall; skipping (state not cleared)")
-		d.clearStateWarned = true
-	}
-	return nil
+	return errors.New("clear-state on a physical device requires --ios-app-path for a reinstall; " +
+		"there is no data-container wipe on a device, so the run would start on the previous run's state")
 }

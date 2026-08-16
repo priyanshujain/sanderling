@@ -37,7 +37,9 @@ IOS_DEVICE="iPhone 15" just ios   # pick a different simulator
 
 `just ios` regenerates `app/iosApp/iosApp.xcodeproj` from `app/iosApp/project.yml`,
 builds the KMP framework (`Shared.framework` from `:app:shared`), links it
-into the SwiftUI host, installs, and launches.
+into the SwiftUI host, uninstalls any previous copy, installs, and launches.
+The uninstall matters: folio's signed-in session survives an install over the
+top, so without it a run opens on the last run's Home screen.
 
 ## Web
 

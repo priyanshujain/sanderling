@@ -1,12 +1,16 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 )
 
@@ -26,7 +30,8 @@ globalThis.properties = {};
 // control, so the runner has a real applied action to report on the next step.
 type tappingWebDriver struct {
 	*mockdriver.Driver
-	installed []string
+	installed     []string
+	installedLogs []string
 }
 
 func (d *tappingWebDriver) InstallBundle(context.Context, []byte) error { return nil }
@@ -41,6 +46,11 @@ func (d *tappingWebDriver) NextActionFromV8(context.Context) (json.RawMessage, e
 
 func (d *tappingWebDriver) SetLastAction(_ context.Context, encoded json.RawMessage) error {
 	d.installed = append(d.installed, string(encoded))
+	return nil
+}
+
+func (d *tappingWebDriver) SetLogs(_ context.Context, encoded json.RawMessage) error {
+	d.installedLogs = append(d.installedLogs, string(encoded))
 	return nil
 }
 
@@ -72,9 +82,76 @@ func TestRunner_WebInstallsLastActionInThePage(t *testing.T) {
 	// Every later step carries what the runner actually applied. The shape is
 	// the goja host's (internal/verifier/marshal.go lastActionFields), pinned
 	// against it by TestLastAction_WebJSONMatchesTheGojaObject.
-	const want = `{"kind":"Tap","applied":true,"on":"id:TxnSubmit"}`
+	const want = `{"kind":"Tap","applied":true,"relaunched":null,"on":"id:TxnSubmit"}`
 	if web.installed[1] != want {
 		t.Errorf("step 2 installed %s, want %s", web.installed[1], want)
+	}
+}
+
+// The same hole on the other channel: state.logs was hardcoded [] in
+// pkg/spec/src/web-runtime.ts, and because the page's reading of an extractor
+// replaces the host's on web, the driver's error-level entries never reached a
+// property. The default noLogcatErrors counted an empty array on every run.
+func TestRunner_WebInstallsTheStepsLogsInThePage(t *testing.T) {
+	state := newHarnessWithSpec(t, lastActionSpec)
+	state.mock.LogEntries = []driver.LogEntry{
+		{UnixMillis: 1700000000123, Level: "E", Tag: "console", Message: "boom from the page"},
+	}
+	web := &tappingWebDriver{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    2,
+		Driver:      web,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(web.installedLogs) == 0 {
+		t.Fatal("the page was never handed the step's logs; every property reading " +
+			"state.logs evaluated against the empty array the page starts with")
+	}
+	// The shape is the goja host's (internal/verifier/marshal.go logFields),
+	// pinned against it by TestLogs_WebJSONMatchesTheGojaObject.
+	const want = `[{"unixMillis":1700000000123,"level":"E","tag":"console","message":"boom from the page"}]`
+	if web.installedLogs[0] != want {
+		t.Errorf("step 1 installed %s, want %s", web.installedLogs[0], want)
+	}
+}
+
+// A log fetch that fails decides the verdict of every log property: they all
+// evaluate against an empty slice and hold. That is not a fact about the app,
+// so the step it happened on has to be visible in the run's output. It used to
+// be dropped in silence, under a comment claiming it was warned about.
+func TestRunner_ReportsALogFetchItCouldNotMake(t *testing.T) {
+	state := newHarnessWithSpec(t, lastActionSpec)
+	state.mock.Failures[mockdriver.ActionRecentLogs] = errors.New("adb: device offline")
+
+	var buffer bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    2,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Logger:      logger,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !strings.Contains(buffer.String(), "adb: device offline") {
+		t.Errorf("the run never reported the failed log fetch, so noLogcatErrors "+
+			"held on evidence nobody collected; log was %q", buffer.String())
 	}
 }
 
@@ -112,7 +189,7 @@ func TestRunner_WebInstallsAnUnconfirmedActionWithItsFateUnknown(t *testing.T) {
 		t.Fatalf("the page was handed lastAction %d time(s); the web path never installed it",
 			len(web.installed))
 	}
-	const want = `{"kind":"Tap","applied":null,"on":"id:TxnSubmit"}`
+	const want = `{"kind":"Tap","applied":null,"relaunched":null,"on":"id:TxnSubmit"}`
 	if web.installed[1] != want {
 		t.Errorf("step 2 installed %s, want %s", web.installed[1], want)
 	}

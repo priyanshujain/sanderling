@@ -42,7 +42,7 @@ interface State {
 | `snapshots` | Key-value data pushed by the app SDK (empty if SDK not integrated) |
 | `lastAction` | The action dispatched in the previous step, or `null` on the first step and on any step that dispatched nothing |
 | `logs` | Log entries collected since the previous step |
-| `exceptions` | Uncaught exceptions or `Sanderling.reportError()` calls since the previous step |
+| `exceptions` | Uncaught exceptions and unhandled promise rejections captured in the page. Web only: nothing fills this on Android or iOS, where it is always empty |
 | `time` | Milliseconds elapsed since the run started |
 
 `lastAction.applied` is `true` when the runner saw the dispatch succeed and `null` when the apply call failed with the action possibly already delivered: an RPC deadline can fire after the tap reached the app, and nothing can find out afterwards. So there are three states, not two. `state.lastAction === null` means no action ran; `applied === null` means one ran whose fate is unknown. A property that attributes an effect to the action ("this submit must move the balance by the typed amount") has to decline unless `applied` is `true`, or a timeout convicts a healthy app. A property that counts what the app COULD have done should include it: an unconfirmed submit belongs in an upper bound on how many submits a window holds.
@@ -303,9 +303,9 @@ import { defaultActions, doubleTaps } from "@sanderling/spec/defaults";
 import { noUncaughtExceptions, noLogcatErrors } from "@sanderling/spec/defaults/properties";
 ```
 
-`defaultActions` is a ready-made weighted tree of the built-in generators: taps and typing at weight 100, scrolls 50, swipes 25, double taps 10. Use it as a baseline pool or as one entry in your own tree.
+`defaultActions` is a ready-made weighted tree of five of the built-in generators: taps and typing at weight 100, scrolls 50, swipes 25, double taps 10. `longPresses`, `pressKeys` and `waitOnce` are not in it; weight them in yourself if you want them. Use it as a baseline pool or as one entry in your own tree.
 
 | Property | Fails when |
 |---|---|
-| `noUncaughtExceptions` | An uncaught exception or `Sanderling.reportError()` call is captured |
+| `noUncaughtExceptions` | The page captured an uncaught exception or an unhandled rejection (web only; holds on Android and iOS, where `state.exceptions` is never populated) |
 | `noLogcatErrors` | Logcat emits any error-level (`E`) lines since the previous step (Android only; holds elsewhere) |

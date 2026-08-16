@@ -6,7 +6,7 @@ import {
   readHomeCards,
   readHomeTotalBalance,
   routeOfFrame,
-  submitChangesBalanceByTypedAmount,
+  submitChangesBalanceByAtMostTypedAmount,
 } from "../../../examples/folio/sanderling/predicates.ts";
 
 // The spec's own screen table. A frame is the set of markers its accessibility
@@ -119,7 +119,7 @@ test("the measured android transition chain no longer convicts at delta 0", () =
   const landing = step(["HomeScreen"], "$86,911.00", phantomSubmit);
   assert.equal(landing.submits, 6);
   assert.equal(
-    submitChangesBalanceByTypedAmount({
+    submitChangesBalanceByAtMostTypedAmount({
       route: landing.route,
       lastAction: phantomSubmit,
       submitsInWindow: landing.submits,
@@ -131,15 +131,33 @@ test("the measured android transition chain no longer convicts at delta 0", () =
   );
 
   // What the reset bought the old spec: the same landing, judged against a
-  // window of one and a total the transition frame had already banked.
+  // window of one and a total the transition frame had already banked. It
+  // convicted on a delta of zero, and that shape cannot convict any more even
+  // with the window reset back to one, because the property is a bound rather
+  // than an equality. A balance that did not move is under any typed amount,
+  // whether nothing was submitted or the total has not caught up yet.
   assert.equal(
-    submitChangesBalanceByTypedAmount({
+    submitChangesBalanceByAtMostTypedAmount({
       route: "home",
       lastAction: phantomSubmit,
       submitsInWindow: 1,
       typedAmount: 33900,
       prevTotalBalance: 8691100,
       currTotalBalance: 8691100,
+    }),
+    true,
+  );
+
+  // The double tap it was always meant to catch is untouched by that: two
+  // 33900 debits against one action still exceed the amount typed for it.
+  assert.equal(
+    submitChangesBalanceByAtMostTypedAmount({
+      route: "home",
+      lastAction: { ...phantomSubmit, kind: "DoubleTap" },
+      submitsInWindow: 1,
+      typedAmount: 33900,
+      prevTotalBalance: 8691100,
+      currTotalBalance: 8691100 - 67800,
     }),
     false,
   );

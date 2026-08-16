@@ -84,6 +84,17 @@ var newDeviceDriver = func(ctx context.Context, options ioscompanion.DeviceOptio
 	return d, d.Close, nil
 }
 
+// newSimulatorDriver constructs the iOS simulator driver and its cleanup. A
+// seam so routing tests assert the run's options reach ioscompanion.Options
+// without spawning a companion.
+var newSimulatorDriver = func(ctx context.Context, options ioscompanion.Options) (driver.DeviceDriver, func(), error) {
+	d, err := ioscompanion.New(ctx, options)
+	if err != nil {
+		return nil, nil, err
+	}
+	return d, d.Close, nil
+}
+
 // buildDriver creates the appropriate DeviceDriver for the platform and returns
 // a cleanup function. For web, ChromeDriver is used directly. An iOS simulator
 // is driven by the native simulator companion (no JVM). A physical iOS device
@@ -99,16 +110,17 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	}
 
 	if options.Platform == "ios" && options.iosIsSimulator {
-		d, err := ioscompanion.New(ctx, ioscompanion.Options{
+		d, cleanup, err := newSimulatorDriver(ctx, ioscompanion.Options{
 			UniqueDeviceIdentifier: options.iosUDID,
 			BundleID:               options.BundleID,
 			AppPath:                options.IosAppPath,
+			ClearState:             options.ClearData,
 			Output:                 stdout,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("ios simulator driver: %w", err)
 		}
-		return d, d.Close, nil
+		return d, cleanup, nil
 	}
 
 	if options.Platform == "ios" {
@@ -117,6 +129,7 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 			CoreDeviceID: options.iosCoreDeviceID,
 			BundleID:     options.BundleID,
 			AppPath:      options.IosAppPath,
+			ClearState:   options.ClearData,
 			Output:       stdout,
 		})
 		if err != nil {
@@ -148,10 +161,14 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	if options.Device != "" {
 		sidecarArgs = append(sidecarArgs, "--serial", options.Device)
 	}
+	adbPath, err := android.AdbBinary()
+	if err != nil {
+		return nil, nil, preflightFailure("android", err)
+	}
 	sidecarCommand := exec.CommandContext(ctx, "java", sidecarArgs...)
 	sidecarCommand.Stdout = stdout
 	sidecarCommand.Stderr = stdout
-	sidecarCommand.Env = android.EnvWithAndroidPlatformTools(os.Environ())
+	sidecarCommand.Env = android.EnvWithAndroidPlatformTools(os.Environ(), adbPath)
 	// SIGTERM lets the sidecar's shutdown hook stop the iOS XCTest runner.
 	// SIGKILL skips the hook and orphans an xcodebuild session that later
 	// restarts its runner and hijacks the simulator mid-run.
@@ -162,11 +179,13 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	if err := sidecarCommand.Start(); err != nil {
 		return nil, nil, fmt.Errorf("spawn sidecar: %w", err)
 	}
-	fmt.Fprintf(stdout, "sidecar pid=%d listening on 127.0.0.1:%d\n", sidecarCommand.Process.Pid, sidecarPort)
+	sidecarExited := watchSidecar(sidecarCommand)
+	address := fmt.Sprintf("127.0.0.1:%d", sidecarPort)
+	fmt.Fprintf(stdout, "sidecar pid=%d listening on %s (adb: %s)\n", sidecarCommand.Process.Pid, address, adbPath)
 
-	driverClient, err := driverSidecar.Dial(fmt.Sprintf("127.0.0.1:%d", sidecarPort))
+	driverClient, err := driverSidecar.Dial(address)
 	if err != nil {
-		stopSidecar(sidecarCommand)
+		stopSidecar(sidecarCommand, sidecarExited)
 		return nil, nil, fmt.Errorf("dial sidecar: %w", err)
 	}
 	driverClient.SetPlatform(options.Platform)
@@ -175,20 +194,80 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	// (absorbing the XCUITest startup race) runs inside IosDriverBackend.init
 	// in the sidecar - no additional sleep needed here.
 	healthCtx, healthCancel := context.WithTimeout(ctx, sidecarStartupTimeout)
-	if err := driverClient.WaitForHealth(healthCtx, 250e6); err != nil {
-		healthCancel()
-		stopSidecar(sidecarCommand)
-		_ = driverClient.Close()
-		return nil, nil, fmt.Errorf("sidecar health check: %w", err)
-	}
+	healthErr := awaitSidecar(healthCtx, address, sidecarStartupTimeout, func(pollCtx context.Context) error {
+		return driverClient.WaitForHealth(pollCtx, 250e6)
+	}, sidecarExited)
 	healthCancel()
+	if healthErr != nil {
+		stopSidecar(sidecarCommand, sidecarExited)
+		_ = driverClient.Close()
+		return nil, nil, healthErr
+	}
 	fmt.Fprintln(stdout, "sidecar is healthy")
 
 	cleanup := func() {
 		_ = driverClient.Close()
-		stopSidecar(sidecarCommand)
+		stopSidecar(sidecarCommand, sidecarExited)
 	}
 	return driverClient, cleanup, nil
+}
+
+// watchSidecar reaps the sidecar and publishes its exit status. The channel is
+// closed after the send so the shutdown path can still receive once the startup
+// path has taken the status.
+func watchSidecar(sidecarCommand *exec.Cmd) <-chan error {
+	exited := make(chan error, 1)
+	go func() {
+		exited <- sidecarCommand.Wait()
+		close(exited)
+	}()
+	return exited
+}
+
+// awaitSidecar waits for the sidecar to answer a health check, racing that
+// against the process exiting so a sidecar that dies during startup is reported
+// as the exit it was rather than as a deadline half a minute later. Neither
+// failure knows why the sidecar was unhappy, so both name what to look at
+// instead of picking a cause.
+func awaitSidecar(
+	ctx context.Context,
+	address string,
+	timeout time.Duration,
+	health func(context.Context) error,
+	exited <-chan error,
+) error {
+	healthy := make(chan error, 1)
+	go func() { healthy <- health(ctx) }()
+	select {
+	case exitErr := <-exited:
+		return sidecarExitedError(address, exitErr)
+	case err := <-healthy:
+		if err == nil {
+			return nil
+		}
+		select {
+		case exitErr := <-exited:
+			return sidecarExitedError(address, exitErr)
+		default:
+			return fmt.Errorf(
+				"sidecar did not answer a health check on %s within %s and is still running\n%s",
+				address, timeout, sidecarWhatToCheck,
+			)
+		}
+	}
+}
+
+const sidecarWhatToCheck = "check the sidecar output above, then `sanderling doctor --platform=android` (java 17+, adb, Android SDK)"
+
+func sidecarExitedError(address string, exitErr error) error {
+	status := "exit status 0"
+	if exitErr != nil {
+		status = exitErr.Error()
+	}
+	return fmt.Errorf(
+		"sidecar exited before it answered a health check on %s: %s\n%s",
+		address, status, sidecarWhatToCheck,
+	)
 }
 
 // sidecarShutdownGrace bounds how long the sidecar gets to run its shutdown
@@ -198,25 +277,20 @@ const sidecarShutdownGrace = 15 * time.Second
 // stopSidecar terminates the sidecar gracefully so its shutdown hook can stop
 // the device-side runner processes, escalating to SIGKILL when it does not
 // exit within the grace window.
-func stopSidecar(sidecarCommand *exec.Cmd) {
+func stopSidecar(sidecarCommand *exec.Cmd, exited <-chan error) {
 	if sidecarCommand.Process == nil {
 		return
 	}
 	if err := sidecarCommand.Process.Signal(syscall.SIGTERM); err != nil {
 		_ = sidecarCommand.Process.Kill()
-		_ = sidecarCommand.Wait()
+		<-exited
 		return
 	}
-	done := make(chan struct{})
-	go func() {
-		_ = sidecarCommand.Wait()
-		close(done)
-	}()
 	select {
-	case <-done:
+	case <-exited:
 	case <-time.After(sidecarShutdownGrace):
 		_ = sidecarCommand.Process.Kill()
-		<-done
+		<-exited
 	}
 }
 

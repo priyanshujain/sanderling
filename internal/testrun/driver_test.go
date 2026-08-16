@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion"
@@ -27,7 +30,7 @@ func TestBuildDriverRoutesPhysicalIOSToDeviceDriver(t *testing.T) {
 		return stubDeviceDriver{}, func() { closed = true }, nil
 	}
 
-	options := Options{Platform: "ios", BundleID: "app.folio", IosAppPath: "/tmp/iosApp.app"}
+	options := Options{Platform: "ios", BundleID: "app.folio", IosAppPath: "/tmp/iosApp.app", ClearData: true}
 	options.iosIsSimulator = false
 	options.iosUDID = "00008140-HW"
 	options.iosCoreDeviceID = "CORE-1"
@@ -45,9 +48,38 @@ func TestBuildDriverRoutesPhysicalIOSToDeviceDriver(t *testing.T) {
 	if got.BundleID != "app.folio" || got.AppPath != "/tmp/iosApp.app" {
 		t.Fatalf("DeviceOptions = %+v, want bundle and app path threaded through", got)
 	}
+	if !got.ClearState {
+		t.Fatalf("DeviceOptions = %+v, want clear-data threaded through: the driver clears before its session, so a launch cannot", got)
+	}
 	cleanup()
 	if !closed {
 		t.Fatal("cleanup must close the device driver")
+	}
+}
+
+func TestBuildDriverThreadsClearStateToTheSimulatorDriver(t *testing.T) {
+	stubPreflight(t)
+	original := newSimulatorDriver
+	t.Cleanup(func() { newSimulatorDriver = original })
+
+	var got ioscompanion.Options
+	newSimulatorDriver = func(_ context.Context, options ioscompanion.Options) (driver.DeviceDriver, func(), error) {
+		got = options
+		return stubDeviceDriver{}, func() {}, nil
+	}
+
+	options := Options{Platform: "ios", BundleID: "app.folio", IosAppPath: "/tmp/iosApp.app", ClearData: true}
+	options.iosIsSimulator = true
+	options.iosUDID = "SIM-UDID"
+
+	if _, _, err := buildDriver(context.Background(), options, io.Discard); err != nil {
+		t.Fatalf("buildDriver: %v", err)
+	}
+	if got.UniqueDeviceIdentifier != "SIM-UDID" || got.BundleID != "app.folio" || got.AppPath != "/tmp/iosApp.app" {
+		t.Fatalf("Options = %+v, want the resolved target, bundle and app path", got)
+	}
+	if !got.ClearState {
+		t.Fatalf("Options = %+v, want clear-data threaded through: the driver clears before its session, so a launch cannot", got)
 	}
 }
 
@@ -62,6 +94,130 @@ func TestBuildDriverSurfacesDeviceConstructionError(t *testing.T) {
 	options.iosIsSimulator = false
 	if _, _, err := buildDriver(context.Background(), options, io.Discard); err == nil {
 		t.Fatal("expected the device construction error to surface")
+	}
+}
+
+// A sidecar that dies during startup leaves the health poll with nothing to
+// talk to, and reporting that as a deadline sends the reader after a gRPC
+// timeout instead of the exit that already happened.
+func TestAwaitSidecarReportsTheExitItSaw(t *testing.T) {
+	exited := make(chan error, 1)
+	exited <- errors.New("exit status 1")
+	close(exited)
+
+	err := awaitSidecar(
+		context.Background(),
+		"127.0.0.1:54321",
+		30*time.Second,
+		func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+		exited,
+	)
+	if err == nil {
+		t.Fatal("expected an error when the sidecar exits before it is healthy")
+	}
+	for _, want := range []string{
+		"sidecar exited before it answered a health check on 127.0.0.1:54321: exit status 1",
+		"check the sidecar output above",
+		"sanderling doctor --platform=android",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+}
+
+func TestAwaitSidecarTimeoutSaysOnlyWhatItObserved(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := awaitSidecar(
+		ctx,
+		"127.0.0.1:54321",
+		50*time.Millisecond,
+		func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+		make(chan error, 1),
+	)
+	if err == nil {
+		t.Fatal("expected an error when the sidecar never answers")
+	}
+	for _, want := range []string{
+		"sidecar did not answer a health check on 127.0.0.1:54321 within 50ms and is still running",
+		"check the sidecar output above",
+		"sanderling doctor --platform=android",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("error %q must not hand the reader a bare gRPC deadline", err)
+	}
+}
+
+func TestAwaitSidecarHealthyReturnsNil(t *testing.T) {
+	err := awaitSidecar(
+		context.Background(),
+		"127.0.0.1:54321",
+		30*time.Second,
+		func(context.Context) error { return nil },
+		make(chan error, 1),
+	)
+	if err != nil {
+		t.Fatalf("expected a healthy sidecar to pass, got %v", err)
+	}
+}
+
+func TestStopSidecarTerminatesARunningSidecar(t *testing.T) {
+	command := exec.Command("sleep", "60")
+	if err := command.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	exited := watchSidecar(command)
+
+	stopped := make(chan struct{})
+	go func() {
+		stopSidecar(command, exited)
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stopSidecar never returned for a running sidecar")
+	}
+	if got := command.ProcessState.String(); got != "signal: terminated" {
+		t.Errorf("sidecar ended as %q, want the SIGTERM its shutdown hook needs", got)
+	}
+}
+
+// The startup path takes the exit status to report it, so the shutdown path
+// that follows must not sit waiting for a status nobody will send again.
+func TestStopSidecarAfterTheStartupPathTookTheExitStatus(t *testing.T) {
+	command := exec.Command("sh", "-c", "exit 3")
+	if err := command.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	exited := watchSidecar(command)
+
+	err := awaitSidecar(
+		context.Background(),
+		"127.0.0.1:54321",
+		30*time.Second,
+		func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+		exited,
+	)
+	if err == nil || !strings.Contains(err.Error(), "exit status 3") {
+		t.Fatalf("expected the sidecar's real exit status, got %v", err)
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		stopSidecar(command, exited)
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stopSidecar blocked on an exit status the startup path had already taken")
 	}
 }
 
