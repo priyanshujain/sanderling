@@ -1,6 +1,7 @@
 package hierarchy
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -1299,5 +1300,174 @@ func TestRawDriverAttributeIsNotUnknown(t *testing.T) {
 	sel := Selector{Filters: []AttrFilter{{Attr: "important-for-accessibility", Value: "true"}}}
 	if unknown := tree.UnknownSelectorKeys(sel); len(unknown) != 0 {
 		t.Fatalf("got %v, want none", unknown)
+	}
+}
+
+// TestStoredTreeRebuildsRootAndResolvesSelectors is the offline half of every
+// trace: a tree that only survives as a flat pre-order array resolves nothing,
+// because every lookup walks Root.
+func TestStoredTreeRebuildsRootAndResolvesSelectors(t *testing.T) {
+	tree, err := Parse(sampleDump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := json.Marshal(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Tree
+	if err := json.Unmarshal(stored, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Root == nil {
+		t.Fatal("Root not rebuilt from the stored tree")
+	}
+	if len(decoded.Elements) != len(tree.Elements) {
+		t.Fatalf(
+			"elements = %d, want %d",
+			len(decoded.Elements),
+			len(tree.Elements),
+		)
+	}
+	for index, element := range decoded.Elements {
+		if element.ResourceID != tree.Elements[index].ResourceID {
+			t.Fatalf(
+				"element %d = %q, want %q",
+				index,
+				element.ResourceID,
+				tree.Elements[index].ResourceID,
+			)
+		}
+	}
+	online := tree.Find("id:app:id/title")
+	offline := decoded.Find("id:app:id/title")
+	if online == nil {
+		t.Fatal("the selector does not resolve online; the fixture is wrong")
+	}
+	if offline == nil || offline.Text != online.Text {
+		t.Fatalf(
+			"selector resolves online to %+v, offline to %+v",
+			online,
+			offline,
+		)
+	}
+	if decoded.Find("id:app:id/title") != decoded.Elements[1] {
+		t.Error(
+			"the rebuilt nodes and the decoded element list are different pointers",
+		)
+	}
+	childCount := 0
+	var walk func(node *Node)
+	walk = func(node *Node) {
+		childCount++
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(decoded.Root)
+	if childCount != len(decoded.Elements) {
+		t.Errorf(
+			"the rebuilt tree holds %d nodes, the element list %d",
+			childCount,
+			len(decoded.Elements),
+		)
+	}
+}
+
+// TestStoredTreeWithoutDepthsKeepsTheOldShape: traces written before the
+// depths field must still load, and must say "no structure" rather than
+// inventing one.
+func TestStoredTreeWithoutDepthsKeepsTheOldShape(t *testing.T) {
+	var decoded Tree
+	if err := json.Unmarshal([]byte(`{"elements":[{"resourceId":"root"},{"resourceId":"child"}]}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Elements) != 2 {
+		t.Fatalf("elements = %d, want 2", len(decoded.Elements))
+	}
+	if decoded.Root != nil {
+		t.Errorf(
+			"Root = %+v, want nil for a stored tree that carries no depths",
+			decoded.Root,
+		)
+	}
+}
+
+func TestStoredTreeRejectsDepthsItCannotRebuild(t *testing.T) {
+	for name, stored := range map[string]string{
+		"count mismatch": `{"elements":[{"resourceId":"a"},{"resourceId":"b"}],"depths":[0]}`,
+		"rootless":       `{"elements":[{"resourceId":"a"}],"depths":[1]}`,
+		"second root":    `{"elements":[{"resourceId":"a"},{"resourceId":"b"}],"depths":[0,0]}`,
+		"skipped level":  `{"elements":[{"resourceId":"a"},{"resourceId":"b"}],"depths":[0,2]}`,
+	} {
+		var decoded Tree
+		if err := json.Unmarshal([]byte(stored), &decoded); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if decoded.Root != nil {
+			t.Errorf("%s: Root = %+v, want nil", name, decoded.Root)
+		}
+	}
+}
+
+// TestTreeStoresNoDepthsForAnUnwalkableRoot keeps the stored shape honest:
+// a hand-built Tree whose Root and Elements disagree must not claim a
+// structure that would rebuild into a different tree.
+func TestTreeStoresNoDepthsForAnUnwalkableRoot(t *testing.T) {
+	tree := &Tree{
+		Root:     &Node{Element: Element{ResourceID: "root"}},
+		Elements: []*Element{{ResourceID: "root"}, {ResourceID: "orphan"}},
+	}
+	stored, err := json.Marshal(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), "depths") {
+		t.Errorf("stored a shape that cannot be rebuilt: %s", stored)
+	}
+}
+
+// A producer that puts a string where a flag belongs must cost that flag and
+// nothing else. Failing the document instead blanks the whole tree, and every
+// extractor then reads a screen with no elements on it.
+func TestParseUnreadableFlagKeepsTheRestOfTheTree(t *testing.T) {
+	input := `{"attributes":{"resource-id":"app:id/root","bounds":"[0,0,400,800]"},"children":[
+		{"attributes":{"resource-id":"app:id/tabs","text":"keep"},"selected":"active","children":[]},
+		{"attributes":{"resource-id":"app:id/leaf"},"clickable":true,"children":[]}
+	]}`
+	tree, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(tree.Elements) != 3 {
+		t.Fatalf("elements = %d, want 3: one unreadable flag must not cost the tree", len(tree.Elements))
+	}
+	tabs := tree.Find("id:tabs")
+	if tabs == nil {
+		t.Fatal("the element carrying the unreadable flag was dropped")
+	}
+	if tabs.Text != "keep" {
+		t.Errorf("neighbouring field corrupted: text=%q", tabs.Text)
+	}
+	if tabs.Selected {
+		t.Error("selected must stay unset when the value the producer sent is not a boolean")
+	}
+	leaf := tree.Find("id:leaf")
+	if leaf == nil || !leaf.Clickable {
+		t.Errorf("a readable flag elsewhere in the tree must survive, got %+v", leaf)
+	}
+	if tree.UnreadableFlags != 1 {
+		t.Errorf("UnreadableFlags = %d, want 1: a dropped flag has to be countable", tree.UnreadableFlags)
+	}
+	stored, err := json.Marshal(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Tree
+	if err := json.Unmarshal(stored, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.UnreadableFlags != 1 {
+		t.Errorf("stored UnreadableFlags = %d, want 1: the trace has to carry it", decoded.UnreadableFlags)
 	}
 }

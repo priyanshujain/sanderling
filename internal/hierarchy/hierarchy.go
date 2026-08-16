@@ -85,18 +85,148 @@ type Node struct {
 type Tree struct {
 	Root     *Node      `json:"-"`
 	Elements []*Element `json:"elements"`
+	// UnreadableFlags counts the boolean fields the producer sent as something
+	// other than a boolean. They are dropped rather than failing the dump, so
+	// the count is what keeps the drop from being silent.
+	UnreadableFlags int `json:"unreadableFlags,omitempty"`
+}
+
+// treeJSON is the stored form of a Tree. `depths` is the pre-order depth of
+// each element, which is what turns the flat array back into Root: a stored
+// tree without it (every trace written before the field existed) decodes with
+// a nil Root and resolves no selector, exactly as it did before.
+//
+// A depth per element rather than a parent index per element: the numbers are
+// one digit deep into most hierarchies where a parent index is three, and a
+// step already costs 86 KB on android.
+type treeJSON struct {
+	Elements        []*Element `json:"elements"`
+	Depths          []int      `json:"depths,omitempty"`
+	UnreadableFlags int        `json:"unreadable_flags,omitempty"`
+}
+
+func (t Tree) MarshalJSON() ([]byte, error) {
+	return json.Marshal(treeJSON{
+		Elements:        t.Elements,
+		Depths:          t.depths(),
+		UnreadableFlags: t.UnreadableFlags,
+	})
+}
+
+// depths walks Root, and yields nothing unless the walk covers exactly the
+// elements the flat array holds: a hand-built Tree whose Root and Elements
+// disagree would otherwise store a shape that rebuilds into a different tree.
+func (t Tree) depths() []int {
+	if t.Root == nil {
+		return nil
+	}
+	depths := make([]int, 0, len(t.Elements))
+	var walk func(node *Node, depth int)
+	walk = func(node *Node, depth int) {
+		depths = append(depths, depth)
+		for _, child := range node.Children {
+			walk(child, depth+1)
+		}
+	}
+	walk(t.Root, 0)
+	if len(depths) != len(t.Elements) {
+		return nil
+	}
+	return depths
+}
+
+func (t *Tree) UnmarshalJSON(data []byte) error {
+	var stored treeJSON
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return err
+	}
+	t.Elements = stored.Elements
+	t.UnreadableFlags = stored.UnreadableFlags
+	t.Root = t.rebuild(stored.Depths)
+	return nil
+}
+
+// rebuild re-parents the flat pre-order array from the stored depths. Every
+// element is re-seated inside its Node so Tree.Elements and &node.Element stay
+// the same pointer, which is the identity the verifier's element scope and the
+// picker's target list are keyed on.
+func (t *Tree) rebuild(depths []int) *Node {
+	if !wellFormedDepths(depths, len(t.Elements)) {
+		return nil
+	}
+	stack := make([]*Node, 0, 32)
+	for index, depth := range depths {
+		node := &Node{Element: *t.Elements[index], tree: t}
+		t.Elements[index] = &node.Element
+		stack = stack[:depth]
+		if depth > 0 {
+			parent := stack[depth-1]
+			parent.Children = append(parent.Children, node)
+		}
+		stack = append(stack, node)
+	}
+	return stack[0]
+}
+
+// wellFormedDepths accepts only a single-rooted pre-order sequence: one root at
+// the head and no child deeper than one level below its predecessor.
+func wellFormedDepths(depths []int, elementCount int) bool {
+	if len(depths) == 0 || len(depths) != elementCount || depths[0] != 0 {
+		return false
+	}
+	for index := 1; index < len(depths); index++ {
+		if depths[index] < 1 || depths[index] > depths[index-1]+1 {
+			return false
+		}
+	}
+	return true
 }
 
 // treeNodeJSON mirrors the sidecar TreeNode JSON structure.
 type treeNodeJSON struct {
 	Attributes map[string]string `json:"attributes"`
 	Children   []treeNodeJSON    `json:"children"`
-	Clickable  *bool             `json:"clickable"`
-	Enabled    *bool             `json:"enabled"`
-	Focused    *bool             `json:"focused"`
-	Checked    *bool             `json:"checked"`
-	Selected   *bool             `json:"selected"`
-	Editable   *bool             `json:"editable"`
+	Clickable  flagJSON          `json:"clickable"`
+	Enabled    flagJSON          `json:"enabled"`
+	Focused    flagJSON          `json:"focused"`
+	Checked    flagJSON          `json:"checked"`
+	Selected   flagJSON          `json:"selected"`
+	Editable   flagJSON          `json:"editable"`
+}
+
+// flagJSON is one boolean field of a node. A value that is not a boolean
+// leaves the flag unset and marks itself unreadable rather than failing the
+// document: a dump is one observation of a whole screen, and one node's bit is
+// no reason to discard every element on it. Malformed bounds are already
+// treated this way.
+type flagJSON struct {
+	set        bool
+	value      bool
+	unreadable bool
+}
+
+func (f *flagJSON) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+	var value bool
+	if err := json.Unmarshal(data, &value); err != nil {
+		f.unreadable = true
+		return nil
+	}
+	f.set = true
+	f.value = value
+	return nil
+}
+
+func (n *treeNodeJSON) unreadableFlags() int {
+	count := 0
+	for _, flag := range []flagJSON{n.Clickable, n.Enabled, n.Focused, n.Checked, n.Selected, n.Editable} {
+		if flag.unreadable {
+			count++
+		}
+	}
+	return count
 }
 
 // Selector describes a multi-attribute AND match.
@@ -381,6 +511,7 @@ func Parse(text string) (*Tree, error) {
 }
 
 func walkNode(node *treeNodeJSON, tree *Tree) *Node {
+	tree.UnreadableFlags += node.unreadableFlags()
 	n := &Node{Element: *elementFromNode(node), tree: tree}
 	tree.Elements = append(tree.Elements, &n.Element)
 	for i := range node.Children {
@@ -421,23 +552,23 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	}
 	element.Screen = attrs["sanderling-screen"]
 
-	if node.Clickable != nil {
-		element.Clickable = *node.Clickable
+	if node.Clickable.set {
+		element.Clickable = node.Clickable.value
 	}
-	if node.Enabled != nil {
-		element.Enabled = *node.Enabled
+	if node.Enabled.set {
+		element.Enabled = node.Enabled.value
 	}
-	if node.Focused != nil {
-		element.Focused = *node.Focused
+	if node.Focused.set {
+		element.Focused = node.Focused.value
 	}
-	if node.Checked != nil {
-		element.Checked = *node.Checked
+	if node.Checked.set {
+		element.Checked = node.Checked.value
 	}
-	if node.Selected != nil {
-		element.Selected = *node.Selected
+	if node.Selected.set {
+		element.Selected = node.Selected.value
 	}
-	if node.Editable != nil {
-		element.Editable = *node.Editable
+	if node.Editable.set {
+		element.Editable = node.Editable.value
 	} else {
 		element.Editable = strings.Contains(element.Class, "EditText") || attrs["hintText"] != ""
 	}
@@ -451,20 +582,20 @@ func elementFromNode(node *treeNodeJSON) *Element {
 
 	element.Attributes = make(map[string]string, len(attrs)+5)
 	maps.Copy(element.Attributes, attrs)
-	if node.Clickable != nil {
-		element.Attributes["clickable"] = strconv.FormatBool(*node.Clickable)
+	if node.Clickable.set {
+		element.Attributes["clickable"] = strconv.FormatBool(node.Clickable.value)
 	}
-	if node.Enabled != nil {
-		element.Attributes["enabled"] = strconv.FormatBool(*node.Enabled)
+	if node.Enabled.set {
+		element.Attributes["enabled"] = strconv.FormatBool(node.Enabled.value)
 	}
-	if node.Focused != nil {
-		element.Attributes["focused"] = strconv.FormatBool(*node.Focused)
+	if node.Focused.set {
+		element.Attributes["focused"] = strconv.FormatBool(node.Focused.value)
 	}
-	if node.Checked != nil {
-		element.Attributes["checked"] = strconv.FormatBool(*node.Checked)
+	if node.Checked.set {
+		element.Attributes["checked"] = strconv.FormatBool(node.Checked.value)
 	}
-	if node.Selected != nil {
-		element.Attributes["selected"] = strconv.FormatBool(*node.Selected)
+	if node.Selected.set {
+		element.Attributes["selected"] = strconv.FormatBool(node.Selected.value)
 	}
 	element.Attributes["editable"] = strconv.FormatBool(element.Editable)
 
