@@ -4,8 +4,21 @@ on:
   pull_request:
   push:
     branches: [master]
-    tags: ["v*"]
+  # `none` is an ordinary ci run. minor and major consolidate every patch
+  # released since the last milestone into one, and run the whole suite first:
+  # a release that skipped the device legs would be the only release nobody
+  # checked. The default is what stops a dispatch meant to re-run the tests
+  # from cutting a release by accident.
   workflow_dispatch:
+    inputs:
+      promote:
+        description: Consolidate the released patches into a milestone
+        type: choice
+        options:
+          - none
+          - minor
+          - major
+        default: none
 
 permissions:
   contents: read
@@ -434,45 +447,72 @@ jobs:
           path: runs/
           retention-days: 14
 
-  # On master this publishes @sanderling/spec, and only when
-  # pkg/spec/package.json carries a version npm does not have yet. On a tag it
-  # publishes the version the tag names.
+  # Every merge to master cuts a patch: 0.1.4 becomes 0.1.5. A dispatch with
+  # `promote` set cuts the milestone that consolidates them instead. Both wait on
+  # the device legs as well as the checks, so nothing reaches a registry that the
+  # emulators and the simulator have not agreed on, and both release the commit
+  # this run tested rather than whatever master drifted to while it ran.
+  #
+  # These jobs live here rather than in a workflow of their own because npm
+  # matches a package's one trusted publisher against the filename of the
+  # workflow that starts the run. See docs/development/ci.md.
+  release-tag:
+    name: Tag
+    needs:
+      - checks
+      - folio
+      - replay-ui
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'workflow_dispatch' && inputs.promote != 'none')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      tag: ${{ steps.next.outputs.tag }}
+      previous_tag: ${{ steps.next.outputs.previous_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The version is counted off the tags, so the tags have to be here.
+          fetch-depth: 0
+
+      # `inputs` is empty on a push, which leaves the resolver on its default of
+      # a patch: that is the bump a merge cuts.
+      - name: Resolve the version
+        id: next
+        run: .github/scripts/next-version.sh
+        env:
+          BUMP: ${{ inputs.promote }}
+
+      # Nothing is published until this lands, so a version that cannot be
+      # tagged never reaches a registry. npm is the half of a release that
+      # cannot be taken back and a tag is the half that can.
+      - name: Tag the commit
+        run: |
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+
   release-npm:
     name: Release (npm)
-    needs: checks
-    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+    needs: release-tag
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # npm authenticates this publish over OIDC against the trusted publisher
+      # configured for @sanderling/spec, so the job holds no token and there is
+      # none to expire. npm revoked every classic token in December 2025 and
+      # caps a granular one at 90 days, so a token here would break quarterly.
+      id-token: write
     steps:
-      # A refname is attacker-controlled text and git permits backtick, `$`,
-      # `(`, `;`, `&` and `|` in it, so it goes through env: a `${{ }}` is
-      # substituted before bash ever sees the line. Every step below reads these
-      # outputs rather than the refname, and nothing reaches a shell before it
-      # has matched the pattern. The pattern is anchored and admits no newline,
-      # which is what stops the value below forging a second $GITHUB_OUTPUT key.
-      # Release (cli) validates the same way, from its own copy: the two jobs
-      # hold different permissions and neither should wait on the other.
-      - name: Validate the tag
-        id: tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
-          if [[ ! "$TAG" =~ $pattern ]]; then
-            echo "release: refusing to publish from '$TAG'" >&2
-            echo "release: a release tag is vMAJOR.MINOR.PATCH with an optional -prerelease, e.g. v0.1.0 or v0.0.1-rc1" >&2
-            exit 1
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-        env:
-          TAG: ${{ github.ref_name }}
-
       - uses: actions/checkout@v7
         with:
-          # Empty on master, where the commit that triggered the run is the one
-          # to publish and master may have moved on since.
-          ref: ${{ steps.tag.outputs.tag || github.sha }}
+          ref: ${{ needs.release-tag.outputs.tag }}
           # `npm ci` below runs dependency lifecycle scripts, and no step in
           # this job needs the git credential afterwards.
           persist-credentials: false
@@ -485,92 +525,60 @@ jobs:
           cache: npm
           cache-dependency-path: pkg/spec/package-lock.json
 
+      # registry-url above writes an `_authToken=${NODE_AUTH_TOKEN}` line into
+      # .npmrc whether or not a token exists, and an npm older than 11.5.1 reads
+      # that empty line as "auth is configured" and never asks for an OIDC
+      # token, so the publish fails needing auth. Node 22 ships npm 10.
+      - name: Install an npm that can publish over OIDC
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         working-directory: pkg/spec
         run: npm ci
 
-      - name: Stamp version
-        if: startsWith(github.ref, 'refs/tags/v')
+      # The repo keeps package.json at 0.0.0-dev. The tags are the record of
+      # what has been released, and a version committed to master would be a
+      # second record to hold in step with them.
+      - name: Stamp the version
         working-directory: pkg/spec
         run: npm version "$VERSION" --no-git-tag-version --allow-same-version
         env:
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.release-tag.outputs.version }}
 
-      # npm refuses a version it already has, so most merges to master have
-      # nothing to publish and must not be red for it. The registry is asked
-      # rather than the diff of package.json: that answer is still right after a
-      # revert, after a merge that publishes nothing, and after a publish that
-      # failed halfway. Only stdout decides, because `npm view` on a version
-      # that does not exist is empty on some npm releases and an error on
-      # others, and an unreachable registry must end in a publish that fails
-      # loudly rather than a skip that looks like success.
+      # A publish that landed and then failed on its way out leaves npm holding
+      # the version, and re-running the job must not be red for it. The registry
+      # is asked rather than the tags: only npm knows what npm has. Only stdout
+      # decides, because `npm view` on a version that does not exist is empty on
+      # some npm releases and an error on others, and an unreachable registry
+      # must end in a publish that fails loudly rather than a skip that reads as
+      # success.
       - name: Ask npm whether this version is already published
-        id: version
-        working-directory: pkg/spec
+        id: published
         run: |
-          version="$(node -p 'require("./package.json").version')"
-          # Held to the pattern the tag is held to above, and for the same
-          # reason: a value with a newline in it would forge a second key.
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
-            echo "release: pkg/spec/package.json carries '$version', which is not a version this publishes" >&2
-            exit 1
-          fi
-          published="$(npm view "@sanderling/spec@$version" version 2>/dev/null || true)"
-          if [ -n "$published" ]; then
-            echo "npm already has @sanderling/spec@$version, nothing to publish"
+          if [ -n "$(npm view "@sanderling/spec@$VERSION" version 2>/dev/null || true)" ]; then
+            echo "npm already has @sanderling/spec@$VERSION, nothing to publish"
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
-            echo "publishing @sanderling/spec@$version"
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ needs.release-tag.outputs.version }}
 
       - name: Publish @sanderling/spec to npm
-        if: steps.version.outputs.publish == 'true'
+        if: steps.published.outputs.publish == 'true'
         working-directory: pkg/spec
-        # npm tag pre-releases (e.g. 0.1.0-rc1) as "next" so npm install @sanderling/spec
-        # keeps resolving the latest stable.
-        run: |
-          if [[ "$VERSION" == *-* ]]; then
-            npm publish --access public --tag next
-          else
-            npm publish --access public
-          fi
-        # The publish credential is scoped to the one step that publishes rather
-        # than to the job, so no other step runs with it in reach.
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
 
-  # Tags only: there is no CLI to cut on a merge. This is the job that holds
-  # contents: write, and it holds no publish credential of its own.
   release-cli:
     name: Release (cli)
-    needs: checks
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-tag
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      # The same validation Release (npm) runs, on the same pattern, for the
-      # same reason. Both copies must stay identical.
-      - name: Validate the tag
-        id: tag
-        run: |
-          pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
-          if [[ ! "$TAG" =~ $pattern ]]; then
-            echo "release: refusing to publish from '$TAG'" >&2
-            echo "release: a release tag is vMAJOR.MINOR.PATCH with an optional -prerelease, e.g. v0.1.0 or v0.0.1-rc1" >&2
-            exit 1
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-        env:
-          TAG: ${{ github.ref_name }}
-
       - uses: actions/checkout@v7
         with:
-          ref: ${{ steps.tag.outputs.tag }}
+          ref: ${{ needs.release-tag.outputs.tag }}
           # GoReleaser reads the tag history for its changelog.
           fetch-depth: 0
 
@@ -602,6 +610,12 @@ jobs:
       - name: Build sidecar JAR
         run: make sidecar
 
+      # GoReleaser reaches back to the release before this one on its own, which
+      # is right for a patch and wrong for a milestone: the notes on a 0.2.0
+      # consolidating six patches would cover the last merge only.
+      # GORELEASER_PREVIOUS_TAG moves that boundary back to the last release at
+      # this one's level, and an empty value leaves GoReleaser on its own
+      # default, which is what a patch passes.
       - name: Publish the sanderling CLI to GitHub Releases
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -609,6 +623,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_PREVIOUS_TAG: ${{ needs.release-tag.outputs.previous_tag }}
 
   release:
     name: Release
@@ -629,7 +644,7 @@ jobs:
   docs:
     name: Docs
     needs: checks
-    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
       contents: read

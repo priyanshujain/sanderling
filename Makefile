@@ -158,6 +158,7 @@ test-folio:
 test-ci-scripts:
 	.github/scripts/replay-ui-summary-test.sh
 	.github/scripts/folio-run-test.sh
+	.github/scripts/next-version-test.sh
 
 test-spec-api:
 	cd pkg/spec && npm test --silent
