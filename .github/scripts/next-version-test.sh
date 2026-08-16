@@ -14,9 +14,9 @@ outputs=""
 status=0
 stderr=""
 
-resolve() { # <case> <bump> <version> <tag>...
-  local name="$1" bump="$2" version="$3"
-  shift 3
+resolve() { # <case> <bump> <tag>...
+  local name="$1" bump="$2"
+  shift 2
   local repo="$work/$name"
   rm -rf "$repo"
   mkdir -p "$repo"
@@ -28,7 +28,7 @@ resolve() { # <case> <bump> <version> <tag>...
   stderr="$work/$name.err"
   : > "$outputs"
   status=0
-  (cd "$repo" && BUMP="$bump" VERSION="$version" GITHUB_OUTPUT="$outputs" \
+  (cd "$repo" && BUMP="$bump" GITHUB_OUTPUT="$outputs" \
     bash -eo pipefail "$script") >/dev/null 2>"$stderr" || status=$?
 }
 
@@ -44,11 +44,18 @@ expect_version() { # <want> <case>
   [ "$status" = 0 ] || fail "$2: exit $status, want 0"
 }
 
-# The manual pipeline promotes the commit this tag points at, so a wrong answer
+# The manual pipeline re-cuts the commit this tag points at, so a wrong answer
 # here releases the wrong code under the right version.
 expect_released_tag() { # <want, empty for none> <case>
   grep -qxF -- "released_tag=$1" "$outputs" \
     || fail "$2: $(grep '^released_tag=' "$outputs" || echo 'no released_tag'), want released_tag=$1"
+}
+
+# How far back GoReleaser reaches for the notes. Empty leaves it on its own
+# default, which is the release immediately before this one.
+expect_previous_tag() { # <want, empty for none> <case>
+  grep -qxF -- "previous_tag=$1" "$outputs" \
+    || fail "$2: $(grep '^previous_tag=' "$outputs" || echo 'no previous_tag'), want previous_tag=$1"
 }
 
 expect_refused() { # <case> <message fragment>
@@ -58,74 +65,88 @@ expect_refused() { # <case> <message fragment>
 }
 
 # A repository with nothing released yet starts the line at 0.0.1 rather than
-# reissuing 0.0.0.
-resolve first patch "" 
+# reissuing 0.0.0, and has no release to promote or to write notes against.
+resolve first patch
 expect_version 0.0.1 first
 expect_released_tag "" first
+expect_previous_tag "" first
 
 # The rc tags this repository carries are candidates for 0.0.1, so the first
-# stable release is 0.0.1 and not 0.0.2.
-resolve rcs patch "" v0.0.1-rc1 v0.0.1-rc4
+# stable release is 0.0.1 and not 0.0.2, and a candidate is not a release to
+# promote.
+resolve rcs patch v0.0.1-rc1 v0.0.1-rc4
 expect_version 0.0.1 rcs
-# A candidate is not a release, so there is nothing to promote yet.
 expect_released_tag "" rcs
 
-resolve patch patch "" v1.2.3
+resolve patch patch v1.2.3
 expect_version 1.2.4 patch
+expect_released_tag v1.2.3 patch
+# A patch already follows the release before it, so GoReleaser is left alone.
+expect_previous_tag "" patch
 
-resolve minor minor "" v1.2.3
+resolve minor minor v1.2.3
 expect_version 1.3.0 minor
+expect_released_tag v1.2.3 minor
 
-resolve major major "" v1.2.3
+resolve major major v1.2.3
 expect_version 2.0.0 major
 
 # Lexically 0.9.0 sorts above 0.10.0, so a version-blind sort would count the
 # next patch off the wrong release and hand back 0.9.1.
-resolve ordering patch "" v0.9.0 v0.10.0
+resolve ordering patch v0.9.0 v0.10.0
 expect_version 0.10.1 ordering
 expect_released_tag v0.10.0 ordering
 
 # A tag that is not a release is not a base to count from.
-resolve noise patch "" v1.2.3 nightly v2.0.0-rc1 vfoo
+resolve noise patch v1.2.3 nightly v2.0.0-rc1 vfoo
 expect_version 1.2.4 noise
 expect_released_tag v1.2.3 noise
 
-resolve named "" 2.5.0 v1.2.3
-expect_version 2.5.0 named
-# A named version still promotes the last release rather than some other commit.
-expect_released_tag v1.2.3 named
-
-# A named version wins over the bump rather than being combined with it.
-resolve named-over-bump major 0.4.0 v1.2.3
-expect_version 0.4.0 named-over-bump
-
-resolve named-prerelease "" 1.0.0-rc1 v0.9.0
-expect_version 1.0.0-rc1 named-prerelease
-
-resolve named-junk "" "1.0" v1.2.3
-expect_refused named-junk "is not a version this releases"
-
-# The refusal has to survive text that would otherwise reach a shell or forge a
-# second $GITHUB_OUTPUT key.
-resolve named-injection "" '1.0.0; touch /tmp/pwned' v1.2.3
-expect_refused named-injection "is not a version this releases"
-
-resolve named-newline "" '1.0.0
-version=9.9.9' v1.2.3
-expect_refused named-newline "is not a version this releases"
-
-resolve bad-bump sideways "" v1.2.3
-expect_refused bad-bump "is not a bump"
-
 # A bump counts off the highest release, so releasing twice in a row advances
 # twice rather than landing on the tag the first one just cut.
-resolve consecutive patch "" v1.2.3 v1.2.4
+resolve consecutive patch v1.2.3 v1.2.4
 expect_version 1.2.5 consecutive
 
-# Naming a version that is already tagged would relabel a release people have
-# already installed.
-resolve named-already "" 1.2.3 v1.2.3
-expect_refused named-already "is already tagged"
+resolve bad-bump sideways v1.2.3
+expect_refused bad-bump "is not a bump"
+
+# --- how far back a milestone's notes reach ----------------------------------
+# The whole point of consolidating: 0.2.0's notes have to cover every patch
+# since 0.1.0, not just the merge that happened to be last before it.
+resolve minor-notes minor v0.1.0 v0.1.1 v0.1.2
+expect_version 0.2.0 minor-notes
+expect_previous_tag v0.1.0 minor-notes
+
+# The last release at this level, not the first one ever seen at it.
+resolve minor-notes-latest minor v0.1.0 v0.2.0 v0.2.1
+expect_version 0.3.0 minor-notes-latest
+expect_previous_tag v0.2.0 minor-notes-latest
+
+# A major counts as a milestone for a minor's notes: 1.0.0 is where the patches
+# being consolidated started.
+resolve minor-notes-major minor v0.9.0 v1.0.0 v1.0.1
+expect_version 1.1.0 minor-notes-major
+expect_previous_tag v1.0.0 minor-notes-major
+
+# The same version-aware ordering the base needs.
+resolve minor-notes-ordering minor v0.9.0 v0.10.0 v0.10.1
+expect_version 0.11.0 minor-notes-ordering
+expect_previous_tag v0.10.0 minor-notes-ordering
+
+# A major reaches back to the last major, not to the last minor.
+resolve major-notes major v1.0.0 v1.1.0 v1.1.3
+expect_version 2.0.0 major-notes
+expect_previous_tag v1.0.0 major-notes
+
+# The first milestone of its kind has nothing at its own level to reach back to,
+# so it reaches back to the first release there has ever been.
+resolve minor-notes-firstever minor v0.0.1 v0.0.2 v0.0.3
+expect_version 0.1.0 minor-notes-firstever
+expect_previous_tag v0.0.1 minor-notes-firstever
+
+resolve major-notes-firstever major v0.1.0 v0.2.0 v0.2.1
+expect_version 1.0.0 major-notes-firstever
+expect_previous_tag v0.1.0 major-notes-firstever
 
 if [ "$failed" = 0 ]; then
   echo "next-version-test: ok"
