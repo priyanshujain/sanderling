@@ -47,6 +47,16 @@ globalThis.properties = {
 globalThis.actions = actions(() => [Wait({ durationMillis: 0 })]);
 `
 
+// absentSelectorSpec names an element the tree never holds, so every step
+// dispatches by selector and the driver is the layer that finds nothing.
+const absentSelectorSpec = `
+import { actions, always, Tap } from "@sanderling/spec";
+globalThis.properties = {
+  alwaysHolds: always(() => true),
+};
+globalThis.actions = actions(() => [Tap({ on: "id:absent" })]);
+`
+
 const violationSpec = `
 import { actions, always } from "@sanderling/spec";
 globalThis.properties = {
@@ -739,20 +749,6 @@ func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
 	}
 }
 
-// TestApplyAction_InputTextWithoutTargetSkipsFocusTap pins that with no
-// resolvable target there is no focus tap (and so no settle), and InputText
-// still runs at the cursor.
-func TestApplyAction_InputTextWithoutTargetSkipsFocusTap(t *testing.T) {
-	driverMock := mockdriver.New()
-	action := verifier.Action{Kind: verifier.ActionKindInputText, X: -1, Y: -1, Text: "alice"}
-
-	mustDispatch(t, driverMock, action, nil)
-	actions := driverMock.Actions()
-	if len(actions) != 1 || actions[0].Kind != mockdriver.ActionInputText {
-		t.Errorf("no target: want input_text only (no focus tap), got %v", actions)
-	}
-}
-
 // TestApplyAction_InputTextSkipsEraseForReplacingDriver pins that a driver
 // asserting the TextReplacer capability never pays the pre-erase round-trip:
 // its InputText already replaces the field's content.
@@ -1156,6 +1152,47 @@ func TestApplyAction_ScrollWithPrecomputedEndpointsSwipes(t *testing.T) {
 	}
 }
 
+// scrollingDriver is a driver that scrolls by something other than a drag,
+// which is what the web driver is: a browser scrolls on wheel input and only
+// ever treats a drag as a drag.
+type scrollingDriver struct {
+	*mockdriver.Driver
+	scrolls [][4]int
+}
+
+func (d *scrollingDriver) Scroll(
+	_ context.Context,
+	fromX, fromY, toX, toY int,
+	_ time.Duration,
+) error {
+	d.scrolls = append(d.scrolls, [4]int{fromX, fromY, toX, toY})
+	return nil
+}
+
+func TestApplyAction_ScrollPrefersTheScrollCapabilityOverASwipe(t *testing.T) {
+	drv := &scrollingDriver{Driver: mockdriver.New()}
+	action := verifier.Action{
+		Kind:           verifier.ActionKindScroll,
+		Direction:      "down",
+		FromX:          100,
+		FromY:          500,
+		ToX:            100,
+		ToY:            300,
+		DurationMillis: 300,
+	}
+
+	mustDispatch(t, drv, action, nil)
+	want := [4]int{100, 500, 100, 300}
+	if len(drv.scrolls) != 1 || drv.scrolls[0] != want {
+		t.Fatalf("scrolls = %v, want one %v", drv.scrolls, want)
+	}
+	for _, a := range drv.Actions() {
+		if a.Kind == mockdriver.ActionSwipe {
+			t.Errorf("the scroll was dispatched as a swipe: %v", drv.Actions())
+		}
+	}
+}
+
 func TestApplyAction_ScrollDirectionUsesInversion(t *testing.T) {
 	driverMock := mockdriver.New()
 	treeJSON := `{"attributes":{"resource-id":"com.fixture:id/list","bounds":"[0,0,400,800]"},"children":[],"enabled":true}`
@@ -1258,21 +1295,6 @@ func TestApplyAction_NonDispatchPathsReportWhy(t *testing.T) {
 		tree   *hierarchy.Tree
 		want   actionSkipReason
 	}{
-		{
-			name:   "tap with neither selector nor coordinates",
-			action: verifier.Action{Kind: verifier.ActionKindTap, X: -1, Y: -1},
-			want:   actionSkippedNoTarget,
-		},
-		{
-			name:   "double tap with neither selector nor coordinates",
-			action: verifier.Action{Kind: verifier.ActionKindDoubleTap, X: -1, Y: -1},
-			want:   actionSkippedNoTarget,
-		},
-		{
-			name:   "long press with neither selector nor coordinates",
-			action: verifier.Action{Kind: verifier.ActionKindLongPress, X: -1, Y: -1},
-			want:   actionSkippedNoTarget,
-		},
 		{
 			name:   "long press whose selector is not on screen",
 			action: verifier.Action{Kind: verifier.ActionKindLongPress, On: "id:gone"},
@@ -1379,10 +1401,11 @@ func TestRunner_DispatchedActionRecordsNoSkipReason(t *testing.T) {
 }
 
 type traceStepLine struct {
-	Step          int           `json:"step"`
-	NextAction    *trace.Action `json:"next_action"`
-	ActionSkipped string        `json:"action_skipped"`
-	Transitional  bool          `json:"transitional"`
+	Step             int           `json:"step"`
+	NextAction       *trace.Action `json:"next_action"`
+	ActionSkipped    string        `json:"action_skipped"`
+	Transitional     bool          `json:"transitional"`
+	ObservationError string        `json:"observation_error"`
 }
 
 func readTraceLines(t *testing.T, directory string) []traceStepLine {
@@ -2573,5 +2596,383 @@ func TestRunner_SiblingTapsReachTheDriverAtTheirOwnCoordinates(t *testing.T) {
 	}
 	if len(tapped) != len(want) {
 		t.Errorf("driver saw %d distinct tap points, want %d: %v", len(tapped), len(want), slices.Sorted(maps.Keys(tapped)))
+	}
+}
+
+// tapReachesNoElement wraps a mock driver so every tap reports what the chrome
+// driver reports when the action's point holds no element: nothing was
+// dispatched, so the app cannot have responded.
+type tapReachesNoElement struct {
+	*mockdriver.Driver
+}
+
+func (d *tapReachesNoElement) TapSelector(
+	_ context.Context,
+	selector string,
+) error {
+	return fmt.Errorf("%w: %s", driver.ErrGestureUndelivered, selector)
+}
+
+func (d *tapReachesNoElement) Tap(_ context.Context, x, y int) error {
+	return fmt.Errorf("%w: (%d,%d)", driver.ErrGestureUndelivered, x, y)
+}
+
+// TestRunner_UndeliveredGestureIsRecordedNotSilentlyClean is the runner half of
+// the silent-actuation bug: a run whose every tap reached nothing used to look
+// exactly like a run that exercised the app and found no violations. The step
+// now names the reason, and the run says how many actions did nothing.
+func TestRunner_UndeliveredGestureIsRecordedNotSilentlyClean(t *testing.T) {
+	state := newHarness(t)
+	wrapped := &tapReachesNoElement{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    10 * time.Second,
+		MaxSteps:    maxConsecutiveApplyFailures + 2,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf(
+			"a gesture that reached nothing is not a device fault: %v",
+			err,
+		)
+	}
+	if summary.Steps <= maxConsecutiveApplyFailures {
+		t.Fatalf(
+			"the run must outlive the apply-failure cap, got %d steps",
+			summary.Steps,
+		)
+	}
+	undelivered := summary.SkippedActions[string(actionSkippedGestureUndelivered)]
+	if undelivered != summary.Steps {
+		t.Errorf(
+			"gesture_undelivered count = %d, want %d (every tap reached nothing)",
+			undelivered,
+			summary.Steps,
+		)
+	}
+
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "web")
+	if !strings.Contains(rendered.String(), "gesture_undelivered") {
+		t.Errorf(
+			"the summary must not read clean while nothing was actuated, got:\n%s",
+			rendered.String(),
+		)
+	}
+
+	type traceLine struct {
+		Step          int    `json:"step"`
+		ActionSkipped string `json:"action_skipped"`
+		Transitional  bool   `json:"transitional"`
+	}
+	body, err := os.ReadFile(
+		filepath.Join(state.writer.Directory(), "trace.jsonl"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var line traceLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		if line.ActionSkipped != "gesture_undelivered" {
+			t.Errorf("step %d: action_skipped = %q, want %q",
+				line.Step, line.ActionSkipped, "gesture_undelivered")
+		}
+		if line.Transitional {
+			t.Errorf(
+				"step %d: an undelivered gesture leaves the verified screen intact, "+
+					"so the step must not be transitional",
+				line.Step,
+			)
+		}
+	}
+}
+
+// selectorMatchesNothing wraps a mock driver so every by-selector tap reports
+// what the drivers report when the selector names no element on the screen.
+type selectorMatchesNothing struct {
+	*mockdriver.Driver
+}
+
+func (d *selectorMatchesNothing) TapSelector(_ context.Context, selector string) error {
+	return fmt.Errorf("%w: %q", driver.ErrSelectorMatchedNothing, selector)
+}
+
+// TestRunner_SelectorThatMatchesNothingIsRecordedApartFromAnUndeliveredGesture
+// keeps the two silent paths distinguishable. A selector that named no element
+// is a resolution failure, so the step records unresolved_selector, keeps the
+// verified screen (not transitional), and does not spend the apply-failure
+// budget that a wedged device is meant to exhaust.
+func TestRunner_SelectorThatMatchesNothingIsRecordedApartFromAnUndeliveredGesture(t *testing.T) {
+	state := newHarnessWithSpec(t, absentSelectorSpec)
+	wrapped := &selectorMatchesNothing{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    10 * time.Second,
+		MaxSteps:    maxConsecutiveApplyFailures + 2,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("a selector that matched nothing is not a device fault: %v", err)
+	}
+	if summary.Steps <= maxConsecutiveApplyFailures {
+		t.Fatalf("the run must outlive the apply-failure cap, got %d steps", summary.Steps)
+	}
+	if got := summary.SkippedActions[string(actionSkippedUnresolvedSelector)]; got != summary.Steps {
+		t.Errorf("unresolved_selector count = %d, want %d", got, summary.Steps)
+	}
+	if got := summary.SkippedActions[string(actionSkippedGestureUndelivered)]; got != 0 {
+		t.Errorf("gesture_undelivered count = %d, want 0: nothing was dispatched to a point", got)
+	}
+
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "android")
+	if !strings.Contains(rendered.String(), "unresolved_selector") {
+		t.Errorf("the summary must name the actions that found no target, got:\n%s", rendered.String())
+	}
+
+	type traceLine struct {
+		Step          int    `json:"step"`
+		ActionSkipped string `json:"action_skipped"`
+		Transitional  bool   `json:"transitional"`
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var line traceLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		if line.ActionSkipped != "unresolved_selector" {
+			t.Errorf("step %d: action_skipped = %q, want %q",
+				line.Step, line.ActionSkipped, "unresolved_selector")
+		}
+		if line.Transitional {
+			t.Errorf("step %d: nothing was dispatched, so the step must not be transitional", line.Step)
+		}
+	}
+}
+
+// TestApplyAction_TapAboveTheViewportReachesTheDriver is the other half of the
+// off-screen reach fix. The web host names an unnamed candidate by coordinates
+// alone, and a candidate the growing document pushed above the fold carries a
+// negative y; dropping it here denies the driver the scroll that would bring it
+// back, so reach below the fold works and reach above it does not.
+func TestApplyAction_TapAboveTheViewportReachesTheDriver(t *testing.T) {
+	mock := mockdriver.New()
+	mustDispatch(t, mock, verifier.Action{
+		Kind: verifier.ActionKindTap,
+		X:    622,
+		Y:    -208,
+	}, nil)
+
+	dispatched := mock.Actions()
+	if len(dispatched) != 1 {
+		t.Fatalf("driver saw %d actions, want 1: %v", len(dispatched), dispatched)
+	}
+	if dispatched[0].Kind != mockdriver.ActionTap ||
+		dispatched[0].X != 622 || dispatched[0].Y != -208 {
+		t.Errorf("driver saw %v, want a tap at (622,-208)", dispatched[0])
+	}
+}
+
+// TestApplyAction_TapAboveTheViewportKeepsTheUndeliveredReport holds the
+// distinction the fix must not collapse: a point the driver cannot put an
+// element under is still a failure, reported as ErrGestureUndelivered rather
+// than as an action the runner declined to try.
+func TestApplyAction_TapAboveTheViewportKeepsTheUndeliveredReport(t *testing.T) {
+	drv := &tapReachesNoElement{Driver: mockdriver.New()}
+	skipped, err := applyAction(context.Background(), drv, verifier.Action{
+		Kind: verifier.ActionKindTap,
+		X:    622,
+		Y:    -208,
+	}, nil)
+	if !errors.Is(err, driver.ErrGestureUndelivered) {
+		t.Errorf("err = %v, want ErrGestureUndelivered", err)
+	}
+	if skipped != "" {
+		t.Errorf("skip reason = %q, want none: the driver was called", skipped)
+	}
+}
+
+// TestRenderSummary_NamesTheActionsThatNeverReachedTheApp is the report half of
+// the silent-actuation class. A run that chose an action every step and dropped
+// every one of them printed the same "no violations" as a run that exercised
+// the app, because the reasons lived only in the trace and a warn line.
+func TestRenderSummary_NamesTheActionsThatNeverReachedTheApp(t *testing.T) {
+	state := newHarnessWithSpec(t, zeroWaitSpec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reason := string(actionSkippedZeroDurationWait)
+	if summary.SkippedActions[reason] != 3 {
+		t.Errorf("SkippedActions[%s] = %d, want 3", reason, summary.SkippedActions[reason])
+	}
+
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "web")
+	want := "3 action(s) never reached the app: " + reason + " 3"
+	if !strings.Contains(rendered.String(), want) {
+		t.Errorf("summary must carry %q, got:\n%s", want, rendered.String())
+	}
+
+	var clean bytes.Buffer
+	RenderSummary(&clean, Summary{Steps: 3}, "web")
+	if strings.Contains(clean.String(), "never reached the app") {
+		t.Errorf("a run that dropped nothing must not carry the line, got:\n%s", clean.String())
+	}
+}
+
+// wedgedTapSelector never answers the first by-selector tap, which is what a
+// driver call that has stopped returning looks like from the step loop.
+type wedgedTapSelector struct {
+	*mockdriver.Driver
+	calls int
+}
+
+func (d *wedgedTapSelector) TapSelector(ctx context.Context, selector string) error {
+	d.calls++
+	if d.calls == 1 {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return d.Driver.TapSelector(ctx, selector)
+}
+
+// Duration is a loop condition checked between steps, so an action that never
+// returns held the run for as long as the process lived and only a kill from
+// outside ended it. The step is what must fail, under a reason of its own: a
+// wedge is not the gesture that reached nothing and not the action the runner
+// declined to dispatch, and an analysis that cannot tell them apart cannot say
+// whether the device answered at all.
+func TestRunner_AnActionThatNeverReturnsFailsTheStepNotTheRun(t *testing.T) {
+	state := newHarness(t)
+	previousApplyTimeout := applyTimeout
+	applyTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { applyTimeout = previousApplyTimeout })
+	wrapped := &wedgedTapSelector{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run must outlive an action that never returns, got %v", err)
+	}
+	if summary.Steps != 3 {
+		t.Fatalf("Steps = %d, want 3: the wedge costs one step, not the run", summary.Steps)
+	}
+	lines := readTraceLines(t, state.writer.Directory())
+	if lines[0].ActionSkipped != string(actionSkippedApplyTimeout) {
+		t.Errorf("step 1 action_skipped = %q, want %q",
+			lines[0].ActionSkipped, actionSkippedApplyTimeout)
+	}
+	if !lines[0].Transitional {
+		t.Error("step 1 must be transitional: the action was dispatched and its effect is unknown")
+	}
+	for _, line := range lines[1:] {
+		if line.ActionSkipped != "" {
+			t.Errorf("step %d action_skipped = %q, want the wedge confined to the step that wedged",
+				line.Step, line.ActionSkipped)
+		}
+	}
+	if summary.SkippedActions[string(actionSkippedApplyTimeout)] != 1 {
+		t.Errorf("SkippedActions = %v, want one %s", summary.SkippedActions, actionSkippedApplyTimeout)
+	}
+}
+
+// snapshotFailThenEmpty fails the first observation outright and answers the
+// second with a dump holding no elements at all.
+type snapshotFailThenEmpty struct {
+	*mockdriver.Driver
+	calls int
+}
+
+func (d *snapshotFailThenEmpty) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	d.calls++
+	switch d.calls {
+	case 1:
+		return "", driver.Image{}, errors.New("Timeout while fetching view hierarchy")
+	case 2:
+		return "", driver.Image{}, nil
+	}
+	return d.Driver.Snapshot(ctx)
+}
+
+// A step that read nothing because the read failed and a step that read a
+// screen with nothing on it are recorded identically as a nil tree, so a run
+// that observed nothing at all reports exactly like a run that observed an
+// empty app and found no violation in it.
+func TestRunner_AFailedObservationIsNotAnObservationOfAnEmptyScreen(t *testing.T) {
+	state := newHarness(t)
+	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"HomeScreen"},"children":[]}`
+	wrapped := &snapshotFailThenEmpty{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps != 3 {
+		t.Fatalf("Steps = %d, want 3", summary.Steps)
+	}
+	lines := readTraceLines(t, state.writer.Directory())
+	if !strings.Contains(lines[0].ObservationError, "Timeout while fetching view hierarchy") {
+		t.Errorf("step 1 observation_error = %q, want the driver's own failure",
+			lines[0].ObservationError)
+	}
+	if lines[1].ObservationError != "" {
+		t.Errorf("step 2 observation_error = %q, want none: the screen was read and held no elements",
+			lines[1].ObservationError)
+	}
+	if lines[2].ObservationError != "" {
+		t.Errorf("step 3 observation_error = %q, want none", lines[2].ObservationError)
+	}
+	if summary.FailedObservations != 1 {
+		t.Errorf("FailedObservations = %d, want 1", summary.FailedObservations)
+	}
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "android")
+	if !strings.Contains(rendered.String(), "1 step(s) observed nothing") {
+		t.Errorf("summary hides the failed observation: %q", rendered.String())
 	}
 }

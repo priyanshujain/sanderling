@@ -61,6 +61,15 @@ type Summary struct {
 	// could not dispatch, deduped, so the report can flag a spec exercising
 	// gestures this target does not support.
 	UnsupportedVerbs []string
+	// SkippedActions counts, by reason, the actions a step chose that never
+	// reached the app. Without it a run that dropped most of what it generated
+	// reads exactly like one that exercised it: the reasons reach the trace and
+	// a warn line, and nothing else.
+	SkippedActions map[string]int
+	// FailedObservations counts the steps whose device read produced no tree at
+	// all. Such a step verifies nothing, so a run that failed every observation
+	// finishes with no violations and reads as a clean one.
+	FailedObservations int
 }
 
 type ViolationRecord struct {
@@ -94,6 +103,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		return Summary{}, err
 	}
 	_, pageExtractors := extractorSource.(webSource)
+	exceptionReporter, _ := options.Driver.(driver.ExceptionReporter)
+	navigationReporter, _ := options.Driver.(driver.NavigationReporter)
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -130,8 +141,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 
 		// gctx is bound to the errgroup so a returned error (or outer
 		// cancellation) propagates to every sibling read rather than leaving
-		// one blocked on a hung device.
-		g, gctx := errgroup.WithContext(ctx)
+		// one blocked on a hung device, and to observationTimeout so a read
+		// that never answers ends the step instead of the run.
+		observeCtx, observeCancel := context.WithTimeout(ctx, observationTimeout)
+		g, gctx := errgroup.WithContext(observeCtx)
 		si := stepIndex
 		// fetchSyncedState issues a single Snapshot RPC so hierarchy and
 		// screenshot describe the same frame, then re-fetches the pair
@@ -152,12 +165,18 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// All goroutines write to local variables and return nil, so the Wait
 		// error is always nil; ignored intentionally.
 		_ = g.Wait()
+		observeCancel()
 
+		navigations := collectNavigations(ctx, navigationReporter, logger, stepIndex)
+
+		observationError := ""
 		if hierarchyErr != nil {
 			if isWDADrop(hierarchyErr) {
 				return summary, fmt.Errorf("WDA connection permanently lost at step %d - re-run the test: %w", stepIndex, hierarchyErr)
 			}
 			logger.Warn("hierarchy fetch failed", "step", stepIndex, "err", hierarchyErr)
+			observationError = hierarchyErr.Error()
+			summary.FailedObservations++
 		}
 		treeSize := 0
 		if tree != nil {
@@ -189,6 +208,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var violations []string
 		var extractorChanges map[string]trace.ExtractorChange
 		var witnesses map[string]trace.Witness
+		var exceptions []verifier.Exception
 		skippedVerification := false
 		if !transitional {
 			// The page-side extractors evaluate only on steps the verifier will
@@ -205,7 +225,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			//
 			// lastAction is the same value PushSnapshot hands the goja state
 			// below: the two engines evaluate this step against one action.
-			v8Overrides, overridesErr := extractorSource.ExtractorOverrides(ctx, lastAction)
+			overridesCtx, overridesCancel := context.WithTimeout(ctx, observationTimeout)
+			v8Overrides, overridesErr := extractorSource.ExtractorOverrides(overridesCtx, lastAction)
+			overridesCancel()
 			if overridesErr != nil {
 				// Not a warning. Without the page's values this step's
 				// extractors keep goja's dump-derived readings while the
@@ -214,6 +236,12 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				// wrong.
 				return summary, fmt.Errorf("step %d extractor overrides: %w", stepIndex, overridesErr)
 			}
+			exceptions = collectExceptions(
+				ctx,
+				exceptionReporter,
+				logger,
+				stepIndex,
+			)
 			if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
 				Tree:          tree,
 				ScreenshotPNG: screenshotPNG,
@@ -222,6 +250,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				StepIndex:     stepIndex,
 				RunStart:      summary.StartTime,
 				Logs:          logs,
+				Exceptions:    exceptions,
 			}); err != nil {
 				return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 			}
@@ -285,8 +314,33 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			actionSkipped = actionSkippedForeground
 			lastAction = nil
 		} else if nextErr == nil {
-			notDispatched, err := applyAction(ctx, options.Driver, nextAction, tree)
-			if err != nil {
+			applyCtx, applyCancel := context.WithTimeout(ctx, applyBound(nextAction))
+			notDispatched, err := applyAction(applyCtx, options.Driver, nextAction, tree)
+			applyCancel()
+			if errors.Is(err, driver.ErrGestureUndelivered) {
+				// The gesture reached no element, so the app cannot have
+				// responded to it and the screen is still the one already
+				// verified. The device is healthy, so the step is neither
+				// transitional nor part of the apply-failure streak; it records
+				// that the action landed on nothing, which is what separates it
+				// from an action the app received and ignored.
+				logger.Warn("gesture reached no element",
+					"step", stepIndex, "action", nextAction.Kind, "err", err)
+				applySkipped = true
+				actionSkipped = actionSkippedGestureUndelivered
+				lastAction = nil
+			} else if errors.Is(err, driver.ErrSelectorMatchedNothing) {
+				// The selector named no element, so no point was resolved and
+				// nothing was dispatched. The screen is the one already
+				// verified and the device is healthy, so this is the same
+				// non-action the runner records when it cannot resolve a
+				// selector itself, not a device fault worth a failure streak.
+				logger.Warn("selector matched no element",
+					"step", stepIndex, "action", nextAction.Kind, "err", err)
+				applySkipped = true
+				actionSkipped = actionSkippedUnresolvedSelector
+				lastAction = nil
+			} else if err != nil {
 				if isWDADrop(err) {
 					return summary, fmt.Errorf("step %d: the iOS XCTest runner could not be restarted - re-run the test: %w", stepIndex, err)
 				}
@@ -303,10 +357,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				if consecutiveApplyFailures >= maxConsecutiveApplyFailures {
 					return summary, fmt.Errorf("step %d apply: %d consecutive failures; the device is not recovering: %w", stepIndex, consecutiveApplyFailures, err)
 				}
-				logger.Warn("apply error; marking step transitional", "step", stepIndex, "err", err)
+				actionSkipped = actionSkippedApplyError
+				if errors.Is(applyCtx.Err(), context.DeadlineExceeded) {
+					actionSkipped = actionSkippedApplyTimeout
+				}
+				logger.Warn("apply error; marking step transitional",
+					"step", stepIndex, "reason", actionSkipped, "err", err)
 				transitional = true
 				applySkipped = true
-				actionSkipped = actionSkippedApplyError
 				lastAction = nil
 			} else if notDispatched != "" {
 				// The action was chosen but nothing reached the driver, so the
@@ -333,18 +391,28 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			Timestamp:           stepStart,
 			Screen:              screen,
 			NextAction:          traceAction,
+			Logs:                traceLogs(logs),
+			Exceptions:          traceExceptions(exceptions),
+			Navigations:         navigations,
 			Violations:          violations,
 			Hierarchy:           tree,
 			Residuals:           residuals,
 			Metrics:             metrics,
 			ExtractorChanges:    extractorChanges,
 			Transitional:        transitional,
+			ObservationError:    observationError,
 			ActionSkipped:       string(actionSkipped),
 			SkippedVerification: skippedVerification,
 			Witnesses:           witnesses,
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
+		}
+		if actionSkipped != "" {
+			if summary.SkippedActions == nil {
+				summary.SkippedActions = map[string]int{}
+			}
+			summary.SkippedActions[string(actionSkipped)]++
 		}
 		summary.Steps = stepIndex
 		if len(violations) > 0 {
@@ -409,6 +477,21 @@ func RenderSummary(w io.Writer, summary Summary, platform string) {
 		for _, violation := range summary.Violations {
 			fmt.Fprintf(w, "  step %d: %v\n", violation.StepIndex, violation.Properties)
 		}
+	}
+	if len(summary.SkippedActions) > 0 {
+		total := 0
+		byReason := make([]string, 0, len(summary.SkippedActions))
+		for _, reason := range slices.Sorted(maps.Keys(summary.SkippedActions)) {
+			total += summary.SkippedActions[reason]
+			byReason = append(byReason,
+				fmt.Sprintf("%s %d", reason, summary.SkippedActions[reason]))
+		}
+		fmt.Fprintf(w, "%d action(s) never reached the app: %s\n",
+			total, strings.Join(byReason, ", "))
+	}
+	if summary.FailedObservations > 0 {
+		fmt.Fprintf(w, "%d step(s) observed nothing: the device state could not be read\n",
+			summary.FailedObservations)
 	}
 	if len(summary.UnsupportedVerbs) > 0 {
 		fmt.Fprintf(w, "unsupported on %s: %s\n",
@@ -655,27 +738,18 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 	case verifier.ActionKindTap:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
-			if action.On == "" {
-				return actionSkippedNoTarget, nil
-			}
 			return "", drv.TapSelector(ctx, action.On)
 		}
 		return "", drv.Tap(ctx, x, y)
 	case verifier.ActionKindDoubleTap:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
-			if action.On == "" {
-				return actionSkippedNoTarget, nil
-			}
 			return "", drv.DoubleTapSelector(ctx, action.On)
 		}
 		return "", drv.DoubleTap(ctx, x, y)
 	case verifier.ActionKindLongPress:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
-			if action.On == "" {
-				return actionSkippedNoTarget, nil
-			}
 			// No long-press-by-selector RPC exists, so a selector that resolves
 			// to no coordinates is nothing we can dispatch.
 			return actionSkippedUnresolvedSelector, nil
@@ -687,6 +761,9 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		duration := time.Duration(action.DurationMillis) * time.Millisecond
 		if duration <= 0 {
 			duration = 300 * time.Millisecond
+		}
+		if scroller, ok := drv.(driver.Scroller); ok {
+			return "", scroller.Scroll(ctx, fromX, fromY, toX, toY, duration)
 		}
 		return "", drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindInputText:
@@ -778,6 +855,81 @@ func collectLogs(ctx context.Context, drv driver.DeviceDriver, since time.Time) 
 			Tag:        entry.Tag,
 			Message:    entry.Message,
 		})
+	}
+	return result
+}
+
+// collectExceptions reads the app's captured uncaught errors. Like log
+// capture it is best-effort: a failed read is warned on rather than ending
+// the run, and a driver that cannot report them yields none.
+func collectExceptions(
+	ctx context.Context,
+	reporter driver.ExceptionReporter,
+	logger *slog.Logger,
+	stepIndex int,
+) []verifier.Exception {
+	if reporter == nil {
+		return nil
+	}
+	captured, err := reporter.Exceptions(ctx)
+	if err != nil {
+		logger.Warn("exception fetch failed", "step", stepIndex, "err", err)
+		return nil
+	}
+	result := make([]verifier.Exception, 0, len(captured))
+	for _, entry := range captured {
+		result = append(result, verifier.Exception{
+			Class:      entry.Class,
+			Message:    entry.Message,
+			StackTrace: entry.StackTrace,
+			UnixMillis: entry.UnixMillis,
+		})
+	}
+	return result
+}
+
+func collectNavigations(
+	ctx context.Context,
+	reporter driver.NavigationReporter,
+	logger *slog.Logger,
+	stepIndex int,
+) []trace.Navigation {
+	if reporter == nil {
+		return nil
+	}
+	observed, err := reporter.Navigations(ctx)
+	if err != nil {
+		logger.Warn("navigation fetch failed", "step", stepIndex, "err", err)
+		return nil
+	}
+	records := make([]trace.Navigation, 0, len(observed))
+	for _, entry := range observed {
+		records = append(records, trace.Navigation{URL: entry.URL, UnixMillis: entry.UnixMillis})
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	return records
+}
+
+func traceLogs(entries []verifier.LogEntry) []trace.LogEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	result := make([]trace.LogEntry, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, trace.LogEntry(entry))
+	}
+	return result
+}
+
+func traceExceptions(entries []verifier.Exception) []trace.Exception {
+	if len(entries) == 0 {
+		return nil
+	}
+	result := make([]trace.Exception, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, trace.Exception(entry))
 	}
 	return result
 }
@@ -894,13 +1046,12 @@ func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int,
 	// When On is empty, X/Y are authoritative (web V8 path emits coordinates
 	// directly from getBoundingClientRect; the runtime nullifies unresolved
 	// actions upstream so a non-null InputText here always has real coords,
-	// even at (0,0)). When On is set, prefer the tree lookup so stale coords
-	// don't leak from earlier ticks.
+	// even at (0,0)). A point outside the viewport is off screen, not absent:
+	// only the driver knows whether it can scroll that point back into reach,
+	// so the judgement belongs there and not here. When On is set, prefer the
+	// tree lookup so stale coords don't leak from earlier ticks.
 	if action.On == "" {
-		if action.X >= 0 && action.Y >= 0 {
-			return action.X, action.Y, true
-		}
-		return 0, 0, false
+		return action.X, action.Y, true
 	}
 	if tree != nil {
 		// An ambiguous selector names several elements while the action's own
@@ -1268,15 +1419,21 @@ type actionSkipReason string
 const (
 	actionSkippedForeground actionSkipReason = "app_left_foreground"
 	actionSkippedApplyError actionSkipReason = "apply_error"
-	// The action named no target at all: no selector, and no usable
-	// coordinates (a web candidate scrolled out of the viewport carries
-	// negative ones).
-	actionSkippedNoTarget actionSkipReason = "no_target"
+	// The action was dispatched and the driver never came back inside the
+	// step's bound. Distinct from apply_error, which is a call that answered
+	// and said no, and from the reasons below, which are actions that never
+	// reached the device at all.
+	actionSkippedApplyTimeout actionSkipReason = "apply_timeout"
 	// The action named a selector that resolved to no on-screen coordinates,
-	// and its verb has no by-selector dispatch to fall back to.
+	// either because its verb has no by-selector dispatch to fall back to or
+	// because the driver's own lookup found nothing to tap.
 	actionSkippedUnresolvedSelector actionSkipReason = "unresolved_selector"
 	actionSkippedMissingKey         actionSkipReason = "missing_key"
 	actionSkippedZeroDurationWait   actionSkipReason = "zero_duration_wait"
+	// The driver resolved the action's point and found no element there, so
+	// the gesture was never dispatched. Recorded rather than counted as a
+	// device fault: a run that acts on nothing has to say so.
+	actionSkippedGestureUndelivered actionSkipReason = "gesture_undelivered"
 )
 
 // maxConsecutiveApplyFailures bounds how many transient apply failures in a
@@ -1284,6 +1441,24 @@ const (
 // an unbroken streak means the device is wedged and the rest of the budget
 // would be spent doing nothing.
 const maxConsecutiveApplyFailures = 3
+
+// applyTimeout bounds one dispatched action and observationTimeout the device
+// reads a step opens with. Options.Duration is a loop condition checked between
+// steps and the drivers add no deadline of their own, so without these a call
+// that never returns holds the run for as long as the process lives. Both are
+// far above any healthy call and far below the timeout a campaign runner puts
+// on a whole run. Variables so the timeout tests can shrink them.
+var (
+	applyTimeout       = 60 * time.Second
+	observationTimeout = 60 * time.Second
+)
+
+// applyBound is how long one dispatched action may take. An action that names
+// its own duration carries it on top: the bound exists to end a call that
+// stopped answering, not to cut a gesture the spec asked for.
+func applyBound(action verifier.Action) time.Duration {
+	return applyTimeout + time.Duration(action.DurationMillis)*time.Millisecond
+}
 
 // isWDADrop reports that the sidecar could not restart the iOS XCTest
 // runner: the channel is gone for good and the run must abort. Transient
