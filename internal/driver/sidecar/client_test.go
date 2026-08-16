@@ -2,6 +2,7 @@ package sidecar
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/priyanshujain/sanderling/internal/driver"
 	driverpb "github.com/priyanshujain/sanderling/proto/driverpb"
 )
 
@@ -46,8 +48,10 @@ type fakeServer struct {
 	logEntries     []*driverpb.LogEntry
 	metrics        *driverpb.MetricsResponse
 
-	healthError error
-	tapError    error
+	healthError   error
+	tapError      error
+	gestureError  error
+	selectorError error
 }
 
 func (s *fakeServer) Health(_ context.Context, _ *driverpb.Empty) (*driverpb.HealthStatus, error) {
@@ -85,6 +89,9 @@ func (s *fakeServer) Tap(_ context.Context, point *driverpb.Point) (*driverpb.Em
 	if s.tapError != nil {
 		return nil, s.tapError
 	}
+	if s.gestureError != nil {
+		return nil, s.gestureError
+	}
 	s.taps = append(s.taps, point.GetX(), point.GetY())
 	return &driverpb.Empty{}, nil
 }
@@ -92,6 +99,9 @@ func (s *fakeServer) Tap(_ context.Context, point *driverpb.Point) (*driverpb.Em
 func (s *fakeServer) TapSelector(_ context.Context, selector *driverpb.Selector) (*driverpb.Empty, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	if s.selectorError != nil {
+		return nil, s.selectorError
+	}
 	s.tapSelectors = append(s.tapSelectors, selector.GetValue())
 	return &driverpb.Empty{}, nil
 }
@@ -113,6 +123,9 @@ func (s *fakeServer) WaitForIdle(_ context.Context, duration *driverpb.Duration)
 func (s *fakeServer) LongPress(_ context.Context, point *driverpb.Point) (*driverpb.Empty, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	if s.gestureError != nil {
+		return nil, s.gestureError
+	}
 	s.longPresses = append(s.longPresses, point.GetX(), point.GetY())
 	return &driverpb.Empty{}, nil
 }
@@ -120,6 +133,9 @@ func (s *fakeServer) LongPress(_ context.Context, point *driverpb.Point) (*drive
 func (s *fakeServer) DoubleTap(_ context.Context, point *driverpb.Point) (*driverpb.Empty, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	if s.gestureError != nil {
+		return nil, s.gestureError
+	}
 	s.doubleTaps = append(s.doubleTaps, point.GetX(), point.GetY())
 	return &driverpb.Empty{}, nil
 }
@@ -127,6 +143,9 @@ func (s *fakeServer) DoubleTap(_ context.Context, point *driverpb.Point) (*drive
 func (s *fakeServer) Swipe(_ context.Context, request *driverpb.SwipeRequest) (*driverpb.Empty, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	if s.gestureError != nil {
+		return nil, s.gestureError
+	}
 	s.swipes = append(s.swipes, request)
 	return &driverpb.Empty{}, nil
 }
@@ -678,6 +697,67 @@ func TestClient_RecentLogsSinceBranches(t *testing.T) {
 			}
 			if len(logs) != 1 || logs[0].Level != "E" || logs[0].Message != "boom" || logs[0].UnixMillis != 5 || logs[0].Tag != "t" {
 				t.Errorf("decoded logs wrong: %+v", logs)
+			}
+		})
+	}
+}
+
+// TestClient_SelectorThatMatchesNothingReportsIt keeps a by-selector tap that
+// named no element distinguishable from a gesture that reached no point: the
+// sidecar refuses it with NOT_FOUND and the client names the resolution
+// failure rather than the delivery one.
+func TestClient_SelectorThatMatchesNothingReportsIt(t *testing.T) {
+	taps := map[string]func(*Client) error{
+		"TapSelector":       func(c *Client) error { return c.TapSelector(context.Background(), "id:absent") },
+		"DoubleTapSelector": func(c *Client) error { return c.DoubleTapSelector(context.Background(), "id:absent") },
+	}
+	for name, tap := range taps {
+		t.Run(name, func(t *testing.T) {
+			state := newHarness(t)
+			state.fake.mutex.Lock()
+			state.fake.selectorError = status.Error(
+				codes.NotFound, "selector id:absent matched no element")
+			state.fake.mutex.Unlock()
+			client, _ := Dial(state.address)
+			defer client.Close()
+
+			err := tap(client)
+			if !errors.Is(err, driver.ErrSelectorMatchedNothing) {
+				t.Fatalf("err = %v, want ErrSelectorMatchedNothing", err)
+			}
+			if errors.Is(err, driver.ErrGestureUndelivered) {
+				t.Fatal("a selector that matched nothing must not read as an undelivered gesture")
+			}
+		})
+	}
+}
+
+// TestClient_OffScreenGestureReportsUndelivered holds the Android client to the
+// contract Chrome and iOS already meet: a gesture the device had no surface
+// under reports driver.ErrGestureUndelivered rather than returning nil and
+// letting the step read as an action that landed.
+func TestClient_OffScreenGestureReportsUndelivered(t *testing.T) {
+	gestures := map[string]func(*Client) error{
+		"Tap":       func(c *Client) error { return c.Tap(context.Background(), 160, 900) },
+		"DoubleTap": func(c *Client) error { return c.DoubleTap(context.Background(), 160, 900) },
+		"LongPress": func(c *Client) error { return c.LongPress(context.Background(), 160, 900) },
+		"Swipe": func(c *Client) error {
+			return c.Swipe(context.Background(), 160, 900, 160, 700, time.Second)
+		},
+	}
+	for name, gesture := range gestures {
+		t.Run(name, func(t *testing.T) {
+			state := newHarness(t)
+			state.fake.mutex.Lock()
+			state.fake.gestureError = status.Error(
+				codes.OutOfRange, "gesture point (160,900) is outside the 320x640 screen")
+			state.fake.mutex.Unlock()
+			client, _ := Dial(state.address)
+			defer client.Close()
+
+			err := gesture(client)
+			if !errors.Is(err, driver.ErrGestureUndelivered) {
+				t.Fatalf("err = %v, want ErrGestureUndelivered", err)
 			}
 		})
 	}
