@@ -74,12 +74,16 @@ jobs:
       # The token is what stops this step flaking: without it the action pulls
       # buf's release tarball from github.com anonymously, on the shared runner
       # IP's rate limit, and a throttled connection shows up as `socket hang
-      # up` after three retries. The version is the action's own default, made
-      # explicit so a new action release cannot move the buf we build with.
+      # up` after three retries. The version is pinned explicitly so a new
+      # action release cannot move the buf we build with. `setup_only` is what
+      # keeps this a plain install: left off, the action runs its own lint,
+      # format and breaking checks, and `buf lint` below is where this repo
+      # says which rules it wants.
       - name: Install buf
-        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3 # v1.5.0
         with:
-          version: "1.50.0"
+          version: "1.72.0"
+          setup_only: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install protoc plugins
