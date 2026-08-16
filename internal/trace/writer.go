@@ -13,14 +13,31 @@ import (
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
+// TraceVersion is stamped on every step this build writes. A step decoding to
+// version 0 predates the fields introduced with version 1 (the tree's stored
+// depths, per-step logs, per-step exceptions), which is what separates "this
+// trace cannot answer the question" from "this step had nothing to report".
+const TraceVersion = 1
+
 type Step struct {
-	Index     int                        `json:"step"`
-	Timestamp time.Time                  `json:"timestamp"`
-	Screen    string                     `json:"screen,omitempty"`
-	Snapshots map[string]json.RawMessage `json:"snapshots,omitempty"`
+	Index        int                        `json:"step"`
+	TraceVersion int                        `json:"trace_version,omitempty"`
+	Timestamp    time.Time                  `json:"timestamp"`
+	Screen       string                     `json:"screen,omitempty"`
+	Snapshots    map[string]json.RawMessage `json:"snapshots,omitempty"`
 	// NextAction is the action chosen for the next iteration based on observing this step.
-	NextAction       *Action                    `json:"next_action,omitempty"`
-	Exceptions       []Exception                `json:"exceptions,omitempty"`
+	NextAction *Action `json:"next_action,omitempty"`
+	// Logs are the platform log lines collected for this step, Exceptions the
+	// uncaught errors read at verification time: the error surface behind
+	// state.logs and state.exceptions, which the default properties read and
+	// an offline oracle has no other source for.
+	Logs       []LogEntry  `json:"logs,omitempty"`
+	Exceptions []Exception `json:"exceptions,omitempty"`
+	// Navigations are the document-replacing navigations seen since the
+	// previous step: the app reloaded, submitted a form, or changed route.
+	// Each one restarts the app's own runtime, so without them a reload and a
+	// generator repeating itself read the same way in a trace.
+	Navigations      []Navigation               `json:"navigations,omitempty"`
 	Violations       []string                   `json:"violations,omitempty"`
 	Hierarchy        *hierarchy.Tree            `json:"hierarchy,omitempty"`
 	Residuals        map[string]json.RawMessage `json:"residuals,omitempty"`
@@ -35,6 +52,11 @@ type Step struct {
 	// count of executed actions cannot be inflated by steps whose action the
 	// runner threw away. Empty when the action ran (or when none was chosen).
 	ActionSkipped string `json:"action_skipped,omitempty"`
+	// ObservationError names why this step's device read produced no tree,
+	// empty when a tree was read. A screen with no elements on it is a tree,
+	// so without this a step that observed nothing at all is indistinguishable
+	// from a step that observed an app showing nothing.
+	ObservationError string `json:"observation_error,omitempty"`
 	// SkippedVerification is set true exactly when the verifier was skipped
 	// for this step, so downstream tooling can tell a deliberately-skipped
 	// step from one that was verified and came back clean.
@@ -42,6 +64,12 @@ type Step struct {
 	// Witnesses records the violation witness for each property that newly
 	// violated at this step: the cause and the extractor values at onset.
 	Witnesses map[string]Witness `json:"witnesses,omitempty"`
+}
+
+// Navigation is one document-replacing navigation the run observed.
+type Navigation struct {
+	URL        string `json:"url"`
+	UnixMillis int64  `json:"unix_millis,omitempty"`
 }
 
 // Witness is the trace-side record of a property violation: why it fired, the
@@ -112,6 +140,15 @@ type BoundsRecord struct {
 type PointRecord struct {
 	X int `json:"x"`
 	Y int `json:"y"`
+}
+
+// LogEntry mirrors one platform log line the runner collected for this step,
+// in the shape state.logs exposes to a spec.
+type LogEntry struct {
+	UnixMillis int64  `json:"unix_millis,omitempty"`
+	Level      string `json:"level,omitempty"`
+	Tag        string `json:"tag,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 type Exception struct {
@@ -195,12 +232,15 @@ func (w *Writer) WriteMeta(meta Meta) error {
 	return os.WriteFile(filepath.Join(w.directory, "meta.json"), body, 0o644)
 }
 
+// WriteStep stamps the format version itself so no caller can write a step
+// that cannot be told apart from one written before the format changed.
 func (w *Writer) WriteStep(step Step) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 	if w.file == nil {
 		return fmt.Errorf("trace: writer is closed")
 	}
+	step.TraceVersion = TraceVersion
 	return w.encoder.Encode(step)
 }
 

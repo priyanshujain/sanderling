@@ -143,11 +143,6 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 		t.Errorf("residuals round-trip wrong: %s", got.Residuals["prop1"])
 	}
 
-	// Intentionally-lossy contract: Tree marshals only Elements (Root and
-	// Node.Children are json:"-"). The flat element list survives; tree
-	// structure does not. Lock both halves so a regression that drops the
-	// element list, or one that silently starts persisting structure the
-	// replay UI would then depend on, is caught.
 	if got.Hierarchy == nil {
 		t.Fatal("hierarchy dropped from trace")
 	}
@@ -157,8 +152,22 @@ func TestWriteStep_HierarchyAndResidualsRoundTrip(t *testing.T) {
 	if got.Hierarchy.Elements[1].Text != "hi" {
 		t.Errorf("element field lost: %+v", got.Hierarchy.Elements[1])
 	}
-	if got.Hierarchy.Root != nil {
-		t.Errorf("Root is json:\"-\" and must decode nil, got %+v", got.Hierarchy.Root)
+	if got.Hierarchy.Root == nil {
+		t.Fatal("tree structure not reconstructed from the stored form")
+	}
+	if got.Hierarchy.Root.ResourceID != "root" ||
+		len(got.Hierarchy.Root.Children) != 1 {
+		t.Fatalf("root rebuilt wrong: %+v", got.Hierarchy.Root.Element)
+	}
+	if resolved := got.Hierarchy.Find("id:child"); resolved == nil ||
+		resolved.Text != "hi" {
+		t.Errorf(
+			"selector resolves online but not against the decoded tree: %+v",
+			resolved,
+		)
+	}
+	if resolved := got.Hierarchy.Find("id:child"); resolved != got.Hierarchy.Elements[1] {
+		t.Error("decoded elements and the rebuilt nodes are different pointers")
 	}
 }
 
@@ -491,5 +500,50 @@ func TestWriteMeta_OmitsArmMembershipWhenUnset(t *testing.T) {
 		if strings.Contains(string(body), `"`+key+`"`) {
 			t.Errorf("meta.json carries %q when unset:\n%s", key, body)
 		}
+	}
+}
+
+// TestStepPredatingTheFormatIsDistinguishable is the backward-compatibility
+// contract: the existing corpus must still load, and a step from it must be
+// separable from one this build wrote with nothing to report, or "this trace
+// predates the format" reads as "this step had no logs".
+func TestStepPredatingTheFormatIsDistinguishable(t *testing.T) {
+	const stored = `{"step":3,"timestamp":"2026-06-10T21:22:07Z",` +
+		`"hierarchy":{"elements":[{"resourceId":"root"},{"resourceId":"child"}]}}`
+	var old Step
+	if err := json.Unmarshal([]byte(stored), &old); err != nil {
+		t.Fatalf(
+			"a trace written before the format change no longer loads: %v",
+			err,
+		)
+	}
+	if old.TraceVersion != 0 {
+		t.Errorf(
+			"trace_version = %d, want 0 for a step that predates the field",
+			old.TraceVersion,
+		)
+	}
+	if len(old.Hierarchy.Elements) != 2 || old.Hierarchy.Root != nil {
+		t.Errorf("old hierarchy reinterpreted: elements=%d root=%v",
+			len(old.Hierarchy.Elements), old.Hierarchy.Root)
+	}
+
+	directory := t.TempDir()
+	writer, _ := NewWriter(directory)
+	defer writer.Close()
+	if err := writer.WriteStep(Step{Index: 3}); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(directory, "trace.jsonl"))
+	var fresh Step
+	if err := json.Unmarshal(body, &fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.TraceVersion != TraceVersion {
+		t.Errorf("a step with nothing to report stamped version %d, want %d",
+			fresh.TraceVersion, TraceVersion)
+	}
+	if len(fresh.Logs) != 0 {
+		t.Errorf("logs = %v, want none", fresh.Logs)
 	}
 }
