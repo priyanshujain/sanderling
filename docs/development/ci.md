@@ -253,33 +253,22 @@ window looked like and not only that the conviction happened.
 
 ## Releases
 
-Two pipelines, and they are independent of each other.
+**Every merge to master cuts a patch.** The `Tag`, `Release (npm)` and
+`Release (cli)` jobs sit in `ci.yml` alongside everything else, waiting on
+`Checks`, `Folio` and `Replay UI`, so nothing reaches a registry that the
+emulators and the simulator have not agreed on. `0.1.4` becomes `0.1.5`:
+published to npm, and to GitHub Releases with the CLI binaries.
 
-**Every merge to master cuts a patch.** The `Release` jobs sit in `ci.yml`
-alongside everything else, waiting on `Checks`, `Folio` and `Replay UI`, so
-nothing reaches a registry that the emulators and the simulator have not agreed
-on. `0.1.4` becomes `0.1.5`: published to npm, and to GitHub Releases with the
-CLI binaries. It releases the commit that triggered the run rather than master's
-head, because master can move in the hour the device legs take.
+**A milestone consolidates them.** Actions -> ci -> Run workflow, set `promote`
+to `minor` or `major`, and the patches you have been shipping become `0.2.0`.
+Leaving `promote` on `none` is an ordinary ci run that publishes nothing, which
+is what stops a dispatch meant to re-run the tests from cutting a release.
 
-**`release.yml` promotes that to a milestone.** Actions -> release -> Run
-workflow, pick `minor` or `major`, and the version you have been running as
-`0.1.6` is republished as `0.2.0`.
-
-Those two entries are the whole interface. There is no box to type a version
-into, and no `patch` entry: a manual patch would republish an identical commit
-under the next patch number, and a version named by hand is the one way to get a
-release that does not follow from the tag before it.
-
-It runs no checks and needs none. The commit it releases is the one the last
-release was cut from, and that commit only carries a tag because a whole ci run
-went green on it. Re-running the device legs to republish bytes that already
-passed them would prove nothing. Afterwards the patch line continues from the
-milestone: the next merge counts off `0.2.0` and cuts `0.2.1`.
-
-Both call `release-publish.yml`, which is where the tagging, the npm publish and
-GoReleaser actually live. Two copies of a publish drift, and the drift only
-shows up on a release.
+A promotion runs the whole suite, device legs included. It is the same pipeline
+either way, and a release that skipped the checks would be the only release
+nobody checked. Both paths release the commit the run tested rather than
+whatever master drifted to while it ran. Afterwards the patch line continues
+from the milestone: the next merge counts off `0.2.0` and cuts `0.2.1`.
 
 **The tags are the version.** Nothing in the tree holds it:
 `pkg/spec/package.json` stays at `0.0.0-dev` and CI stamps the real version in
@@ -295,17 +284,14 @@ BUMP=minor .github/scripts/next-version.sh
 ```
 
 The tag is pushed before anything is published, because npm is the half of a
-release that cannot be taken back and a tag is the half that can. Both pipelines
-resolve their version under one `release-tag` concurrency group, so a promotion
-and a merge can never count off the same tag at once.
+release that cannot be taken back and a tag is the half that can.
 
 ### How far back the notes reach
 
 GoReleaser builds its changelog from the commits between the previous tag and
 this one, and works that previous tag out on its own. For a patch that is
-exactly right. For a promotion it is not: `v0.2.0` lands on the commit `v0.1.6`
-already tags, so GoReleaser reaches back to `v0.1.5` and the notes on a release
-consolidating six patches describe one merge.
+exactly right. For a milestone it is not: the notes on a `0.2.0` consolidating
+six patches would describe the one merge that happened to be last.
 
 So the resolver also emits `previous_tag`, which the release passes as
 `GORELEASER_PREVIOUS_TAG`: the last release at the level being cut. A minor
@@ -320,18 +306,34 @@ landed *after* that tag. So the one release this shortchanges is the first
 milestone of its kind, whose notes start after the first release rather than at
 it. That is one merge, once, and it is not worth a special case.
 
-### The npm credential
+### Why the release is not its own workflow
 
-`NPM_TOKEN` is a classic automation token. Those do not expire, which is the
-whole point: what took the pipeline down in August 2026 was a *granular* token,
-and granular tokens default to a 30-day life. npm answers a publish it will not
-authorise with `404`, so the failure read as "package does not exist" while
-`@sanderling/spec` was sitting in the registry the whole time.
+It reads like it should be. The reason it is not is npm.
 
-Trusted publishing over OIDC would remove the token, and it is the better
-mechanism, but it cannot express this shape: a package carries exactly one
-trusted publisher, matched against the filename of the workflow that *starts*
-the run, and there are two workflows here that publish. A reusable workflow does
-not help, because npm sees the caller's name. Collapsing the two pipelines into
-one is the price of OIDC, and it is not worth paying.
+npm publishes over OIDC here, against a trusted publisher configured for
+`@sanderling/spec`, so CI holds no npm credential at all. That is not a
+preference: npm disabled classic token creation in November 2025, revoked every
+classic token on 9 December 2025, and caps a granular token at 90 days. A token
+in CI would now expire quarterly, which is exactly the failure this replaced.
+The August 2026 outage was an expired granular token, and npm answers a publish
+it will not authorise with `404`, so it read as "package does not exist" while
+`@sanderling/spec` sat in the registry the whole time.
 
+A package carries exactly one trusted publisher, and npm matches it against the
+filename of the workflow that *starts* the run. A reusable workflow does not
+help, because npm sees the caller's name, not the callee's. So every publish has
+to enter through one file, and since a merge's release has to run inside ci, that
+file is `ci.yml`.
+
+Setting it up again, or moving the package, means npmjs.com -> the package ->
+trusted publisher: repository `priyanshujain/sanderling`, workflow `ci.yml`. Or
+from a shell, which needs an interactive 2FA challenge:
+
+```
+npm trust github @sanderling/spec --file ci.yml --repo priyanshujain/sanderling --allow-publish
+npm trust list @sanderling/spec
+```
+
+The job installs npm 11.5.1 or newer before publishing, because
+`actions/setup-node` writes an empty `_authToken` line into `.npmrc` and an older
+npm reads that as "auth is configured" and never asks for an OIDC token.
