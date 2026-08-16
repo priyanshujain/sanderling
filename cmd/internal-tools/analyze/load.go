@@ -42,11 +42,16 @@ type runRecord struct {
 	MonotonicMillis int64 `json:"monotonic_millis"`
 	// DurationMillis is the name campaigns written before the two clocks were
 	// split gave the same monotonic reading, so those files still read.
-	DurationMillis           int64    `json:"duration_millis"`
-	TraceError               string   `json:"trace_error"`
-	Steps                    int      `json:"steps"`
-	FirstViolationOriginStep *int     `json:"first_violation_origin_step"`
-	ViolatedProperties       []string `json:"violated_properties"`
+	DurationMillis           int64  `json:"duration_millis"`
+	TraceError               string `json:"trace_error"`
+	Steps                    int    `json:"steps"`
+	FirstViolationOriginStep *int   `json:"first_violation_origin_step"`
+	// FirstViolationDetectedStep is the step the violation was reported on,
+	// which is the origin step for a safety property tripping under its own
+	// action and the end of the budget for an obligation that never discharged.
+	// It is what the survival analysis times the event by; see eventStep.
+	FirstViolationDetectedStep *int     `json:"first_violation_detected_step"`
+	ViolatedProperties         []string `json:"violated_properties"`
 	// Actions is the count of steps that dispatched an action, and it is a
 	// pointer so that a runs.jsonl written before the campaign tool counted
 	// them is refused rather than read as an arm that acted zero times. The
@@ -66,11 +71,14 @@ const (
 )
 
 type classifiedRun struct {
-	Seed               int64
-	Steps              int
-	Actions            int
-	MonotonicMillis    int64
-	OriginStep         int
+	Seed            int64
+	Steps           int
+	Actions         int
+	MonotonicMillis int64
+	OriginStep      int
+	// EventStep is when the run could know, and it is what the survival
+	// analysis measures. It is the origin step whenever the two agree.
+	EventStep          int
 	Violated           bool
 	ClampedToBudget    bool
 	ViolatedProperties []string
@@ -183,15 +191,35 @@ func classify(record runRecord, budget int) classifiedRun {
 		return item
 	}
 	item.Violated = true
-	if origin > budget {
+	item.OriginStep = origin
+	item.EventStep = eventStep(record, origin)
+	if item.EventStep > budget {
 		// The run-end finalize line reports obligations that never discharged
 		// at an index one past the last executed step. That is a real detection
 		// but not a real step, so it is held at the budget and counted.
-		origin = budget
+		item.EventStep = budget
 		item.ClampedToBudget = true
 	}
-	item.OriginStep = origin
 	return item
+}
+
+// eventStep is the step at which the run could know it had violated. A safety
+// property tripping under its own action is detected on the step that armed it
+// and the two agree. An obligation that never discharges is reported when the
+// run ends, and timing that at the step that armed it would record a liveness
+// failure flushed at the budget as a violation found on the first step, which
+// is a number the run cannot support and which no censored run can be compared
+// against: the budget is the clock the clean runs are censored on, so the events
+// have to be on it too. A campaign written before the field existed carries no
+// detected step and keeps the origin.
+func eventStep(record runRecord, origin int) int {
+	if record.FirstViolationDetectedStep == nil {
+		return origin
+	}
+	if detected := *record.FirstViolationDetectedStep; detected > origin {
+		return detected
+	}
+	return origin
 }
 
 // groupArms folds every campaign directory into its arm. Two directories with
@@ -250,13 +278,16 @@ func (a arm) observations() []observation {
 		if item.ExcludedBecause != "" {
 			continue
 		}
-		if item.Violated {
-			result = append(result, observation{Steps: float64(item.OriginStep), Event: true})
-			continue
-		}
-		result = append(result, observation{Steps: float64(a.Budget), Event: false})
+		result = append(result, observationOf(item, a.Budget))
 	}
 	return result
+}
+
+func observationOf(item classifiedRun, budget int) observation {
+	if item.Violated {
+		return observation{Steps: float64(item.EventStep), Event: true}
+	}
+	return observation{Steps: float64(budget), Event: false}
 }
 
 // stepTimes is the observations flattened to plain numbers, censored runs held

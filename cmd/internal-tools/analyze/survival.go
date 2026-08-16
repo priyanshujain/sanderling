@@ -67,12 +67,7 @@ func kaplanMeier(observations []observation) []survivalPoint {
 // and the second return value says so: substituting a mean there would report a
 // number the data does not contain.
 func medianSurvival(curve []survivalPoint) (float64, bool) {
-	for _, point := range curve {
-		if point.Survival <= 0.5 {
-			return point.Steps, true
-		}
-	}
-	return 0, false
+	return quantileSurvival(curve, 0.5)
 }
 
 func distinctSteps(observations []observation) []float64 {

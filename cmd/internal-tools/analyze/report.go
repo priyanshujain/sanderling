@@ -14,7 +14,7 @@ import (
 func writeReport(result analysis, out io.Writer) {
 	fmt.Fprintf(out, "primary outcome: %s\n\n", result.Outcome)
 
-	writeTable(out, []string{"arm", "runs", "violated", "censored", "excluded", "missing", "median steps", "violation rate"},
+	writeTable(out, []string{"arm", "runs", "violated", "censored", "excluded", "missing", "median steps", "iqr steps", "violation rate"},
 		func(add func(...string)) {
 			for _, summary := range result.Arms {
 				add(
@@ -25,6 +25,7 @@ func writeReport(result analysis, out io.Writer) {
 					strconv.Itoa(summary.Excluded),
 					strconv.Itoa(len(summary.MissingSeeds)),
 					formatMedian(summary.MedianStepsToFirstViolation),
+					formatMedian(summary.FirstQuartileSteps)+" to "+formatMedian(summary.ThirdQuartileSteps),
 					formatRatio(summary.ViolationRate, 3),
 				)
 			}
@@ -66,6 +67,13 @@ func writeReport(result analysis, out io.Writer) {
 		if summary.EventsHeldAtBudget > 0 {
 			fmt.Fprintf(out, "\n%s held %d violation(s) reported past the budget at %d steps",
 				summary.Arm, summary.EventsHeldAtBudget, summary.StepBudget)
+		}
+	}
+	for _, summary := range result.Arms {
+		if summary.EventsDetectedAfterOrigin > 0 {
+			fmt.Fprintf(out, "\n%s timed %d violation(s) at the step they were detected rather than the step that armed them, "+
+				"which is what an obligation reported only when the run ended looks like",
+				summary.Arm, summary.EventsDetectedAfterOrigin)
 		}
 	}
 	if len(result.Arms) > 0 {

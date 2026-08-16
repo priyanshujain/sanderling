@@ -14,6 +14,7 @@ func violatingRun(seed int64, steps, origin int, properties ...string) classifie
 		Actions:            steps,
 		MonotonicMillis:    60_000,
 		OriginStep:         origin,
+		EventStep:          origin,
 		Violated:           true,
 		ViolatedProperties: properties,
 	}

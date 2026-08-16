@@ -20,7 +20,10 @@ type armSummary struct {
 	ExcludedByReason            map[string]int  `json:"excluded_by_reason,omitempty"`
 	MissingSeeds                []int64         `json:"missing_seeds,omitempty"`
 	EventsHeldAtBudget          int             `json:"events_held_at_budget"`
+	EventsDetectedAfterOrigin   int             `json:"events_detected_after_origin"`
 	MedianStepsToFirstViolation *float64        `json:"median_steps_to_first_violation"`
+	FirstQuartileSteps          *float64        `json:"first_quartile_steps_to_first_violation"`
+	ThirdQuartileSteps          *float64        `json:"third_quartile_steps_to_first_violation"`
 	SurvivalCurve               []survivalPoint `json:"survival_curve,omitempty"`
 	ViolationRate               *float64        `json:"violation_rate"`
 	TotalSteps                  int             `json:"total_steps"`
@@ -154,6 +157,9 @@ func summarize(current arm) armSummary {
 		if item.ClampedToBudget {
 			summary.EventsHeldAtBudget++
 		}
+		if item.Violated && item.EventStep > item.OriginStep {
+			summary.EventsDetectedAfterOrigin++
+		}
 		if item.Violated {
 			summary.Violated++
 		} else {
@@ -169,6 +175,12 @@ func summarize(current arm) armSummary {
 	summary.SurvivalCurve = kaplanMeier(current.observations())
 	if median, ok := medianSurvival(summary.SurvivalCurve); ok {
 		summary.MedianStepsToFirstViolation = &median
+	}
+	if lower, ok := quantileSurvival(summary.SurvivalCurve, 0.25); ok {
+		summary.FirstQuartileSteps = &lower
+	}
+	if upper, ok := quantileSurvival(summary.SurvivalCurve, 0.75); ok {
+		summary.ThirdQuartileSteps = &upper
 	}
 	if summary.Usable > 0 {
 		rate := float64(summary.Violated) / float64(summary.Usable)

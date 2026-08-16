@@ -63,7 +63,7 @@ func TestClassify_ViolationIsAnEventAtTheOriginStep(t *testing.T) {
 // silently turned into a censored run.
 func TestClassify_ViolationPastTheBudgetIsHeldAtTheBudget(t *testing.T) {
 	item := classify(runRecord{FirstViolationOriginStep: stepPointer(51)}, 50)
-	if !item.Violated || item.OriginStep != 50 || !item.ClampedToBudget {
+	if !item.Violated || item.EventStep != 50 || !item.ClampedToBudget {
 		t.Errorf("run %+v, want a clamped event at 50", item)
 	}
 }
