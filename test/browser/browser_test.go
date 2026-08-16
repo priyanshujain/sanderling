@@ -10,9 +10,12 @@
 package browser_test
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -82,6 +85,14 @@ func TestBrowserAriaRoleIsTappable(t *testing.T) {
 // and returns every property name that was ever reported violated.
 func runFixture(t *testing.T, name string) []string {
 	t.Helper()
+	violations, _ := runFixtureRecording(t, name)
+	return violations
+}
+
+// runFixtureRecording is runFixture plus the run directory, for a test that
+// asserts what the run left on disk rather than what it reported.
+func runFixtureRecording(t *testing.T, name string) ([]string, string) {
+	t.Helper()
 
 	server := httptest.NewServer(http.FileServer(http.Dir(testdataDir(t))))
 	t.Cleanup(server.Close)
@@ -139,12 +150,15 @@ func runFixture(t *testing.T, name string) []string {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
+	if err := traceWriter.Close(); err != nil {
+		t.Fatalf("close trace: %v", err)
+	}
 
 	var violated []string
 	for _, record := range summary.Violations {
 		violated = append(violated, record.Properties...)
 	}
-	return violated
+	return violated, traceWriter.Directory()
 }
 
 // bundleSpec compiles the fixture spec for both runtimes: the goja bundle the
@@ -220,5 +234,44 @@ func TestBrowserUndefinedExtractorStaysUndefined(t *testing.T) {
 	}
 	if !slices.Contains(violations, "counterNeverMoves") {
 		t.Fatalf("nothing was ever tapped, so the property above held vacuously; violations=%v", violations)
+	}
+}
+
+// TestBrowserUncaughtExceptionReachesTheTrace covers the error surface a web
+// run has no other source for. The page buffers its uncaught errors in V8;
+// nothing used to carry them out, so state.exceptions was empty on the host
+// and no trace ever held one, leaving an offline crash oracle nothing to read.
+func TestBrowserUncaughtExceptionReachesTheTrace(t *testing.T) {
+	violations, directory := runFixtureRecording(t, "throwing")
+	if !slices.Contains(violations, "noUncaughtExceptions") {
+		t.Fatalf("the page never threw; violations=%v", violations)
+	}
+
+	file, err := os.Open(filepath.Join(directory, "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	var recorded []trace.Exception
+	for scanner.Scan() {
+		var step trace.Step
+		if err := json.Unmarshal(scanner.Bytes(), &step); err != nil {
+			t.Fatalf("decode step: %v", err)
+		}
+		if step.TraceVersion != trace.TraceVersion {
+			t.Errorf("step %d: trace_version = %d, want %d", step.Index, step.TraceVersion, trace.TraceVersion)
+		}
+		recorded = append(recorded, step.Exceptions...)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorded) == 0 {
+		t.Fatal("the page threw and the verdict saw it, but no trace step carries an exception")
+	}
+	if recorded[0].Class == "" || recorded[0].Message == "" {
+		t.Errorf("exception recorded without class or message: %+v", recorded[0])
 	}
 }
