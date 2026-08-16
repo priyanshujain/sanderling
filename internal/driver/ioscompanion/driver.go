@@ -594,7 +594,19 @@ func (d *Driver) Terminate(ctx context.Context) error {
 	})
 }
 
+// offScreen reports a point the device has no surface under. The hierarchy
+// reaches past the screen wherever a scroll container holds content beyond the
+// fold, so an action derived from it can name a point no touch can land on.
+// The far edge is exclusive: a touch at x == screenWidth arrives at
+// screenWidth-1, which is a point the action never named.
+func (d *Driver) offScreen(x, y int) bool {
+	return x < 0 || y < 0 || x >= d.screenWidth || y >= d.screenHeight
+}
+
 func (d *Driver) Tap(ctx context.Context, x, y int) error {
+	if d.offScreen(x, y) {
+		return fmt.Errorf("%w: (%d,%d)", driver.ErrGestureUndelivered, x, y)
+	}
 	d.mu.Lock()
 	d.lastTap.x = float64(x)
 	d.lastTap.y = float64(y)
@@ -606,18 +618,27 @@ func (d *Driver) Tap(ctx context.Context, x, y int) error {
 }
 
 func (d *Driver) DoubleTap(ctx context.Context, x, y int) error {
+	if d.offScreen(x, y) {
+		return fmt.Errorf("%w: (%d,%d)", driver.ErrGestureUndelivered, x, y)
+	}
 	return d.withRecovery(ctx, func() error {
 		return d.companion.SendHID(ctx, doubleTapEvents(float64(x), float64(y), d.doubleTapGapMilliseconds)...)
 	})
 }
 
 func (d *Driver) LongPress(ctx context.Context, x, y int) error {
+	if d.offScreen(x, y) {
+		return fmt.Errorf("%w: (%d,%d)", driver.ErrGestureUndelivered, x, y)
+	}
 	return d.withRecovery(ctx, func() error {
 		return d.companion.SendHID(ctx, longPressEvents(float64(x), float64(y), longPressHoldMilliseconds)...)
 	})
 }
 
 func (d *Driver) Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error {
+	if d.offScreen(fromX, fromY) {
+		return fmt.Errorf("%w: (%d,%d)", driver.ErrGestureUndelivered, fromX, fromY)
+	}
 	seconds := duration.Seconds()
 	if seconds <= 0 {
 		seconds = 0.25
@@ -707,7 +728,7 @@ func (d *Driver) resolveSelectorCenter(ctx context.Context, selector string) (in
 	}
 	element := tree.Find(selector)
 	if element == nil {
-		return 0, 0, fmt.Errorf("selector %q matched no element", selector)
+		return 0, 0, fmt.Errorf("%w: %q", driver.ErrSelectorMatchedNothing, selector)
 	}
 	x, y := element.Bounds.Center()
 	return x, y, nil
