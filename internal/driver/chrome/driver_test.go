@@ -1038,3 +1038,49 @@ func TestEvaluateExtractors_RejectsAnUnenvelopedReading(t *testing.T) {
 		t.Errorf("EvaluateExtractors failed with %q, want it to name the bundle mismatch", err)
 	}
 }
+
+// TestHierarchy_CarriesEveryMarkupAttribute covers the data the spec actually
+// reads. folio-web's extractors read data-cents, data-account-id and
+// data-balance off the elements they find; the dump used to emit a fixed
+// standard set, so those values were absent from the goja host and from every
+// stored trace, and a selector over them resolved nothing offline.
+func TestHierarchy_CarriesEveryMarkupAttribute(t *testing.T) {
+	const html = `<body>` +
+		`<div id="total-balance" data-cents="125000">$1,250.00</div>` +
+		`<div id="card" data-testid="account-card" data-account-id="acct-7" data-balance="4200">Tim</div>` +
+		`</body>`
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+
+	total := tree.Find("id:total-balance")
+	if total == nil {
+		t.Fatal("total-balance not in the dump")
+	}
+	if got := total.Attributes["data-cents"]; got != "125000" {
+		t.Errorf(`attrs["data-cents"] = %q, want "125000"`, got)
+	}
+	card := tree.Find(`data-account-id:acct-7`)
+	if card == nil {
+		t.Fatal("no element resolves by a data attribute the markup carries")
+	}
+	if got := card.Attributes["data-balance"]; got != "4200" {
+		t.Errorf(`attrs["data-balance"] = %q, want "4200"`, got)
+	}
+	if got := card.Attributes["data-testid"]; got != "account-card" {
+		t.Errorf(`attrs["data-testid"] = %q, want "account-card"`, got)
+	}
+}

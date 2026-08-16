@@ -449,7 +449,17 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     'input, textarea, [contenteditable]').filter(isEditableElement));
   function buildTree(el, isRoot) {
     const rect = el.getBoundingClientRect();
+    // Every attribute the markup wrote, keyed as written, which is what attrs
+    // means on the native hosts and what rawAttributes in
+    // pkg/spec/src/web-runtime.ts already gives the page-side handle. Emitting
+    // only the standard set left a spec's data-* reads (folio-web's data-cents,
+    // data-account-id, data-balance) undefined on the goja host and absent from
+    // the trace, so an offline replay of the same step could not see them at
+    // all. The derived keys below overwrite anything of the same name.
     const attrs = {};
+    for (const attribute of el.attributes || []) {
+      attrs[attribute.name] = attribute.value;
+    }
     const bounds = '[' + Math.round(rect.left) + ',' + Math.round(rect.top) + ',' +
       Math.round(rect.right) + ',' + Math.round(rect.bottom) + ']';
     if (rect.width > 0 || rect.height > 0) attrs.bounds = bounds;
@@ -500,8 +510,10 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
       clickable: isClickable || null,
       enabled: isEnabled(el) || null,
       focused: document.activeElement === el || null,
-      checked: el.checked || null,
-      selected: el.selected || null,
+      // A component keeps what it likes in these two properties, so what is
+      // emitted is the flag the field declares and not the property's value.
+      checked: el.checked === true || null,
+      selected: el.selected === true || null,
       // Emitted as a plain boolean, never null: internal/hierarchy falls back to
       // the native heuristic when the field is absent, which reads any class
       // name containing "EditText" as an Android text widget. On web that is a

@@ -499,6 +499,7 @@ function isEnabled(element: Element): boolean {
 }
 
 function elementHandle(element: Element, selector: unknown): Record<string, unknown> {
+  const state = element as Partial<HTMLInputElement & HTMLOptionElement>;
   const rect = element.getBoundingClientRect();
   const x = Math.round(rect.left + rect.width / 2);
   const y = Math.round(rect.top + rect.height / 2);
@@ -529,6 +530,13 @@ function elementHandle(element: Element, selector: unknown): Record<string, unkn
     enabled: isEnabled(element),
     editable: isEditableElement(element as HTMLElement),
     focused: document.activeElement === element,
+    // Checkbox and option state lives in the DOM PROPERTY: the markup attribute
+    // records only what the page started with, so a handle reading it reports a
+    // box's initial state however often the user ticks it.
+    // internal/driver/chrome/driver.go reads the same two properties for the
+    // dump the goja host gets.
+    checked: state.checked === true,
+    selected: state.selected === true,
     x,
     y,
     bounds: {

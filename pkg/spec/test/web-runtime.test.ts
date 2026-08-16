@@ -547,12 +547,14 @@ function domElement(spec: {
   attributes?: Record<string, string>;
   labels?: string[];
   text?: string;
+  checked?: boolean;
 }): unknown {
   const attributes = spec.attributes ?? {};
   return {
     tagName: spec.tag.toUpperCase(),
     type: spec.tag === "input" ? "text" : "",
     isContentEditable: false,
+    checked: spec.checked,
     id: attributes.id ?? "",
     className: attributes.class ?? "",
     textContent: spec.text ?? "",
@@ -618,6 +620,23 @@ test("attrs keys data attributes by the name the markup writes", () => {
   assert.equal(attrsOf(element)["data-account-id"], "a-1");
   // `dataset` stays the DOMStringMap view, camelCase keys and all.
   assert.deepEqual(handleOf(element).dataset, { txnCount: "3", accountId: "a-1" });
+});
+
+// docs/manual/spec-language.md lists `checked` on every element find returns,
+// and HTML keeps that state in the DOM property: the markup attribute only
+// records what the page started with. A handle reading the attribute reports a
+// checkbox's starting state forever, so a property over "the box is ticked"
+// holds on a page where nothing was ever ticked.
+test("checked reads the live property, not the markup attribute", () => {
+  const ticked = domElement({ tag: "input", attributes: { id: "toggle-all" }, checked: true });
+  assert.equal(handleOf(ticked).checked, true);
+
+  const cleared = domElement({
+    tag: "input",
+    attributes: { id: "toggle-all", checked: "" },
+    checked: false,
+  });
+  assert.equal(handleOf(cleared).checked, false);
 });
 
 test("attrs carries every other attribute alongside tag and aria-label", () => {
