@@ -264,10 +264,12 @@ head, because master can move in the hour the device legs take.
 
 **`release.yml` promotes that to a milestone.** Actions -> release -> Run
 workflow, pick `minor` or `major`, and the version you have been running as
-`0.1.6` is republished as `0.2.0`. The `version` box overrides the dropdown with
-a version named outright, which is how a pre-release like `1.0.0-rc1` gets cut;
-a pre-release publishes under npm's `next` tag so `npm install @sanderling/spec`
-keeps resolving the latest stable.
+`0.1.6` is republished as `0.2.0`.
+
+Those two entries are the whole interface. There is no box to type a version
+into, and no `patch` entry: a manual patch would republish an identical commit
+under the next patch number, and a version named by hand is the one way to get a
+release that does not follow from the tag before it.
 
 It runs no checks and needs none. The commit it releases is the one the last
 release was cut from, and that commit only carries a tag because a whole ci run
@@ -297,6 +299,22 @@ release that cannot be taken back and a tag is the half that can. Both pipelines
 resolve their version under one `release-tag` concurrency group, so a promotion
 and a merge can never count off the same tag at once.
 
+### How far back the notes reach
+
+GoReleaser builds its changelog from the commits between the previous tag and
+this one, and works that previous tag out on its own. For a patch that is
+exactly right. For a promotion it is not: `v0.2.0` lands on the commit `v0.1.6`
+already tags, so GoReleaser reaches back to `v0.1.5` and the notes on a release
+consolidating six patches describe one merge.
+
+So the resolver also emits `previous_tag`, which the release passes as
+`GORELEASER_PREVIOUS_TAG`: the last release at the level being cut. A minor
+reaches back to the last `vX.Y.0`, counting a major as one, and a major reaches
+back to the last `vX.0.0`. The first milestone of its kind has nothing at its own
+level, so it reaches back to the first release there has ever been. A patch emits
+nothing, and an empty value leaves GoReleaser on the default that was already
+right for it.
+
 ### The npm credential
 
 `NPM_TOKEN` is a classic automation token. Those do not expire, which is the
@@ -312,12 +330,3 @@ the run, and there are two workflows here that publish. A reusable workflow does
 not help, because npm sees the caller's name. Collapsing the two pipelines into
 one is the price of OIDC, and it is not worth paying.
 
-### A promoted release has thin release notes
-
-GoReleaser builds its changelog from the commits between the previous tag and
-this one. A promotion tags a commit that is already tagged, so `v0.2.0` and
-`v0.1.6` sit on the same commit and there is nothing between them to list. The
-binaries and the npm tarball are correct; only the generated notes are empty.
-Setting `GORELEASER_PREVIOUS_TAG` to the previous milestone would make the notes
-span the patches being consolidated, and is the obvious thing to add if those
-notes start mattering.
