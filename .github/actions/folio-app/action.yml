@@ -10,7 +10,7 @@ runs:
   using: composite
   steps:
     - name: Set up the JDKs
-      uses: actions/setup-java@v5
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
       with:
         distribution: temurin
         # The metro gradle plugin folio builds with needs a 21 runtime; the
@@ -28,7 +28,7 @@ runs:
 
     - name: Cache Gradle
       if: inputs.platform != 'ios'
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.gradle/caches
@@ -50,7 +50,7 @@ runs:
     # land before `make sanderling-ios`, which is what consumes them.
     - name: Cache the companion and runner bundles
       if: inputs.platform == 'ios'
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           internal/driver/ioscompanion/companionassets/assets
