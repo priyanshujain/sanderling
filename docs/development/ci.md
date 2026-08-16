@@ -4,21 +4,17 @@ title: CI
 
 # CI
 
-`ci.yml` runs on every pull request: it builds, unit-tests, and drives three
-small web fixtures through headless Chrome (`test/browser/testdata`). It never
-runs sanderling against a real app.
+`ci.yml` runs on every pull request and every push to master. The `Check`
+jobs build, unit-test, and drive three small web fixtures through headless
+Chrome (`test/browser/testdata`). The `Folio` and `Replay UI` jobs in the same
+workflow do run sanderling against real apps, on emulators and simulators, and
+they are what make a run take the better part of an hour.
 
-Two other workflows do, and both are `workflow_dispatch` only. They boot devices,
-build apps and take minutes, which is not what you want on every push, and
-neither is a merge gate.
+`All checks passed` is the one status check to point branch protection at, and
+it is what gates a release: `release.yml` cuts one only after a whole ci run
+went green. See [Releases](#releases) at the bottom.
 
 ## folio
-
-Actions -> folio -> Run workflow. Inputs pick the legs (`all`, `android`, `ios`,
-`web`), and override the seed, the step budget and the wall-clock budget. Seed
-and step budget take `0` to mean "use the calibrated value in the workflow"; the
-wall-clock budget has no such sentinel and is passed through as written, so
-every leg gets whatever you type there.
 
 Each leg builds `examples/folio` for its platform, builds the CLI with only the
 tags that platform needs (`make sanderling-android` and friends), and runs
@@ -181,7 +177,7 @@ run's automation session bound to a bundle the simulator no longer knows.
 
 ## replay-ui
 
-Actions -> replay-ui -> Run workflow. This one is dogfooding: it records a trace
+This one is dogfooding: it records a trace
 from `test/browser/testdata/throwing` (violations and uncaught exceptions, so
 every panel has something to render), serves it with `sanderling replay`, and
 fuzzes that UI with `replay-ui/sanderling/spec.ts`.
@@ -253,3 +249,54 @@ because the window the counting invariant had to judge it in was 117 steps wide.
 Sweeping selects for a seed that reaches the bug. It cannot select for one whose
 walk also closes the window, so when a property needs a window, check what the
 window looked like and not only that the conviction happened.
+
+
+## Releases
+
+Every merge to master cuts a release. `release.yml` watches ci with a
+`workflow_run` trigger, and when a push to master finishes green it advances the
+patch: `0.1.3` becomes `0.1.4`. That publishes `@sanderling/spec` to npm and a
+GitHub Release carrying the CLI binaries, both from the commit ci went green on
+rather than from whatever master has drifted to since.
+
+For a minor or major release, Actions -> release -> Run workflow. The `bump`
+dropdown picks which part of `MAJOR.MINOR.PATCH` to advance, and `version`
+overrides it with a version named outright, which is how a pre-release like
+`1.0.0-rc1` gets cut. A pre-release publishes under npm's `next` tag so
+`npm install @sanderling/spec` keeps resolving the latest stable.
+
+**The tags are the version.** Nothing in the tree holds it: `pkg/spec/package.json`
+stays at `0.0.0-dev` and CI stamps the real version in before it publishes. So
+there is no version-bump commit to land on master, nothing to conflict on, and
+no second record to hold in step with the tags. `.github/scripts/next-version.sh`
+is the whole rule, and it counts off stable tags only, because `v0.0.1-rc4` is a
+candidate for `0.0.1` and a patch counted off it would skip the version it was a
+candidate for. Run it anywhere to see what the next release would be:
+
+```
+BUMP=minor .github/scripts/next-version.sh
+```
+
+The tag is pushed before anything is published, because npm is the half of a
+release that cannot be taken back and a tag is the half that can.
+
+### Why the release is its own workflow
+
+npm authenticates the publish over OIDC, against a trusted publisher configured
+for `@sanderling/spec` on npmjs.com. There is no token in the repo and none to
+expire, which is what took the pipeline down in August 2026: the `NPM_TOKEN`
+secret behind the old tag-driven release had expired, and npm answers an
+unauthorised publish with a 404 that reads as "no such package".
+
+npm matches that trusted publisher against the filename of the workflow that
+*starts* the run, and a package carries only one. So the publish has to live in
+one entry-point workflow: a job inside ci.yml would present `ci.yml`, and a
+reusable workflow called from ci.yml would present the caller's name too. That
+is why the merge path arrives at `release.yml` as a `workflow_run` rather than
+as a job at the end of ci.
+
+Setting that up again, or moving the package, means npmjs.com -> the package ->
+Settings -> Trusted publisher: repository `priyanshujain/sanderling`, workflow
+`release.yml`. It needs npm 11.5.1 or newer, which the job installs, because
+`actions/setup-node` writes an empty `_authToken` line into `.npmrc` and an
+older npm reads that as "auth is configured" and never asks for an OIDC token.
