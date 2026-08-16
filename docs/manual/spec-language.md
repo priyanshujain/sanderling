@@ -47,7 +47,7 @@ interface State {
 
 ## Selectors
 
-Selectors are passed to `ax.find()`, `ax.findAll()`, and element-scoped `.find()` / `.findAll()`.
+Selectors are passed to `ax.find()`, `ax.findAll()`, and element-scoped `.find()` / `.findAll()`. A tree-level lookup scans the whole hierarchy, the root element included; an element-scoped one scans that element's descendants. Both selector forms scan the same set, so `ax.find("id:page")` and `ax.find({ id: "page" })` return the same element.
 
 ### String selectors
 
@@ -55,12 +55,14 @@ Selectors are passed to `ax.find()`, `ax.findAll()`, and element-scoped `.find()
 |---|---|
 | `id:<value>` | Exact match on resource-id, or element whose resource-id ends with `:id/<value>` (Android) |
 | `idPrefix:<prefix>` | Starts-with match on resource-id, matched against the whole id and against the local name after `:id/` (Android) |
-| `text:<value>` | Substring match on text content |
+| `text:<value>` | Substring match on text content, innermost match only |
 | `desc:<value>` | Exact match on accessibility description; also matches when description starts with `<value>, ` (iOS merged labels) |
 | `descPrefix:<prefix>` | Starts-with match on accessibility description |
 | `<attr>:<value>` | Substring match on any raw attribute by name |
 
 Boolean attributes (`"true"` / `"false"`) use exact match rather than substring.
+
+`text:` names the innermost match. An element's text is its whole subtree's text on web and on iOS, so a badge reading "Sent ✓" makes every ancestor of it read as a match too, up to the root. A match a descendant of it also makes is dropped, which leaves the deepest element carrying the value: `ax.find("text:Sent")` lands on the badge, and `ax.findAll("text:Sent")` returns the badges without their ancestors. An ancestor whose own text carries the value where no descendant of it does keeps its match. `{ text: "Sent" }` means the same thing.
 
 ### Object selectors
 
@@ -229,9 +231,9 @@ PressKey({ key: Key })
 Wait({ durationMillis: number })
 ```
 
-`Key` values: `"back"`, `"home"`, `"enter"`, `"tab"`, `"up"`, `"down"`, `"left"`, `"right"`.
+`Key` values: `"back"`, `"home"`, `"enter"`, `"tab"`, `"escape"`, `"up"`, `"down"`, `"left"`, `"right"`.
 
-On web, `"back"` maps to Backspace and `"home"` is not supported. All other keys work on all platforms.
+Android sends all nine. Web sends every key except `"back"` and `"home"`, which have no in-page meaning. iOS sends `"enter"` and `"escape"`. A key the platform cannot send fails the action with an error rather than pressing nothing.
 
 ### Built-in generators
 
@@ -253,6 +255,12 @@ you need one.
 `swipes` is a free drag of 200 to 600 px from any element with real bounds, in any of the
 four directions. The sideways ones are what reach swipe-to-dismiss and swipe-to-delete on
 a list row.
+
+On a touch device the two verbs are one gesture: a Scroll is dispatched as a drag. A
+browser is not a touch device, so `Scroll` there is a wheel over the point, which moves the
+container under it by exactly the distance asked for, and `Swipe` is a touch drag, which
+reaches the handlers only a finger reaches and carries a drag's momentum. Reach for `Swipe`
+when a container scrolls by handling the drag itself rather than by overflowing.
 
 ### `actions(generator)`
 
