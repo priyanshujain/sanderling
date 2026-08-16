@@ -184,7 +184,7 @@ func findNodeFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Value)
 		return nil
 	}
 	requireKnownSelectorKeys(runtime, tree, sel)
-	return tree.Root.FindBySelector(sel)
+	return tree.FindBySelector(sel)
 }
 
 // findAllNodesFromJS dispatches a JS value to Tree-level multi-node lookup.
@@ -204,7 +204,7 @@ func findAllNodesFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Va
 		return nil
 	}
 	requireKnownSelectorKeys(runtime, tree, sel)
-	return tree.Root.FindAllBySelector(sel)
+	return tree.FindAllBySelector(sel)
 }
 
 // findNodeInSubtreeFromJS dispatches a JS value to Node-level scoped lookup.

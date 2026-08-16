@@ -102,6 +102,21 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			object:   objectSelector("data-testid", "customer-row"),
 			want:     []string{"customer_row_a1", "customer_row_b2"},
 		},
+		{
+			name:     "raw attribute, matched on a substring",
+			selector: "data-state:sent",
+			object:   objectSelector("data-state", "sent"),
+			want:     []string{"status_badge"},
+		},
+		{
+			// The root element answers a selector like any other: the string
+			// form scans from the root down, and the object form used to start
+			// at the root's children and lose it.
+			name:     "id naming the root element",
+			selector: "id:page",
+			object:   objectSelector("id", "page"),
+			want:     []string{"page"},
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -127,6 +142,189 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			}
 		})
 	}
+}
+
+// `text:` is a substring match on text content wherever the spec runs
+// (docs/manual/spec-language.md), so a badge reading "Sent ✓" answers to
+// text:Sent on web the way it already does on Android and iOS, and one reading
+// "3 unsent" out of two text nodes answers to text:unsent. It names the
+// innermost match: an element's text is its whole subtree's text, so a badge's
+// ancestors up to the document root read as matches too, and the deepest one is
+// the element the author meant.
+func TestSelectors_TextNamesTheInnermostMatchInEveryResolver(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+	installSelectorProbe(ctx, t, d)
+
+	// split_row is the ancestor that keeps its match: its own text carries the
+	// value where no descendant of it does. nested_row is the ancestor that
+	// loses it: its badge carries the value too, and the badge is the match.
+	cases := []struct {
+		name       string
+		selector   string
+		want       []string
+		scope      string
+		scopedWant []string
+	}{
+		{
+			name:     "one text node",
+			selector: "text:Sent",
+			want: []string{
+				"status_badge",
+				"draft_badge",
+				"split_row",
+				"nested_badge",
+			},
+			scope:      "status_row",
+			scopedWant: []string{"status_badge"},
+		},
+		{
+			// React writes `{count} unsent` as two text nodes, and an XPath over
+			// text() reads only the first of them.
+			name:       "text split across text nodes",
+			selector:   "text:unsent",
+			want:       []string{"unsent_badge"},
+			scope:      "unsent_row",
+			scopedWant: []string{"unsent_badge"},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			value := strings.TrimPrefix(testCase.selector, "text:")
+			if native := selectorIDsFromDump(tree, testCase.selector); !slices.Equal(
+				native,
+				testCase.want,
+			) {
+				t.Errorf(
+					"the dump matched %v for %s, want %v",
+					native,
+					testCase.selector,
+					testCase.want,
+				)
+			}
+			if web := selectorIDsFromWebRuntime(ctx, t, d, testCase.selector); !slices.Equal(
+				web,
+				testCase.want,
+			) {
+				t.Errorf(
+					"the web runtime matched %v for %s, want %v",
+					web,
+					testCase.selector,
+					testCase.want,
+				)
+			}
+			object := objectSelectorJSON(objectSelector("text", value))
+			if web := selectorIDsFromWebRuntime(ctx, t, d, object); !slices.Equal(
+				web,
+				testCase.want,
+			) {
+				t.Errorf(
+					"the web runtime matched %v for %s, want %v",
+					web,
+					object,
+					testCase.want,
+				)
+			}
+
+			xpath, isXPath, err := TranslateStringSelector(testCase.selector)
+			if err != nil {
+				t.Fatalf(
+					"TranslateStringSelector(%q): %v",
+					testCase.selector,
+					err,
+				)
+			}
+			if !isXPath {
+				t.Fatalf(
+					"TranslateStringSelector(%q) returned CSS, want an XPath",
+					testCase.selector,
+				)
+			}
+			if overCDP := xpathIDsOverCDP(ctx, t, d, xpath); !slices.Equal(
+				overCDP,
+				testCase.want,
+			) {
+				t.Errorf(
+					"the CDP selector %q matched %v, want %v",
+					xpath,
+					overCDP,
+					testCase.want,
+				)
+			}
+
+			// Scoped to one row, `text:` reads that row, the way every other
+			// selector does: an XPath anchored at the document root answers for
+			// the whole page however the caller scoped the lookup.
+			path := []hierarchy.Selector{
+				objectSelector("id", testCase.scope),
+				objectSelector("text", value),
+			}
+			var scoped []string
+			for _, node := range tree.FindAllBySelectorPath(path) {
+				scoped = append(scoped, node.Element.ResourceID)
+			}
+			if !slices.Equal(scoped, testCase.scopedWant) {
+				t.Errorf(
+					"the dump matched %v within %s, want %v",
+					scoped,
+					testCase.scope,
+					testCase.scopedWant,
+				)
+			}
+			pathJSON := objectSelectorJSON(objectSelector("id", testCase.scope))
+			pathJSON = "[" + pathJSON + "," + object + "]"
+			if web := selectorIDsFromWebRuntime(ctx, t, d, pathJSON); !slices.Equal(
+				web,
+				testCase.scopedWant,
+			) {
+				t.Errorf(
+					"the web runtime matched %v for %s, want %v",
+					web,
+					pathJSON,
+					testCase.scopedWant,
+				)
+			}
+		})
+	}
+}
+
+// xpathIDsOverCDP resolves an XPath the way TapSelector does, over CDP against
+// the live document, and reads back the ids it matched in document order.
+func xpathIDsOverCDP(
+	ctx context.Context,
+	t *testing.T,
+	d *Driver,
+	xpath string,
+) []string {
+	t.Helper()
+	var ids []string
+	script := `(() => {
+	  const found = document.evaluate(` + jsArgument(xpath) + `, document, null,
+	    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+	  const ids = [];
+	  for (let i = 0; i < found.snapshotLength; i++) ids.push(found.snapshotItem(i).id);
+	  return ids;
+	})()`
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &ids)); err != nil {
+		t.Fatalf("resolve %q over CDP: %v", xpath, err)
+	}
+	return ids
 }
 
 // A third resolver reads the same selector: TapSelector hands it to CDP as the
@@ -197,16 +395,18 @@ func objectSelectorJSON(sel hierarchy.Selector) string {
 
 func selectorIDsFromDumpObject(tree *hierarchy.Tree, sel hierarchy.Selector) []string {
 	var ids []string
-	for _, node := range tree.Root.FindAllBySelector(sel) {
+	for _, node := range tree.FindAllBySelector(sel) {
 		ids = append(ids, node.Element.ResourceID)
 	}
 	return ids
 }
 
-// jsArgument passes an object selector through as the JS object literal it
-// already is, and quotes anything else as a string selector.
+// jsArgument passes an object or path selector through as the JS literal it
+// already is, and quotes anything else as a string selector. A CSS attribute
+// selector opens with a bracket too, so only well-formed JSON passes through.
 func jsArgument(selector string) string {
-	if strings.HasPrefix(selector, "{") {
+	if json.Valid([]byte(selector)) &&
+		(strings.HasPrefix(selector, "{") || strings.HasPrefix(selector, "[")) {
 		return selector
 	}
 	quoted, err := json.Marshal(selector)

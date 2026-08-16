@@ -7,7 +7,7 @@
 //	  attribute:value      - substring match; exact for "true"/"false" booleans
 //	  id:<suffix>          - substring on resource-id / identifier (backward compat)
 //	  idPrefix:<prefix>    - starts-with on resource-id / identifier, package prefix skipped
-//	  text:<value>         - substring on text attribute
+//	  text:<value>         - substring on text attribute, innermost match only
 //	  desc:<value>         - substring on content-desc / accessibilityText
 //	  descPrefix:<prefix>  - starts-with on content-desc / accessibilityText
 //
@@ -325,6 +325,46 @@ func matchSelector(element *Element, sel Selector) bool {
 	return true
 }
 
+func selectorReadsText(sel Selector) bool {
+	for _, f := range sel.Filters {
+		if f.Attr == "text" {
+			return true
+		}
+	}
+	return false
+}
+
+// innermostMatches drops a match a descendant of it also makes. An element's
+// text is its whole subtree's text on web and on iOS, so every ancestor of a
+// matching element matches too, up to the root, and the deepest match is the
+// element the author named. An ancestor whose own text carries the value where
+// no descendant of it does keeps its match.
+func innermostMatches(nodes []*Node) []*Node {
+	if len(nodes) == 0 {
+		return nodes
+	}
+	matched := make(map[*Node]bool, len(nodes))
+	for _, node := range nodes {
+		matched[node] = true
+	}
+	var kept []*Node
+	for _, node := range nodes {
+		if !hasMatchingDescendant(node, matched) {
+			kept = append(kept, node)
+		}
+	}
+	return kept
+}
+
+func hasMatchingDescendant(node *Node, matched map[*Node]bool) bool {
+	for _, child := range node.Children {
+		if matched[child] || hasMatchingDescendant(child, matched) {
+			return true
+		}
+	}
+	return false
+}
+
 // Parse parses a sidecar TreeNode JSON hierarchy.
 func Parse(text string) (*Tree, error) {
 	text = strings.TrimSpace(text)
@@ -497,20 +537,54 @@ func (t *Tree) FindAllNodes(selector string) []*Node {
 	return searchSubtree(t.Root, kind, value)
 }
 
-// FindBySelectorPath walks the selector chain starting from the tree root.
-func (t *Tree) FindBySelectorPath(path []Selector) *Node {
-	if t == nil || t.Root == nil {
+// FindBySelector returns the first Node in the tree matching sel, or nil. The
+// root is a candidate, the way it is for the string form: one selector cannot
+// mean one thing written "id:page" and another written {id: "page"}.
+func (t *Tree) FindBySelector(sel Selector) *Node {
+	if t == nil {
 		return nil
 	}
-	return t.Root.FindBySelectorPath(path)
+	return firstNode(searchSubtreeBySelector(t.Root, sel))
+}
+
+// FindAllBySelector returns every Node in the tree matching sel, root included.
+func (t *Tree) FindAllBySelector(sel Selector) []*Node {
+	if t == nil {
+		return nil
+	}
+	return searchSubtreeBySelector(t.Root, sel)
+}
+
+// FindBySelectorPath walks the selector chain starting from the tree root.
+func (t *Tree) FindBySelectorPath(path []Selector) *Node {
+	if t == nil || t.Root == nil || len(path) == 0 {
+		return nil
+	}
+	for _, candidate := range t.FindAllBySelector(path[0]) {
+		if len(path) == 1 {
+			return candidate
+		}
+		if deeper := candidate.FindBySelectorPath(path[1:]); deeper != nil {
+			return deeper
+		}
+	}
+	return nil
 }
 
 // FindAllBySelectorPath walks the selector chain starting from the tree root.
 func (t *Tree) FindAllBySelectorPath(path []Selector) []*Node {
-	if t == nil || t.Root == nil {
+	if t == nil || t.Root == nil || len(path) == 0 {
 		return nil
 	}
-	return t.Root.FindAllBySelectorPath(path)
+	var result []*Node
+	for _, candidate := range t.FindAllBySelector(path[0]) {
+		if len(path) == 1 {
+			result = append(result, candidate)
+			continue
+		}
+		result = append(result, candidate.FindAllBySelectorPath(path[1:])...)
+	}
+	return result
 }
 
 // Find returns the first Node scoped to this node (descendants, with spatial
@@ -527,9 +601,13 @@ func (n *Node) FindAll(selector string) []*Node {
 	if !ok {
 		return nil
 	}
-	return n.scopedNodes(func(element *Element) bool {
+	nodes := n.scopedNodes(func(element *Element) bool {
 		return matchAttr(element, kind, value)
 	})
+	if kind == "text" {
+		return innermostMatches(nodes)
+	}
+	return nodes
 }
 
 // FindBySelector returns the first Node scoped to this node matching sel (AND semantics).
@@ -539,9 +617,13 @@ func (n *Node) FindBySelector(sel Selector) *Node {
 
 // FindAllBySelector returns all Nodes scoped to this node matching sel (AND semantics).
 func (n *Node) FindAllBySelector(sel Selector) []*Node {
-	return n.scopedNodes(func(element *Element) bool {
+	nodes := n.scopedNodes(func(element *Element) bool {
 		return matchSelector(element, sel)
 	})
+	if selectorReadsText(sel) {
+		return innermostMatches(nodes)
+	}
+	return nodes
 }
 
 // FindBySelectorPath walks a chain of selectors. The first selector is matched
@@ -729,11 +811,11 @@ func searchSubtree(root *Node, kind, value string) []*Node {
 		return nil
 	}
 	var result []*Node
-	if matchAttr(&root.Element, kind, value) {
-		result = append(result, root)
-	}
-	for _, child := range root.Children {
-		result = append(result, searchSubtree(child, kind, value)...)
+	collectMatches(root, func(element *Element) bool {
+		return matchAttr(element, kind, value)
+	}, &result)
+	if kind == "text" {
+		return innermostMatches(result)
 	}
 	return result
 }
@@ -744,11 +826,11 @@ func searchSubtreeBySelector(root *Node, sel Selector) []*Node {
 		return nil
 	}
 	var result []*Node
-	if matchSelector(&root.Element, sel) {
-		result = append(result, root)
-	}
-	for _, child := range root.Children {
-		result = append(result, searchSubtreeBySelector(child, sel)...)
+	collectMatches(root, func(element *Element) bool {
+		return matchSelector(element, sel)
+	}, &result)
+	if selectorReadsText(sel) {
+		return innermostMatches(result)
 	}
 	return result
 }

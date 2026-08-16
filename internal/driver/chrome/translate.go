@@ -39,7 +39,14 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 	case "tag":
 		return cssEscape(value), false, nil
 	case "text":
-		return `//*[normalize-space(text())=` + xpathStringLiteral(value) + `]`, true, nil
+		// Substring of the element's whole text, the way internal/hierarchy
+		// reads the same selector: an element reading "Sent ✓" answers to
+		// text:Sent on every platform, and one React wrote as `{count} unsent`
+		// answers to text:unsent though its text arrives as two text nodes.
+		// normalize-space(text()) would read only the first of them. The
+		// not() clause is what keeps the badge's ancestors, up to <html>, from
+		// answering for it.
+		return `//*[` + innermostTextPredicate(value) + `]`, true, nil
 	case "desc":
 		// Mirrors the native rule: the label itself, or the label at the head of
 		// an iOS merged label ("account_card:7, Tim, $100").
@@ -63,7 +70,11 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 		if !attrNamePattern.MatchString(kind) {
 			return "", false, fmt.Errorf("unsafe selector prefix %q", kind)
 		}
-		return `[` + kind + `="` + cssEscape(value) + `"]`, false, nil
+		operator := `*=`
+		if value == "true" || value == "false" {
+			operator = `=`
+		}
+		return `[` + kind + operator + `"` + cssEscape(value) + `"]`, false, nil
 	}
 }
 
@@ -93,6 +104,17 @@ func cssEscape(value string) string {
 		}
 	}
 	return builder.String()
+}
+
+// innermostTextPredicate matches an element whose text contains value and whose
+// descendants do not, which is the innermost match internal/hierarchy resolves
+// the same selector to. The same predicate appears in
+// pkg/spec/src/web-runtime.ts.
+func innermostTextPredicate(value string) string {
+	contains := `contains(normalize-space(.), ` + xpathStringLiteral(
+		value,
+	) + `)`
+	return contains + ` and not(.//*[` + contains + `])`
 }
 
 // xpathStringLiteral wraps the value in a valid XPath 1.0 string literal.

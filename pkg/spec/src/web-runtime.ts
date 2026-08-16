@@ -213,10 +213,15 @@ function unknownSelectorKeyMessage(keys: string[]): string {
   );
 }
 
+// A key naming no rule is a raw attribute name, and a raw attribute matches on a
+// substring, a boolean value exactly (docs/manual/spec-language.md), which is
+// what internal/hierarchy does with the same key. Matching exactly here made
+// `data-state:sent` name the badge on Android and nothing at all on web.
 function cssPart(key: string, value: string): string {
   const builder = KNOWN_KEY_TO_CSS[key];
   if (builder) return builder(value);
-  return `[${key}="${cssEscape(value)}"]`;
+  const operator = value === "true" || value === "false" ? "=" : "*=";
+  return `[${key}${operator}"${cssEscape(value)}"]`;
 }
 
 // A selector key that can never match yields an empty result, which reads
@@ -248,11 +253,19 @@ function selectorFromObject(selector: Record<string, string | boolean | undefine
     throw new Error(unknownSelectorKeyMessage(unknown));
   }
   if (textValue !== undefined && parts.length === 0) {
-    return {
-      xpath: `//*[normalize-space(text())=${xpathStringLiteral(textValue)}]`,
-    };
+    return { xpath: innermostTextXPath(textValue) };
   }
   return { css: parts.join("") };
+}
+
+// innermostTextXPath matches an element whose text contains value and whose
+// descendants do not. An element's XPath string value is its whole subtree's
+// text, so without the not() clause a badge's ancestors up to <html> answer for
+// it and find lands on the document. internal/hierarchy suppresses the same
+// matches, and internal/driver/chrome/translate.go builds the same predicate.
+function innermostTextXPath(value: string): string {
+  const contains = `contains(normalize-space(.), ${xpathStringLiteral(value)})`;
+  return `.//*[${contains} and not(.//*[${contains}])]`;
 }
 
 // xpathStringLiteral wraps the value in a valid XPath 1.0 string literal.
@@ -272,8 +285,14 @@ function selectorFromString(selector: string): { css?: string; xpath?: string } 
   }
   const kind = selector.slice(0, colon);
   const value = selector.slice(colon + 1);
+  // Substring of the element's whole text, the way internal/hierarchy reads the
+  // same selector: an element reading "Sent ✓" answers to text:Sent on every
+  // platform, and one React wrote as `{count} unsent` answers to text:unsent
+  // though its text arrives as two text nodes, which normalize-space(text())
+  // reads only the first of. Anchored at the context node, so a scoped .find
+  // reads its own subtree rather than the page.
   if (kind === "text") {
-    return { xpath: `//*[normalize-space(text())=${xpathStringLiteral(value)}]` };
+    return { xpath: innermostTextXPath(value) };
   }
   // The string form's kind space stays open: "<attr>:<value>" is the documented
   // way to reach a raw driver attribute, and internal/hierarchy resolves an

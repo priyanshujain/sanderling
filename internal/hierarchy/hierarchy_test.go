@@ -1,6 +1,7 @@
 package hierarchy
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -575,6 +576,113 @@ func TestTextIsNowSubstring(t *testing.T) {
 	}
 }
 
+// subtreeTextDump is the shape web and iOS report: an element's text is its
+// whole subtree's text, so a badge's ancestors carry the badge's words.
+// split_row is the ancestor whose own text carries the value where no
+// descendant of it does; nested_row is the one whose badge carries it too.
+const subtreeTextDump = `{
+  "attributes": {"resource-id": "page", "text": "Sent Sent here Sent Sent", "bounds": "[0,0,1080,2340]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "status_row", "text": "Sent", "bounds": "[0,0,1080,100]"},
+      "children": [
+        {"attributes": {"resource-id": "status_badge", "text": "Sent", "bounds": "[0,0,200,100]"}, "children": []}
+      ]
+    },
+    {
+      "attributes": {"resource-id": "split_row", "text": "Sent here", "bounds": "[0,100,1080,200]"},
+      "children": [
+        {"attributes": {"resource-id": "split_tail", "text": "t here", "bounds": "[0,100,200,200]"}, "children": []}
+      ]
+    },
+    {
+      "attributes": {"resource-id": "nested_row", "text": "Sent Sent", "bounds": "[0,200,1080,300]"},
+      "children": [
+        {"attributes": {"resource-id": "nested_badge", "text": "Sent", "bounds": "[0,200,200,300]"}, "children": []}
+      ]
+    }
+  ]
+}`
+
+func TestTextNamesTheInnermostMatch(t *testing.T) {
+	tree, _ := Parse(subtreeTextDump)
+	want := []string{"status_badge", "split_row", "nested_badge"}
+	if got := resourceIDsOf(tree.FindAllNodes("text:Sent")); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("text:Sent matched %v, want %v", got, want)
+	}
+	sel := Selector{Filters: []AttrFilter{{Attr: "text", Value: "Sent"}}}
+	if got := resourceIDsOf(tree.FindAllBySelector(sel)); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("{text: Sent} matched %v, want %v", got, want)
+	}
+	node := tree.FindNode("text:Sent")
+	if node == nil || node.ResourceID != "status_badge" {
+		t.Errorf("find named %v, want the deepest match status_badge", node)
+	}
+}
+
+func TestScopedTextNamesTheInnermostMatch(t *testing.T) {
+	tree, _ := Parse(subtreeTextDump)
+	want := []string{"status_badge", "split_row", "nested_badge"}
+	if got := resourceIDsOf(tree.Root.FindAll("text:Sent")); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("scoped text:Sent matched %v, want %v", got, want)
+	}
+	sel := Selector{Filters: []AttrFilter{{Attr: "text", Value: "Sent"}}}
+	if got := resourceIDsOf(tree.Root.FindAllBySelector(sel)); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("scoped {text: Sent} matched %v, want %v", got, want)
+	}
+}
+
+// The root answers a selector whichever form the selector is written in: the
+// string form scans the tree from the root down, and the object form used to
+// start at the root's children and lose it.
+func TestRootMatchesInBothSelectorForms(t *testing.T) {
+	tree, _ := Parse(subtreeTextDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "id", Value: "page"}}}
+	want := []string{"page"}
+	if got := resourceIDsOf(tree.FindAllNodes("id:page")); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("id:page matched %v, want %v", got, want)
+	}
+	if got := resourceIDsOf(tree.FindAllBySelector(sel)); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("{id: page} matched %v, want %v", got, want)
+	}
+	if got := resourceIDsOf(tree.FindAllBySelectorPath([]Selector{sel})); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("[{id: page}] matched %v, want %v", got, want)
+	}
+	if node := tree.FindBySelector(sel); node == nil ||
+		node.ResourceID != "page" {
+		t.Errorf("find({id: page}) named %v, want page", node)
+	}
+}
+
+func resourceIDsOf(nodes []*Node) []string {
+	var ids []string
+	for _, node := range nodes {
+		ids = append(ids, node.ResourceID)
+	}
+	return ids
+}
+
 func TestMultiFilterSelectorAND(t *testing.T) {
 	tree, _ := Parse(androidAttrDump)
 	sel := Selector{Filters: []AttrFilter{
@@ -1142,7 +1250,7 @@ func TestTreeTransitional(t *testing.T) {
 func TestObjectSelectorIDMatchesTheSameElementsAsTheStringForm(t *testing.T) {
 	tree, _ := Parse(sampleDump)
 	sel := Selector{Filters: []AttrFilter{{Attr: "id", Value: "row"}}}
-	object := tree.Root.FindAllBySelector(sel)
+	object := tree.FindAllBySelector(sel)
 	if len(object) != len(tree.FindAll("id:row")) {
 		t.Fatalf("object form matched %d, string form %d", len(object), len(tree.FindAll("id:row")))
 	}
@@ -1154,7 +1262,7 @@ func TestObjectSelectorIDMatchesTheSameElementsAsTheStringForm(t *testing.T) {
 func TestObjectSelectorDescMatchesTheSameElementsAsTheStringForm(t *testing.T) {
 	tree, _ := Parse(sampleDump)
 	sel := Selector{Filters: []AttrFilter{{Attr: "desc", Value: "row"}}}
-	if len(tree.Root.FindAllBySelector(sel)) != len(tree.FindAll("desc:row")) {
+	if len(tree.FindAllBySelector(sel)) != len(tree.FindAll("desc:row")) {
 		t.Fatal("object and string form disagree on desc")
 	}
 }

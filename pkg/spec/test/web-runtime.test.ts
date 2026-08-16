@@ -383,27 +383,33 @@ test("xpathStringLiteral table: quote handling stays well-formed", () => {
 });
 
 // selectorFromString routes a "kind:value" prefix; text becomes an XPath
-// equality, everything else a CSS attribute selector. A value containing a
+// substring test, everything else a CSS attribute selector. A value containing a
 // colon must not be re-split, and a quote in a text value must reach the
 // well-formed XPath literal rather than corrupting the predicate.
 const { selectorFromString, selectorFromObject } = __testing__;
 
-test("selectorFromString routes text to a normalize-space XPath", () => {
+test("selectorFromString routes text to a substring XPath", () => {
   assert.deepEqual(selectorFromString("text:Hello"), {
-    xpath: `//*[normalize-space(text())="Hello"]`,
+    xpath:
+      `.//*[contains(normalize-space(.), "Hello") ` +
+      `and not(.//*[contains(normalize-space(.), "Hello")])]`,
   });
 });
 
 test("selectorFromString keeps colons in the value intact", () => {
   // Only the first colon splits kind from value; the rest is the value.
   assert.deepEqual(selectorFromString("text:a:b:c"), {
-    xpath: `//*[normalize-space(text())="a:b:c"]`,
+    xpath:
+      `.//*[contains(normalize-space(.), "a:b:c") ` +
+      `and not(.//*[contains(normalize-space(.), "a:b:c")])]`,
   });
 });
 
 test("selectorFromString text value with both quote kinds uses concat", () => {
   assert.deepEqual(selectorFromString(`text:say "hi" o'clock`), {
-    xpath: `//*[normalize-space(text())=concat("say ", '"', "hi", '"', " o'clock")]`,
+    xpath:
+      `.//*[contains(normalize-space(.), concat("say ", '"', "hi", '"', " o'clock")) ` +
+      `and not(.//*[contains(normalize-space(.), concat("say ", '"', "hi", '"', " o'clock"))])]`,
   });
 });
 
@@ -488,11 +494,15 @@ test("selectorFromObject rejects a key no element can carry", () => {
 });
 
 // Raw attributes the key list does not enumerate stay reachable when the page
-// actually carries them.
+// actually carries them, matched on a substring the way internal/hierarchy
+// matches the same key.
 test("selectorFromObject accepts a raw attribute the page carries", () => {
   withDocumentCarrying(["data-foo"], () => {
     assert.deepEqual(selectorFromObject({ "data-foo": "bar" }), {
-      css: `[data-foo="bar"]`,
+      css: `[data-foo*="bar"]`,
+    });
+    assert.deepEqual(selectorFromObject({ "data-foo": "true" }), {
+      css: `[data-foo="true"]`,
     });
   });
 });
@@ -502,7 +512,7 @@ test("selectorFromObject accepts a raw attribute the page carries", () => {
 // resolves an unknown kind to an empty result rather than an error.
 test("selectorFromString accepts a kind the object form would reject", () => {
   assert.deepEqual(selectorFromString("descripton:Supplier"), {
-    css: `[descripton="Supplier"]`,
+    css: `[descripton*="Supplier"]`,
   });
 });
 
@@ -522,7 +532,9 @@ function withDocumentCarrying(attributes: string[], run: () => void): void {
 
 test("selectorFromObject text-only selector becomes an XPath", () => {
   assert.deepEqual(selectorFromObject({ text: "Go" }), {
-    xpath: `//*[normalize-space(text())="Go"]`,
+    xpath:
+      `.//*[contains(normalize-space(.), "Go") ` +
+      `and not(.//*[contains(normalize-space(.), "Go")])]`,
   });
 });
 
