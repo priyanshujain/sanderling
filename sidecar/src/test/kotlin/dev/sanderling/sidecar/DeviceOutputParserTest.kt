@@ -2,6 +2,7 @@ package dev.sanderling.sidecar
 
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -134,6 +135,20 @@ class DeviceOutputParserTest {
         val tree = node("resource-id" to "com.example:id/x", "bounds" to "[0,0,1,1]")
         assertNull(findBoundsBySelector(tree, "id"))
         assertNull(findBoundsBySelector(tree, "id:missing"))
+    }
+
+    @Test fun findBoundsBySelectorReadsTheBoundsTheDeviceActuallyReports() {
+        val tree = node("text" to "Sign in", "bounds" to "[129,274][192,292]")
+        assertEquals(listOf(129, 274, 192, 292), findBoundsBySelector(tree, "text:Sign in")?.toList())
+    }
+
+    @Test fun requireBoundsBySelectorRefusesASelectorThatMatchesNothing() {
+        val tree = node("resource-id" to "com.example:id/x", "bounds" to "[0,0,4,4]")
+        assertEquals(listOf(0, 0, 4, 4), requireBoundsBySelector(tree, "id:x").toList())
+        val refused = assertFailsWith<io.grpc.StatusRuntimeException> {
+            requireBoundsBySelector(tree, "id:missing")
+        }
+        assertEquals(io.grpc.Status.Code.NOT_FOUND, refused.status.code)
     }
 
     @Test fun findBoundsBySelectorReturnsNullWhenMatchHasMalformedBounds() {
