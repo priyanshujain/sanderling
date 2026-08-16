@@ -315,6 +315,11 @@ level, so it reaches back to the first release there has ever been. A patch emit
 nothing, and an empty value leaves GoReleaser on the default that was already
 right for it.
 
+The boundary is exclusive, the way a changelog always is: the notes cover what
+landed *after* that tag. So the one release this shortchanges is the first
+milestone of its kind, whose notes start after the first release rather than at
+it. That is one merge, once, and it is not worth a special case.
+
 ### The npm credential
 
 `NPM_TOKEN` is a classic automation token. Those do not expire, which is the
