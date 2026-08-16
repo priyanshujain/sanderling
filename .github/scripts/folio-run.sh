@@ -102,7 +102,7 @@ case "$platform" in
     # away from the `simctl uninstall` + `install` path that races FrontBoard
     # ("app.folio is unknown to FrontBoard"), which needs an app path to reach.
     folio_args+=(--platform ios
-      --ios-device "${IOS_DEVICE:-iPhone 16 Pro}")
+      --ios-device "${IOS_DEVICE:-iPhone 17 Pro}")
     ;;
   web)
     dist="examples/folio/app/webApp/build/dist/wasmJs/developmentExecutable"
