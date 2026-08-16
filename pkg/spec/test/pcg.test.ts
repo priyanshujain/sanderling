@@ -56,3 +56,17 @@ for (const c of cases) {
     });
   }
 }
+
+// A web run's runtime is reinstalled by every page navigation, so the host
+// carries this pair across and the seed's stream stays one stream. A restore
+// that lost a bit would silently re-explore ground the seed already covered.
+test("a restored state continues the sequence it was taken from", () => {
+  const source = new Pcg(1n, 0n);
+  for (let draw = 0; draw < 5; draw++) source.uint64();
+  const carried = source.state();
+  const continuation = [source.uint64(), source.uint64(), source.uint64()];
+
+  const fresh = new Pcg(1n, 0n);
+  fresh.restore(carried.hi, carried.lo);
+  assert.deepEqual([fresh.uint64(), fresh.uint64(), fresh.uint64()], continuation);
+});

@@ -161,6 +161,20 @@ export function installRuntime(
   // picker's rng scope. It brackets those calls with this so a multi-item
   // sampler refuses rather than handing back its first item forever.
   defineLockedGlobal("__sanderlingSetEnumeratingCandidates__", setEnumeratingCandidates);
+  // The picker's draw position, as "hi,lo" decimal (a bigint pair survives no
+  // JSON hop). A web run's runtime is reinstalled by every page navigation, so
+  // the host reads the position back after each decision and puts it in place
+  // before the next one; without that the seed's stream restarts at its first
+  // draw every time the page reloads.
+  defineLockedGlobal("__sanderlingPickerState__", () => {
+    const { hi, lo } = rng.state();
+    return `${hi},${lo}`;
+  });
+  defineLockedGlobal("__sanderlingRestorePickerState__", (state: string) => {
+    const [hi, lo] = state.split(",");
+    if (hi === undefined || lo === undefined) return;
+    rng.restore(BigInt(hi), BigInt(lo));
+  });
   defineLockedGlobal("__sanderlingExtractors__", () => evaluateExtractors());
   // __sanderlingSetupAction__ walks ONLY the setup generator once, for the LLM
   // action generator (Go), which drives selection itself and must not run the

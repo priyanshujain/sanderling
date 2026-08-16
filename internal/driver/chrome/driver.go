@@ -32,6 +32,14 @@ type Driver struct {
 
 	logsMu sync.Mutex
 	logs   []driver.LogEntry
+
+	navigationsMu sync.Mutex
+	navigations   []driver.Navigation
+
+	// pickerState is the seeded picker's draw position, held here rather than
+	// in the page: a navigation replaces the page's runtime, and a runtime that
+	// starts over restarts the seed's stream at its first draw.
+	pickerState string
 }
 
 // New creates a new ChromeDriver. Call Terminate when done.
@@ -94,6 +102,19 @@ func New() *Driver {
 		d.logsMu.Unlock()
 	})
 
+	chromedp.ListenTarget(tabCtx, func(ev any) {
+		e, ok := ev.(*page.EventFrameNavigated)
+		if !ok || e.Frame == nil || e.Frame.ParentID != "" {
+			return
+		}
+		d.navigationsMu.Lock()
+		d.navigations = append(d.navigations, driver.Navigation{
+			URL:        e.Frame.URL,
+			UnixMillis: time.Now().UnixMilli(),
+		})
+		d.navigationsMu.Unlock()
+	})
+
 	return d
 }
 
@@ -133,7 +154,20 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _
 		})()`, &dims)); err == nil && dims[0] > 0 && dims[1] > 0 {
 		_ = chromedp.Run(runCtx, chromedp.EmulateViewport(dims[0], dims[1]))
 	}
+	// The opening navigation is the harness arriving, not the app navigating.
+	_, _ = d.Navigations(ctx)
 	return nil
+}
+
+// Navigations returns the document-replacing main-frame navigations seen since
+// the last call and forgets them. Each one replaced the page's runtime, which
+// is what separates "the app reloaded" from "the picker repeated itself".
+func (d *Driver) Navigations(context.Context) ([]driver.Navigation, error) {
+	d.navigationsMu.Lock()
+	defer d.navigationsMu.Unlock()
+	drained := d.navigations
+	d.navigations = nil
+	return drained, nil
 }
 
 // clearState wipes the target's stored data before the application loads.
@@ -1078,19 +1112,87 @@ new Promise((resolve, reject) => {
   read();
 })`
 
+// Exceptions returns the uncaught errors and unhandled rejections the page
+// runtime has buffered so far. The buffer is cumulative, which is what
+// state.exceptions means inside the page (buildState in
+// pkg/spec/src/web-runtime.ts), so the host and the page read one list.
+func (d *Driver) Exceptions(ctx context.Context) ([]driver.Exception, error) {
+	const script = `JSON.stringify(window.__sanderlingExceptions__ ? window.__sanderlingExceptions__() : [])`
+	var encoded string
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+		return nil, fmt.Errorf("evaluate exceptions: %w", err)
+	}
+	if encoded == "" || encoded == "[]" {
+		return nil, nil
+	}
+	var captured []struct {
+		Class      string `json:"class"`
+		Message    string `json:"message"`
+		StackTrace string `json:"stackTrace"`
+		UnixMillis int64  `json:"unixMillis"`
+	}
+	if err := json.Unmarshal([]byte(encoded), &captured); err != nil {
+		return nil, fmt.Errorf("decode exceptions %s: %w", encoded, err)
+	}
+	result := make([]driver.Exception, 0, len(captured))
+	for _, entry := range captured {
+		result = append(result, driver.Exception{
+			Class:      entry.Class,
+			Message:    entry.Message,
+			StackTrace: entry.StackTrace,
+			UnixMillis: entry.UnixMillis,
+		})
+	}
+	return result, nil
+}
+
+// nextActionScript puts the carried draw position back before the picker
+// decides and reads the new one out afterwards, in the one evaluation, so no
+// navigation can land between the restore and the draw.
+const nextActionScript = `((carried) => {
+  if (!window.__sanderlingNextAction__) return "{}";
+  if (carried !== "" && window.__sanderlingRestorePickerState__) {
+    window.__sanderlingRestorePickerState__(carried);
+  }
+  const action = window.__sanderlingNextAction__();
+  const state = window.__sanderlingPickerState__ ? window.__sanderlingPickerState__() : "";
+  return JSON.stringify({action, state});
+})(%s)`
+
 // NextActionFromV8 invokes the bundle-installed action generator and returns
 // the resulting Action JSON. Returns an empty json.RawMessage when the
 // generator declines to act this tick.
+//
+// The picker's draw position rides along: it lives here rather than in the
+// page, because a page that navigates gets a fresh runtime whose picker would
+// otherwise start the seed's stream over at its first draw on every reload.
 func (d *Driver) NextActionFromV8(ctx context.Context) (json.RawMessage, error) {
-	const script = `JSON.stringify(window.__sanderlingNextAction__ ? window.__sanderlingNextAction__() : null)`
+	script := fmt.Sprintf(nextActionScript, strconv.Quote(d.pickerState))
 	var encoded string
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
 	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
 		return nil, fmt.Errorf("evaluate next action: %w", err)
 	}
-	if encoded == "" || encoded == "null" {
+	if encoded == "" {
 		return nil, nil
 	}
-	return json.RawMessage(encoded), nil
+	var decoded struct {
+		Action json.RawMessage `json:"action"`
+		State  string          `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(encoded), &decoded); err != nil {
+		return nil, fmt.Errorf("decode next action %s: %w", encoded, err)
+	}
+	// An empty state means the page had no runtime to ask, so the position we
+	// already hold is still the run's position.
+	if decoded.State != "" {
+		d.pickerState = decoded.State
+	}
+	if len(decoded.Action) == 0 || string(decoded.Action) == "null" {
+		return nil, nil
+	}
+	return decoded.Action, nil
 }

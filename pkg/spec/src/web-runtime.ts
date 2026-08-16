@@ -672,6 +672,12 @@ defineLockedGlobal("__sanderlingSetLastAction__", (value: unknown) => {
   lastAction = value ?? null;
 });
 
+// The host reads the same buffer buildState puts behind state.exceptions, so
+// the goja-side state.exceptions is the page's list rather than the empty one
+// it held before, and the trace records an error surface an offline oracle can
+// read back.
+defineLockedGlobal("__sanderlingExceptions__", () => capturedExceptions.slice());
+
 // writable:false stops a page script from shadowing the runtime via plain
 // assignment (the realistic in-page threat). configurable:true is required so
 // unit tests sharing one process can reinstall a fake via defineProperty; a
