@@ -5,13 +5,27 @@
 # version, and a release cannot disagree with a package.json someone edited.
 #
 # BUMP is major, minor or patch. VERSION overrides it with a version named
-# outright. Writes `version` and `tag` to $GITHUB_OUTPUT when it is set.
+# outright. Writes `version`, `tag` and `released_tag` to $GITHUB_OUTPUT when it
+# is set; `released_tag` is the release this one follows, and is empty in a
+# repository that has never cut one.
 set -euo pipefail
 
 bump="${BUMP:-patch}"
 named="${VERSION:-}"
 
 semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
+
+# Only a stable tag counts as a release. v0.0.1-rc4 is a candidate for 0.0.1, so
+# counting a patch off it would skip the very version it was a candidate for.
+# `sort -V` puts 0.10.0 above 0.9.0, which a lexical sort does not, and
+# `sed -n p` reports no matches as an empty line rather than as the failure
+# `grep` would return under pipefail.
+released="$(git tag -l 'v*' \
+  | sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' \
+  | sort -V \
+  | tail -1)"
+released_tag=""
+[ -n "$released" ] && released_tag="v$released"
 
 if [ -n "$named" ]; then
   if [[ ! "$named" =~ $semver ]]; then
@@ -22,16 +36,7 @@ if [ -n "$named" ]; then
   version="$named"
   from="named outright"
 else
-  # Only a stable tag is a base to count from. v0.0.1-rc4 is a candidate for
-  # 0.0.1, so counting a patch off it would skip the very version it was a
-  # candidate for. `sort -V` puts 0.10.0 above 0.9.0, which a lexical sort does
-  # not, and `sed -n p` reports no matches as an empty line rather than as the
-  # failure `grep` would return under pipefail.
-  base="$(git tag -l 'v*' \
-    | sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' \
-    | sort -V \
-    | tail -1)"
-  base="${base:-0.0.0}"
+  base="${released:-0.0.0}"
   from="a $bump off ${base}"
   IFS=. read -r major minor patch <<<"$base"
   case "$bump" in
@@ -59,5 +64,6 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
     echo "version=$version"
     echo "tag=$tag"
+    echo "released_tag=$released_tag"
   } >> "$GITHUB_OUTPUT"
 fi

@@ -44,6 +44,13 @@ expect_version() { # <want> <case>
   [ "$status" = 0 ] || fail "$2: exit $status, want 0"
 }
 
+# The manual pipeline promotes the commit this tag points at, so a wrong answer
+# here releases the wrong code under the right version.
+expect_released_tag() { # <want, empty for none> <case>
+  grep -qxF -- "released_tag=$1" "$outputs" \
+    || fail "$2: $(grep '^released_tag=' "$outputs" || echo 'no released_tag'), want released_tag=$1"
+}
+
 expect_refused() { # <case> <message fragment>
   [ "$status" != 0 ] || fail "$1: exit 0, want a refusal"
   grep -q -- "$2" "$stderr" || fail "$1: refused with '$(cat "$stderr")', want it to mention '$2'"
@@ -54,11 +61,14 @@ expect_refused() { # <case> <message fragment>
 # reissuing 0.0.0.
 resolve first patch "" 
 expect_version 0.0.1 first
+expect_released_tag "" first
 
 # The rc tags this repository carries are candidates for 0.0.1, so the first
 # stable release is 0.0.1 and not 0.0.2.
 resolve rcs patch "" v0.0.1-rc1 v0.0.1-rc4
 expect_version 0.0.1 rcs
+# A candidate is not a release, so there is nothing to promote yet.
+expect_released_tag "" rcs
 
 resolve patch patch "" v1.2.3
 expect_version 1.2.4 patch
@@ -73,13 +83,17 @@ expect_version 2.0.0 major
 # next patch off the wrong release and hand back 0.9.1.
 resolve ordering patch "" v0.9.0 v0.10.0
 expect_version 0.10.1 ordering
+expect_released_tag v0.10.0 ordering
 
 # A tag that is not a release is not a base to count from.
 resolve noise patch "" v1.2.3 nightly v2.0.0-rc1 vfoo
 expect_version 1.2.4 noise
+expect_released_tag v1.2.3 noise
 
 resolve named "" 2.5.0 v1.2.3
 expect_version 2.5.0 named
+# A named version still promotes the last release rather than some other commit.
+expect_released_tag v1.2.3 named
 
 # A named version wins over the bump rather than being combined with it.
 resolve named-over-bump major 0.4.0 v1.2.3
