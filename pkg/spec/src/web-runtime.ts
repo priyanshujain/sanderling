@@ -503,7 +503,21 @@ function isEnabled(element: Element): boolean {
   return element.getAttribute("aria-disabled") !== "true";
 }
 
-function elementHandle(element: Element, selector: unknown): Record<string, unknown> {
+// document.activeElement stops at a shadow boundary and names the HOST, so a
+// Compose for Web page reported focus on its mount element and never on the
+// field. selectAllScript in internal/driver/chrome/driver.go carries the rest of
+// it; buildAx descends once per pass and hands the answer down.
+function deepestActiveElement(): Element | null {
+  let element = document.activeElement;
+  while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+  return element;
+}
+
+function elementHandle(
+  element: Element,
+  selector: unknown,
+  focusedElement: Element | null,
+): Record<string, unknown> {
   const state = element as Partial<HTMLInputElement & HTMLOptionElement>;
   const rect = element.getBoundingClientRect();
   const x = Math.round(rect.left + rect.width / 2);
@@ -534,7 +548,7 @@ function elementHandle(element: Element, selector: unknown): Record<string, unkn
     clickable: element.matches(TAPPABLE_SELECTOR),
     enabled: isEnabled(element),
     editable: isEditableElement(element as HTMLElement),
-    focused: document.activeElement === element,
+    focused: focusedElement === element,
     // Checkbox and option state lives in the DOM PROPERTY: the markup attribute
     // records only what the page started with, so a handle reading it reports a
     // box's initial state however often the user ticks it.
@@ -555,25 +569,26 @@ function elementHandle(element: Element, selector: unknown): Record<string, unkn
     [SELECTOR_TAG]: selectorTagFor(element, selector),
     find(childSelector: unknown): unknown {
       const child = queryElement(element, childSelector);
-      return child ? elementHandle(child, childSelector) : undefined;
+      return child ? elementHandle(child, childSelector, focusedElement) : undefined;
     },
     findAll(childSelector: unknown): unknown[] {
       return queryAllElements(element, childSelector).map((child) =>
-        elementHandle(child, childSelector),
+        elementHandle(child, childSelector, focusedElement),
       );
     },
   };
 }
 
 function buildAx(): unknown {
+  const focusedElement = deepestActiveElement();
   return {
     find(selector: unknown): unknown {
       const element = queryElement(document, selector);
-      return element ? elementHandle(element, selector) : undefined;
+      return element ? elementHandle(element, selector, focusedElement) : undefined;
     },
     findAll(selector: unknown): unknown[] {
       return queryAllElements(document, selector).map((element) =>
-        elementHandle(element, selector),
+        elementHandle(element, selector, focusedElement),
       );
     },
   };

@@ -967,6 +967,42 @@ test("ax.find resolves the shadow-hosted match the hierarchy dump reaches first"
   });
 });
 
+// document.activeElement stops at every shadow boundary it meets, so a Compose
+// for Web page, which mounts its whole tree in a shadow root, answered `focused`
+// on the mount element and never on the field the user was typing into.
+// internal/driver/chrome/driver.go descends the same chain for the dump the goja
+// host reads, so a handle that compares against the host alone puts the two
+// hosts on opposite answers for one page.
+test("ax.find reports focus on the field inside the shadow root, not on its hosts", () => {
+  const app = fakeElement({
+    tag: "div", x: 0, y: 0, width: 400, height: 800, id: "app",
+    shadow: [
+      {
+        tag: "div", x: 0, y: 0, width: 400, height: 100, id: "form",
+        shadow: [
+          {
+            tag: "input", x: 0, y: 0, width: 200, height: 40, id: "amount",
+            editable: true, focused: true,
+          },
+        ],
+      },
+    ],
+  });
+  withFakeDocument([app], () => {
+    __testing__.extractors.length = 0;
+    for (const id of ["amount", "form", "app"]) {
+      __testing__.runtime.extract((state) => {
+        const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
+        return ax.find(`id:${id}`)?.focused;
+      });
+    }
+    const values = __testing__.evaluateExtractors();
+    assert.equal(readingOf(values, 0), true);
+    assert.equal(readingOf(values, 1), false);
+    assert.equal(readingOf(values, 2), false);
+  });
+});
+
 // A nested undefined is the one reading shape the two hosts do NOT encode
 // alike, and this pins the split instead of hiding it. JSON has no undefined,
 // so the key goes with the value here; goja marshals the same member as null,

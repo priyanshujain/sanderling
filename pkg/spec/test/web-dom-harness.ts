@@ -53,12 +53,14 @@ export interface FakeElementSpec {
   // overflows makes the element's content taller than its box, which is how the
   // host decides an element is scrollable.
   overflows?: boolean;
+  focused?: boolean;
   children?: FakeElementSpec[];
   shadow?: FakeElementSpec[];
 }
 
 export interface FakeRoot {
   children: FakeElement[];
+  activeElement: FakeElement | null;
   querySelectorAll(selector: string): FakeElement[];
 }
 
@@ -139,9 +141,26 @@ export function fakeElement(spec: FakeElementSpec): FakeElement {
 function fakeRoot(children: FakeElement[]): FakeRoot {
   const root: FakeRoot = {
     children,
+    get activeElement(): FakeElement | null {
+      return activeElementIn(children);
+    },
     querySelectorAll: (selector: string) => queryScope(root, selector),
   };
   return root;
+}
+
+// A root answers activeElement with a node of its OWN tree, as the browser
+// does: focus inside a shadow root names the host, and only that root's own
+// activeElement names the field. Reporting the field from both roots would let
+// a runtime that never descends still pass.
+function activeElementIn(nodes: FakeElement[]): FakeElement | null {
+  for (const node of nodes) {
+    if (node.focused) return node;
+    if (node.shadowRoot?.activeElement) return node;
+    const inside = activeElementIn(node.children);
+    if (inside) return inside;
+  }
+  return null;
 }
 
 function queryScope(scope: { children: FakeElement[] }, selector: string): FakeElement[] {
