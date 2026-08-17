@@ -51,10 +51,14 @@ type elementFacts struct {
 	editable   bool
 	scrollable bool
 	hintText   string
-	// handleClickable is the clickability of the ax element a spec reaches
-	// through state.ax.find, a third place the fact is computed and the one that
-	// answered a hardcoded true while the other two resolved a selector.
+	// handleClickable and handleEditable are the same facts on the ax element a
+	// spec reaches through state.ax.find, a third place they are computed and the
+	// one that has twice been the odd one out: clickable answered a hardcoded
+	// true while the other two resolved a selector, and editable read the
+	// INHERITED isContentEditable, which makes every span inside a contenteditable
+	// container typeable.
 	handleClickable bool
+	handleEditable  bool
 	positiveBounds  bool
 }
 
@@ -170,6 +174,7 @@ func factsFromWebRuntime(
 		Scrollable      bool   `json:"scrollable"`
 		HintText        string `json:"hintText"`
 		HandleClickable bool   `json:"handleClickable"`
+		HandleEditable  bool   `json:"handleEditable"`
 		Width           int    `json:"width"`
 		Height          int    `json:"height"`
 	}
@@ -188,6 +193,7 @@ func factsFromWebRuntime(
 				scrollable:      item.Scrollable,
 				hintText:        item.HintText,
 				handleClickable: item.HandleClickable,
+				handleEditable:  item.HandleEditable,
 				positiveBounds:  hasPositiveBounds(item.Width, item.Height),
 			},
 		})
@@ -258,24 +264,36 @@ func requireBothPolarities(t *testing.T, rows []factRow) {
 
 // requireTheHandleAgreesWithTheEnumeration compares the V8 host against itself.
 // An element a spec reaches through state.ax and the same element in the
-// enumeration must be clickable to the same degree, or a spec taps a container
-// the picker calls inert. The handle resolved the fact by element.matches over
-// the tappable selector while the enumeration resolved it by membership of the
-// set that selector queried, and this is where those two answers are held
-// together over a real page: an [onclick] attribute, an onclick property that is
-// not one, elements inside a shadow root.
+// enumeration must be clickable, and typeable, to the same degree, or a spec
+// taps a container the picker calls inert and types into a box the picker calls
+// read-only. The handle resolves each fact by element.matches over a selector
+// while the enumeration resolves it by membership of the set that selector
+// queried, and this is where the two answers are held together over a real page:
+// an [onclick] attribute, an onclick property that is not one, a <span> whose
+// contenteditable is inherited from its container, elements inside a shadow root.
 func requireTheHandleAgreesWithTheEnumeration(t *testing.T, rows []factRow) {
 	t.Helper()
 	for _, row := range rows {
-		if row.facts.handleClickable != row.facts.clickable {
-			t.Errorf(
-				"%q (<%s>): the ax handle reports clickable=%v, the enumeration "+
-					"reports clickable=%v",
-				row.id,
-				row.facts.tag,
-				row.facts.handleClickable,
-				row.facts.clickable,
-			)
+		for _, fact := range []struct {
+			name        string
+			handle      bool
+			enumeration bool
+		}{
+			{"clickable", row.facts.handleClickable, row.facts.clickable},
+			{"editable", row.facts.handleEditable, row.facts.editable},
+		} {
+			if fact.handle != fact.enumeration {
+				t.Errorf(
+					"%q (<%s>): the ax handle reports %s=%v, the enumeration reports "+
+						"%s=%v",
+					row.id,
+					row.facts.tag,
+					fact.name,
+					fact.handle,
+					fact.name,
+					fact.enumeration,
+				)
+			}
 		}
 	}
 }

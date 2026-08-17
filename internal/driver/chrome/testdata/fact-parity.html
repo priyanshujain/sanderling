@@ -63,7 +63,10 @@
     <input id="hint-name" type="text" name="reference-field" />
     <input id="agree" type="checkbox" placeholder="not a hint" />
     <textarea id="notes"></textarea>
-    <div id="bio" contenteditable="true">bio</div>
+    <!-- contenteditable is INHERITED, so #bio-word answers isContentEditable
+         true while matching neither producer's editable selector itself. It is
+         the element the ax handle and the enumeration disagreed on. -->
+    <div id="bio" contenteditable="true">bio <span id="bio-word">word</span></div>
     <div id="menu" role="button">menu</div>
     <!-- One element per ARIA role both producers resolve as clickable. A role
          covered on one side only makes that control reachable for one host,

@@ -17,7 +17,11 @@ const { collectTargets, targetElements, buildAx } = __testing__;
 // reaches them and the way internal/verifier/llm.go handleLabel reads them, so
 // the comparison runs over what the model is actually shown rather than over a
 // recomputation of it.
-type AxHandle = { attrs?: Record<string, string>; clickable?: boolean };
+type AxHandle = {
+  attrs?: Record<string, string>;
+  clickable?: boolean;
+  editable?: boolean;
+};
 type Ax = { find(selector: unknown): AxHandle | undefined };
 
 function handleOf(ax: Ax, id: string): AxHandle | undefined {
@@ -45,6 +49,7 @@ function domFacts(): unknown[] {
       scrollable: target.scrollable,
       hintText: handle?.attrs?.hintText ?? "",
       handleClickable: handle?.clickable ?? false,
+      handleEditable: handle?.editable ?? false,
       width: target.width ?? 0,
       height: target.height ?? 0,
     };
