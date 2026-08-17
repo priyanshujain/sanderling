@@ -101,6 +101,37 @@ func TestRunSweep_StopsBeforeItInstallsAnythingWhenABinaryIsMissing(
 	}
 }
 
+// Two binaries missing is one rerun, not two: the operator is told about both
+// at once, in flag order, whatever order the check happened to walk.
+func TestResolveBinaries_NamesEveryMissingBinaryInFlagOrder(t *testing.T) {
+	configuration := config{
+		bunPath: writeScript(
+			t,
+			filepath.Join(t.TempDir(), "stub-bun"),
+			"#!/bin/sh\nexit 0\n",
+		),
+		campaignPath:   "campaign-that-is-not-installed",
+		sanderlingPath: "sanderling-that-is-not-installed",
+	}
+
+	err := resolveBinaries(&configuration)
+	if err == nil {
+		t.Fatal("got no error, want both missing binaries named")
+	}
+	message := err.Error()
+	campaign := strings.Index(message, "--campaign")
+	sanderling := strings.Index(message, "--sanderling")
+	if campaign < 0 || sanderling < 0 {
+		t.Fatalf("got %q, want both --campaign and --sanderling named", message)
+	}
+	if campaign > sanderling {
+		t.Errorf("got %q, want --campaign named before --sanderling", message)
+	}
+	if strings.Contains(message, "--bun") {
+		t.Errorf("got %q, want the bun that resolved left out", message)
+	}
+}
+
 func TestRunSweep_RefusesADirectoryThatAlreadyHoldsASweep(t *testing.T) {
 	implementations := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(implementations, "impl-01"), 0o755); err != nil {
