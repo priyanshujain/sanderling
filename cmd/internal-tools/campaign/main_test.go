@@ -71,6 +71,35 @@ func TestParseArguments_Rejections(t *testing.T) {
 	}
 }
 
+// Three flags missing is one rerun, not three: the operator is told about all
+// of them at once, in flag order, whatever order the check happened to walk.
+func TestParseArguments_NamesEveryMissingRequiredFlagInFlagOrder(t *testing.T) {
+	_, err := parseArguments(
+		[]string{"--bundle-id", "a", "--seeds", "1", "--max-steps", "10"},
+		io.Discard,
+	)
+	if err == nil {
+		t.Fatal("got no error, want every missing flag named")
+	}
+	message := err.Error()
+	previous := -1
+	for _, name := range []string{"--spec", "--arm", "--output"} {
+		at := strings.Index(message, name)
+		if at < 0 {
+			t.Fatalf("got %q, want %s named", message, name)
+		}
+		if at < previous {
+			t.Errorf("got %q, want the flags named in flag order", message)
+		}
+		previous = at
+	}
+	for _, supplied := range []string{"--bundle-id", "--seeds"} {
+		if strings.Contains(message, supplied) {
+			t.Errorf("got %q, want the supplied %s left out", message, supplied)
+		}
+	}
+}
+
 func TestRunArguments_PlatformDeviceFlagAndPassthrough(t *testing.T) {
 	cases := []struct {
 		platform string
