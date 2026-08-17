@@ -34,16 +34,16 @@ jobs:
     name: Check (tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "17"
@@ -51,20 +51,20 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
 
-      - name: Set up Node 22
-        uses: actions/setup-node@v7
+      - name: Set up Node 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: pkg/spec/package-lock.json
 
       - name: Set up bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.3.13"
+          bun-version: "1.3.14"
 
       - name: Cache bun store
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('replay-ui/bun.lock') }}
@@ -74,22 +74,30 @@ jobs:
       # The token is what stops this step flaking: without it the action pulls
       # buf's release tarball from github.com anonymously, on the shared runner
       # IP's rate limit, and a throttled connection shows up as `socket hang
-      # up` after three retries. The version is the action's own default, made
-      # explicit so a new action release cannot move the buf we build with.
+      # up` after three retries. The version is pinned explicitly so a new
+      # action release cannot move the buf we build with. `setup_only` is what
+      # keeps this a plain install: left off, the action runs its own lint,
+      # format and breaking checks, and `buf lint` below is where this repo
+      # says which rules it wants.
       - name: Install buf
-        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3 # v1.5.0
         with:
-          version: "1.50.0"
+          version: "1.72.0"
+          setup_only: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Pinned, not @latest: these two write the committed stubs, so a floating
+      # version is an unreviewed input to generated code. The versions are the
+      # ones the stubs under proto/ record generating them, so what CI builds
+      # with and what is checked in stay the same thing.
       - name: Install protoc plugins
         run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Cache Gradle
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -115,7 +123,7 @@ jobs:
       # JAVA_HOME after `make test` rather than installing both up front
       # leaves every step above this one on exactly the JDK it ran on before.
       - name: Set up JDK 21 for folio
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "21"
@@ -127,10 +135,10 @@ jobs:
     name: Check (browser)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -145,7 +153,7 @@ jobs:
     name: Check (workflows)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Pinned so a new actionlint release cannot change what CI enforces,
       # for the same reason the buf version above is spelled out. shellcheck
@@ -187,10 +195,10 @@ jobs:
       MAX_STEPS: "200"
       DURATION: 20m
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -198,7 +206,7 @@ jobs:
       - name: Set up bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.3.13"
+          bun-version: "1.3.14"
 
       - name: Build the folio app
         uses: ./.github/actions/folio-app
@@ -220,7 +228,7 @@ jobs:
 
       - name: Upload the run
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: folio-android
           path: runs/
@@ -228,18 +236,19 @@ jobs:
 
   folio-ios:
     name: Folio (ios)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     env:
       SEED: "7"
       MAX_STEPS: "240"
       DURATION: 20m
-      IOS_DEVICE: iPhone 16 Pro
+      IOS_DEVICE: iPhone 17 Pro
+      IOS_RUNTIME: iOS 26.2
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -247,7 +256,7 @@ jobs:
       - name: Set up bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.3.13"
+          bun-version: "1.3.14"
 
       - name: Build the folio app
         uses: ./.github/actions/folio-app
@@ -257,10 +266,53 @@ jobs:
       - name: Build sanderling
         run: make sanderling-ios
 
+      # simctl resolves a device by name alone, and one image carries the same
+      # phone under several runtimes: iPhone 17 Pro exists here on iOS 26.2,
+      # 26.4 and 26.5. Booting by name is therefore booting on whichever one
+      # simctl happens to list first, and a seed only means something against a
+      # fixed runtime. So the pair is resolved to a UDID here and every step
+      # after this boots that one simulator. An image that stops carrying the
+      # pair fails here naming what it does carry, rather than as a
+      # `bootstatus` error to read backwards from.
+      #
+      # The UDID stays in this step. IOS_DEVICE has to keep holding the name,
+      # because `just ios` spends it as xcodebuild's `-destination name=`, which
+      # matches on the display name and rejects a UDID. Nothing downstream needs
+      # it anyway: the install, the launch and the terminate all address
+      # `booted`, and sanderling resolves --ios-device against booted simulators
+      # before available ones, so the one booted here is the one they all get.
       - name: Boot a simulator
         run: |
-          xcrun simctl boot "$IOS_DEVICE" || true
-          xcrun simctl bootstatus "$IOS_DEVICE" -b
+          udid="$(python3 <<'PY'
+          import json, os, subprocess, sys
+
+          want_device = os.environ["IOS_DEVICE"]
+          want_runtime = os.environ["IOS_RUNTIME"]
+          devices = json.loads(subprocess.run(
+              ["xcrun", "simctl", "list", "devices", "available", "--json"],
+              capture_output=True, text=True, check=True).stdout)["devices"]
+
+          def name_of(runtime):
+              family, _, version = runtime.rsplit(".", 1)[-1].partition("-")
+              return "%s %s" % (family, version.replace("-", "."))
+
+          for runtime, entries in devices.items():
+              if name_of(runtime) != want_runtime:
+                  continue
+              for entry in entries:
+                  if entry["name"] == want_device:
+                      print(entry["udid"])
+                      sys.exit(0)
+
+          carried = sorted({"%s on %s" % (e["name"], name_of(r))
+                            for r, es in devices.items() for e in es})
+          sys.exit("no %r on %r in this image. it carries:\n  %s"
+                   % (want_device, want_runtime, "\n  ".join(carried) or "no simulators at all"))
+          PY
+          )"
+          echo "booting $IOS_DEVICE on $IOS_RUNTIME ($udid)"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
 
       - name: Build and install folio
         working-directory: examples/folio
@@ -276,7 +328,7 @@ jobs:
 
       - name: Upload the run
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: folio-ios
           path: runs/
@@ -291,10 +343,10 @@ jobs:
       MAX_STEPS: "240"
       DURATION: 20m
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -302,7 +354,7 @@ jobs:
       - name: Set up bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.3.13"
+          bun-version: "1.3.14"
 
       - name: Set up headless Chrome
         uses: ./.github/actions/headless-chrome
@@ -320,7 +372,7 @@ jobs:
 
       - name: Upload the run
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: folio-web
           path: runs/
@@ -348,10 +400,10 @@ jobs:
       MAX_STEPS: "80"
       DURATION: 10m
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -359,7 +411,7 @@ jobs:
       - name: Set up bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.3.13"
+          bun-version: "1.3.14"
 
       - name: Set up headless Chrome
         uses: ./.github/actions/headless-chrome
@@ -441,7 +493,7 @@ jobs:
 
       - name: Upload the run
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: replay-ui-runs
           path: runs/
@@ -473,7 +525,7 @@ jobs:
       tag: ${{ steps.next.outputs.tag }}
       previous_tag: ${{ steps.next.outputs.previous_tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The version is counted off the tags, so the tags have to be here.
           fetch-depth: 0
@@ -510,27 +562,26 @@ jobs:
       # caps a granular one at 90 days, so a token here would break quarterly.
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-tag.outputs.tag }}
           # `npm ci` below runs dependency lifecycle scripts, and no step in
           # this job needs the git credential afterwards.
           persist-credentials: false
 
-      - name: Set up Node 22
-        uses: actions/setup-node@v7
+      # registry-url below writes an `_authToken=${NODE_AUTH_TOKEN}` line into
+      # .npmrc whether or not a token exists, and an npm older than 11.5.1 reads
+      # that empty line as "auth is configured" and never asks for an OIDC
+      # token, so the publish fails needing auth. 24 is the oldest Node whose
+      # bundled npm clears that floor (11.17.0), which is why it is pinned here
+      # rather than upgrading npm over the top of an older one.
+      - name: Set up Node 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
           cache: npm
           cache-dependency-path: pkg/spec/package-lock.json
-
-      # registry-url above writes an `_authToken=${NODE_AUTH_TOKEN}` line into
-      # .npmrc whether or not a token exists, and an npm older than 11.5.1 reads
-      # that empty line as "auth is configured" and never asks for an OIDC
-      # token, so the publish fails needing auth. Node 22 ships npm 10.
-      - name: Install an npm that can publish over OIDC
-        run: npm install -g npm@latest
 
       - name: Install dependencies
         working-directory: pkg/spec
@@ -576,20 +627,20 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-tag.outputs.tag }}
           # GoReleaser reads the tag history for its changelog.
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "17"
@@ -598,7 +649,7 @@ jobs:
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
 
       - name: Cache Gradle
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -658,7 +709,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install pandoc
         run: sudo apt-get update && sudo apt-get install -y pandoc
@@ -671,11 +722,11 @@ jobs:
       # which holds three ordinary files. _assets is underscore-prefixed, not
       # hidden, and deploy-pages serves the artifact without running Jekyll, so
       # it needs no .nojekyll either.
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: build/site
 
-      - uses: actions/deploy-pages@v5
+      - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
         id: deployment
 
   # The one status check to point branch protection at. Without `if: always()`

@@ -170,6 +170,14 @@ reinstall-and-launch cycles on iOS 26.1, 10 of them reinstalling on top of a
 live app, so any fix for it has to be developed on a host that can still show it
 failing.
 
+The leg names a device and a runtime, `iPhone 17 Pro` on `iOS 26.2`, and boots
+by the UDID that pair resolves to. Both halves matter: one runner image carries
+the same phone under several runtimes, so booting by name alone is booting on
+whichever one `simctl` lists first, and a seed that is only calibrated against a
+runtime it did not run on says nothing. A runner image that stops carrying the
+pair fails the boot step naming what it does carry, which is the cue to pick a
+new pair and recalibrate rather than a `bootstatus` error to read backwards.
+
 Only one sanderling run may drive a given simulator at a time. The driver takes
 an advisory lock on the target's UDID and a second run is refused with the lock
 path in the message, because two runs interleaving app lifecycle leave the first

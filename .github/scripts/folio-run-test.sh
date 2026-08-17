@@ -110,7 +110,7 @@ expect_argv "--seed" argv-ios
 expect_argv "7" argv-ios
 expect_argv "240" argv-ios
 expect_argv "20m" argv-ios
-expect_argv "iPhone 16 Pro" argv-ios
+expect_argv "iPhone 17 Pro" argv-ios
 
 run argv-android android 2 <<TRACE
 $on_txn
