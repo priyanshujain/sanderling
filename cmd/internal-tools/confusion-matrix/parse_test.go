@@ -31,6 +31,31 @@ func scoredFixture(name, model string) fixtureImplementation {
 	}
 }
 
+// Three flags missing is one rerun, not three: the operator is told about all
+// of them at once, in flag order, whatever order the check happened to walk.
+func TestRunNamesEveryMissingRequiredFlagInFlagOrder(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"--sweep", "s"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("got no error, want every missing flag named")
+	}
+	message := err.Error()
+	previous := -1
+	for _, name := range []string{"--reviews", "--assignment", "--property-clauses"} {
+		at := strings.Index(message, name)
+		if at < 0 {
+			t.Fatalf("got %q, want %s named", message, name)
+		}
+		if at < previous {
+			t.Errorf("got %q, want the flags named in flag order", message)
+		}
+		previous = at
+	}
+	if strings.Contains(message, "--sweep") {
+		t.Errorf("got %q, want the supplied --sweep left out", message)
+	}
+}
+
 func TestMappingRefusesInputTheMatrixCannotBeScoredFrom(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -54,15 +54,24 @@ func run(arguments []string, stdout, stderr io.Writer) error {
 	if err := flagSet.Parse(arguments); err != nil {
 		return err
 	}
-	for name, value := range map[string]string{
-		"--sweep":            sweepDirectory,
-		"--reviews":          reviewsDirectory,
-		"--assignment":       assignmentPath,
-		"--property-clauses": mappingPath,
+	// Every missing flag is named together, in flag order: stopping at the
+	// first turns one rerun into one rerun per missing flag.
+	var missing []error
+	for _, required := range []struct {
+		name  string
+		value string
+	}{
+		{"--sweep", sweepDirectory},
+		{"--reviews", reviewsDirectory},
+		{"--assignment", assignmentPath},
+		{"--property-clauses", mappingPath},
 	} {
-		if value == "" {
-			return fmt.Errorf("%s is required", name)
+		if required.value == "" {
+			missing = append(missing, fmt.Errorf("%s is required", required.name))
 		}
+	}
+	if err := errors.Join(missing...); err != nil {
+		return err
 	}
 
 	mapping, err := loadMapping(mappingPath)
