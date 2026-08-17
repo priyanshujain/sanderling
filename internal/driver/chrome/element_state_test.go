@@ -191,6 +191,62 @@ func TestElementState_ReportsTheOtherDocumentedBooleans(t *testing.T) {
 	)
 }
 
+// Focus belongs to the node the user is typing into, not to the element the
+// shadow tree is mounted on.
+//
+// document.activeElement stops at a shadow boundary and names the host, so a
+// Compose for Web app reports focus on its mount element forever. confirmFocus
+// in internal/runner/runner.go re-reads the dump after a focus tap and refuses
+// to type when the field it tapped is not the one holding focus, so every
+// InputText step on such an app failed and the run aborted.
+func TestElementState_FocusDescendsIntoTheShadowRoot(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/shadow-focus.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	field := elementInHierarchyDump(ctx, t, d, "id:shadow-field")
+	x, y := field.Bounds.Center()
+	if err := d.Tap(ctx, x, y); err != nil {
+		t.Fatalf("Tap the field: %v", err)
+	}
+
+	if tapped := elementInHierarchyDump(ctx, t, d, "id:shadow-field"); !tapped.Focused {
+		t.Error("the field inside the shadow root reports no focus after being tapped")
+	}
+	if host := elementInHierarchyDump(ctx, t, d, "id:app"); host.Focused {
+		t.Error("the shadow host reports focus, so the text would land there")
+	}
+}
+
+func elementInHierarchyDump(
+	ctx context.Context,
+	t *testing.T,
+	d *Driver,
+	selector string,
+) *hierarchy.Element {
+	t.Helper()
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+	element := tree.Find(selector)
+	if element == nil {
+		t.Fatalf("the hierarchy dump holds no element matching %q", selector)
+	}
+	return element
+}
+
 func requireBoolean(
 	ctx context.Context,
 	t *testing.T,

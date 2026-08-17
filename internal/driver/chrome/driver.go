@@ -642,6 +642,13 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     ', [onclick]'));
   const editableSet = new Set(deepQuery(
     'input, textarea, [contenteditable]').filter(isEditableElement));
+  // Descended once for the whole dump, for the reason selectAllScript above
+  // descends: document.activeElement names the shadow host, so a Compose for
+  // Web app reported focus on its mount element and never on the field.
+  let focusedElement = document.activeElement;
+  while (focusedElement && focusedElement.shadowRoot && focusedElement.shadowRoot.activeElement) {
+    focusedElement = focusedElement.shadowRoot.activeElement;
+  }
   function buildTree(el, isRoot) {
     const rect = el.getBoundingClientRect();
     // Every attribute the markup wrote, keyed as written, which is what attrs
@@ -704,7 +711,7 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
       children: children,
       clickable: isClickable || null,
       enabled: isEnabled(el) || null,
-      focused: document.activeElement === el || null,
+      focused: focusedElement === el || null,
       // A component keeps what it likes in these two properties, so what is
       // emitted is the flag the field declares and not the property's value.
       checked: el.checked === true || null,

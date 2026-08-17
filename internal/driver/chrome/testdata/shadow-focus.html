@@ -1,0 +1,17 @@
+<!doctype html>
+<html id="page">
+  <head id="page-head">
+    <meta id="page-charset" charset="utf-8" />
+    <title id="page-title">shadow focus</title>
+  </head>
+  <body id="page-body">
+    <!-- Shaped like Compose for Web: the app mounts its accessibility tree
+         inside a shadow root on this element, so document.activeElement answers
+         with the host for every field the user is typing into. -->
+    <div id="app"></div>
+    <script id="page-script">
+      const root = document.getElementById("app").attachShadow({ mode: "open" });
+      root.innerHTML = `<input id="shadow-field" type="text" />`;
+    </script>
+  </body>
+</html>
