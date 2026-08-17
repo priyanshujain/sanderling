@@ -98,7 +98,19 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	// Gate on the app actually being on top before acting, so the first
 	// action never fires against a leftover screen or a system dialog. Done
 	// before the deadline is set so the settle time does not eat the run.
-	waitForForeground(ctx, options, logger)
+	//
+	// A run that cannot get its app on screen has no preconditions to explore
+	// from: every step after this would observe some other app and every
+	// property would judge it, so the run ends here and the trace records why.
+	if !waitForForeground(ctx, options, logger) {
+		if err := recordPreconditionFailure(options); err != nil {
+			return Summary{}, err
+		}
+		return Summary{}, ForegroundNotReachedError{
+			BundleID: options.BundleID,
+			Waited:   foregroundReadyBudget,
+		}
+	}
 
 	// Pick the action and extractor sources once from the driver's
 	// capabilities so the step loop runs one uniform path with no per-step
@@ -138,7 +150,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// readings" and the runner has no business saying that: the action ran,
 		// and a property told otherwise convicts the app of an effect with no
 		// cause. See foreground_guard_last_action_test.go.
-		guard := ensureForeground(ctx, options, logger, stepIndex)
+		guard, inScope := ensureForeground(ctx, options, logger, stepIndex)
 		if lastAction != nil {
 			switch guard {
 			case foregroundRelaunched:
@@ -465,6 +477,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			ActionSkipped:       string(actionSkipped),
 			SkippedVerification: skippedVerification,
 			Witnesses:           witnesses,
+			PreconditionFailure: preconditionFailure(inScope),
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
@@ -632,22 +645,24 @@ const (
 // ensureForeground keeps the app under test in the foreground. When the driver
 // can report the foreground app and it no longer matches the bundle under test,
 // the app is relaunched. Reports what it did so the caller can pass that on to
-// the spec through the previous action. Drivers without ForegroundChecker (web,
-// iOS) are a no-op.
+// the spec through the previous action, and whether the app is in front at all:
+// a false there is a step whose observation is not of the app under test, which
+// the step records so a trace cannot pass it off as exploration. Drivers without
+// ForegroundChecker (web, iOS) are a no-op.
 func ensureForeground(
 	ctx context.Context,
 	options Options,
 	logger *slog.Logger,
 	stepIndex int,
-) foregroundGuard {
+) (foregroundGuard, bool) {
 	checker, ok := options.Driver.(driver.ForegroundChecker)
 	if !ok || options.BundleID == "" {
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	foreground, err := checker.ForegroundApp(ctx)
 	if err != nil {
 		logger.Warn("foreground check failed", "step", stepIndex, "err", err)
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	if foreground != "" && foreground != options.BundleID {
 		logger.Warn("app left foreground; relaunching",
@@ -659,8 +674,7 @@ func ensureForeground(
 		// InputText). awaitForeground re-checks the foreground and focused
 		// window, so it never acts outside the app no matter how slow the
 		// relaunch settles.
-		awaitForeground(ctx, options, logger, stepIndex)
-		return foregroundRelaunched
+		return foregroundRelaunched, awaitForeground(ctx, options, logger, stepIndex)
 	}
 	// The app is the resumed activity, but a system overlay can still own the
 	// focused window while the app stays resumed: a fuzzer swipe starting in the
@@ -670,15 +684,15 @@ func ensureForeground(
 	// the app again.
 	focusChecker, hasFocus := options.Driver.(driver.FocusedWindowChecker)
 	if !hasFocus {
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	focused, err := focusChecker.FocusedWindowApp(ctx)
 	if err != nil {
 		logger.Warn("focus check failed", "step", stepIndex, "err", err)
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	if focused == "" || focused == options.BundleID {
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	logger.Warn("system window obscuring app; dismissing",
 		"step", stepIndex, "focused", focused, "want", options.BundleID)
@@ -686,7 +700,7 @@ func ensureForeground(
 		logger.Warn("dismiss overlay failed", "step", stepIndex, "err", err)
 	}
 	settleForForeground(ctx, options)
-	return foregroundOverlayDismissed
+	return foregroundOverlayDismissed, true
 }
 
 // appIsForeground reports whether the app under test currently owns the
@@ -721,10 +735,44 @@ func appIsForeground(ctx context.Context, options Options) bool {
 	return focused == options.BundleID
 }
 
-// foregroundReadyAttempts bounds how many times waitForForeground tries to
-// bring the app forward before the first step, so a stuck system dialog can
-// never hang the run.
-const foregroundReadyAttempts = 8
+// foregroundReadyBudget bounds how long awaitForeground waits for the app to be
+// on screen, so a stuck system dialog can never hang the run. It is wall-clock
+// time and not a count of polls because a poll costs whatever the driver's idle
+// wait happens to take, and that is a property of the device: on an API 34
+// emulator settleForForeground returned in ~100ms, so eight polls gave up 1.2s
+// into a launch whose window drew at ~1.9s, while on API 36 the same eight polls
+// spanned 3s and cleared the same launch. Counted in polls, the gate's verdict
+// describes the device it ran on rather than the app it was watching.
+var foregroundReadyBudget = 15 * time.Second
+
+// foregroundPollInterval floors how often the gate re-reads the device.
+// settleForForeground returns the moment the device reports idle, which during a
+// launch animation is immediately, so without a floor the gate would spin on adb
+// for the whole budget.
+var foregroundPollInterval = 250 * time.Millisecond
+
+// preconditionAppNotForeground is the reason a trace step carries when the app
+// under test was not in front of it: the startup gate's verdict on step 0, and
+// the scope guard's on any later step it could not bring the app back for. It is
+// a fixed token so a campaign counts these by decoding the trace rather than by
+// grepping a log line.
+const preconditionAppNotForeground = "app_not_in_foreground"
+
+// ForegroundNotReachedError reports that the app under test never came to the
+// foreground within foregroundReadyBudget, so the run never started. A run that
+// ends this way has judged nothing, and reporting it as a clean run would count
+// a harness failure as evidence about the app.
+type ForegroundNotReachedError struct {
+	BundleID string
+	Waited   time.Duration
+}
+
+func (e ForegroundNotReachedError) Error() string {
+	return fmt.Sprintf(
+		"%s never reached the foreground within %s: nothing was observed and no property "+
+			"judged anything, so this run holds no verdict about the app",
+		e.BundleID, e.Waited)
+}
 
 // focusTapSettle is the pause after tapping a field to focus it, before typing.
 // Long enough for focus to land, short enough to avoid the ~500ms-1s full
@@ -742,13 +790,13 @@ var focusTapSettle = 250 * time.Millisecond
 // alone lets the first observe read the outgoing app. When the driver can also
 // report the focused window, the gate additionally waits for that window to
 // name the app, which only happens once it is genuinely drawn.
-func waitForForeground(ctx context.Context, options Options, logger *slog.Logger) {
-	awaitForeground(ctx, options, logger, 0)
+func waitForForeground(ctx context.Context, options Options, logger *slog.Logger) bool {
+	return awaitForeground(ctx, options, logger, 0)
 }
 
 // awaitForeground brings the app under test forward when it is not already
 // resumed and blocks until its window is actually drawn, bounded by
-// foregroundReadyAttempts so a stuck system dialog can never hang the run. It
+// foregroundReadyBudget so a stuck system dialog can never hang the run. It
 // re-checks the foreground each iteration and only presses back + relaunches
 // while the app is genuinely absent, so once the app is resumed it polls the
 // focused-window signal instead of mashing back (which would re-exit the app
@@ -756,61 +804,116 @@ func waitForForeground(ctx context.Context, options Options, logger *slog.Logger
 // the per-step scope guard so neither lets an observe or action land outside
 // the app. Drivers without ForegroundChecker (web) and an unknown foreground
 // both skip the gate.
-func awaitForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
+//
+// It reports whether the app is on screen. False means the budget ran out with
+// the app confirmed absent, which is a precondition the caller has to record:
+// every signal that cannot answer the question (no capability, a read error, an
+// unknown foreground, a cancelled run) reports true rather than manufacture a
+// failure out of a gate that never got to judge.
+func awaitForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) bool {
 	checker, ok := options.Driver.(driver.ForegroundChecker)
 	if !ok || options.BundleID == "" {
-		return
+		return true
 	}
 	focusChecker, hasFocus := options.Driver.(driver.FocusedWindowChecker)
-	for attempt := range foregroundReadyAttempts {
+	deadline := time.Now().Add(foregroundReadyBudget)
+	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return
+			return true // the run is ending on its own; the gate holds no verdict
 		}
 		foreground, err := checker.ForegroundApp(ctx)
 		if err != nil {
 			logger.Warn("foreground check failed", "step", stepIndex, "err", err)
-			return
+			return true
 		}
 		if foreground == "" {
-			return // foreground unknowable (e.g. iOS); don't block the run
+			return true // foreground unknowable (e.g. iOS); don't block the run
 		}
-		if foreground != options.BundleID {
-			logger.Warn("app not in foreground; bringing it forward",
-				"step", stepIndex, "foreground", foreground, "want", options.BundleID, "attempt", attempt)
-			bringToForeground(ctx, options, logger, stepIndex)
+		if foreground == options.BundleID {
+			if !hasFocus {
+				return true // resumed is the app and no finer signal exists
+			}
+			focused, err := focusChecker.FocusedWindowApp(ctx)
+			if err != nil {
+				logger.Warn("focus check failed", "step", stepIndex, "err", err)
+				return true
+			}
+			if focused == options.BundleID {
+				return true // window is drawn; safe to observe
+			}
+			if !time.Now().Before(deadline) {
+				break
+			}
+			logger.Warn("app resumed but window not yet drawn; waiting",
+				"step", stepIndex, "focused", focused, "want", options.BundleID, "attempt", attempt)
+			awaitNextForegroundPoll(ctx, options)
 			continue
 		}
-		if !hasFocus {
-			return // resumed is the app and no finer signal exists
+		if !time.Now().Before(deadline) {
+			break
 		}
-		focused, err := focusChecker.FocusedWindowApp(ctx)
-		if err != nil {
-			logger.Warn("focus check failed", "step", stepIndex, "err", err)
-			return
-		}
-		if focused == options.BundleID {
-			return // window is drawn; safe to observe
-		}
-		logger.Warn("app resumed but window not yet drawn; waiting",
-			"step", stepIndex, "focused", focused, "want", options.BundleID, "attempt", attempt)
-		settleForForeground(ctx, options)
+		logger.Warn("app not in foreground; bringing it forward",
+			"step", stepIndex, "foreground", foreground, "want", options.BundleID, "attempt", attempt)
+		bringToForeground(ctx, options, logger, stepIndex)
+		awaitNextForegroundPoll(ctx, options)
 	}
-	logger.Warn("app never reached foreground; proceeding anyway",
-		"step", stepIndex, "want", options.BundleID)
+	logger.Warn("app never reached foreground", "step", stepIndex,
+		"want", options.BundleID, "waited", foregroundReadyBudget)
+	return false
+}
+
+// awaitNextForegroundPoll waits out one poll interval before the gate re-reads
+// the device: one settle, then whatever is left of foregroundPollInterval, so a
+// driver whose idle wait returns immediately cannot turn the gate into a spin.
+func awaitNextForegroundPoll(ctx context.Context, options Options) {
+	start := time.Now()
+	settleForForeground(ctx, options)
+	remaining := foregroundPollInterval - time.Since(start)
+	if remaining <= 0 {
+		return
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 }
 
 // bringToForeground returns the app under test to the foreground. It first
 // presses BACK to dismiss any modal system dialog (a relaunch alone does not
-// close one), then relaunches and waits for the UI to settle.
+// close one), then relaunches. The caller waits out the poll interval before
+// looking again, so a relaunch that fails outright cannot spin the gate.
 func bringToForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
 	if err := options.Driver.PressKey(ctx, "back"); err != nil {
 		logger.Warn("dismiss key before relaunch failed", "step", stepIndex, "err", err)
 	}
 	if err := options.Driver.Launch(ctx, options.BundleID, false, nil); err != nil {
 		logger.Warn("relaunch failed", "step", stepIndex, "err", err)
-		return
 	}
-	settleForForeground(ctx, options)
+}
+
+// preconditionFailure names what a step could not assume, empty when it could.
+func preconditionFailure(inScope bool) string {
+	if inScope {
+		return ""
+	}
+	return preconditionAppNotForeground
+}
+
+// recordPreconditionFailure writes the startup gate's verdict to the trace as
+// step 0, the step index no observation ever uses, so a run that never started
+// is countable off the trace instead of off a warn line in a log.
+func recordPreconditionFailure(options Options) error {
+	step := trace.Step{
+		Index:               0,
+		Timestamp:           time.Now(),
+		PreconditionFailure: preconditionAppNotForeground,
+	}
+	if err := options.TraceWriter.WriteStep(step); err != nil {
+		return fmt.Errorf("write precondition failure to trace: %w", err)
+	}
+	return nil
 }
 
 // settleForForeground waits one idle window for the UI to settle, bounding the

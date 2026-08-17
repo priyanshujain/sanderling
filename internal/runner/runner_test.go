@@ -82,6 +82,18 @@ func fastFocusSettle(t *testing.T) {
 	t.Cleanup(func() { focusTapSettle = prev })
 }
 
+// fastForegroundGate shrinks the startup gate's wall-clock budget so a test that
+// drives it to exhaustion takes milliseconds. The budget stays a duration, which
+// is the property under test.
+func fastForegroundGate(t *testing.T) {
+	budget, interval := foregroundReadyBudget, foregroundPollInterval
+	foregroundReadyBudget = 200 * time.Millisecond
+	foregroundPollInterval = time.Millisecond
+	t.Cleanup(func() {
+		foregroundReadyBudget, foregroundPollInterval = budget, interval
+	})
+}
+
 func mustDispatch(t *testing.T, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) {
 	t.Helper()
 	skipped, err := applyAction(context.Background(), drv, action, tree)
@@ -2117,9 +2129,12 @@ func containsProperty(records []ViolationRecord, property string) bool {
 }
 
 func TestRunner_RelaunchesWhenAppLeavesForeground(t *testing.T) {
+	fastForegroundGate(t)
 	state := newHarness(t)
-	// Always report a foreign app, so every step's guard must relaunch.
-	state.mock.ForegroundResults = []string{"com.android.chrome"}
+	// The app is in front when the run starts and a foreign app every time a
+	// step looks, so the startup gate passes and every step's guard must
+	// relaunch.
+	state.mock.ForegroundResults = []string{"app.folio", "com.android.chrome"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -2173,6 +2188,7 @@ func TestRunner_NoRelaunchWhenAppInForeground(t *testing.T) {
 // brings the app forward (back-press + relaunch) before any tap fires when the
 // device boots showing a system dialog.
 func TestRunner_WaitsForForegroundBeforeFirstAction(t *testing.T) {
+	fastForegroundGate(t)
 	state := newHarness(t)
 	// First the device shows a system setup screen, then the app is on top.
 	state.mock.ForegroundResults = []string{"com.google.android.setupwizard", "app.folio"}
@@ -2221,6 +2237,7 @@ func TestRunner_WaitsForForegroundBeforeFirstAction(t *testing.T) {
 // signal rather than relaunching, and only proceed once the window names the
 // app.
 func TestRunner_WaitsForWindowDrawnBeforeFirstAction(t *testing.T) {
+	fastForegroundGate(t)
 	state := newHarness(t)
 	// The app is resumed immediately, but its window lags: the outgoing
 	// settings screen stays focused for two checks before the app draws.
@@ -2263,6 +2280,7 @@ func TestRunner_WaitsForWindowDrawnBeforeFirstAction(t *testing.T) {
 // which returns before the window draws on a slow physical device, is the bug
 // this guards against.
 func TestAwaitForeground_RelaunchesThenWaitsForWindow(t *testing.T) {
+	fastForegroundGate(t)
 	m := mockdriver.New()
 	// Foreground: launcher on the first poll (still gone), then the app. Focus:
 	// the launcher window lingers one extra poll before the app's window draws.
@@ -2363,10 +2381,14 @@ func TestEnsureForeground_DismissesSystemOverlay(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	options := Options{BundleID: "app.folio", Driver: m, IdleTimeout: 10 * time.Millisecond}
 
-	got := ensureForeground(context.Background(), options, logger, 5)
+	got, inScope := ensureForeground(context.Background(), options, logger, 5)
 	if got != foregroundOverlayDismissed {
 		t.Fatalf("the guard reported %v, want foregroundOverlayDismissed; "+
 			"an obscured app is not a relaunched one", got)
+	}
+	if !inScope {
+		t.Fatal("the guard reported the app out of scope; a dismissed overlay leaves " +
+			"the app resumed, and marking the step unmet would hide the real ones")
 	}
 	backs, relaunches := 0, 0
 	for _, a := range m.Actions() {
