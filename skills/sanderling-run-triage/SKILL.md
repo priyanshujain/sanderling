@@ -147,8 +147,8 @@ result.
 
 ## 5. When a run is not evidence at all
 
-Some runs never got far enough for any of the above to matter, and every one of
-them exits 0 and reports no violations.
+Some runs never got far enough for any of the above to matter, and most of them
+exit 0 and report no violations.
 
 **It never reached the app.** A launch flake left a fuzzer on the device
 launcher for 200 steps in 65 seconds, two nodes per snapshot, exit 0, no
@@ -157,6 +157,13 @@ trace at all: the folio CI leg greps for `"AddTransactionScreen"` and fails the
 run when it is absent, which is more honest than any exit code it could read.
 The run's stdout also carries `app left foreground; relaunching` with the
 package it found instead.
+
+A run that could not get the app on screen at all no longer reaches that state:
+the startup gate ends it, the process exits 1, and the trace holds one record,
+`{"step":0,"precondition_failure":"app_not_in_foreground"}`. The same field
+lands on any later step the scope guard could not bring the app back for, and
+the campaign summary counts both as `precondition_failures`, so a directory of
+runs answers "how many of these were never in the app" without reading a log.
 
 **The hierarchy is a handful of nodes.** `nodes=` in each step line is the
 cheapest signal there is. Measured: 6 on a four-element page, 2 on an empty one.
