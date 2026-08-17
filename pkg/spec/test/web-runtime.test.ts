@@ -627,12 +627,13 @@ function domElement(spec: {
   labels?: string[];
   text?: string;
   checked?: boolean;
+  contentEditable?: boolean;
 }): unknown {
   const attributes = spec.attributes ?? {};
   return {
     tagName: spec.tag.toUpperCase(),
     type: spec.tag === "input" ? "text" : "",
-    isContentEditable: false,
+    isContentEditable: spec.contentEditable ?? false,
     checked: spec.checked,
     id: attributes.id ?? "",
     className: attributes.class ?? "",
@@ -775,6 +776,25 @@ test("an element reached through ax reports the tappable selector's clickability
     clickabilityOf(domElement({ tag: "span", attributes: { id: "note", role: "presentation" } })),
     false,
   );
+});
+
+// isContentEditable is inherited, so the handle called every span inside a
+// contenteditable container typeable while the enumeration and the hierarchy
+// dump, which both ask whether the element itself matches EDITABLE_SELECTOR,
+// called the same span inert.
+test("an element reached through ax reports the editable selector's editability", () => {
+  const editabilityOf = (element: unknown) => handleOf(element).editable;
+  assert.equal(
+    editabilityOf(
+      domElement({ tag: "div", attributes: { id: "note", contenteditable: "" }, contentEditable: true }),
+    ),
+    true,
+  );
+  assert.equal(
+    editabilityOf(domElement({ tag: "span", attributes: { id: "word" }, contentEditable: true })),
+    false,
+  );
+  assert.equal(editabilityOf(domElement({ tag: "textarea", attributes: { id: "memo" } })), true);
 });
 
 test("a non-editable element carries no hintText", () => {

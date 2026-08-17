@@ -547,7 +547,11 @@ function elementHandle(
     // container a spec reached through state.ax claimed to be a tap target.
     clickable: element.matches(TAPPABLE_SELECTOR),
     enabled: isEnabled(element),
-    editable: isEditableElement(element as HTMLElement),
+    // isContentEditable is inherited, so reading it alone made every span inside
+    // a contenteditable container typeable here while collectTargets and the
+    // hierarchy dump, which both require the element ITSELF to match
+    // EDITABLE_SELECTOR, called the same span inert.
+    editable: element.matches(EDITABLE_SELECTOR) && isEditableElement(element as HTMLElement),
     focused: focusedElement === element,
     // Checkbox and option state lives in the DOM PROPERTY: the markup attribute
     // records only what the page started with, so a handle reading it reports a
