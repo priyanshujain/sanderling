@@ -29,7 +29,7 @@ WEB_DIST := replay-ui/dist
 
 GOLINES := $(shell $(GO) env GOPATH)/bin/golines
 
-.PHONY: bootstrap proto sidecar sidecar-embed sanderling sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-folio test-spec-api test-ci-scripts spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
+.PHONY: bootstrap proto sidecar sidecar-embed sanderling build sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-folio test-spec-api test-ci-scripts spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
 
 bootstrap:
 	$(GO) mod download
@@ -47,6 +47,12 @@ sidecar: $(SIDECAR_JAR)
 sidecar-embed: $(SIDECAR_EMBED)
 
 sanderling: $(SANDERLING_BIN)
+
+# `build` is a directory at the repository root, so `make build` matched it and
+# reported nothing to be done while leaving a stale binary in bin/ for the next
+# command to use. Aliasing it is cheaper than expecting everyone to remember
+# that the target is named after the binary.
+build: sanderling
 
 $(SANDERLING_BIN): $(SIDECAR_EMBED) $(COMPANION_EMBED) $(RUNNER_EMBED) web-build
 	mkdir -p bin
