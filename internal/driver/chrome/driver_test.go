@@ -317,14 +317,14 @@ func TestHierarchy_ScrollableAttribute(t *testing.T) {
 func TestHierarchy_HintTextNamesAnEditableField(t *testing.T) {
 	const html = `<body>` +
 		`<label id="amount-label" for="amount">Amount</label>` +
-		`<input id="amount" placeholder="0.00" name="amount-field">` +
-		`<input id="search" aria-label="Search" placeholder="Type here" name="q">` +
+		`<input id="amount" class="input amount-input" placeholder="0.00" name="amount-field">` +
+		`<input id="search" class="input search-input" aria-label="Search" placeholder="Type here" name="q">` +
 		`<label id="note-label" for="note"> </label>` +
-		`<input id="note" placeholder="What's this for?" name="note-field">` +
-		`<input id="reference" name="reference-field">` +
-		`<input id="unnamed">` +
-		`<input id="agree" type="checkbox" placeholder="ignored">` +
-		`<button id="go" placeholder="ignored">go</button>` +
+		`<input id="note" class="input note-input" placeholder="What's this for?" name="note-field">` +
+		`<input id="reference" class="input" name="reference-field">` +
+		`<input id="unnamed" class="input">` +
+		`<input id="agree" class="checkbox" type="checkbox" placeholder="ignored">` +
+		`<button id="go" class="button" placeholder="ignored">go</button>` +
 		`</body>`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -346,17 +346,18 @@ func TestHierarchy_HintTextNamesAnEditableField(t *testing.T) {
 
 	type node struct {
 		Attributes map[string]string `json:"attributes"`
+		Editable   bool              `json:"editable"`
 		Children   []node            `json:"children"`
 	}
 	var root node
 	if err := json.Unmarshal([]byte(dump), &root); err != nil {
 		t.Fatalf("unmarshal hierarchy: %v", err)
 	}
-	hintByID := map[string]string{}
+	fieldByID := map[string]node{}
 	var walk func(n node)
 	walk = func(n node) {
 		if id := n.Attributes["resource-id"]; id != "" {
-			hintByID[id] = n.Attributes["hintText"]
+			fieldByID[id] = n
 		}
 		for _, c := range n.Children {
 			walk(c)
@@ -365,19 +366,30 @@ func TestHierarchy_HintTextNamesAnEditableField(t *testing.T) {
 	walk(root)
 
 	for _, tc := range []struct {
-		id   string
-		want string
+		id       string
+		want     string
+		editable bool
 	}{
-		{"search", "Search"},
-		{"amount", "Amount"},
-		{"note", "What's this for?"},
-		{"reference", "reference-field"},
-		{"unnamed", ""},
-		{"agree", ""},
-		{"go", ""},
+		{"search", "Search", true},
+		{"amount", "Amount", true},
+		{"note", "What's this for?", true},
+		{"reference", "reference-field", true},
+		{"unnamed", "", true},
+		{"agree", "", false},
+		{"go", "", false},
 	} {
-		if hintByID[tc.id] != tc.want {
-			t.Errorf("%q: hintText = %q, want %q", tc.id, hintByID[tc.id], tc.want)
+		field := fieldByID[tc.id]
+		if field.Attributes["hintText"] != tc.want {
+			t.Errorf("%q: hintText = %q, want %q", tc.id, field.Attributes["hintText"], tc.want)
+		}
+		// visibleLabel reaches the hint only for an element the dump calls
+		// editable, so a field named right and marked wrong is still named by
+		// its class downstream.
+		if field.Editable != tc.editable {
+			t.Errorf("%q: editable = %v, want %v", tc.id, field.Editable, tc.editable)
+		}
+		if tc.want != "" && field.Attributes["hintText"] == field.Attributes["class"] {
+			t.Errorf("%q: named by its CSS class %q", tc.id, field.Attributes["class"])
 		}
 	}
 }
