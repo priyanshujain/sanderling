@@ -510,7 +510,35 @@ function isEnabled(element: Element): boolean {
 function deepestActiveElement(): Element | null {
   let element = document.activeElement;
   while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
-  return element;
+  return fieldBehindTheCaret(element) ?? element;
+}
+
+// Compose for Web takes keystrokes on a 1px input pinned to the caret, a SIBLING
+// of the accessibility tree, so descending the shadow roots lands on a node no
+// selector can name and the field carrying the test tag reads unfocused.
+// selectAllScript in internal/driver/chrome/driver.go re-attributes focus the
+// same way for the dump the goja host reads, and carries the reasoning,
+// including why the caret's CENTRE decides rather than its whole box.
+const CARET_ORIGIN_PROPERTY = "--compose-internal-web-backing-input-left";
+
+function fieldBehindTheCaret(caretInput: Element | null): Element | null {
+  if (!caretInput || caretInput.tagName !== "INPUT") return null;
+  if (!getComputedStyle(caretInput).getPropertyValue(CARET_ORIGIN_PROPERTY).trim()) return null;
+  const caret = caretInput.getBoundingClientRect();
+  const x = (caret.left + caret.right) / 2;
+  const y = (caret.top + caret.bottom) / 2;
+  let field: Element | null = null;
+  let fieldArea = Infinity;
+  for (const candidate of editableElements()) {
+    if (candidate === caretInput) continue;
+    const box = candidate.getBoundingClientRect();
+    const area = box.width * box.height;
+    if (area <= 0 || area >= fieldArea) continue;
+    if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue;
+    field = candidate;
+    fieldArea = area;
+  }
+  return field;
 }
 
 function elementHandle(
@@ -831,6 +859,12 @@ function isEditableElement(element: HTMLElement): boolean {
   return false;
 }
 
+function editableElements(): Set<Element> {
+  return new Set<Element>(
+    (deepQueryAll(EDITABLE_SELECTOR, document) as HTMLElement[]).filter(isEditableElement),
+  );
+}
+
 // isScrollable mirrors the native `scrollable` accessibility attribute: the
 // container can actually scroll, i.e. its content overflows its box. The
 // document scrolling root is not special-cased in: when the page does not
@@ -936,9 +970,7 @@ function selectorsFor(elements: readonly HTMLElement[]): Array<string | undefine
 // stays expressed in CSS, as it always was.
 function collectTargets(): TargetElement[] {
   const clickable = new Set<Element>(deepQueryAll(TAPPABLE_SELECTOR, document));
-  const editable = new Set<Element>(
-    (deepQueryAll(EDITABLE_SELECTOR, document) as HTMLElement[]).filter(isEditableElement),
-  );
+  const editable = editableElements();
   const elements = targetElements();
   const selectors = selectorsFor(elements);
   return elements.map((element, index) => ({

@@ -54,6 +54,12 @@ export interface FakeElementSpec {
   // host decides an element is scrollable.
   overflows?: boolean;
   focused?: boolean;
+  // customProperties are DECLARED on this element and INHERITED by everything
+  // under it, which is the whole reason the runtime reads a computed style and
+  // not the style attribute: Compose declares the caret's box on the container
+  // that positions its backing input, and only the input's COMPUTED style
+  // carries it.
+  customProperties?: Record<string, string>;
   children?: FakeElementSpec[];
   shadow?: FakeElementSpec[];
 }
@@ -161,6 +167,14 @@ function activeElementIn(nodes: FakeElement[]): FakeElement | null {
     if (inside) return inside;
   }
   return null;
+}
+
+function inheritedProperty(element: FakeElement, name: string): string {
+  for (let node: FakeElement | null = element; node; node = node.parentElement) {
+    const declared = node.customProperties?.[name];
+    if (declared !== undefined) return declared;
+  }
+  return "";
 }
 
 function queryScope(scope: { children: FakeElement[] }, selector: string): FakeElement[] {
@@ -303,9 +317,13 @@ export function withFakeDocument(elements: FakeElement[], run: () => void): void
   const global = globalThis as Record<string, unknown>;
   const originalDocument = global.document;
   const originalWindow = global.window;
+  const originalComputedStyle = global.getComputedStyle;
   const document: FakeRoot = fakeRoot(elements);
   global.document = document;
   global.window = {};
+  global.getComputedStyle = (element: FakeElement) => ({
+    getPropertyValue: (name: string) => inheritedProperty(element, name),
+  });
   __testing__.resetTargetCache();
   try {
     run();
@@ -313,5 +331,6 @@ export function withFakeDocument(elements: FakeElement[], run: () => void): void
     __testing__.resetTargetCache();
     global.document = originalDocument;
     global.window = originalWindow;
+    global.getComputedStyle = originalComputedStyle;
   }
 }

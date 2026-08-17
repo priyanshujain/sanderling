@@ -1023,6 +1023,73 @@ test("ax.find reports focus on the field inside the shadow root, not on its host
   });
 });
 
+// Descending the shadow roots is still not enough on Compose for Web: it takes
+// keystrokes on a 1px input pinned to the caret, a SIBLING of the accessibility
+// tree, so DOM focus never reaches the semantics element carrying the test tag
+// and every field read unfocused. internal/driver/chrome/driver.go re-attributes
+// focus to the field the caret sits in, and TestElementState_FocusFollowsTheCaretToItsField
+// pins it there over a real Compose-shaped page.
+//
+// Both fields are focused in turn, because answering with the first editable in
+// the tree would satisfy the email half and still name the wrong field. The
+// password caret overhangs its box, as it does whenever the text style is taller
+// than the field's layout box, so requiring the caret to be CONTAINED rather
+// than to have its centre inside would drop that field back to unfocused.
+test("focus follows the caret to the field it types into, not the input it is", () => {
+  const carets = [
+    { field: "EmailField", y: 78, height: 17.578125 },
+    { field: "PasswordField", y: 157, height: 20 },
+  ];
+  for (const caret of carets) {
+    const app = fakeElement({
+      tag: "div", x: 0, y: 0, width: 760, height: 800, id: "app",
+      shadow: [
+        {
+          tag: "div", x: 0, y: 0, width: 0, height: 0, id: "caret-holder",
+          customProperties: {
+            "--compose-internal-web-backing-input-left": "34",
+            "--compose-internal-web-backing-input-top": String(caret.y),
+            "--compose-internal-web-backing-input-width": "1",
+            "--compose-internal-web-backing-input-height": String(caret.height),
+          },
+          children: [
+            {
+              tag: "input", x: 34, y: caret.y, width: 1, height: caret.height,
+              id: "caret-input", editable: true, focused: true,
+            },
+          ],
+        },
+        {
+          tag: "div", x: 0, y: 0, width: 760, height: 800, id: "a11y-root",
+          children: [
+            {
+              tag: "div", x: 34, y: 78, width: 688, height: 18, id: "EmailField",
+              attrs: { role: "textbox", contenteditable: "true" }, editable: true,
+            },
+            {
+              tag: "div", x: 34, y: 158, width: 688, height: 18, id: "PasswordField",
+              attrs: { role: "textbox", contenteditable: "true" }, editable: true,
+            },
+          ],
+        },
+      ],
+    });
+    withFakeDocument([app], () => {
+      __testing__.extractors.length = 0;
+      const ids = ["EmailField", "PasswordField", "caret-input", "caret-holder", "a11y-root", "app"];
+      for (const id of ids) {
+        __testing__.runtime.extract((state) => {
+          const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
+          return ax.find(`id:${id}`)?.focused;
+        });
+      }
+      const values = __testing__.evaluateExtractors();
+      const focused = ids.filter((_, index) => readingOf(values, index) === true);
+      assert.deepEqual(focused, [caret.field]);
+    });
+  }
+});
+
 // A nested undefined is the one reading shape the two hosts do NOT encode
 // alike, and this pins the split instead of hiding it. JSON has no undefined,
 // so the key goes with the value here; goja marshals the same member as null,
