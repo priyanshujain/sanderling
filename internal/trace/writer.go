@@ -61,6 +61,12 @@ type Step struct {
 	// for this step, so downstream tooling can tell a deliberately-skipped
 	// step from one that was verified and came back clean.
 	SkippedVerification bool `json:"skipped_verification,omitempty"`
+	// PreconditionFailure names a precondition of the run that was not met, so
+	// a step that never had the app under test in front of it cannot be counted
+	// as one that explored the app. Index 0 carries the startup gate's verdict:
+	// a trace holding that record and nothing else is a run that never started,
+	// which is a different thing from a run that explored and found nothing.
+	PreconditionFailure string `json:"precondition_failure,omitempty"`
 	// Witnesses records the violation witness for each property that newly
 	// violated at this step: the cause and the extractor values at onset.
 	Witnesses map[string]Witness `json:"witnesses,omitempty"`
