@@ -74,8 +74,8 @@ The loop runs until the duration you set elapses. Every step is written to a tra
 
 | Platform | How sanderling drives the app |
 |---|---|
-| Android | A native sidecar reads the UI through UIAutomator and injects input. Works on emulators and devices. |
-| iOS | A native sidecar reads the UI through XCTest and injects input. Works on simulators. |
+| Android | A JVM sidecar reads the UI from an on-device accessibility service and injects input. Works on emulators and devices. |
+| iOS | An XCTest runner inside the simulator or device reads the UI and types; on the simulator a bundled idb_companion adds gestures and screenshots. No JVM. Works on simulators and devices. |
 | Web | Chrome, driven directly over the Chrome DevTools Protocol. No sidecar. |
 
 Kotlin Multiplatform apps need nothing special: the Android build is tested through the Android driver and the iOS build through the iOS driver.
