@@ -1551,3 +1551,67 @@ func TestSelectorFormsResolveTheSameElement(t *testing.T) {
 		})
 	}
 }
+
+// customElementDump is the shape a page built from custom elements reports: a
+// container's tag name contains the tag name of what it holds, so "todo-list"
+// carries "li" and "todo-app" carries "a".
+const customElementDump = `{
+  "attributes": {"tag": "todo-app", "resource-id": "app", "bounds": "[0,0,800,600]"},
+  "children": [
+    {
+      "attributes": {"tag": "todo-list", "resource-id": "list", "bounds": "[0,0,800,400]"},
+      "children": [
+        {"attributes": {"tag": "li", "resource-id": "todo_1", "bounds": "[0,0,800,50]"}, "children": []},
+        {"attributes": {"tag": "li", "resource-id": "todo_2", "bounds": "[0,50,800,100]"}, "children": []}
+      ]
+    },
+    {
+      "attributes": {"tag": "a", "resource-id": "filter_all", "bounds": "[0,400,800,450]"},
+      "children": []
+    }
+  ]
+}`
+
+func TestTagNamesTheWholeTagNotASubstringOfIt(t *testing.T) {
+	tree, _ := Parse(customElementDump)
+	for _, test := range []struct {
+		value string
+		want  []string
+	}{
+		{"li", []string{"todo_1", "todo_2"}},
+		{"a", []string{"filter_all"}},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			sel := Selector{Filters: []AttrFilter{{Attr: "tag", Value: test.value}}}
+			if got := resourceIDsOf(tree.FindAllBySelector(sel)); !slices.Equal(got, test.want) {
+				t.Errorf("{tag: %q} matched %v, want %v", test.value, got, test.want)
+			}
+			stringForm := "tag:" + test.value
+			if got := resourceIDsOf(tree.FindAllNodes(stringForm)); !slices.Equal(got, test.want) {
+				t.Errorf("%q matched %v, want %v", stringForm, got, test.want)
+			}
+		})
+	}
+}
+
+func TestTagMatchesTheElementItNames(t *testing.T) {
+	tree, _ := Parse(customElementDump)
+	for _, test := range []struct {
+		value string
+		want  []string
+	}{
+		{"todo-app", []string{"app"}},
+		{"todo-list", []string{"list"}},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			sel := Selector{Filters: []AttrFilter{{Attr: "tag", Value: test.value}}}
+			if got := resourceIDsOf(tree.FindAllBySelector(sel)); !slices.Equal(got, test.want) {
+				t.Errorf("{tag: %q} matched %v, want %v", test.value, got, test.want)
+			}
+			stringForm := "tag:" + test.value
+			if got := resourceIDsOf(tree.FindAllNodes(stringForm)); !slices.Equal(got, test.want) {
+				t.Errorf("%q matched %v, want %v", stringForm, got, test.want)
+			}
+		})
+	}
+}

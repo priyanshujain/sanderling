@@ -10,6 +10,7 @@
 //	  text:<value>         - substring on text attribute, innermost match only
 //	  desc:<value>         - substring on content-desc / accessibilityText
 //	  descPrefix:<prefix>  - starts-with on content-desc / accessibilityText
+//	  tag:<value>          - exact match on the element's tag name (web)
 //
 //	Object selectors (multi-attribute AND, element-scoped or global):
 //	  { attr: value, ... } - all key/value pairs must match, each key resolved by
@@ -394,6 +395,13 @@ func matchSelectorKind(element *Element, kind, value string) (bool, bool) {
 			strings.HasPrefix(element.Description, value+", "), true
 	case "descPrefix":
 		return strings.HasPrefix(element.Description, value), true
+	case "tag":
+		// Both DOM resolvers compile this to a CSS type selector, which is the
+		// whole tag name. A substring rule here made {tag: "li"} name
+		// <todo-list> and {tag: "a"} name <todo-app>, so a selector meant for a
+		// row resolved to the container holding it.
+		tag, ok := element.Attributes["tag"]
+		return ok && tag == value, true
 	default:
 		return false, false
 	}

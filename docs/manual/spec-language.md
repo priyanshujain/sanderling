@@ -60,6 +60,7 @@ Selectors are passed to `ax.find()`, `ax.findAll()`, and element-scoped `.find()
 | `text:<value>` | Substring match on text content, innermost match only |
 | `desc:<value>` | Exact match on accessibility description; also matches when description starts with `<value>, ` (iOS merged labels) |
 | `descPrefix:<prefix>` | Starts-with match on accessibility description |
+| `tag:<value>` | Exact match on the element's tag name (web) |
 | `<attr>:<value>` | Substring match on any raw attribute by name |
 
 Boolean attributes (`"true"` / `"false"`) use exact match rather than substring.
@@ -75,7 +76,7 @@ s.ax.find({ accessibilityText: "LoginScreen" })
 s.ax.find({ testTag: "AccountCard", clickable: true })
 ```
 
-Every key-value pair must match. A key means the same thing here as in the string form: `id`, `desc`, `idPrefix` and `descPrefix` keep their matching rules, and every other key is an attribute name, with substring and boolean rules per attribute.
+Every key-value pair must match. A key means the same thing here as in the string form: `id`, `desc`, `idPrefix`, `descPrefix` and `tag` keep their matching rules, and every other key is an attribute name, with substring and boolean rules per attribute.
 
 Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
 
