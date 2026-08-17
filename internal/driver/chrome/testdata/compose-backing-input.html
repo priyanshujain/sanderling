@@ -1,0 +1,80 @@
+<!doctype html>
+<html id="page">
+  <head id="page-head">
+    <meta id="page-charset" charset="utf-8" />
+    <title id="page-title">compose backing input</title>
+  </head>
+  <body id="page-body">
+    <!-- Shaped like Compose for Web: keystrokes go through a 1px transparent
+         input pinned to the caret, a sibling of the accessibility tree rather
+         than a node in it, so DOM focus never lands on the semantics element
+         carrying the test tag. The custom properties are declared on the
+         container and read by the input, exactly as Compose writes them. -->
+    <div id="app"></div>
+    <script id="page-script">
+      const root = document.getElementById("app").attachShadow({ mode: "open" });
+      root.innerHTML = `
+        <div
+          id="caret-holder"
+          style="
+            position: absolute;
+            top: 0px;
+            left: 0px;
+            --compose-internal-web-backing-input-left: 0;
+            --compose-internal-web-backing-input-top: 0;
+            --compose-internal-web-backing-input-width: 1;
+            --compose-internal-web-backing-input-height: 17.578125;
+          "
+        >
+          <input
+            id="caret-input"
+            style="
+              position: absolute;
+              top: calc(var(--compose-internal-web-backing-input-top) * 1px);
+              left: calc(var(--compose-internal-web-backing-input-left) * 1px);
+              width: calc(var(--compose-internal-web-backing-input-width) * 1px);
+              height: calc(var(--compose-internal-web-backing-input-height) * 1px);
+              padding: 0;
+              color: transparent;
+              background: transparent;
+              caret-color: transparent;
+              border: none;
+              outline: none;
+              z-index: -1;
+            "
+          />
+        </div>
+        <div id="a11y-root" role="presentation">
+          <div
+            id="EmailField"
+            role="textbox"
+            contenteditable="true"
+            style="position: absolute; left: 34px; top: 78px; width: 688px; height: 18px;"
+          ></div>
+          <div
+            id="PasswordField"
+            role="textbox"
+            contenteditable="true"
+            style="position: absolute; left: 34px; top: 158px; width: 688px; height: 18px;"
+          ></div>
+        </div>`;
+      const holder = root.getElementById("caret-holder");
+      const caret = root.getElementById("caret-input");
+      for (const field of root.querySelectorAll('[role="textbox"]')) {
+        field.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          const box = field.getBoundingClientRect();
+          holder.style.setProperty(
+            "--compose-internal-web-backing-input-left",
+            String(Math.round(event.clientX)),
+          );
+          holder.style.setProperty(
+            "--compose-internal-web-backing-input-top",
+            String(Math.round(box.top)),
+          );
+          caret.focus();
+        });
+      }
+    </script>
+  </body>
+</html>

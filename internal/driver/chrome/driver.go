@@ -649,6 +649,36 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
   while (focusedElement && focusedElement.shadowRoot && focusedElement.shadowRoot.activeElement) {
     focusedElement = focusedElement.shadowRoot.activeElement;
   }
+  // Descending is still not enough on Compose for Web: it takes keystrokes on a
+  // 1px transparent input pinned to the caret, and that input is a SIBLING of
+  // the accessibility tree rather than a node in it. DOM focus therefore never
+  // reaches the semantics element carrying the test tag, so confirmFocus in
+  // internal/runner/runner.go saw an unnamed element hold focus after every
+  // focus tap and refused to type. Compose declares the caret's box in these
+  // custom properties, which the input inherits from the container that
+  // positions it, so the field being typed into is the innermost editable box
+  // that caret sits in.
+  const CARET_ORIGIN_PROPERTY = '--compose-internal-web-backing-input-left';
+  function fieldBehindTheCaret(caretInput) {
+    if (!caretInput || caretInput.tagName !== 'INPUT') return null;
+    if (!getComputedStyle(caretInput).getPropertyValue(CARET_ORIGIN_PROPERTY).trim()) return null;
+    const caret = caretInput.getBoundingClientRect();
+    const x = (caret.left + caret.right) / 2;
+    const y = (caret.top + caret.bottom) / 2;
+    let field = null;
+    let fieldArea = Infinity;
+    for (const candidate of editableSet) {
+      if (candidate === caretInput) continue;
+      const box = candidate.getBoundingClientRect();
+      const area = box.width * box.height;
+      if (area <= 0 || area >= fieldArea) continue;
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue;
+      field = candidate;
+      fieldArea = area;
+    }
+    return field;
+  }
+  focusedElement = fieldBehindTheCaret(focusedElement) || focusedElement;
   function buildTree(el, isRoot) {
     const rect = el.getBoundingClientRect();
     // Every attribute the markup wrote, keyed as written, which is what attrs

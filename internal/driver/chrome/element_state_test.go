@@ -225,6 +225,69 @@ func TestElementState_FocusDescendsIntoTheShadowRoot(t *testing.T) {
 	}
 }
 
+// Focus belongs to the field the caret sits in, not to the input the caret is.
+//
+// Compose for Web takes keystrokes on a 1px transparent input pinned to the
+// caret, and that input is a sibling of the accessibility tree rather than a
+// node in it. Descending activeElement through the shadow roots therefore lands
+// on a node no selector can name, and every semantics element reads unfocused,
+// so confirmFocus in internal/runner/runner.go rejected each focus tap with "an
+// unnamed element holds focus" and no InputText step ever ran.
+//
+// Both fields are tapped, because reporting the first editable in the tree
+// would satisfy the email half of this and still type into the wrong field.
+func TestElementState_FocusFollowsTheCaretToItsField(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/compose-backing-input.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	for _, field := range []string{"EmailField", "PasswordField"} {
+		tapped := elementInHierarchyDump(ctx, t, d, "id:"+field)
+		x, y := tapped.Bounds.Center()
+		if err := d.Tap(ctx, x, y); err != nil {
+			t.Fatalf("Tap %s: %v", field, err)
+		}
+
+		if focused := elementInHierarchyDump(ctx, t, d, "id:"+field); !focused.Focused {
+			t.Errorf("%s reports no focus after being tapped", field)
+		}
+		if caret := elementInHierarchyDump(ctx, t, d, "id:caret-input"); caret.Focused {
+			t.Errorf("the hidden caret input reports focus after tapping %s, "+
+				"and no selector can name it", field)
+		}
+		if held := focusedElements(ctx, t, d); len(held) != 1 {
+			t.Errorf("after tapping %s the dump reports %d focused elements %v, want 1",
+				field, len(held), held)
+		}
+	}
+}
+
+func focusedElements(ctx context.Context, t *testing.T, d *Driver) []string {
+	t.Helper()
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+	var held []string
+	for _, element := range tree.Elements {
+		if element.Focused {
+			held = append(held, element.ResourceID+"/"+element.Attributes["tag"])
+		}
+	}
+	return held
+}
+
 func elementInHierarchyDump(
 	ctx context.Context,
 	t *testing.T,
