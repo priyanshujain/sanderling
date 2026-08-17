@@ -109,6 +109,27 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			want:     []string{"status_badge"},
 		},
 		{
+			// A custom element's tag name holds a real tag name inside it, so a
+			// substring rule answered tag:li with <todo-list> and tag:a with
+			// <todo-app>: the container, not the row the author named.
+			name:     "tag against a page of custom elements",
+			selector: "tag:li",
+			object:   objectSelector("tag", "li"),
+			want:     []string{"todo_1", "todo_2"},
+		},
+		{
+			name:     "tag naming the custom element itself",
+			selector: "tag:todo-list",
+			object:   objectSelector("tag", "todo-list"),
+			want:     []string{"todo_list"},
+		},
+		{
+			name:     "tag naming an anchor",
+			selector: "tag:a",
+			object:   objectSelector("tag", "a"),
+			want:     []string{"todo_link"},
+		},
+		{
 			// The root element answers a selector like any other: the string
 			// form scans from the root down, and the object form used to start
 			// at the root's children and lose it.
