@@ -20,23 +20,24 @@ import (
 var Version = "dev"
 
 type testOptions struct {
-	spec            string
-	bundleID        string
-	platform        string
-	avd             string
-	device          string
-	iosDevice       string
-	iosAppPath      string
-	androidAppPath  string
-	duration        time.Duration
-	maxSteps        int
-	arm             string
-	seed            int64
-	output          string
-	clearData       bool
-	generator       string
-	labelSource     string
-	exitOnViolation bool
+	spec              string
+	bundleID          string
+	platform          string
+	avd               string
+	device            string
+	iosDevice         string
+	iosAppPath        string
+	androidAppPath    string
+	duration          time.Duration
+	maxSteps          int
+	arm               string
+	seed              int64
+	output            string
+	clearData         bool
+	generator         string
+	labelSource       string
+	exitOnViolation   bool
+	allowNoProperties bool
 }
 
 const topUsage = `sanderling is a property-based UI fuzzer for mobile apps.
@@ -74,6 +75,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.StringVar(&options.generator, "generator", "seeded", "action generator: seeded (weighted random) or llm (model picks from the same candidate set; requires generator = llm() in the spec)")
 	flagSet.StringVar(&options.labelSource, "label-source", "visible-text", "how candidates are named to the llm generator: visible-text (what a user reads) or resource-id (the identifier the app assigned). The seeded generator picks by index and ignores this")
 	flagSet.BoolVar(&options.exitOnViolation, "exit-on-violation", false, "stop the run at the first property violation and exit 2, so CI can tell a found bug (2) from a broken harness (1)")
+	flagSet.BoolVar(&options.allowNoProperties, "allow-no-properties", false, "run a spec that registers no properties. Such a run judges nothing and can only report no violations, so it is refused by default; pass this when the run measures what the spec extracts or where the generator reaches")
 	if err := flagSet.Parse(args); err != nil {
 		return testOptions{}, err
 	}

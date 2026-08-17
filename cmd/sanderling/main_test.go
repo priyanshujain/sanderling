@@ -401,6 +401,30 @@ func TestParseTestArgs_ExitOnViolation(t *testing.T) {
 	}
 }
 
+// TestParseTestArgs_AllowNoPropertiesReachesThePipeline pins the opt-out the
+// extraction and portability sweeps pass. Dropped here, the guard is either
+// unreachable or permanent: a sweep that deliberately judges nothing cannot ask
+// for it, and every other run keeps the false green the guard exists to stop.
+func TestParseTestArgs_AllowNoPropertiesReachesThePipeline(t *testing.T) {
+	base := []string{"--spec", "s.ts", "--bundle-id", "com.example"}
+
+	options, err := parseTestArgs(base, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pipelineOptions(options).AllowNoProperties {
+		t.Error("allowNoProperties default: got true, want false")
+	}
+
+	options, err = parseTestArgs(append(base, "--allow-no-properties"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pipelineOptions(options).AllowNoProperties {
+		t.Error("--allow-no-properties never reached the pipeline options")
+	}
+}
+
 // TestExitCode_SeparatesFoundBugsFromBrokenHarnesses pins the three statuses CI
 // reads: 0 clean, 2 the run found violations, 1 everything else. A workflow
 // that asserts "the known bug is still found" is only meaningful while 2 and 1
@@ -416,6 +440,7 @@ func TestExitCode_SeparatesFoundBugsFromBrokenHarnesses(t *testing.T) {
 		{"help", flag.ErrHelp, 0, ""},
 		{"violations found", testrun.ViolationsError{Count: 2}, 2, "violations: 2"},
 		{"broken harness", errors.New("launch app: no device"), 1, "error: launch app"},
+		{"spec judges nothing", testrun.NoPropertiesError{Spec: "s.ts"}, 1, "registers no properties"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			var stderr bytes.Buffer
