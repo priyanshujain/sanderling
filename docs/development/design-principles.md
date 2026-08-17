@@ -4,44 +4,39 @@ title: Design principles
 
 # Design principles
 
-## 1. The app owns introspection; the driver owns input
+## 1. The driver both reads and drives
 
-On native platforms, the in-app SDK knows the state: view hierarchy, coverage, logs, exceptions, custom extractors. The driver causes the state to change through taps, swipes, typed text, and deep links. The Go runner decides what to do.
+Introspection and input come through the same interface. On Android and iOS the state is the platform accessibility tree (an on-device AccessibilityService, XCTest's `XCUIApplication.snapshot()`); on web it is the DOM, read over CDP. The same driver dispatches taps, swipes, typed text, key presses, and launches, and the Go runner decides what to do.
 
-Splitting these responsibilities is what makes the system work across iOS and Android with one spec surface. Neither the driver nor the SDK alone is sufficient.
-
-- The driver can read a coarse accessibility tree, but not the real `UIView` or `View` hierarchy, not coverage, not in-process logs.
-- The SDK can see everything inside the app, but cannot dispatch UI events the way the OS would. Touch injection goes through the OS UI-test pipeline (XCTest on iOS, UIAutomator on Android), which the OS treats as real input.
-
-On web, the driver speaks the Chrome DevTools Protocol and handles both input and introspection. No in-app SDK is needed.
+There is no in-app SDK and no second channel into the app's process. On native that is a hard limit on what a spec can know: the tree carries no real `UIView` or `View` hierarchy and nothing the platform declines to expose to accessibility, and an extractor cannot recover a fact the tree left out. On web, extractors run inside the page and read the DOM directly.
 
 ## 2. One TypeScript surface across platforms
 
-Spec authors write against `state.ax`, `state.logs`, `state.snapshots`, and so on, regardless of iOS, Android, or web. Platform differences (back button semantics, system alerts, coverage format) are absorbed in the Go runner and the drivers.
+Spec authors write against `state.ax`, `state.logs`, and so on, regardless of iOS, Android, or web. Platform differences (back button semantics, keyboard dismissal) are absorbed in the Go runner and the drivers.
 
 Corollary: if a concept only exists on one platform, it does not belong in the spec API. It belongs behind a feature flag or an extractor.
 
+`state.snapshots` is the one place this surface lies. It was the in-app SDK's extractor output, the SDK is gone, and nothing populates it now: a spec that reads it gets an empty object on every platform.
+
 ## 3. The driver is an interface
 
-`DeviceDriver` has two production implementations: `sidecar` (gRPC to the native sidecar) and `chrome` (CDP, for web), plus a `mock` for tests. The runner never knows which is wired in. Adding a new platform means adding a new implementation; nothing else changes.
+`DeviceDriver` has three production implementations: `sidecar` (gRPC to the JVM sidecar, for Android), `ioscompanion` (Go-native, for the iOS simulator and for physical devices), and `chrome` (CDP, for web), plus a `mock` for tests. The runner never knows which is wired in. Adding a new platform means adding a new implementation; nothing else changes.
 
-## 4. Hot loops bypass the sidecar (native)
+## 4. The step loop pays for every round trip
 
-On native, per-step introspection (hierarchy dump, coverage read, pause and resume) goes over a local Unix socket directly to the SDK. Only physical UI events go through the sidecar's gRPC surface.
+Every step reads the hierarchy and a screenshot before anything can be evaluated, and there is no cheaper channel to read them from: introspection and input share one driver. Per-step latency is therefore the run's budget, and it is why the iOS simulator is driven Go-natively rather than through the JVM sidecar, whose p95 step latency was about twice as high ([driver history](./driver-history/)).
 
-A 30-minute run is about 10,000 steps. Every step has at least one hierarchy dump and one coverage read. If those went through the JVM sidecar, the JVM hop would be the bottleneck. Instead the hot path is a 2 ms round-trip to an in-process Swift or Kotlin SDK.
-
-On web, CDP is fast enough that a separate introspection channel is not needed.
+On web the per-element work stays in the page. Extractors and the action picker run in V8 and only coordinates and values cross back to Go, because a CDP round-trip per element would dominate the step.
 
 ## 5. Deterministic where it can be
 
-A seeded PRNG drives action selection. Spec evaluation is pure given state and snapshots. The bundle hash and seed are recorded in `meta.json`.
+A seeded PRNG drives action selection. Spec evaluation is pure given state. The bundle hash and seed are recorded in `meta.json`.
 
 sanderling does not attempt byte-exact replay. Animation timing, keyboard popup timing, and system daemons are non-deterministic on mobile, and the cost of trying to suppress that is not worth the payoff. Same seed produces a similar trajectory, which is usually enough to reproduce the bug.
 
 ## 6. Fail honest
 
-If coverage is not available (release build, instrumentation off), tell the user. Do not pretend exploration is guided when it is random. If the SDK is not linked, say so. If a property is unparseable, fail the run at startup, not step 1000.
+If a property is unparseable, fail the run at startup, not step 1000. If a probe cannot be read, do not read it as the reassuring answer: an unparseable count of animating windows is not "nothing is animating", and an action whose outcome the driver could not observe is not an action that landed, which is why `state.lastAction.applied` is three-valued.
 
 The alternative, graceful degradation that silently weakens guarantees, is how testing tools lose trust.
 
