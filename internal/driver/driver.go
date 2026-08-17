@@ -8,9 +8,9 @@ import (
 )
 
 // DeviceDriver abstracts the platform-specific UI automation backend. v0.1
-// surface matches proto/driverpb/driver.proto. The sidecar implementation
-// lives under driver/sidecar; the web implementation under driver/chrome;
-// tests use driver/mock.
+// surface matches proto/driverpb/driver.proto. The Android implementation
+// lives under driver/sidecar; iOS under driver/ioscompanion; the web
+// implementation under driver/chrome; tests use driver/mock.
 type DeviceDriver interface {
 	Launch(ctx context.Context, bundleID string, clearState bool, env map[string]string) error
 	Terminate(ctx context.Context) error
