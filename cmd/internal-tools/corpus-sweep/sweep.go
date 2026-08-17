@@ -17,23 +17,31 @@ import (
 // resolveBinaries turns campaign and sanderling into absolute paths before
 // anything is served. Each campaign runs from the sweep's own directory, and a
 // binary that is missing altogether has to stop the sweep here rather than fail
-// once per implementation and seed.
+// once per implementation and seed. Every one that is missing is named
+// together, in flag order: stopping at the first turns that single stop into
+// one rerun per missing binary.
 func resolveBinaries(configuration *config) error {
-	for name, value := range map[string]*string{
-		"--campaign":   &configuration.campaignPath,
-		"--sanderling": &configuration.sanderlingPath,
+	var missing []error
+	for _, binary := range []struct {
+		name  string
+		value *string
+	}{
+		{"--campaign", &configuration.campaignPath},
+		{"--sanderling", &configuration.sanderlingPath},
 	} {
-		resolved, err := exec.LookPath(*value)
+		resolved, err := exec.LookPath(*binary.value)
 		if err != nil {
-			return fmt.Errorf("%s: %w", name, err)
+			missing = append(missing, fmt.Errorf("%s: %w", binary.name, err))
+			continue
 		}
 		absolute, err := filepath.Abs(resolved)
 		if err != nil {
-			return fmt.Errorf("%s: %w", name, err)
+			missing = append(missing, fmt.Errorf("%s: %w", binary.name, err))
+			continue
 		}
-		*value = absolute
+		*binary.value = absolute
 	}
-	return nil
+	return errors.Join(missing...)
 }
 
 type sweep struct {
