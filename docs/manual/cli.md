@@ -25,6 +25,7 @@ Run a spec against an app for a fixed duration.
 | `--duration` | `5m` | Total test duration (`30s`, `5m`, `2h`, `1d`). |
 | `--max-steps` | `0` | Stop after this many steps (`0` = no cap, the duration governs). A step budget is what makes two generators comparable. |
 | `--exit-on-violation` | `false` | Stop the run at the first property violation and exit `2`. |
+| `--allow-no-properties` | `false` | Run a spec that registers no properties. Such a run judges nothing and can only report no violations, so it is refused by default; pass this when the run measures what the spec extracts or where the generator reaches. |
 | `--arm` | optional | Experiment label recorded in the run's metadata. Used by the campaign tool to tell one sweep cell from another. |
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
 | `--generator` | `seeded` | Who picks each action: `seeded` (the run's PRNG) or `llm` (a vision model). See [the LLM generator](../spec-language/#llm-generator). |
