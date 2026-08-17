@@ -65,19 +65,28 @@ func TestDiscoverImplementations_EmptyDirectoryIsRefused(t *testing.T) {
 func TestRunSweep_StopsBeforeItInstallsAnythingWhenABinaryIsMissing(
 	t *testing.T,
 ) {
-	implementations := t.TempDir()
+	root := t.TempDir()
+	implementations := filepath.Join(root, "implementations")
 	if err := os.MkdirAll(filepath.Join(implementations, "impl-01"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	output := filepath.Join(t.TempDir(), "campaigns")
+	output := filepath.Join(root, "campaigns")
 	configuration := config{
 		implementationsDirectory: implementations,
 		outputDirectory:          output,
 		basePort:                 5300,
 		concurrency:              1,
-		bunPath:                  "bun",
-		campaignPath:             "campaign-that-is-not-installed",
-		sanderlingPath:           "sanderling",
+		bunPath: writeScript(
+			t,
+			filepath.Join(root, "stub-bun"),
+			"#!/bin/sh\nexit 0\n",
+		),
+		campaignPath: "campaign-that-is-not-installed",
+		sanderlingPath: writeScript(
+			t,
+			filepath.Join(root, "stub-sanderling"),
+			"#!/bin/sh\nexit 0\n",
+		),
 	}
 	err := runSweep(t.Context(), configuration, os.Stdout)
 	if err == nil || !strings.Contains(err.Error(), "--campaign") {
