@@ -6,6 +6,7 @@ title: Development
 
 - [Design principles](./design-principles/)
 - [Architecture](./architecture/)
+- [Driver history](./driver-history/): how the driver layer got its current shape, and the bugs that forced each move.
 - [CI](./ci/)
 - v0.1.0 scope: [milestone #1](https://github.com/priyanshujain/sanderling/milestone/1)
 

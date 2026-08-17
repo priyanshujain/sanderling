@@ -21,6 +21,7 @@ Alpha: the scope of v0.1.0 is tracked in the [v0.1.0 milestone](https://github.c
 ## Development
 
 - [Architecture](./development/architecture/) and [design principles](./development/design-principles/) for contributors.
+- [Driver history](./development/driver-history/): why the driver layer looks the way it does.
 
 ---
 

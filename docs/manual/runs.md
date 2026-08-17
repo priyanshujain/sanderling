@@ -14,7 +14,7 @@ A run is not a unit test. The closer picture is: boot a fuzzer for an hour and s
 sanderling test --spec spec.ts --bundle-id com.example.app --duration 30m
   │
   ├── launch the app under test (wipes app data first unless --clear-data=false)
-  ├── boot the sidecar (or connect to Chrome on web)
+  ├── boot the driver (the JVM sidecar on Android, the XCTest runner on iOS, Chrome on web)
   ├── bundle the spec, load it into the JS runtime
   │
   ├── step 0..N:  read state, check properties, pick and perform an action

@@ -39,7 +39,7 @@ interface State {
 | Field | Description |
 |---|---|
 | `ax` | Live UI hierarchy for this step |
-| `snapshots` | Key-value data pushed by the app SDK (empty if SDK not integrated) |
+| `snapshots` | Always empty. It carried data from an in-app SDK that no longer exists; read app state from `ax` |
 | `lastAction` | The action dispatched in the previous step, or `null` on the first step and on any step that dispatched nothing |
 | `logs` | Log entries collected since the previous step |
 | `exceptions` | Uncaught exceptions and unhandled promise rejections captured in the page. Web only: nothing fills this on Android or iOS, where it is always empty |
@@ -132,14 +132,14 @@ Fields available on every element returned by `find` / `findAll`:
 - `id` maps to the Android resource-id (e.g., `com.example:id/button`). The `id:<value>` selector matches by suffix after `:id/`, so `id:button` matches `com.example:id/button`.
 - `desc` maps to `content-desc`.
 - `class` is the Java view class name (e.g., `android.widget.TextView`).
-- `attrs` contains raw UIAutomator attributes: `package`, `scrollable`, `checkable`, etc.
+- `attrs` contains the raw attributes of the on-device accessibility tree: `scrollable`, `hintText`, `content-desc`, etc.
 
 ### iOS
 
 - `id` maps to the `accessibilityIdentifier` set via `.accessibilityIdentifier` in SwiftUI/UIKit.
-- `desc` maps to `accessibilityText`, which the iOS sidecar builds by merging `accessibilityLabel` and the element's value (e.g., `"Close, icon description"`). The `desc:<value>` selector handles this by also matching when the description starts with `<value>, `.
-- `class` is the XCUITest element type (e.g., `XCUIElementTypeButton`).
-- `attrs` contains raw XCUITest attributes: `title`, `placeholderValue`, `hasFocus`, etc.
+- `desc` maps to `accessibilityText`, the element's `accessibilityLabel`. iOS reports a container's label as a comma-joined reading of the labels under it (e.g., `"Close, icon description"`), so the `desc:<value>` selector also matches when the description starts with `<value>, `.
+- `class` is the XCUITest element type with the `XCUIElementType` prefix dropped (e.g., `Button`, `StaticText`).
+- `attrs` contains the keys the XCUITest snapshot carries: `identifier`, `accessibilityText`, and `hintText` for an empty field's placeholder.
 
 ### Web (Chrome)
 
@@ -201,7 +201,7 @@ Wait({ durationMillis: number })
 
 `Key` values: `"back"`, `"home"`, `"enter"`, `"tab"`, `"up"`, `"down"`, `"left"`, `"right"`.
 
-On web, `"back"` maps to Backspace and `"home"` is not supported. All other keys work on all platforms.
+Android takes all eight. Web rejects `"back"` and `"home"` and takes the rest. iOS takes only `"enter"` and rejects every other key.
 
 ### Built-in generators
 
