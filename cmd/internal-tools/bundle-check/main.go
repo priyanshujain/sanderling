@@ -1,13 +1,23 @@
-// Command bundle-check is a developer tool that bundles a spec file to confirm it compiles.
+// Command bundle-check is a developer tool that bundles a spec file and loads
+// it into the evaluator to confirm it compiles and registers properties.
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/priyanshujain/sanderling/internal/bundler"
+	"github.com/priyanshujain/sanderling/internal/testrun"
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
+
+// checkSeed keeps the load deterministic. The bundle it seeds is only loaded,
+// never hashed or reported, so the value is arbitrary.
+const checkSeed = 1
 
 func bundleSpec(specSrc, entryFile string) (bundler.Result, error) {
 	return bundler.Bundle(bundler.Options{
@@ -18,6 +28,45 @@ func bundleSpec(specSrc, entryFile string) (bundler.Result, error) {
 			"@sanderling/spec/defaults/properties": filepath.Join(specSrc, "defaults/properties.ts"),
 		},
 	})
+}
+
+// registeredProperties bundles the spec the way a run bundles it, with the
+// runtime entry that assigns globalThis.properties, and loads it into the real
+// evaluator. Bundling alone proves nothing about registration: a spec that
+// registers no property compiles perfectly and then judges nothing.
+func registeredProperties(entryFile string) ([]string, error) {
+	bundle, err := testrun.BundleSpec(entryFile, checkSeed)
+	if err != nil {
+		return nil, fmt.Errorf("bundle with runtime entry: %w", err)
+	}
+	evaluator, err := verifier.New()
+	if err != nil {
+		return nil, fmt.Errorf("evaluator: %w", err)
+	}
+	if err := evaluator.Load(string(bundle.JavaScript)); err != nil {
+		return nil, fmt.Errorf("load spec: %w", err)
+	}
+	return evaluator.PropertyNames(), nil
+}
+
+func check(specSrc, entryFile string, stdout io.Writer) error {
+	result, err := bundleSpec(specSrc, entryFile)
+	if err != nil {
+		return fmt.Errorf("bundle: %w", err)
+	}
+	fmt.Fprintf(stdout, "bundled: %d bytes, sha256=%s\n", len(result.JavaScript), result.SHA256)
+
+	names, err := registeredProperties(entryFile)
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return errors.New("the spec bundles and loads cleanly but registers no properties: " +
+			"nothing is wrong with the source, and a run against it would check nothing " +
+			"and report no violations")
+	}
+	fmt.Fprintf(stdout, "properties registered: %d (%s)\n", len(names), strings.Join(names, ", "))
+	return nil
 }
 
 func main() {
@@ -38,10 +87,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	result, err := bundleSpec(filepath.Join(repoRoot, "pkg/spec/src"), entryFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "bundle: %v\n", err)
+	if err := check(filepath.Join(repoRoot, "pkg/spec/src"), entryFile, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("bundled: %d bytes, sha256=%s\n", len(result.JavaScript), result.SHA256)
 }
