@@ -499,6 +499,17 @@ func (v *Verifier) ExtractorNames() []string {
 	return names
 }
 
+// PropertyNames returns the names of the properties the loaded spec registered,
+// sorted.
+func (v *Verifier) PropertyNames() []string {
+	names := make([]string, 0, len(v.properties))
+	for name := range v.properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // PropertyFormulas rebuilds each registered property's formula. The thunks are
 // this verifier's own predicates, reading this verifier's extractor state, so
 // an evaluator built over a rewritten formula observes exactly what the
