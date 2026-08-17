@@ -12,6 +12,7 @@
 
 import { type AccessibilityElement, type Key, PressKey, Tap, actions, always, extract, from, next, weighted } from "@sanderling/spec";
 import { defaultActions, noUncaughtExceptions } from "@sanderling/spec/defaults";
+import { attributeOf } from "./data-attributes";
 
 function numberOf(value: string | undefined): number | null {
   if (value === undefined || value === "") return null;
@@ -21,7 +22,7 @@ function numberOf(value: string | undefined): number | null {
 
 function dataOf(element: AccessibilityElement | undefined, key: string): string | undefined {
   const attrs = (element as unknown as { attrs?: Record<string, string> } | undefined)?.attrs;
-  return attrs ? attrs[key] : undefined;
+  return attrs ? attrs[attributeOf(key)] : undefined;
 }
 
 // The toolbar's own claim about which step is on screen, and how many there are.
