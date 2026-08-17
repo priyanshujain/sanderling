@@ -32,6 +32,12 @@ type traceSummary struct {
 	FirstViolationReason       string   `json:"first_violation_reason,omitempty"`
 	FirstViolationIsError      bool     `json:"first_violation_is_error,omitempty"`
 	ViolatedProperties         []string `json:"violated_properties,omitempty"`
+	// PreconditionFailures counts the trace records naming a precondition the
+	// run could not meet: the startup gate's verdict at step 0, and every later
+	// step the scope guard could not bring the app back for. A run with one of
+	// these and no steps never started, and counting it as a run that explored
+	// and found nothing puts a harness failure in the same column as evidence.
+	PreconditionFailures int `json:"precondition_failures,omitempty"`
 }
 
 type traceLine struct {
@@ -41,10 +47,11 @@ type traceLine struct {
 	Hierarchy json.RawMessage `json:"hierarchy"`
 	// NextAction is read only for its presence: a step that chose no action
 	// carries none at all.
-	NextAction    json.RawMessage          `json:"next_action"`
-	ActionSkipped string                   `json:"action_skipped"`
-	Violations    []string                 `json:"violations"`
-	Witnesses     map[string]trace.Witness `json:"witnesses"`
+	NextAction          json.RawMessage          `json:"next_action"`
+	ActionSkipped       string                   `json:"action_skipped"`
+	PreconditionFailure string                   `json:"precondition_failure"`
+	Violations          []string                 `json:"violations"`
+	Witnesses           map[string]trace.Witness `json:"witnesses"`
 }
 
 func dispatchedAction(line traceLine) bool {
@@ -122,6 +129,9 @@ func summarizeTrace(tracePath string) (traceSummary, error) {
 		}
 		if !synthetic && dispatchedAction(line) {
 			summary.Actions++
+		}
+		if line.PreconditionFailure != "" {
+			summary.PreconditionFailures++
 		}
 		for _, property := range line.Violations {
 			violated[property] = true

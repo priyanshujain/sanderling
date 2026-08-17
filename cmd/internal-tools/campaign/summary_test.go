@@ -292,3 +292,49 @@ func TestSummarizeTrace_MalformedLine(t *testing.T) {
 		t.Fatal("expected an error for a malformed trace line")
 	}
 }
+
+// A run whose app never came to the foreground has to be countable off the
+// summary. Without it the campaign row for a run that never started is a row of
+// zero steps and no violations, which is what a clean short run looks like too.
+func TestSummarizeRun_CountsPreconditionFailures(t *testing.T) {
+	seedDirectory := t.TempDir()
+	writeRunDirectory(t, seedDirectory, "20260812-090000", []trace.Step{
+		{Index: 0, PreconditionFailure: "app_not_in_foreground"},
+	})
+
+	_, summary, err := summarizeRun(seedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.PreconditionFailures != 1 {
+		t.Errorf("precondition failures: got %d, want 1", summary.PreconditionFailures)
+	}
+	if summary.Steps != 0 {
+		t.Errorf("steps: got %d, want 0; the run never observed anything", summary.Steps)
+	}
+}
+
+// The same fact mid-run: steps the scope guard could not bring the app back for
+// are still steps, and they are counted separately from the ones that explored.
+func TestSummarizeRun_CountsMidRunPreconditionFailures(t *testing.T) {
+	seedDirectory := t.TempDir()
+	outsideApp := func(index int) trace.Step {
+		step := actingStep(index)
+		step.PreconditionFailure = "app_not_in_foreground"
+		return step
+	}
+	writeRunDirectory(t, seedDirectory, "20260812-090000", []trace.Step{
+		actingStep(1), outsideApp(2), outsideApp(3), actingStep(4),
+	})
+
+	_, summary, err := summarizeRun(seedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.PreconditionFailures != 2 {
+		t.Errorf("precondition failures: got %d, want 2", summary.PreconditionFailures)
+	}
+	if summary.Steps != 4 {
+		t.Errorf("steps: got %d, want 4", summary.Steps)
+	}
+}
