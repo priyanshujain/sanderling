@@ -62,6 +62,11 @@ type Options struct {
 	// recorded violations as a ViolationsError, so a caller (CI) can tell
 	// "the run found the bug" from "the run finished clean".
 	ExitOnViolation bool
+	// AllowNoProperties lets a run proceed against a spec that registers no
+	// properties. The extraction and portability sweeps pass it: they measure
+	// what a spec can read and where the generator reaches, and they report no
+	// detection count. Every other run without it is a false green.
+	AllowNoProperties bool
 	// Generator selects the action picker: "llm" or the default seeded picker.
 	Generator string
 	// LabelSource selects how candidates are named to the model picker, and is
@@ -190,6 +195,9 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	if err := verifierInstance.Load(string(bundle.JavaScript)); err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
+	if !options.AllowNoProperties && len(verifierInstance.PropertyNames()) == 0 {
+		return NoPropertiesError{Spec: options.Spec}
+	}
 	fmt.Fprintln(stdout, "spec loaded into verifier")
 
 	runDirectory := filepath.Join(options.Output, time.Now().UTC().Format("20060102-150405"))
@@ -305,6 +313,25 @@ func (e VacuousRunError) Error() string {
 		"%d step(s) ran and none of them reached the verifier: the screen was "+
 			"still moving every time it was read, so no property judged this run",
 		e.Steps)
+}
+
+// NoPropertiesError reports a spec that bundled and loaded cleanly and holds no
+// properties. Nothing is broken: the run would drive the app, fill a trace and
+// report no violations having judged nothing, and that green says as much about
+// the app as an unplugged meter says about a wire. It stays untyped to the CLI's
+// violation path like VacuousRunError, so it exits 1 as a run that cannot
+// produce a verdict rather than 2.
+type NoPropertiesError struct {
+	Spec string
+}
+
+func (e NoPropertiesError) Error() string {
+	return fmt.Sprintf(
+		"%s bundled and loaded into the verifier cleanly and registers no properties: "+
+			"nothing is wrong with the spec and nothing is wrong with the run, but this run "+
+			"would check nothing and report no violations. Pass --allow-no-properties for a "+
+			"run that measures extraction or exploration instead of judging the app",
+		e.Spec)
 }
 
 // bundleInputs holds the pre-driver assembly: alias map, seed, esbuild defines,
