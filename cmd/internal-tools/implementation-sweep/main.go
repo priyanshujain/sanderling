@@ -155,15 +155,27 @@ func parseArguments(arguments []string, stderr io.Writer) (config, error) {
 	}
 	configuration.extraArguments = flagSet.Args()
 
-	for name, value := range map[string]string{
-		"--implementations": configuration.implementationsDirectory,
-		"--spec":            configuration.specPath,
-		"--seeds":           seedSpecification,
-		"--output":          configuration.outputDirectory,
+	// Every missing flag is named together, in flag order: stopping at the
+	// first turns one rerun into one rerun per missing flag.
+	var missing []error
+	for _, required := range []struct {
+		name  string
+		value string
+	}{
+		{"--implementations", configuration.implementationsDirectory},
+		{"--spec", configuration.specPath},
+		{"--seeds", seedSpecification},
+		{"--output", configuration.outputDirectory},
 	} {
-		if value == "" {
-			return config{}, fmt.Errorf("%s is required", name)
+		if required.value == "" {
+			missing = append(
+				missing,
+				fmt.Errorf("%s is required", required.name),
+			)
 		}
+	}
+	if err := errors.Join(missing...); err != nil {
+		return config{}, err
 	}
 	if configuration.maxSteps <= 0 {
 		return config{}, fmt.Errorf(
