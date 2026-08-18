@@ -78,6 +78,20 @@ AVD=Pixel_7
 DURATION=5m
 ```
 
+The device does not have to be attached to this machine. `ADB_SERVER_SOCKET`
+aims adb at another host's adb server, and `ANDROID_DEVICE` names the serial
+that server reports, which is also what routes the install when the server has
+more than one device online:
+
+```
+ADB_SERVER_SOCKET=tcp:10.0.0.5:5037
+ANDROID_DEVICE=emulator-5556
+```
+
+Gradle only assembles the APK. The install goes through adb, which reads those
+variables, so a remote server needs nothing else. Gradle's own `installDebug`
+cannot be used here: its adb client only ever dials loopback.
+
 Traces land in `./sanderling/runs/<timestamp>/`.
 
 ## Run with the LLM action generator
