@@ -143,6 +143,49 @@ function secureSelector(value: string): string {
   return `:is(input${textInput}, textarea, [contenteditable]:not([contenteditable="false"]))`;
 }
 
+// The other five boolean states are derived from the live element too, and
+// matching them as an attribute reached nothing at all: `[clickable="true"]` is
+// a match no page carries, the key is accepted so no unknown-key error fires,
+// and a spec naming a control that way, as the worked example in
+// docs/manual/spec-language.md does, finds none and passes having checked
+// nothing. They are answered against the element rather than compiled into CSS
+// because no CSS says what any of them says: `:focus` names the shadow HOST of a
+// focused field as well, and never the field Compose keeps behind its caret,
+// `:checked` misses a checked custom element and answers for a selected <option>
+// besides, and `[checked]` is the state the page loaded with rather than the one
+// the user left it in. Each reads the SAME function elementHandle derives the
+// fact with, so a selector cannot name an element this host calls something else.
+const KNOWN_KEY_TO_STATE: Record<
+  string,
+  (value: string) => (element: Element) => boolean
+> = {
+  clickable: stateMatcher(isClickable),
+  enabled: stateMatcher(isEnabled),
+  focused: focusedMatcher,
+  checked: stateMatcher(isChecked),
+  selected: stateMatcher(isSelected),
+};
+
+// A value that is neither true nor false can match nothing, the way a CSS part
+// built from one resolves to `:not(*)`.
+function stateMatcher(
+  fact: (element: Element) => boolean,
+): (value: string) => (element: Element) => boolean {
+  return (value) => {
+    if (value !== "true" && value !== "false") return () => false;
+    const wanted = value === "true";
+    return (element) => fact(element) === wanted;
+  };
+}
+
+// The focused element is resolved once per selector rather than once per
+// element: finding it descends every shadow root and, on a Compose page, sweeps
+// the editable fields for the box the caret sits in.
+function focusedMatcher(value: string): (element: Element) => boolean {
+  const focusedElement = deepestActiveElement();
+  return stateMatcher((element) => element === focusedElement)(value);
+}
+
 // cssEscape delegates to the platform CSS.escape (per CSSOM spec). It produces
 // output safe for both identifier and string contexts, since CSS string
 // literals accept the same `\HEX ` and `\X` escape sequences as identifiers.
@@ -247,15 +290,24 @@ function cssPart(key: string, value: string): string {
   return `[${key}${operator}"${cssEscape(value)}"]`;
 }
 
+// A compiled selector is what a lookup resolves: the CSS or XPath a document
+// query takes, and the states no query can express, which the elements it
+// answered with are held against afterwards.
+interface CompiledSelector {
+  css?: string;
+  xpath?: string;
+  match?: (element: Element) => boolean;
+}
+
 // A selector key that can never match yields an empty result, which reads
 // exactly like a screen with no such element: the generator declines to act,
 // the runner waits out the step, and the run ends clean having explored
 // nothing. Throwing is what makes the mistake visible.
-function selectorFromObject(selector: Record<string, string | boolean | undefined>): {
-  css?: string;
-  xpath?: string;
-} {
+function selectorFromObject(
+  selector: Record<string, string | boolean | undefined>,
+): CompiledSelector {
   const parts: string[] = [];
+  const stateMatchers: Array<(element: Element) => boolean> = [];
   let textValue: string | undefined;
   const unknown: string[] = [];
   for (const key of Object.keys(selector)) {
@@ -270,15 +322,31 @@ function selectorFromObject(selector: Record<string, string | boolean | undefine
       textValue = value;
       continue;
     }
+    const state = KNOWN_KEY_TO_STATE[key];
+    if (state) {
+      stateMatchers.push(state(value));
+      continue;
+    }
     parts.push(cssPart(key, value));
   }
   if (unknown.length > 0) {
     throw new Error(unknownSelectorKeyMessage(unknown));
   }
   if (textValue !== undefined && parts.length === 0) {
-    return { xpath: innermostTextXPath(textValue) };
+    return withStates({ xpath: innermostTextXPath(textValue) }, stateMatchers);
   }
-  return { css: parts.join("") };
+  // A selector that names states alone still has to name a document query to
+  // hold them against, and every element is what it asks about.
+  const css = parts.length === 0 && stateMatchers.length > 0 ? "*" : parts.join("");
+  return withStates({ css }, stateMatchers);
+}
+
+function withStates(
+  compiled: CompiledSelector,
+  stateMatchers: Array<(element: Element) => boolean>,
+): CompiledSelector {
+  if (stateMatchers.length === 0) return compiled;
+  return { ...compiled, match: (element) => stateMatchers.every((state) => state(element)) };
 }
 
 // innermostTextXPath matches an element whose text contains value and whose
@@ -301,7 +369,7 @@ function xpathStringLiteral(value: string): string {
   return `concat(${parts.map((p) => `"${p}"`).join(`, '"', `)})`;
 }
 
-function selectorFromString(selector: string): { css?: string; xpath?: string } {
+function selectorFromString(selector: string): CompiledSelector {
   const colon = selector.indexOf(":");
   if (colon <= 0) {
     return { css: selector };
@@ -317,6 +385,8 @@ function selectorFromString(selector: string): { css?: string; xpath?: string } 
   if (kind === "text") {
     return { xpath: innermostTextXPath(value) };
   }
+  const state = KNOWN_KEY_TO_STATE[kind];
+  if (state) return { css: "*", match: state(value) };
   // The string form's kind space stays open: "<attr>:<value>" is the documented
   // way to reach a raw driver attribute, and internal/hierarchy resolves an
   // unknown kind to an empty result rather than an error. Only the object form
@@ -348,24 +418,22 @@ function deepQueryAll(selector: string, root: ParentNode): Element[] {
   return found;
 }
 
+// matchedElements resolves one compiled selector: the document query first, then
+// the states it named, which no query can express.
+function matchedElements(root: ParentNode, compiled: CompiledSelector): Element[] {
+  const { css, xpath, match } = compiled;
+  let found: Element[] = [];
+  if (css) found = deepQueryAll(css, root);
+  else if (xpath) found = evaluateXPathAll(xpath, root as Node);
+  return match === undefined ? found : found.filter(match);
+}
+
 function queryElement(
   root: ParentNode,
   selector: unknown,
 ): Element | null {
   if (typeof selector === "string") {
-    const { css, xpath } = selectorFromString(selector);
-    if (css) return deepQueryAll(css, root)[0] ?? null;
-    if (xpath) {
-      const result = document.evaluate(
-        xpath,
-        root as Node,
-        null,
-        XPathResult.FIRST_ORDERED_NODE_TYPE,
-        null,
-      );
-      return result.singleNodeValue as Element | null;
-    }
-    return null;
+    return matchedElements(root, selectorFromString(selector))[0] ?? null;
   }
   if (Array.isArray(selector)) {
     let node: ParentNode | null = root;
@@ -378,28 +446,15 @@ function queryElement(
     return node as Element;
   }
   if (selector && typeof selector === "object") {
-    const { css, xpath } = selectorFromObject(selector as Record<string, string | boolean | undefined>);
-    if (css) return deepQueryAll(css, root)[0] ?? null;
-    if (xpath) {
-      const result = document.evaluate(
-        xpath,
-        root as Node,
-        null,
-        XPathResult.FIRST_ORDERED_NODE_TYPE,
-        null,
-      );
-      return result.singleNodeValue as Element | null;
-    }
+    const compiled = selectorFromObject(selector as Record<string, string | boolean | undefined>);
+    return matchedElements(root, compiled)[0] ?? null;
   }
   return null;
 }
 
 function queryAllElements(root: ParentNode, selector: unknown): Element[] {
   if (typeof selector === "string") {
-    const { css, xpath } = selectorFromString(selector);
-    if (css) return deepQueryAll(css, root);
-    if (xpath) return evaluateXPathAll(xpath, root as Node);
-    return [];
+    return matchedElements(root, selectorFromString(selector));
   }
   // A selector path: every match of the first segment is searched for the rest,
   // concatenated in walk order, mirroring FindAllBySelectorPath in
@@ -416,9 +471,8 @@ function queryAllElements(root: ParentNode, selector: unknown): Element[] {
     return heads.flatMap((element) => queryAllElements(element, rest));
   }
   if (selector && typeof selector === "object" && !Array.isArray(selector)) {
-    const { css, xpath } = selectorFromObject(selector as Record<string, string | boolean | undefined>);
-    if (css) return deepQueryAll(css, root);
-    if (xpath) return evaluateXPathAll(xpath, root as Node);
+    const compiled = selectorFromObject(selector as Record<string, string | boolean | undefined>);
+    return matchedElements(root, compiled);
   }
   return [];
 }
@@ -526,6 +580,23 @@ function isEnabled(element: Element): boolean {
   return element.getAttribute("aria-disabled") !== "true";
 }
 
+function isClickable(element: Element): boolean {
+  return element.matches(TAPPABLE_SELECTOR);
+}
+
+// Checkbox and option state lives in the DOM PROPERTY: the markup attribute
+// records only what the page started with, so anything reading it reports a
+// box's initial state however often the user ticks it.
+// internal/driver/chrome/driver.go reads the same two properties for the dump
+// the goja host gets.
+function isChecked(element: Element): boolean {
+  return (element as Partial<HTMLInputElement>).checked === true;
+}
+
+function isSelected(element: Element): boolean {
+  return (element as Partial<HTMLOptionElement>).selected === true;
+}
+
 // document.activeElement stops at a shadow boundary and names the HOST, so a
 // Compose for Web page reported focus on its mount element and never on the
 // field. selectAllScript in internal/driver/chrome/driver.go carries the rest of
@@ -598,7 +669,7 @@ function elementHandle(
     // The selector collectTargets and the hierarchy dump (driver.go) both
     // resolve clickable through. Hardcoded true here, every text node and
     // container a spec reached through state.ax claimed to be a tap target.
-    clickable: element.matches(TAPPABLE_SELECTOR),
+    clickable: isClickable(element),
     enabled: isEnabled(element),
     // isContentEditable is inherited, so reading it alone made every span inside
     // a contenteditable container typeable here while collectTargets and the
@@ -606,13 +677,8 @@ function elementHandle(
     // EDITABLE_SELECTOR, called the same span inert.
     editable,
     focused: focusedElement === element,
-    // Checkbox and option state lives in the DOM PROPERTY: the markup attribute
-    // records only what the page started with, so a handle reading it reports a
-    // box's initial state however often the user ticks it.
-    // internal/driver/chrome/driver.go reads the same two properties for the
-    // dump the goja host gets.
-    checked: state.checked === true,
-    selected: state.selected === true,
+    checked: isChecked(element),
+    selected: isSelected(element),
     // Three-valued, unlike the other state flags: null on anything that is not
     // a field, matching the hierarchy dump in internal/driver/chrome/driver.go.
     // A consumer deciding what a typed value may be written into a record has

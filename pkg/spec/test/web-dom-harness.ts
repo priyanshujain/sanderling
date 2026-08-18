@@ -50,6 +50,11 @@ export interface FakeElementSpec {
   clickable?: boolean;
   editable?: boolean;
   disabled?: boolean;
+  // checked/selected are DOM properties rather than markup attributes on a real
+  // element, which is the whole point of them: the attribute records what the
+  // page started with and stops tracking the first time a user acts.
+  checked?: boolean;
+  selected?: boolean;
   // overflows makes the element's content taller than its box, which is how the
   // host decides an element is scrollable.
   overflows?: boolean;

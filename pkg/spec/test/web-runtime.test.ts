@@ -766,6 +766,100 @@ test("secure selects the field this host reports secure", () => {
   });
 });
 
+// The other five boolean states have the same hole secure had, and the same
+// silence around it: the key is accepted, so no unknown-key error fires, and a
+// key naming no rule builds `[clickable="true"]`, which no page carries. Every
+// one of them selected NOTHING on web while resolving against the dump on the
+// goja host, docs/manual/spec-language.md's own worked example
+// (`find({ testTag: "AccountCard", clickable: true })`) included, and a property
+// over an element that was never found passes having checked nothing.
+//
+// Each state is asserted against the value the SAME handle reports for it, so a
+// selector can never name an element this host calls something else.
+function statesMatched(selector: unknown, fact: string): unknown[][] {
+  const ax = __testing__.buildAx() as { findAll(selector: unknown): Record<string, unknown>[] };
+  return ax.findAll(selector).map((element) => [element.id, element[fact]]);
+}
+
+test("clickable selects what this host reports clickable", () => {
+  const save = fakeElement({
+    tag: "button", x: 0, y: 0, width: 60, height: 20, id: "save", clickable: true,
+  });
+  const total = fakeElement({ tag: "div", x: 0, y: 20, width: 60, height: 20, id: "total" });
+  withFakeDocument([save, total], () => {
+    assert.deepEqual(statesMatched({ clickable: true }, "clickable"), [["save", true]]);
+    assert.deepEqual(statesMatched({ clickable: false }, "clickable"), [["total", false]]);
+  });
+});
+
+test("enabled selects what this host reports enabled", () => {
+  const save = fakeElement({
+    tag: "button", x: 0, y: 0, width: 60, height: 20, id: "save", clickable: true,
+  });
+  const cancel = fakeElement({
+    tag: "button", x: 0, y: 20, width: 60, height: 20, id: "cancel", clickable: true,
+    disabled: true,
+  });
+  // A role-based control carries no disabled property, so aria-disabled is the
+  // only thing that marks it, and both producers read it.
+  const submit = fakeElement({
+    tag: "div", x: 0, y: 40, width: 60, height: 20, id: "submit", clickable: true,
+    attrs: { role: "button", "aria-disabled": "true" },
+  });
+  withFakeDocument([save, cancel, submit], () => {
+    assert.deepEqual(statesMatched({ enabled: true }, "enabled"), [["save", true]]);
+    assert.deepEqual(statesMatched({ enabled: false }, "enabled"), [
+      ["cancel", false],
+      ["submit", false],
+    ]);
+  });
+});
+
+test("focused selects what this host reports focused", () => {
+  const amount = fakeElement({
+    tag: "input", x: 0, y: 0, width: 60, height: 20, id: "amount", editable: true, focused: true,
+  });
+  const note = fakeElement({
+    tag: "input", x: 0, y: 20, width: 60, height: 20, id: "note", editable: true,
+  });
+  withFakeDocument([amount, note], () => {
+    assert.deepEqual(statesMatched({ focused: true }, "focused"), [["amount", true]]);
+    assert.deepEqual(statesMatched({ focused: false }, "focused"), [["note", false]]);
+  });
+});
+
+// Both producers read the checked PROPERTY, so the selector has to read it too:
+// the markup attribute records only what the page started with, and a box the
+// user ticked answers to `[checked]` never and to `{checked: true}` always.
+test("checked selects the live property, not the markup attribute", () => {
+  const remember = fakeElement({
+    tag: "input", x: 0, y: 0, width: 20, height: 20, id: "remember",
+    attrs: { type: "checkbox" }, checked: true,
+  });
+  const agree = fakeElement({
+    tag: "input", x: 0, y: 20, width: 20, height: 20, id: "agree",
+    attrs: { type: "checkbox", checked: "" }, checked: false,
+  });
+  withFakeDocument([remember, agree], () => {
+    assert.deepEqual(statesMatched({ checked: true }, "checked"), [["remember", true]]);
+    assert.deepEqual(statesMatched({ checked: false }, "checked"), [["agree", false]]);
+  });
+});
+
+test("selected selects the live property, not the markup attribute", () => {
+  const january = fakeElement({
+    tag: "option", x: 0, y: 0, width: 60, height: 20, id: "january", selected: true,
+  });
+  const february = fakeElement({
+    tag: "option", x: 0, y: 20, width: 60, height: 20, id: "february",
+    attrs: { selected: "" },
+  });
+  withFakeDocument([january, february], () => {
+    assert.deepEqual(statesMatched({ selected: true }, "selected"), [["january", true]]);
+    assert.deepEqual(statesMatched({ selected: false }, "selected"), [["february", false]]);
+  });
+});
+
 test("attrs carries every other attribute alongside tag and aria-label", () => {
   const attrs = attrsOf(
     domElement({ tag: "input", attributes: { id: "txn-note", placeholder: "What's this for?" } }),
