@@ -49,7 +49,13 @@ before it decides:
 | a violation of any other property (`newAccountBalanceIsZero` fires on one android seed) | red: a real finding, but not the one this leg gates on |
 | no violation and exit 0 | red: the fuzzer stopped finding a bug that is still there |
 | no trace at all, on exit 0 or 2 | red: the run recorded nothing, so there is no verdict to read |
-| exit 1, or any other code | red: the harness broke, and the code propagates |
+| exit 1, or any other code | red: the run produced no verdict, and the code propagates |
+
+Exit 1 is two things now, and both fail the leg. The harness broke, or the run
+finished cleanly holding no verdict to report: no properties, no step that
+reached the verifier, or an action generator that never drove the app and found
+nothing. The second kind leaves a full run directory and names itself on stderr,
+so the log says which happened.
 
 The first two rows are why the check is worth the code it takes. A `TypeError`
 in `predicates.ts` and a fuzzer that no longer reaches the bug both used to

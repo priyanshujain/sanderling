@@ -25,7 +25,8 @@ Run a spec against an app for a fixed duration.
 | `--duration` | `5m` | Total test duration (`30s`, `5m`, `2h`, `1d`). |
 | `--max-steps` | `0` | Stop after this many steps (`0` = no cap, the duration governs). A step budget is what makes two generators comparable. |
 | `--exit-on-violation` | `false` | Stop the run at the first property violation and exit `2`. |
-| `--allow-no-properties` | `false` | Run a spec that registers no properties. Such a run judges nothing and can only report no violations, so it is refused by default; pass this when the run measures what the spec extracts or where the generator reaches. |
+| `--allow-no-properties` | `false` | Run a spec that registers no properties. Such a run judges nothing and can only report no violations, so it is refused by default; pass this when the run measures what the spec extracts. |
+| `--allow-no-generator-actions` | `false` | Finish a run the action generator never drove. Such a run judged whatever screen the spec's setup left it on and explored nothing, so it is refused by default; pass this when the run measures where the generator reaches and reaching nothing is the measurement. A run that recorded a violation is never refused, flag or no flag. |
 | `--arm` | optional | Experiment label recorded in the run's metadata. Used by the campaign tool to tell one sweep cell from another. |
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
 | `--generator` | `seeded` | Who picks each action: `seeded` (the run's PRNG) or `llm` (a vision model). See [the LLM generator](../spec-language/#llm-generator). |
@@ -34,6 +35,8 @@ Run a spec against an app for a fixed duration.
 | `--clear-data` | `true` | Clear app data before launching so the run starts from a fresh install. Pass `--clear-data=false` to resume prior state. |
 
 Exit codes: `0` the run finished (violations, if any, are in the summary), `2` the run stopped on a violation under `--exit-on-violation`, `1` something went wrong. CI reads the difference between `2` and `1` to tell a found bug from a broken harness.
+
+`1` also covers a run that finished cleanly and holds no verdict, which is not a broken harness but is not evidence either: a spec that registers no properties, a run no step of which reached the verifier, and a run whose action generator never drove the app and found nothing. Each names itself on stderr and leaves its full run directory behind, and each has a flag that says "this is the measurement" when it is.
 
 ## `sanderling replay [run-or-runs-dir]`
 
