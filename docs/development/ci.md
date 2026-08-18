@@ -345,3 +345,26 @@ npm trust list @sanderling/spec
 The job installs npm 11.5.1 or newer before publishing, because
 `actions/setup-node` writes an empty `_authToken` line into `.npmrc` and an older
 npm reads that as "auth is configured" and never asks for an OIDC token.
+
+## The ios companion is pinned, and its cache does not save the build
+
+`.github/actions/folio-app/action.yml` checks the `facebook/fb` tap out at commit
+`c0386793`, the 1.1.8 formula, before installing `idb-companion`. Floating on the
+tap broke the leg on 2026-08-18: the tap moved to 1.5.0, whose bundle has no
+top-level `Frameworks/`, and `companionassets/prepare.sh` stages `bin/` and
+`Frameworks/` as siblings because the binary resolves frameworks through
+`@rpath`. It also names its output `companion-1.1.8.tar.gz` from a hard-coded
+`VERSION`, so a floating tap made that version string a lie: CI built a tarball
+called 1.1.8 out of whatever the tap was serving that day. Moving to 1.5.0 is a
+change to the companion, not to CI.
+
+The `ios-assets` cache does not protect against this, and it is worth knowing why
+before trusting it. It restores, and the build runs anyway: git stamps the
+checked-out `prepare.sh` with checkout time while the restored tarball keeps the
+mtime it was archived with, so make always reads the target as stale. The
+2026-08-18 failure logged `Cache hit` and `Cache restored successfully`, then ran
+`prepare.sh` and died. So every ios run rebuilds the companion from whatever
+`brew` just installed, and a green master says nothing about the tap.
+
+Master looked green through the breakage only because its last run predated the
+tap moving, not because anything shielded it.
