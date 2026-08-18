@@ -20,11 +20,13 @@ const maxTraceLineBytes = 16 * 1024 * 1024
 // to open trace.jsonl again.
 type traceSummary struct {
 	Steps int `json:"steps"`
-	// Actions counts only the steps that both chose an action and dispatched
-	// it. A step whose policy declined to act, and a step whose chosen action
-	// the runner threw away, changed nothing about the app, so counting either
-	// as an action inflates the denominator of every per-action rate. The
-	// inflation is policy-dependent, so it does not cancel between arms.
+	// Actions counts only the steps on which the action generator both chose an
+	// action and dispatched it. A step whose policy declined to act, a step
+	// whose chosen action the runner threw away, and a step the spec's setup
+	// drove before the generator was ever consulted all explored nothing, so
+	// counting any of them as an action inflates the denominator of every
+	// per-action rate. The inflation is policy-dependent, so it does not cancel
+	// between arms.
 	Actions                    int      `json:"actions"`
 	FirstViolationOriginStep   *int     `json:"first_violation_origin_step"`
 	FirstViolationDetectedStep *int     `json:"first_violation_detected_step"`
@@ -45,20 +47,39 @@ type traceLine struct {
 	// Hierarchy is read only for its presence: the run-end finalize line is the
 	// one line carrying violations without an observed hierarchy.
 	Hierarchy json.RawMessage `json:"hierarchy"`
-	// NextAction is read only for its presence: a step that chose no action
-	// carries none at all.
-	NextAction          json.RawMessage          `json:"next_action"`
+	// NextAction is nil on a step that chose no action. Its Source names the
+	// backend that chose the action, which is the only thing in the trace
+	// separating a step the spec's setup drove from one the generator drove.
+	NextAction          *actionLine              `json:"next_action"`
 	ActionSkipped       string                   `json:"action_skipped"`
 	PreconditionFailure string                   `json:"precondition_failure"`
 	Violations          []string                 `json:"violations"`
 	Witnesses           map[string]trace.Witness `json:"witnesses"`
 }
 
-func dispatchedAction(line traceLine) bool {
-	if line.ActionSkipped != "" {
+type actionLine struct {
+	Source string `json:"source"`
+}
+
+// generatorDispatched reports whether this step drove the app on the action
+// generator's behalf, which is the exposure a per-action rate divides by. A
+// spec's setup puts the app into its starting position before the generator is
+// consulted, so its login taps are dispatched actions that explored nothing.
+//
+// Only a model run separates the two: the LLM backend stamps source="llm" on
+// what it chose and leaves setup's actions unstamped. The seeded picker resolves
+// setup precedence inside the one JS call it makes and stamps nothing at all, so
+// its setup steps are indistinguishable from its generator steps in the trace
+// and are counted; reading their absent source as setup would report every
+// seeded run as having explored nothing.
+func generatorDispatched(line traceLine, generator string) bool {
+	if line.ActionSkipped != "" || line.NextAction == nil {
 		return false
 	}
-	return len(line.NextAction) > 0 && string(line.NextAction) != "null"
+	if generator != "llm" {
+		return true
+	}
+	return line.NextAction.Source == "llm"
 }
 
 // findRunDirectory returns the run directory `sanderling test` created inside
@@ -92,14 +113,34 @@ func summarizeRun(seedDirectory string) (string, traceSummary, error) {
 	if err != nil {
 		return "", traceSummary{}, err
 	}
-	summary, err := summarizeTrace(filepath.Join(seedDirectory, name, "trace.jsonl"))
+	directory := filepath.Join(seedDirectory, name)
+	generator, err := runGenerator(directory)
+	if err != nil {
+		return name, traceSummary{}, err
+	}
+	summary, err := summarizeTrace(filepath.Join(directory, "trace.jsonl"), generator)
 	if err != nil {
 		return name, traceSummary{}, err
 	}
 	return name, summary, nil
 }
 
-func summarizeTrace(tracePath string) (traceSummary, error) {
+// runGenerator reads which picker drove the run. The trace on its own cannot
+// say whether an unstamped action came from the seeded picker or from the
+// spec's setup under the model picker, and the two count differently.
+func runGenerator(runDirectory string) (string, error) {
+	body, err := os.ReadFile(filepath.Join(runDirectory, "meta.json"))
+	if err != nil {
+		return "", fmt.Errorf("read meta: %w", err)
+	}
+	var meta trace.Meta
+	if err := json.Unmarshal(body, &meta); err != nil {
+		return "", fmt.Errorf("decode meta: %w", err)
+	}
+	return meta.Generator, nil
+}
+
+func summarizeTrace(tracePath, generator string) (traceSummary, error) {
 	file, err := os.Open(tracePath)
 	if err != nil {
 		return traceSummary{}, fmt.Errorf("open trace: %w", err)
@@ -127,7 +168,7 @@ func summarizeTrace(tracePath string) (traceSummary, error) {
 		if !synthetic && line.Index > summary.Steps {
 			summary.Steps = line.Index
 		}
-		if !synthetic && dispatchedAction(line) {
+		if !synthetic && generatorDispatched(line, generator) {
 			summary.Actions++
 		}
 		if line.PreconditionFailure != "" {

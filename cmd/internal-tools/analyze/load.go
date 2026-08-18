@@ -52,10 +52,12 @@ type runRecord struct {
 	// It is what the survival analysis times the event by; see eventStep.
 	FirstViolationDetectedStep *int     `json:"first_violation_detected_step"`
 	ViolatedProperties         []string `json:"violated_properties"`
-	// Actions is the count of steps that dispatched an action, and it is a
-	// pointer so that a runs.jsonl written before the campaign tool counted
-	// them is refused rather than read as an arm that acted zero times. The
-	// campaign tool always emits the field, so its absence dates the file.
+	// Actions is the count of steps on which the action generator dispatched an
+	// action, which excludes the steps the spec's setup drove before the
+	// generator was consulted wherever the trace names them. It is a pointer so
+	// that a runs.jsonl written before the campaign tool counted them is refused
+	// rather than read as an arm that acted zero times. The campaign tool always
+	// emits the field, so its absence dates the file.
 	Actions *int `json:"actions"`
 }
 

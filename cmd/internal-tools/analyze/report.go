@@ -34,7 +34,8 @@ func writeReport(result analysis, out io.Writer) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "a detection is one distinct property violated in one run; run hours sum the time the runs worked,")
 	fmt.Fprintln(out, "on the monotonic clock, so a host that slept mid-run is not charged for the sleep")
-	fmt.Fprintln(out, "actions count the steps that dispatched one; the rest chose nothing or had the choice thrown away")
+	fmt.Fprintln(out, "actions count the steps the generator dispatched one on; the rest chose nothing, had the choice")
+	fmt.Fprintln(out, "thrown away, or were the spec's setup driving the app into position before the generator ran")
 	writeTable(out, []string{"arm", "steps", "actions", "run hours", "detections", "defects/1k actions", "defects/hour", "distinct defects", "found in one run"},
 		func(add func(...string)) {
 			for _, summary := range result.Arms {

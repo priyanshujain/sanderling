@@ -34,13 +34,51 @@ func skippedActionStep(index int, reason string) trace.Step {
 	return step
 }
 
+func setupStep(index int) trace.Step {
+	step := observedStep(index)
+	step.NextAction = &trace.Action{
+		Kind:     "InputText",
+		Selector: "testTag:LoginScreen > testTag:LoginEmail",
+		Text:     "demo@folio.app",
+	}
+	return step
+}
+
+func modelStep(index int) trace.Step {
+	step := actingStep(index)
+	step.NextAction.Source = "llm"
+	return step
+}
+
+func skippedModelStep(index int, reason string) trace.Step {
+	step := modelStep(index)
+	step.ActionSkipped = reason
+	return step
+}
+
 func writeRunDirectory(t *testing.T, seedDirectory, name string, steps []trace.Step) string {
+	t.Helper()
+	return writeRunDirectoryWithMeta(
+		t,
+		seedDirectory,
+		name,
+		trace.Meta{Seed: 11, Platform: "web", Arm: "seeded-baseline"},
+		steps,
+	)
+}
+
+func writeRunDirectoryWithMeta(
+	t *testing.T,
+	seedDirectory, name string,
+	declared trace.Meta,
+	steps []trace.Step,
+) string {
 	t.Helper()
 	directory := filepath.Join(seedDirectory, name)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	meta, err := json.Marshal(trace.Meta{Seed: 11, Platform: "web", Arm: "seeded-baseline"})
+	meta, err := json.Marshal(declared)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +146,68 @@ func TestSummarizeRun_CountsOnlyStepsThatDispatchedAnAction(t *testing.T) {
 	}
 	if summary.Actions != 3 {
 		t.Errorf("actions: got %d, want 3 (one step chose nothing and six were never dispatched)", summary.Actions)
+	}
+}
+
+func TestSummarizeRun_ModelRunLeavesTheSetupsLoginOutOfTheActionCount(t *testing.T) {
+	seedDirectory := t.TempDir()
+	writeRunDirectoryWithMeta(t, seedDirectory, "20260812-090000",
+		trace.Meta{Seed: 11, Platform: "web", Arm: "llm-identifier", Generator: "llm"},
+		[]trace.Step{
+			setupStep(1),
+			setupStep(2),
+			setupStep(3),
+			modelStep(4),
+			skippedModelStep(5, "unresolved_selector"),
+			modelStep(6),
+		})
+
+	_, summary, err := summarizeRun(seedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Steps != 6 {
+		t.Errorf("steps: got %d, want 6", summary.Steps)
+	}
+	if summary.Actions != 2 {
+		t.Errorf("actions: got %d, want 2 (three login steps were setup's and one generator action was thrown away)", summary.Actions)
+	}
+}
+
+func TestSummarizeRun_ModelRunWithoutSetupCountsEveryDispatchedStep(t *testing.T) {
+	seedDirectory := t.TempDir()
+	writeRunDirectoryWithMeta(t, seedDirectory, "20260812-090000",
+		trace.Meta{Seed: 11, Platform: "web", Arm: "llm-identifier", Generator: "llm"},
+		[]trace.Step{modelStep(1), modelStep(2), modelStep(3), modelStep(4)})
+
+	_, summary, err := summarizeRun(seedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Actions != 4 {
+		t.Errorf("actions: got %d, want 4", summary.Actions)
+	}
+}
+
+func TestSummarizeRun_SeededRunCountsSetupBecauseItsTraceCannotNameIt(t *testing.T) {
+	seedDirectory := t.TempDir()
+	writeRunDirectoryWithMeta(t, seedDirectory, "20260812-090000",
+		trace.Meta{Seed: 11, Platform: "web", Arm: "seeded-baseline", Generator: "seeded"},
+		[]trace.Step{
+			setupStep(1),
+			setupStep(2),
+			setupStep(3),
+			actingStep(4),
+			actingStep(5),
+		})
+
+	_, summary, err := summarizeRun(seedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Actions != 5 {
+		t.Errorf("actions: got %d, want 5: the seeded picker stamps no source, so excluding "+
+			"unstamped steps would count its whole run as setup", summary.Actions)
 	}
 }
 
