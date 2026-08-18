@@ -154,21 +154,38 @@ gate_clear_state() {
 }
 
 # G4: no doubled text after InputText. For each InputText action targeting a
-# field, the field's value in the NEXT hierarchy must not contain the input
-# concatenated with itself (catches append-vs-replace and double-paste bugs).
-# The action chosen at step N is applied before step N+1 is observed, so the
-# effect lands in the following snapshot.
+# field, the field's value in the NEXT hierarchy must not read as the input
+# applied twice (catches append-vs-replace and double-paste bugs). The action
+# chosen at step N is applied before step N+1 is observed, so the effect lands
+# in the following snapshot.
+#
+# Two signals, because the typed value is not always in the trace: a target the
+# platform reports no secure fact for has its typed value written as a fixed
+# placeholder (internal/verifier/redaction.go), and android reports that fact
+# for nothing, so on that backend every InputText records the placeholder. The
+# OBSERVED value is never redacted, and a field holding one string twice over is
+# the doubling itself. A value that is a single character repeated is exempt:
+# the input corpus types "a" 4096 times and a pair of spaces, and neither can be
+# told apart from its own doubling.
 gate_no_doubled_text() {
   local run_directory="$1"
   local trace_file="${run_directory}/trace.jsonl"
   [[ -f "$trace_file" ]] || return 1
   local verdict
-  verdict="$(jq -s -r '
+  verdict="$(jq -s -r --arg redacted "[redacted]" '
     # Map a selector like "testTag:LoginScreen > testTag:LoginEmail" to its
     # target field id: the token after the final ":" of the last segment.
     def target_field(selector):
       (selector | split(">") | last | gsub("^\\s+|\\s+$";"")) as $last
       | ($last | split(":") | last);
+
+    def self_doubled(value):
+      (value | length) as $n
+      | ($n / 2 | floor) as $half
+      | $n > 1
+        and ($n % 2 == 0)
+        and (value[0:$half] == value[$half:])
+        and ((value | explode | unique | length) > 1);
 
     [ .[] | select(.hierarchy != null) ] as $steps
     | reduce range(0; ($steps | length)) as $i ([];
@@ -180,16 +197,18 @@ gate_no_doubled_text() {
             | ($current.next_action.text // "") as $typed
             | (($next.hierarchy.elements // [])
                | map(select(.resourceId == $field)) | first) as $element
-            | if $element != null and $typed != ""
+            | if $element != null
               then
                 (($element.attrs.text // $element.text // "")) as $value
-                | if ($value | contains($typed + $typed))
-                  then . + [{field: $field, typed: $typed, value: $value}]
+                | if self_doubled($value)
+                     or ($typed != "" and $typed != $redacted
+                         and ($value | contains($typed + $typed)))
+                  then . + [{field: $field, value: $value}]
                   else . end
               else . end
           else . end)
     | if length == 0 then "pass"
-      else "fail:" + (.[0].field) + ":" + (.[0].value) end
+      else "fail:" + (.[0].field) + ":" + (.[0].value[0:60]) end
   ' "$trace_file")"
   [[ "$verdict" == "pass" ]]
 }
