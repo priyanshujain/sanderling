@@ -5,9 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/android"
@@ -261,12 +264,26 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 // because it holds no verdict to report. The threshold is every step and not a
 // fraction of them: a screen that composes now and then costs a healthy android
 // run a step or two, and a check that fired on those would be red on every run.
+//
+// A run that dispatched no action at all fails on the same grounds, and the
+// threshold is zero for the same reason: a generator with nothing to offer on
+// some screens is ordinary, one with nothing to offer on every screen of a whole
+// run drove nothing. --exit-on-violation keeps precedence over it so a run that
+// found something still exits on its evidence, and the property-free opt-out
+// exempts the sweeps, whose measurement is where a generator reaches and for
+// which "nowhere on this build" is a result rather than a broken run.
 func runOutcome(options Options, summary runner.Summary) error {
 	if summary.Steps > 0 && summary.SkippedVerification == summary.Steps {
 		return VacuousRunError{Steps: summary.Steps}
 	}
 	if options.ExitOnViolation && len(summary.Violations) > 0 {
 		return ViolationsError{Count: len(summary.Violations)}
+	}
+	if !options.AllowNoProperties && summary.Steps > 0 && summary.DispatchedActions == 0 {
+		return NoActionsDispatchedError{
+			Steps:          summary.Steps,
+			SkippedActions: summary.SkippedActions,
+		}
 	}
 	return nil
 }
@@ -333,6 +350,41 @@ func (e NoPropertiesError) Error() string {
 			"would check nothing and report no violations. Pass --allow-no-properties for a "+
 			"run that measures extraction or exploration instead of judging the app",
 		e.Spec)
+}
+
+// NoActionsDispatchedError reports a run not one of whose steps drove the app.
+// Every screen it judged was the one it launched on, so its empty violation list
+// says as much about the app as a spec with no properties would: the run
+// observed, judged the same state over and over, and exercised nothing. It stays
+// untyped to the CLI's violation path like VacuousRunError, so it exits 1 as a
+// run that holds no verdict rather than 2.
+type NoActionsDispatchedError struct {
+	Steps int
+	// SkippedActions is the runner's per-reason count of actions that never
+	// reached the app, which is where the cause is: a picker with no candidate
+	// reads differently from one whose every model call failed.
+	SkippedActions map[string]int
+}
+
+func (e NoActionsDispatchedError) Error() string {
+	return fmt.Sprintf(
+		"%d step(s) ran and none of them dispatched an action: the run observed the app "+
+			"and never drove it, so it judged its launch screen over and over and its "+
+			"violation count says nothing about the rest of the app%s",
+		e.Steps, skipReasonSuffix(e.SkippedActions))
+}
+
+// skipReasonSuffix renders the skip-reason tally as a trailing clause, empty
+// when the run recorded none.
+func skipReasonSuffix(skipped map[string]int) string {
+	if len(skipped) == 0 {
+		return ""
+	}
+	reasons := make([]string, 0, len(skipped))
+	for _, reason := range slices.Sorted(maps.Keys(skipped)) {
+		reasons = append(reasons, fmt.Sprintf("%s %d", reason, skipped[reason]))
+	}
+	return ". Actions that never reached the app: " + strings.Join(reasons, ", ")
 }
 
 // bundleInputs holds the pre-driver assembly: alias map, seed, esbuild defines,

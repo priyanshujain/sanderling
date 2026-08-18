@@ -297,10 +297,11 @@ func TestBuildRunMeta_OmitsModelWhenSpecDeclaresNoLLMGenerator(t *testing.T) {
 // stays a successful run, which is what every existing invocation expects.
 func TestRunOutcome_ReportsViolationsOnlyUnderTheFlag(t *testing.T) {
 	violated := runner.Summary{
-		Steps:      7,
-		Violations: []runner.ViolationRecord{{StepIndex: 3, Properties: []string{"balanceMoves"}}},
+		Steps:             7,
+		DispatchedActions: 7,
+		Violations:        []runner.ViolationRecord{{StepIndex: 3, Properties: []string{"balanceMoves"}}},
 	}
-	clean := runner.Summary{Steps: 7}
+	clean := runner.Summary{Steps: 7, DispatchedActions: 7}
 
 	if err := runOutcome(Options{}, violated); err != nil {
 		t.Errorf("without --exit-on-violation a violated run must succeed, got %v", err)
@@ -338,9 +339,65 @@ func TestRunOutcome_ARunThatJudgedNothingIsNotASuccess(t *testing.T) {
 
 	// A screen that composes now and then costs a run steps, not its verdict. A
 	// check that fired here would turn every healthy android run red.
-	mostlyJudged := runner.Summary{Steps: 6, SkippedVerification: 5}
+	mostlyJudged := runner.Summary{Steps: 6, SkippedVerification: 5, DispatchedActions: 1}
 	if err := runOutcome(Options{}, mostlyJudged); err != nil {
 		t.Errorf("a run that judged one of its 6 steps must succeed, got %v", err)
+	}
+}
+
+// A run that dispatched no action at all observed one screen for its whole life
+// and never drove the app, so its empty violation list is what an unplugged
+// instrument reports. The provider rate-limiting a model picker is the way this
+// happens in practice: every step ends with the picker handing back nothing.
+func TestRunOutcome_ARunThatDroveNothingIsNotASuccess(t *testing.T) {
+	droveNothing := runner.Summary{
+		Steps:          200,
+		SkippedActions: map[string]int{"no_action_produced": 200},
+	}
+	err := runOutcome(Options{}, droveNothing)
+	var dead NoActionsDispatchedError
+	if !errors.As(err, &dead) {
+		t.Fatalf("a run that dispatched none of its 200 steps' actions came back %v, "+
+			"want a NoActionsDispatchedError", err)
+	}
+	if dead.Steps != 200 {
+		t.Errorf("steps: got %d, want 200", dead.Steps)
+	}
+	if !strings.Contains(dead.Error(), "no_action_produced") {
+		t.Errorf("the error never names why nothing was dispatched: %v", dead)
+	}
+
+	// One action is exploration, however little. A check that fired here would
+	// be red on any run whose screen offers the generator nothing for a while.
+	droveOnce := runner.Summary{Steps: 200, DispatchedActions: 1}
+	if err := runOutcome(Options{}, droveOnce); err != nil {
+		t.Errorf("a run that dispatched one action must succeed, got %v", err)
+	}
+
+	// The sweeps that measure what a spec extracts and where a generator reaches
+	// ask for a run that judges nothing by name, and "the generator reached
+	// nothing here" is their measurement rather than their failure.
+	if err := runOutcome(Options{AllowNoProperties: true}, droveNothing); err != nil {
+		t.Errorf("the property-free opt-out no longer carries a run through, got %v", err)
+	}
+
+	// A run cut short before it took a step never got going, which the deadline
+	// and the step count already say.
+	if err := runOutcome(Options{}, runner.Summary{}); err != nil {
+		t.Errorf("a run with no steps at all must not report as dead-on-arrival, got %v", err)
+	}
+
+	// CI reads exit 2 as "the run found the bug". A run whose first screen
+	// already violated must keep reporting that, or the found bug is downgraded
+	// to a broken harness.
+	foundOnTheFirstScreen := droveNothing
+	foundOnTheFirstScreen.Violations = []runner.ViolationRecord{
+		{StepIndex: 1, Properties: []string{"balanceNonNegative"}},
+	}
+	err = runOutcome(Options{ExitOnViolation: true}, foundOnTheFirstScreen)
+	var violations ViolationsError
+	if !errors.As(err, &violations) {
+		t.Errorf("a run that found a violation came back %v, want a ViolationsError", err)
 	}
 }
 
