@@ -96,3 +96,23 @@ func TestRun_EffectSizeFollowsWhatCensoringDetermines(t *testing.T) {
 			"and none of the early arm's twenty had violated by step 12", pair.A12)
 	}
 }
+
+// The seed-matched contrast reads the same censored runs and reaches the same
+// conclusion or it is not measuring the same thing.
+func TestRun_PairedContrastFollowsWhatCensoringDetermines(t *testing.T) {
+	late := append(violatedAt(6, 5), violatedAt(14, 100)...)
+	earlyDirectory, lateDirectory := wallClockArms(t, stoppedShort(20, 12), late)
+	result := analyseCampaigns(t, "--paired", earlyDirectory, lateDirectory)
+
+	paired := *result.Paired
+	if paired.First != "early" || paired.Second != "late" {
+		t.Fatalf("paired %s minus %s, want early minus late", paired.First, paired.Second)
+	}
+	if paired.Sign != 1 {
+		t.Errorf("sign %+d, want +1: the late arm is the one seen to violate first, in the six pairs "+
+			"where the order is determined at all", paired.Sign)
+	}
+	if paired.A12 <= 0.5 {
+		t.Errorf("a12 within pairs %.4f, want above 0.5", paired.A12)
+	}
+}

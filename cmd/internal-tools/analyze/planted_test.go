@@ -581,7 +581,12 @@ func TestPlanted_PairedComparisonRecoversTheShiftAndItsSign(t *testing.T) {
 	source := rand.New(rand.NewSource(5150))
 
 	var post, pre []plantedRun
-	var differences []float64
+	// Arms are contrasted in the order their labels sort, so the plant is stated
+	// the same way: post-repair against pre-repair. A seed where the unshifted
+	// run violated is a pair the shifted run is known to have outlived, whether
+	// it violated later or ran on clean; a seed where neither violated is a pair
+	// with no order.
+	firstSooner, bothViolated, unordered := 0, 0, 0
 	for seed := int64(1); seed <= 30; seed++ {
 		fast := base.draw(seed, source)
 		slow := plantedRun{seed: seed, steps: fast.steps + shift, violated: fast.violated}
@@ -590,13 +595,18 @@ func TestPlanted_PairedComparisonRecoversTheShiftAndItsSign(t *testing.T) {
 		}
 		post = append(post, fast)
 		pre = append(pre, slow)
-		// Arms are contrasted in the order their labels sort, so the planted
-		// difference is stated the same way: post-repair less pre-repair.
-		differences = append(differences, float64(recordedStep(fast, budget)-recordedStep(slow, budget)))
+		switch {
+		case !fast.violated:
+			unordered++
+		case slow.violated:
+			bothViolated++
+			firstSooner++
+		default:
+			firstSooner++
+		}
 	}
-	expected := medianOf(differences)
-	if expected >= 0 {
-		t.Fatalf("planted median difference %v, want the shifted arm to violate later", expected)
+	if bothViolated == 0 {
+		t.Fatal("no pair has two violations, so the planted shift is nowhere the analysis can read it")
 	}
 
 	root := t.TempDir()
@@ -618,17 +628,24 @@ func TestPlanted_PairedComparisonRecoversTheShiftAndItsSign(t *testing.T) {
 	if paired.Pairs != 30 {
 		t.Errorf("%d pairs, want 30", paired.Pairs)
 	}
-	if paired.MedianDifference != expected {
-		t.Errorf("median difference %v, want the planted %v", paired.MedianDifference, expected)
+	// Every pair where both runs violated was shifted by exactly the plant, so
+	// the median over them is the plant itself rather than a mixture of it with
+	// the step counts censored runs never reached.
+	if paired.BothViolated != bothViolated {
+		t.Errorf("%d pair(s) with two violations, want %d", paired.BothViolated, bothViolated)
+	}
+	if paired.MedianDifference == nil || *paired.MedianDifference != -shift {
+		t.Errorf("median difference %v, want the planted %d", paired.MedianDifference, -shift)
 	}
 	if paired.Sign != -1 {
 		t.Errorf("sign %+d, want -1 for the arm that violated sooner", paired.Sign)
 	}
-	if paired.SecondSooner != 0 {
-		t.Errorf("%d pairs favour the shifted arm, want none: every pair was shifted the same way", paired.SecondSooner)
+	if paired.FirstSooner != firstSooner || paired.SecondSooner != 0 || paired.Unordered != unordered {
+		t.Errorf("counts %+v, want %d favouring the shifted arm, none the other way and %d unordered",
+			paired, firstSooner, unordered)
 	}
-	if paired.A12 != 0 {
-		t.Errorf("a12 within pairs %v, want 0 where no pair favours the first arm", paired.A12)
+	if want := 0.5 * float64(unordered) / 30; paired.A12 != want {
+		t.Errorf("a12 within pairs %v, want %v where no pair favours the first arm", paired.A12, want)
 	}
 	if paired.PValue > 0.001 {
 		t.Errorf("p-value %v for a shift planted in every pair", paired.PValue)
@@ -636,13 +653,6 @@ func TestPlanted_PairedComparisonRecoversTheShiftAndItsSign(t *testing.T) {
 	if paired.HolmPValue != paired.PValue {
 		t.Errorf("holm p %v in a family of one, want the raw %v", paired.HolmPValue, paired.PValue)
 	}
-}
-
-func recordedStep(run plantedRun, budget int) int {
-	if run.violated {
-		return run.steps
-	}
-	return budget
 }
 
 // The paired test is the ablation's decision rule, so a null there has to stay a

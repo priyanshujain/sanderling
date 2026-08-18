@@ -140,15 +140,16 @@ func writeReport(result analysis, out io.Writer) {
 }
 
 func writePaired(out io.Writer, comparison pairedComparison) {
-	fmt.Fprintf(out, "\npaired per-seed difference, %s minus %s, censored runs held at the steps they ran\n",
+	fmt.Fprintf(out, "\npaired per-seed contrast, %s against %s, each pair scored by which run outlived the other\n",
 		comparison.First, comparison.Second)
-	fmt.Fprintf(out, "%d seed pair(s): %s sooner in %d, %s sooner in %d, tied in %d\n",
+	fmt.Fprintf(out, "%d seed pair(s): %s sooner in %d, %s sooner in %d, left in no order by censoring in %d\n",
 		comparison.Pairs, comparison.First, comparison.FirstSooner,
-		comparison.Second, comparison.SecondSooner, comparison.Tied)
-	fmt.Fprintf(out, "median difference %+.1f steps, sign %+d, a12 within pairs %.3f\n",
-		comparison.MedianDifference, comparison.Sign, comparison.A12)
-	fmt.Fprintf(out, "wilcoxon signed-rank v %.1f, p %s, holm p %s\n",
-		comparison.Statistic, formatPValue(comparison.PValue), formatPValue(comparison.HolmPValue))
+		comparison.Second, comparison.SecondSooner, comparison.Unordered)
+	fmt.Fprintf(out, "median difference %s over the %d pair(s) where both runs violated, sign %+d, a12 within pairs %.3f\n",
+		formatStepDifference(comparison.MedianDifference), comparison.BothViolated, comparison.Sign, comparison.A12)
+	fmt.Fprintf(out, "sign test over the %d ordered pair(s), p %s, holm p %s\n",
+		comparison.FirstSooner+comparison.SecondSooner,
+		formatPValue(comparison.PValue), formatPValue(comparison.HolmPValue))
 	if len(comparison.UnpairedSeeds) > 0 {
 		fmt.Fprintf(out, "%d seed(s) usable in one arm only and left out of the pairing: %v\n",
 			len(comparison.UnpairedSeeds), comparison.UnpairedSeeds)
@@ -175,6 +176,13 @@ func formatMedian(value *float64) string {
 		return "undefined"
 	}
 	return strconv.FormatFloat(*value, 'f', -1, 64)
+}
+
+func formatStepDifference(value *float64) string {
+	if value == nil {
+		return "undefined"
+	}
+	return fmt.Sprintf("%+.1f steps", *value)
 }
 
 // formatActions marks a denominator with actions whose producer nothing names,
