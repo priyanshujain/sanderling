@@ -24,8 +24,9 @@ func signTest(favouringFirst, favouringSecond int) float64 {
 	if trials == 0 {
 		return math.NaN()
 	}
+	smaller := min(favouringFirst, favouringSecond)
 	tail := 0.0
-	for count := 0; count <= min(favouringFirst, favouringSecond); count++ {
+	for count := 0; count <= smaller; count++ {
 		tail += math.Exp(logBinomialCoefficient(trials, count) - float64(trials)*math.Ln2)
 	}
 	return math.Min(2*tail, 1)
