@@ -463,6 +463,7 @@ func TestWriteMeta_ArmMembershipRoundTrip(t *testing.T) {
 		MaxSteps:          300,
 		DurationMillis:    180000,
 		Host:              "emulator-farm-01",
+		Device:            "emulator-5556",
 	}
 	if err := writer.WriteMeta(meta); err != nil {
 		t.Fatal(err)
@@ -496,7 +497,7 @@ func TestWriteMeta_OmitsArmMembershipWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"arm", "generator", "label_source", "model", "instructions", "max_steps", "duration_millis", "host"} {
+	for _, key := range []string{"arm", "generator", "label_source", "model", "instructions", "max_steps", "duration_millis", "host", "device"} {
 		if strings.Contains(string(body), `"`+key+`"`) {
 			t.Errorf("meta.json carries %q when unset:\n%s", key, body)
 		}

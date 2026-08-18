@@ -13,6 +13,7 @@ import (
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/runner"
+	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
@@ -219,6 +220,35 @@ func TestBuildRunMeta_RecordsArmMembership(t *testing.T) {
 	}
 	if meta.Host != "farm-01" || meta.Seed != 7 {
 		t.Errorf("host and seed: got host=%q seed=%d", meta.Host, meta.Seed)
+	}
+}
+
+// The device a run drove has to survive in the run's own artifact. Held only in
+// the campaign's runs.jsonl, a trace read on its own cannot say which emulator,
+// or which API level, produced it.
+func TestBuildRunMeta_RecordsTheDeviceInMetaJSON(t *testing.T) {
+	directory := t.TempDir()
+	writer, err := trace.NewWriter(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	options := Options{Platform: "android", Generator: "seeded", Duration: time.Minute, Device: "emulator-5556"}
+	if err := writer.WriteMeta(buildRunMeta(options, "deadbeef", 3, "farm-01", verifier.LLMConfig{}, false)); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(filepath.Join(directory, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored trace.Meta
+	if err := json.Unmarshal(body, &stored); err != nil {
+		t.Fatalf("meta.json is not valid JSON: %v\n%s", err, body)
+	}
+	if stored.Device != "emulator-5556" {
+		t.Errorf("device in meta.json: got %q, want emulator-5556\n%s", stored.Device, body)
 	}
 }
 

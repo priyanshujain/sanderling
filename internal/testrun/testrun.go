@@ -102,6 +102,7 @@ func buildRunMeta(options Options, bundleSHA256 string, seed int64, host string,
 		MaxSteps:          options.MaxSteps,
 		DurationMillis:    options.Duration.Milliseconds(),
 		Host:              host,
+		Device:            options.Device,
 	}
 	if options.Generator == "llm" && hasLLMConfig {
 		meta.Model = llmConfig.Model

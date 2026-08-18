@@ -197,6 +197,11 @@ type Meta struct {
 	// several hosts, so a per-host effect has to be detectable rather than
 	// invisible.
 	Host string `json:"host,omitempty"`
+	// Device is the target the run drove, from --device. One host drives
+	// several emulators at different API levels, so without it a trace on its
+	// own cannot say what produced it and a per-device split can only be
+	// recovered by joining against the campaign manifest.
+	Device string `json:"device,omitempty"`
 }
 
 type Writer struct {
