@@ -97,6 +97,14 @@
     <div id="filler"></div>
     <script id="page-script">
       document.getElementById("delegating-root").onclick = function () {};
+      // checked and focused are live state: the markup attribute records only
+      // what the page loaded with, and nothing writes focus down at all. Both
+      // producers read them off the element, so the fixture has to hold one of
+      // each or the comparison is false against false over the whole page.
+      // #choice-first is the third: an option a select made current with no
+      // attribute anywhere saying so.
+      document.getElementById("agree").checked = true;
+      document.getElementById("save").focus();
     </script>
   </body>
 </html>

@@ -27,9 +27,19 @@
           <button id="shadow-cancel" disabled>cancel</button>
           <input id="shadow-amount" type="text" value="10" placeholder="0.00" />
           <input id="shadow-password" type="password" placeholder="Password" />
+          <input id="shadow-agree" type="checkbox" />
+          <select id="shadow-choice">
+            <option id="shadow-choice-first">first</option>
+          </select>
           <div id="shadow-plain">plain</div>
         </div>
         <div id="shadow-scroller"><div id="shadow-scroller-content"></div></div>`;
+      // document.activeElement names the HOST while focus is inside its shadow
+      // root, so a producer that does not descend reports focus on the mount
+      // element and never on the control, which is what a Compose for Web page
+      // looks like from the outside.
+      root.getElementById("shadow-agree").checked = true;
+      root.getElementById("shadow-save").focus();
     </script>
   </body>
 </html>

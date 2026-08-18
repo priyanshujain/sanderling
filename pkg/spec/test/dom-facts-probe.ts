@@ -22,6 +22,9 @@ type AxHandle = {
   clickable?: boolean;
   editable?: boolean;
   secure?: boolean | null;
+  checked?: boolean;
+  selected?: boolean;
+  focused?: boolean;
 };
 type Ax = { find(selector: unknown): AxHandle | undefined };
 
@@ -55,6 +58,13 @@ function domFacts(): unknown[] {
       // side compares it against a dump that leaves the fact out entirely for an
       // element no producer states it for.
       secure: handle?.secure ?? null,
+      // The three states the target enumeration does not carry: they decide
+      // nothing about which action is offered, so they reach a spec through the
+      // handle alone, and a selector naming them resolves against the same
+      // reading.
+      checked: handle?.checked ?? false,
+      selected: handle?.selected ?? false,
+      focused: handle?.focused ?? false,
       width: target.width ?? 0,
       height: target.height ?? 0,
     };

@@ -57,6 +57,13 @@ type elementFacts struct {
 	// typed value may be written into the shared record, so the two producers
 	// disagreeing about it writes a credential into a run's trace.
 	secure string
+	// checked, selected and focused reach a spec through the ax handle alone:
+	// they decide nothing about which action is offered, so the target
+	// enumeration does not carry them, and a selector naming one of them
+	// resolves against this same reading.
+	checked  bool
+	selected bool
+	focused  bool
 	// handleClickable and handleEditable are the same facts on the ax element a
 	// spec reaches through state.ax.find, a third place they are computed and the
 	// one that has twice been the odd one out: clickable answered a hardcoded
@@ -135,6 +142,9 @@ func factsFromHierarchyDump(t *testing.T, dump string) []factRow {
 				scrollable: element.Attributes["scrollable"] == "true",
 				hintText:   element.Attributes["hintText"],
 				secure:     secureFromDump(element),
+				checked:    element.Checked,
+				selected:   element.Selected,
+				focused:    element.Focused,
 				positiveBounds: hasPositiveBounds(
 					element.Bounds.Width(),
 					element.Bounds.Height(),
@@ -184,6 +194,9 @@ func factsFromWebRuntime(
 		HandleClickable bool   `json:"handleClickable"`
 		HandleEditable  bool   `json:"handleEditable"`
 		Secure          *bool  `json:"secure"`
+		Checked         bool   `json:"checked"`
+		Selected        bool   `json:"selected"`
+		Focused         bool   `json:"focused"`
 		Width           int    `json:"width"`
 		Height          int    `json:"height"`
 	}
@@ -204,6 +217,9 @@ func factsFromWebRuntime(
 				handleClickable: item.HandleClickable,
 				handleEditable:  item.HandleEditable,
 				secure:          secureFromWebRuntime(item.Secure),
+				checked:         item.Checked,
+				selected:        item.Selected,
+				focused:         item.Focused,
 				positiveBounds:  hasPositiveBounds(item.Width, item.Height),
 			},
 		})
@@ -268,6 +284,9 @@ func requireBothPolarities(t *testing.T, rows []factRow) {
 		{"editable", func(f elementFacts) bool { return f.editable }},
 		{"scrollable", func(f elementFacts) bool { return f.scrollable }},
 		{"hintText", func(f elementFacts) bool { return f.hintText != "" }},
+		{"checked", func(f elementFacts) bool { return f.checked }},
+		{"selected", func(f elementFacts) bool { return f.selected }},
+		{"focused", func(f elementFacts) bool { return f.focused }},
 		{"positiveBounds", func(f elementFacts) bool { return f.positiveBounds }},
 	} {
 		var sawTrue, sawFalse bool
@@ -440,6 +459,9 @@ func compareDerivedFacts(t *testing.T, fromDump, fromWebRuntime []factRow) {
 			{"enabled", dump.enabled, web.enabled},
 			{"editable", dump.editable, web.editable},
 			{"scrollable", dump.scrollable, web.scrollable},
+			{"checked", dump.checked, web.checked},
+			{"selected", dump.selected, web.selected},
+			{"focused", dump.focused, web.focused},
 			{"positiveBounds", dump.positiveBounds, web.positiveBounds},
 		} {
 			if fact.dump != fact.web {
