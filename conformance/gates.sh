@@ -493,8 +493,12 @@ self_test() {
 
   assert "G4 pass no doubling" PASS \
     "$(gate_no_doubled_text "${testdata}/pass" && echo PASS || echo FAIL)"
-  assert "G4 doubled text caught" FAIL \
+  assert "G4 doubled text caught with the typed value redacted" FAIL \
     "$(gate_no_doubled_text "${testdata}/g4-doubled-text" && echo PASS || echo FAIL)"
+  assert "G4 repeated character is not doubling" PASS \
+    "$(gate_no_doubled_text "${testdata}/g4-repeated-character" && echo PASS || echo FAIL)"
+  assert "G4 doubled text caught from the recorded value" FAIL \
+    "$(gate_no_doubled_text "${testdata}/g4-recorded-text" && echo PASS || echo FAIL)"
 
   assert "seeds default to one distinct value per run" "101 202 303 404 505" \
     "$(select_seeds 5 "101 202 303 404 505" >/dev/null 2>&1 && echo "${seed_list[*]}")"
