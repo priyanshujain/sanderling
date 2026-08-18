@@ -61,6 +61,8 @@ Preconditions like login run through the spec's `setup` export (see the [case st
 
 Those steps are still actions the app received, so the trace names them: every action it records carries a `source` saying whether `setup`, the seeded picker or the model produced it. Anything measured per action counts the last two.
 
+A trace recorded before actions carried a `source` names no producer for any of them, so nothing can say whether its login is inside a per-action count. The analysis marks such a count unattributed and prints how much of it that is, rather than discarding the runs; what it refuses is testing that count against one the login was taken out of, since the two divide by different things.
+
 ## Session state
 
 Session tokens, keychain entries, shared preferences, and cookies survive the whole run. If the app logs the user out mid-run, the gating extractor flips, `setup` re-engages, and the run logs back in. No retry logic needed in the spec.
