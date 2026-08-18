@@ -59,6 +59,12 @@ type runRecord struct {
 	// rather than read as an arm that acted zero times. The campaign tool always
 	// emits the field, so its absence dates the file.
 	Actions *int `json:"actions"`
+	// UnattributedActions is how many of the run's actions name no producer, so
+	// nothing can say whether the spec's setup drove them. It is a pointer
+	// because a runs.jsonl written before actions named a producer at all has no
+	// field, and reading that silence as none would let a denominator of unknown
+	// provenance pass for one that excludes the setup's login.
+	UnattributedActions *int `json:"unattributed_actions"`
 }
 
 // Exclusion reasons. A run that failed or timed out is missing data, not a
@@ -73,11 +79,12 @@ const (
 )
 
 type classifiedRun struct {
-	Seed            int64
-	Steps           int
-	Actions         int
-	MonotonicMillis int64
-	OriginStep      int
+	Seed                int64
+	Steps               int
+	Actions             int
+	UnattributedActions int
+	MonotonicMillis     int64
+	OriginStep          int
 	// EventStep is when the run could know, and it is what the survival
 	// analysis measures. It is the origin step whenever the two agree.
 	EventStep          int
@@ -148,6 +155,19 @@ func loadCampaign(directory string) (manifest, []runRecord, error) {
 	return declared, records, nil
 }
 
+// unattributedActions is how many of the record's actions carry no producer. A
+// campaign written before the field existed carries none at all, so its whole
+// action count is of unknown provenance rather than none of it.
+func unattributedActions(record runRecord) int {
+	if record.UnattributedActions != nil {
+		return *record.UnattributedActions
+	}
+	if record.Actions == nil {
+		return 0
+	}
+	return *record.Actions
+}
+
 func (r runRecord) workingMillis() int64 {
 	if r.MonotonicMillis != 0 {
 		return r.MonotonicMillis
@@ -167,6 +187,7 @@ func classify(record runRecord, budget int) classifiedRun {
 	if record.Actions != nil {
 		item.Actions = *record.Actions
 	}
+	item.UnattributedActions = unattributedActions(record)
 	switch {
 	case record.LaunchError != "":
 		item.ExcludedBecause = reasonLaunchError
@@ -270,6 +291,19 @@ func groupArms(directories []string) ([]arm, error) {
 		arms = append(arms, *byName[name])
 	}
 	return arms, nil
+}
+
+// unattributedActions is how much of the arm's per-action denominator has no
+// producer behind it, counted over the runs the denominator is built from.
+func (a arm) unattributedActions() int {
+	total := 0
+	for _, item := range a.Runs {
+		if item.ExcludedBecause != "" {
+			continue
+		}
+		total += item.UnattributedActions
+	}
+	return total
 }
 
 // observations returns the usable runs as survival data: an event at the step
