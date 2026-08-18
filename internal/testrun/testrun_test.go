@@ -299,9 +299,10 @@ func TestRunOutcome_ReportsViolationsOnlyUnderTheFlag(t *testing.T) {
 	violated := runner.Summary{
 		Steps:             7,
 		DispatchedActions: 7,
+		GeneratorActions:  7,
 		Violations:        []runner.ViolationRecord{{StepIndex: 3, Properties: []string{"balanceMoves"}}},
 	}
-	clean := runner.Summary{Steps: 7, DispatchedActions: 7}
+	clean := runner.Summary{Steps: 7, DispatchedActions: 7, GeneratorActions: 7}
 
 	if err := runOutcome(Options{}, violated); err != nil {
 		t.Errorf("without --exit-on-violation a violated run must succeed, got %v", err)
@@ -339,7 +340,12 @@ func TestRunOutcome_ARunThatJudgedNothingIsNotASuccess(t *testing.T) {
 
 	// A screen that composes now and then costs a run steps, not its verdict. A
 	// check that fired here would turn every healthy android run red.
-	mostlyJudged := runner.Summary{Steps: 6, SkippedVerification: 5, DispatchedActions: 1}
+	mostlyJudged := runner.Summary{
+		Steps:               6,
+		SkippedVerification: 5,
+		DispatchedActions:   1,
+		GeneratorActions:    1,
+	}
 	if err := runOutcome(Options{}, mostlyJudged); err != nil {
 		t.Errorf("a run that judged one of its 6 steps must succeed, got %v", err)
 	}
@@ -355,10 +361,10 @@ func TestRunOutcome_ARunThatDroveNothingIsNotASuccess(t *testing.T) {
 		SkippedActions: map[string]int{"no_action_produced": 200},
 	}
 	err := runOutcome(Options{}, droveNothing)
-	var dead NoActionsDispatchedError
+	var dead NoGeneratorActionsError
 	if !errors.As(err, &dead) {
 		t.Fatalf("a run that dispatched none of its 200 steps' actions came back %v, "+
-			"want a NoActionsDispatchedError", err)
+			"want a NoGeneratorActionsError", err)
 	}
 	if dead.Steps != 200 {
 		t.Errorf("steps: got %d, want 200", dead.Steps)
@@ -367,11 +373,12 @@ func TestRunOutcome_ARunThatDroveNothingIsNotASuccess(t *testing.T) {
 		t.Errorf("the error never names why nothing was dispatched: %v", dead)
 	}
 
-	// One action is exploration, however little. A check that fired here would
-	// be red on any run whose screen offers the generator nothing for a while.
-	droveOnce := runner.Summary{Steps: 200, DispatchedActions: 1}
+	// One generator action is exploration, however little. A check that fired
+	// here would be red on any run whose screen offers the generator nothing for
+	// a while.
+	droveOnce := runner.Summary{Steps: 200, DispatchedActions: 1, GeneratorActions: 1}
 	if err := runOutcome(Options{}, droveOnce); err != nil {
-		t.Errorf("a run that dispatched one action must succeed, got %v", err)
+		t.Errorf("a run whose generator dispatched one action must succeed, got %v", err)
 	}
 
 	// The sweeps that measure what a spec extracts and where a generator reaches
@@ -398,6 +405,41 @@ func TestRunOutcome_ARunThatDroveNothingIsNotASuccess(t *testing.T) {
 	var violations ViolationsError
 	if !errors.As(err, &violations) {
 		t.Errorf("a run that found a violation came back %v, want a ViolationsError", err)
+	}
+}
+
+// A spec whose setup logs in drives the app before the generator is ever
+// consulted, so a run whose every model call failed still reached the driver a
+// few times. Those actions are the harness getting into position: counting them
+// as the run driving the app passed 86 steps of folio that explored nothing.
+func TestRunOutcome_SetupActionsDoNotCarryARunWhoseGeneratorDroveNothing(t *testing.T) {
+	loginThenNothing := runner.Summary{
+		Steps:             86,
+		DispatchedActions: 3,
+		GeneratorActions:  0,
+		SkippedActions:    map[string]int{"no_action_produced": 83},
+	}
+	err := runOutcome(Options{}, loginThenNothing)
+	var dead NoGeneratorActionsError
+	if !errors.As(err, &dead) {
+		t.Fatalf("a run whose 3 dispatched actions all came from setup came back %v, "+
+			"want a NoGeneratorActionsError", err)
+	}
+	if dead.Steps != 86 {
+		t.Errorf("steps: got %d, want 86", dead.Steps)
+	}
+	if !strings.Contains(dead.Error(), "no_action_produced") {
+		t.Errorf("the error never names why the generator dispatched nothing: %v", dead)
+	}
+
+	// The same run under --exit-on-violation still reports its evidence: CI
+	// reads exit 2 as "the run found the bug", and a setup-only run that found
+	// one must not be downgraded to a broken harness.
+	found := loginThenNothing
+	found.Violations = []runner.ViolationRecord{{StepIndex: 2, Properties: []string{"balanceMoves"}}}
+	var violations ViolationsError
+	if err := runOutcome(Options{ExitOnViolation: true}, found); !errors.As(err, &violations) {
+		t.Errorf("a setup-only run that found a violation came back %v, want a ViolationsError", err)
 	}
 }
 

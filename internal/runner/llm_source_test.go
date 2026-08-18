@@ -818,6 +818,168 @@ func TestRunner_EveryModelCallFailingIsNotACleanRun(t *testing.T) {
 	}
 }
 
+// llmLoginSetupSpec is the shape every spec with a login has: setup drives the
+// app for its first steps and then yields nothing, leaving the rest of the run
+// to the generator.
+const llmLoginSetupSpec = `
+import { llm, always, actions, taps, typing, weighted, Tap } from "@sanderling/spec";
+globalThis.properties = { ok: always(() => true) };
+let setupTapsLeft = 2;
+globalThis.setup = actions(() => (setupTapsLeft-- > 0 ? [Tap({ on: "id:Submit" })] : []));
+globalThis.actions = weighted([1, taps], [1, typing]);
+globalThis.generator = llm({ model: "test/model" });
+`
+
+// TestRunner_SetupActionsAreNotTheGeneratorDrivingTheApp is the folio run: the
+// spec's login setup dispatches the first steps, then every model call fails.
+// Two actions reached the app and none of them explored it, and a run counted
+// by dispatched actions alone reports that as a clean run.
+func TestRunner_SetupActionsAreNotTheGeneratorDrivingTheApp(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	fake.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", fake.server.URL)
+
+	state := newHarnessWithSpec(t, llmLoginSetupSpec)
+	state.mock.HierarchyJSON = llmTreeJSON
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    30 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    4,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Generator:   "llm",
+		LabelSource: verifier.LabelSourceVisibleText,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	wantOutcomes := []string{
+		trace.LLMOutcomeSetupAction, trace.LLMOutcomeSetupAction,
+		trace.LLMOutcomeRequestFailed, trace.LLMOutcomeRequestFailed,
+	}
+	calls := readLLMCalls(t, state.writer.Directory())
+	if len(calls) != len(wantOutcomes) {
+		t.Fatalf("recorded %d selection records, want %d", len(calls), len(wantOutcomes))
+	}
+	for index, call := range calls {
+		if call.Outcome != wantOutcomes[index] {
+			t.Fatalf("call at step %d ended %q, want %q", call.Step, call.Outcome, wantOutcomes[index])
+		}
+	}
+
+	lines := readTraceLines(t, state.writer.Directory())
+	if len(lines) != 4 {
+		t.Fatalf("wrote %d trace lines, want 4", len(lines))
+	}
+	for _, line := range lines[:2] {
+		if line.NextAction == nil || line.ActionSkipped != "" {
+			t.Errorf("step %d = %+v, want setup's action dispatched", line.Step, line)
+		}
+	}
+	for _, line := range lines[2:] {
+		if line.ActionSkipped != string(actionSkippedNoActionProduced) {
+			t.Errorf("step %d action_skipped = %q, want %q",
+				line.Step, line.ActionSkipped, actionSkippedNoActionProduced)
+		}
+	}
+
+	if summary.DispatchedActions != 2 {
+		t.Errorf("DispatchedActions = %d, want 2: setup drove the app twice",
+			summary.DispatchedActions)
+	}
+	if summary.GeneratorActions != 0 {
+		t.Errorf("GeneratorActions = %d, want 0: every model call failed",
+			summary.GeneratorActions)
+	}
+	if got := summary.SkippedActions[string(actionSkippedNoActionProduced)]; got != 2 {
+		t.Errorf("summary counted %d step(s) as %q, want 2: %v",
+			got, actionSkippedNoActionProduced, summary.SkippedActions)
+	}
+	taps := 0
+	for _, action := range state.mock.Actions() {
+		if action.Kind == mockdriver.ActionTap || action.Kind == mockdriver.ActionTapSelector {
+			taps++
+		}
+	}
+	if taps != 2 {
+		t.Errorf("the run drove the app %d time(s), want the 2 setup taps only", taps)
+	}
+}
+
+// TestRunner_SetupAndGeneratorBothDrivingIsAHealthyRun is the same spec with a
+// provider that answers: setup drives its steps and the model drives the rest,
+// which is what an ordinary login-fronted run looks like. Counting only the
+// generator's actions must not turn it red.
+func TestRunner_SetupAndGeneratorBothDrivingIsAHealthyRun(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", fake.server.URL)
+
+	state := newHarnessWithSpec(t, llmLoginSetupSpec)
+	state.mock.HierarchyJSON = llmTreeJSON
+	pushSnapshotTree(t, state.verifier, llmTreeJSON)
+	tap := candidateByKind(t,
+		mustCandidates(t, state.verifier, verifier.LabelSourceVisibleText),
+		verifier.ActionKindTap)
+	fake.choice = tap.Index
+	fake.chosenAction = tap.Description
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    30 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    4,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Generator:   "llm",
+		LabelSource: verifier.LabelSourceVisibleText,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if summary.DispatchedActions != 4 {
+		t.Errorf("DispatchedActions = %d, want 4: every step drove the app",
+			summary.DispatchedActions)
+	}
+	if summary.GeneratorActions != 2 {
+		t.Errorf("GeneratorActions = %d, want 2: the model drove the two steps setup left it",
+			summary.GeneratorActions)
+	}
+	lines := readTraceLines(t, state.writer.Directory())
+	if len(lines) != 4 {
+		t.Fatalf("wrote %d trace lines, want 4", len(lines))
+	}
+	for _, line := range lines {
+		if line.NextAction == nil || line.ActionSkipped != "" {
+			t.Fatalf("step %d = %+v, want an action dispatched", line.Step, line)
+		}
+	}
+	for _, line := range lines[:2] {
+		if line.NextAction.Source != "" {
+			t.Errorf("step %d action source = %q, want none: setup chose it",
+				line.Step, line.NextAction.Source)
+		}
+	}
+	for _, line := range lines[2:] {
+		if line.NextAction.Source != "llm" {
+			t.Errorf("step %d action source = %q, want llm", line.Step, line.NextAction.Source)
+		}
+	}
+}
+
 // llmSetupFixtureSpec drives the first action from setup, so the model is never
 // consulted for that step.
 const llmSetupFixtureSpec = `

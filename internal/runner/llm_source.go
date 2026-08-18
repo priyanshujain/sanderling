@@ -64,11 +64,14 @@ type llmSource struct {
 	// can stamp the trace. lastSource is "llm" only when the LLM (not setup)
 	// chose the action; lastReasoning is the model's rationale. lastChoice is the
 	// 1-based number it picked and lastChosenAction the description it echoed, so
-	// the trace shows what the model believed it was doing.
+	// the trace shows what the model believed it was doing. lastFromSetup says
+	// the spec's setup produced the action, which is the app being put in
+	// position rather than the generator exploring it.
 	lastSource       string
 	lastReasoning    string
 	lastChoice       int
 	lastChosenAction string
+	lastFromSetup    bool
 }
 
 // llmSelection is the outcome of one LLM selection call.
@@ -95,12 +98,14 @@ func (s *llmSource) NextAction(ctx context.Context, stepIndex int) (verifier.Act
 	s.lastReasoning = ""
 	s.lastChoice = 0
 	s.lastChosenAction = ""
+	s.lastFromSetup = false
 	s.history.completeLast(s.verifier.CurrentScreen())
 
 	// Setup precedence only: the LLM replaces the seeded action root, so we run
 	// setup (e.g. login) first but never the weighted picker.
 	action, err := s.verifier.SetupAction()
 	if err == nil {
+		s.lastFromSetup = true
 		s.record(stepIndex, trace.LLMCall{Outcome: trace.LLMOutcomeSetupAction})
 		s.history.add(describeAction(action))
 		return action, nil
@@ -507,6 +512,16 @@ func stampActionSource(traceAction *trace.Action, source ActionSource) {
 	traceAction.LLMReasoning = llm.lastReasoning
 	traceAction.LLMChoice = llm.lastChoice
 	traceAction.LLMChosenAction = llm.lastChosenAction
+}
+
+// generatorChoseAction reports whether the action the source just returned came
+// from the generator rather than from the spec's setup driving the app into
+// position. Only the model source can tell them apart: the seeded picker
+// resolves setup precedence inside the one JS call it makes, so everything it
+// returns counts as the generator's.
+func generatorChoseAction(source ActionSource) bool {
+	llm, ok := source.(*llmSource)
+	return !ok || !llm.lastFromSetup
 }
 
 // screenshotDataURL downscales the PNG and encodes it as a data URL for the

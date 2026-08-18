@@ -79,6 +79,13 @@ type Summary struct {
 	// A run at zero never touched the app, whatever its step count says, so its
 	// empty violation list is the reading of an instrument that measured nothing.
 	DispatchedActions int
+	// GeneratorActions counts the dispatched actions the generator chose. The
+	// spec's setup drives the app into its starting position before the
+	// generator is consulted, so a run at zero here explored nothing however
+	// many actions its login fired. Only the model generator separates the two:
+	// the seeded picker resolves setup precedence inside the one JS call it
+	// makes, so everything it returns counts as the generator's.
+	GeneratorActions int
 }
 
 type ViolationRecord struct {
@@ -499,6 +506,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 		if nextErr == nil && !applySkipped {
 			summary.DispatchedActions++
+			if generatorChoseAction(actionSource) {
+				summary.GeneratorActions++
+			}
 		}
 		summary.Steps = stepIndex
 		if len(violations) > 0 {

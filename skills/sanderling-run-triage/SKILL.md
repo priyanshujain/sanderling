@@ -25,7 +25,10 @@ complete and useful answer.
 - **1** means the harness broke. A bad target gives
   `error: launch app: page load error net::ERR_UNSAFE_PORT` and exit 1, and
   writes no run directory at all, because the trace is created after the launch
-  succeeds.
+  succeeds. A run that finished also exits 1 when it holds no verdict to report:
+  a spec with no properties, a run no step of which reached the verifier, or one
+  whose action generator never drove the app (section 5). Those do leave a full
+  run directory behind.
 
 Anything other than 0 and 2 means the run did not complete, and a missing
 `trace.jsonl` under a 0 or a 2 means there is nothing to judge rather than
@@ -182,7 +185,15 @@ seconds a step for a run that is driving something real.
 **It spent its budget on one action.** Count `next_action` by kind and selector.
 A run whose actions are one selector explored nothing, whatever its step count.
 
-None of these change the exit code. All of them change what the run proves,
+**The generator never drove the app.** A model run whose every call fails still
+dispatches the actions its spec's setup produced, so a login-fronted spec leaves
+a trace and a summary that read like a run that acted. This one the run refuses
+itself: exit 1 and `N step(s) ran and the action generator drove the app in none
+of them`, followed by the per reason tally of what never reached the app.
+`llm-calls.jsonl` carries the cause, one record per step, and the trace's
+`action_skipped` names it on each step that produced nothing.
+
+None of the others change the exit code. All of them change what the run proves,
 which is nothing.
 
 ## 6. `skipped_verification`, `transitional`, and the judged count
