@@ -82,6 +82,8 @@ Every key-value pair must match. A key means the same thing here as in the strin
 
 Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`, `secure`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
 
+A boolean state matches only where the platform reports it. `{secure: true}` names the password entry and `{secure: false}` names an editable field that is not one, so neither value names an element that is no field at all, and neither matches anything on Android, which reports the fact for nothing.
+
 A key that names neither an accepted selector key nor an attribute some element on screen carries fails the run, naming the key and the accepted list. Such a key can never match, and an empty result is indistinguishable from a screen with no matching element: the generator declines to act, the runner waits out the step, and the run ends clean having explored nothing. The string form keeps its open kind space, since `<attr>:<value>` is the documented way to reach a raw driver attribute.
 
 ### Path selectors
@@ -157,6 +159,8 @@ Fields available on every element returned by `find` / `findAll`:
 - `class` is the lowercase HTML tag name (e.g., `button`, `input`).
 - `attrs` contains all HTML attributes available to CDP, keyed by the name the
   markup writes (`attrs["data-cents"]`, not `attrs.cents`).
+- `secure` is `type="password"` on a field the driver calls editable, which is
+  what `{secure: true}` and `{secure: false}` resolve against here.
 - `attrs.hintText` names an editable field the way a user reads it: its
   `aria-label`, the `<label>` bound to it, its `placeholder`, then its `name`.
   The `hintText` selector key does not read that ladder on both hosts: the
