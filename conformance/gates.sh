@@ -174,10 +174,13 @@ gate_no_doubled_text() {
   local verdict
   verdict="$(jq -s -r --arg redacted "[redacted]" '
     # Map a selector like "testTag:LoginScreen > testTag:LoginEmail" to its
-    # target field id: the token after the final ":" of the last segment.
+    # target field id: the token after the final ":" of the last segment. An
+    # action typed at coordinates carries no selector, and jq splits an empty
+    # string into no segments at all, so the fallbacks keep such a step from
+    # aborting the whole analysis.
     def target_field(selector):
-      (selector | split(">") | last | gsub("^\\s+|\\s+$";"")) as $last
-      | ($last | split(":") | last);
+      ((selector | split(">") | last // "") | gsub("^\\s+|\\s+$";"")) as $last
+      | ($last | split(":") | last // "");
 
     def self_doubled(value):
       (value | length) as $n
