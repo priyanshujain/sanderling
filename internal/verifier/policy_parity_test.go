@@ -184,12 +184,15 @@ func modelOfferedActions(t *testing.T, verb string) map[string]Action {
 
 // actionIdentity keys an action by everything except the values the policy owns
 // rather than the candidate set: the typed text, which the seeded arm draws from
-// the edge-case corpus and the model writes itself, and a swipe's drag distance,
-// which the seeded arm draws and the enumeration lists at a nominal length.
+// the edge-case corpus and the model writes itself, a swipe's drag distance,
+// which the seeded arm draws and the enumeration lists at a nominal length, and
+// the source, which names who produced an action rather than what it does (the
+// enumeration names nobody, because the model has not chosen yet).
 // Comparing those would compare policies instead of action spaces. A swipe's
 // direction is NOT policy-owned, so it survives as the sign of the drag.
 func actionIdentity(action Action) string {
 	action.Text = ""
+	action.Source = ""
 	if action.Kind == ActionKindSwipe {
 		action.ToX = sign(action.ToX - action.FromX)
 		action.ToY = sign(action.ToY - action.FromY)

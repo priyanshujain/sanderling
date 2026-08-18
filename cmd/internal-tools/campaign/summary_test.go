@@ -40,13 +40,20 @@ func setupStep(index int) trace.Step {
 		Kind:     "InputText",
 		Selector: "testTag:LoginScreen > testTag:LoginEmail",
 		Text:     "demo@folio.app",
+		Source:   trace.ActionSourceSetup,
 	}
+	return step
+}
+
+func seededStep(index int) trace.Step {
+	step := actingStep(index)
+	step.NextAction.Source = trace.ActionSourceSeeded
 	return step
 }
 
 func modelStep(index int) trace.Step {
 	step := actingStep(index)
-	step.NextAction.Source = "llm"
+	step.NextAction.Source = trace.ActionSourceModel
 	return step
 }
 
@@ -189,7 +196,7 @@ func TestSummarizeRun_ModelRunWithoutSetupCountsEveryDispatchedStep(t *testing.T
 	}
 }
 
-func TestSummarizeRun_SeededRunCountsSetupBecauseItsTraceCannotNameIt(t *testing.T) {
+func TestSummarizeRun_SeededRunLeavesTheSetupsLoginOutOfTheActionCount(t *testing.T) {
 	seedDirectory := t.TempDir()
 	writeRunDirectoryWithMeta(t, seedDirectory, "20260812-090000",
 		trace.Meta{Seed: 11, Platform: "web", Arm: "seeded-baseline", Generator: "seeded"},
@@ -197,17 +204,73 @@ func TestSummarizeRun_SeededRunCountsSetupBecauseItsTraceCannotNameIt(t *testing
 			setupStep(1),
 			setupStep(2),
 			setupStep(3),
-			actingStep(4),
-			actingStep(5),
+			seededStep(4),
+			seededStep(5),
 		})
 
 	_, summary, err := summarizeRun(seedDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Actions != 5 {
-		t.Errorf("actions: got %d, want 5: the seeded picker stamps no source, so excluding "+
-			"unstamped steps would count its whole run as setup", summary.Actions)
+	if summary.Actions != 2 {
+		t.Errorf("actions: got %d, want 2 (three login steps were setup's), which is the same "+
+			"rule the model arm is counted by", summary.Actions)
+	}
+	if summary.UnattributedActions != 0 {
+		t.Errorf("unattributed actions: got %d, want 0: every step named its source",
+			summary.UnattributedActions)
+	}
+}
+
+func TestSummarizeRun_SeededRunWithoutSetupCountsEveryDispatchedStep(t *testing.T) {
+	seedDirectory := t.TempDir()
+	writeRunDirectoryWithMeta(t, seedDirectory, "20260812-090000",
+		trace.Meta{Seed: 11, Platform: "web", Arm: "seeded-baseline", Generator: "seeded"},
+		[]trace.Step{seededStep(1), seededStep(2), seededStep(3), seededStep(4)})
+
+	_, summary, err := summarizeRun(seedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Actions != 4 {
+		t.Errorf("actions: got %d, want 4", summary.Actions)
+	}
+}
+
+// Traces recorded before actions named their source cannot be re-attributed
+// after the fact, so each arm keeps the count it was already reported with: the
+// seeded arm counts every dispatched step, the model arm counts only what the
+// model stamped. UnattributedActions is how such a run says so rather than
+// passing its old denominator off as a setup-excluding one.
+func TestSummarizeRun_TraceWithoutSourcesKeepsTheCountItWasReportedWith(t *testing.T) {
+	for _, testCase := range []struct {
+		generator           string
+		actions             int
+		unattributedActions int
+	}{
+		{generator: "seeded", actions: 5, unattributedActions: 5},
+		{generator: "llm", actions: 0, unattributedActions: 5},
+	} {
+		t.Run(testCase.generator, func(t *testing.T) {
+			seedDirectory := t.TempDir()
+			writeRunDirectoryWithMeta(t, seedDirectory, "20260812-090000",
+				trace.Meta{Seed: 11, Platform: "web", Generator: testCase.generator},
+				[]trace.Step{
+					actingStep(1), actingStep(2), actingStep(3), actingStep(4), actingStep(5),
+				})
+
+			_, summary, err := summarizeRun(seedDirectory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if summary.Actions != testCase.actions {
+				t.Errorf("actions: got %d, want %d", summary.Actions, testCase.actions)
+			}
+			if summary.UnattributedActions != testCase.unattributedActions {
+				t.Errorf("unattributed actions: got %d, want %d",
+					summary.UnattributedActions, testCase.unattributedActions)
+			}
+		})
 	}
 }
 

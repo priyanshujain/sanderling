@@ -65,14 +65,11 @@ type llmSource struct {
 	// can stamp the trace. lastSource is "llm" only when the LLM (not setup)
 	// chose the action; lastReasoning is the model's rationale. lastChoice is the
 	// 1-based number it picked and lastChosenAction the description it echoed, so
-	// the trace shows what the model believed it was doing. lastFromSetup says
-	// the spec's setup produced the action, which is the app being put in
-	// position rather than the generator exploring it.
+	// the trace shows what the model believed it was doing.
 	lastSource       string
 	lastReasoning    string
 	lastChoice       int
 	lastChosenAction string
-	lastFromSetup    bool
 }
 
 // llmSelection is the outcome of one LLM selection call.
@@ -99,14 +96,12 @@ func (s *llmSource) NextAction(ctx context.Context, stepIndex int) (verifier.Act
 	s.lastReasoning = ""
 	s.lastChoice = 0
 	s.lastChosenAction = ""
-	s.lastFromSetup = false
 	s.history.completeLast(s.verifier.CurrentScreen())
 
 	// Setup precedence only: the LLM replaces the seeded action root, so we run
 	// setup (e.g. login) first but never the weighted picker.
 	action, err := s.verifier.SetupAction()
 	if err == nil {
-		s.lastFromSetup = true
 		s.record(stepIndex, trace.LLMCall{Outcome: trace.LLMOutcomeSetupAction})
 		s.history.add(describeAction(action, s.verifier.Tree()))
 		return action, nil
@@ -501,9 +496,10 @@ func (h *actionHistory) recent() []historyEntry {
 	return h.entries
 }
 
-// stampActionSource records the backend that chose an action on the trace.
-// Only an LLM-selected action (not a setup action the JS path produced) carries
-// source="llm" and the model's reasoning.
+// stampActionSource names the model as the producer of an action it chose. The
+// spec's two generators name themselves on the wire (runtime-entry.ts) and
+// traceActionFor has already carried that over; a model pick is built here from
+// the candidate list, so nothing on the wire could have named it.
 func stampActionSource(traceAction *trace.Action, source ActionSource) {
 	if traceAction == nil {
 		return
@@ -518,14 +514,13 @@ func stampActionSource(traceAction *trace.Action, source ActionSource) {
 	traceAction.LLMChosenAction = llm.lastChosenAction
 }
 
-// generatorChoseAction reports whether the action the source just returned came
-// from the generator rather than from the spec's setup driving the app into
-// position. Only the model source can tell them apart: the seeded picker
-// resolves setup precedence inside the one JS call it makes, so everything it
-// returns counts as the generator's.
-func generatorChoseAction(source ActionSource) bool {
-	llm, ok := source.(*llmSource)
-	return !ok || !llm.lastFromSetup
+// generatorChoseAction reports whether this step drove the app on the action
+// generator's behalf rather than on setup's, which is the exposure a per-action
+// rate divides by. Both policies are read the same way, off the stamped trace
+// action: an unstamped one is a source the runner cannot name, and counting it
+// as setup would report a run that explored as having explored nothing.
+func generatorChoseAction(traceAction *trace.Action) bool {
+	return traceAction != nil && traceAction.Source != trace.ActionSourceSetup
 }
 
 // screenshotDataURL downscales the PNG and encodes it as a data URL for the

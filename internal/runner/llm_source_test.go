@@ -968,13 +968,13 @@ func TestRunner_SetupAndGeneratorBothDrivingIsAHealthyRun(t *testing.T) {
 		}
 	}
 	for _, line := range lines[:2] {
-		if line.NextAction.Source != "" {
-			t.Errorf("step %d action source = %q, want none: setup chose it",
+		if line.NextAction.Source != trace.ActionSourceSetup {
+			t.Errorf("step %d action source = %q, want setup: setup chose it",
 				line.Step, line.NextAction.Source)
 		}
 	}
 	for _, line := range lines[2:] {
-		if line.NextAction.Source != "llm" {
+		if line.NextAction.Source != trace.ActionSourceModel {
 			t.Errorf("step %d action source = %q, want llm", line.Step, line.NextAction.Source)
 		}
 	}

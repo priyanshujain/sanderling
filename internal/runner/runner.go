@@ -82,9 +82,8 @@ type Summary struct {
 	// GeneratorActions counts the dispatched actions the generator chose. The
 	// spec's setup drives the app into its starting position before the
 	// generator is consulted, so a run at zero here explored nothing however
-	// many actions its login fired. Only the model generator separates the two:
-	// the seeded picker resolves setup precedence inside the one JS call it
-	// makes, so everything it returns counts as the generator's.
+	// many actions its login fired. Both generators separate the two the same
+	// way, by the producer each action names on the trace.
 	GeneratorActions int
 }
 
@@ -506,7 +505,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 		if nextErr == nil && !applySkipped {
 			summary.DispatchedActions++
-			if generatorChoseAction(actionSource) {
+			if generatorChoseAction(traceAction) {
 				summary.GeneratorActions++
 			}
 		}
@@ -1580,7 +1579,12 @@ func driverIsAndroid(ctx context.Context, options Options, logger *slog.Logger) 
 }
 
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {
-	traceAction := &trace.Action{Kind: string(action.Kind), X: action.X, Y: action.Y}
+	traceAction := &trace.Action{
+		Kind:   string(action.Kind),
+		X:      action.X,
+		Y:      action.Y,
+		Source: action.Source,
+	}
 	switch action.Kind {
 	case verifier.ActionKindTap, verifier.ActionKindDoubleTap, verifier.ActionKindLongPress:
 		traceAction.Selector = action.On

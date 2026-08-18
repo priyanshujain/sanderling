@@ -225,9 +225,10 @@ func summarize(current arm) armSummary {
 		}
 		summary.Usable++
 		summary.TotalSteps += item.Steps
-		// Steps and actions differ by the steps that chose no action and the
-		// steps whose action was never dispatched. Only dispatched actions
-		// exercised the app, so only they belong in a per-action rate.
+		// Steps and actions differ by the steps that chose no action, the steps
+		// whose action was never dispatched, and the steps the spec's setup
+		// drove into position. Only what the action generator dispatched
+		// explored the app, so only that belongs in a per-action rate.
 		summary.TotalActions += item.Actions
 		summary.TotalRunHours += float64(item.MonotonicMillis) / float64(time.Hour/time.Millisecond)
 		if item.ClampedToBudget {

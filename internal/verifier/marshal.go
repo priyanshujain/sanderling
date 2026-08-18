@@ -611,6 +611,10 @@ type wireAction struct {
 	ToX            int    `json:"toX"`
 	ToY            int    `json:"toY"`
 	DurationMillis int    `json:"durationMillis"`
+	// Source names the generator that produced the action: the spec's setup or
+	// the action root. Empty from the candidate enumeration, which serializes
+	// actions nothing has chosen yet.
+	Source string `json:"source"`
 }
 
 // DecodeAction turns one serialized action (the flat camelCase wire contract)
@@ -623,6 +627,15 @@ func DecodeAction(raw json.RawMessage) (Action, error) {
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return Action{}, fmt.Errorf("decode action: %w", err)
 	}
+	action, err := actionFromWire(wire)
+	if err != nil {
+		return Action{}, err
+	}
+	action.Source = wire.Source
+	return action, nil
+}
+
+func actionFromWire(wire wireAction) (Action, error) {
 	switch wire.Kind {
 	case "Tap":
 		return Action{Kind: ActionKindTap, On: wire.Selector, X: wire.X, Y: wire.Y}, nil

@@ -18,7 +18,9 @@ import type { Point } from "./types.ts";
 // (ONE decoder on each side). Builtin targets are already resolved to a Point,
 // and serializeAction collapses author targets that carry {x, y}; a target that
 // does not resolve to coordinates drops the action (returns null).
-export type SerializedAction =
+export type SerializedAction = SerializedActionShape & { source?: ActionSource };
+
+type SerializedActionShape =
   | { kind: "Tap" | "DoubleTap" | "LongPress"; x: number; y: number; selector?: string }
   | { kind: "InputText"; x: number; y: number; text: string; selector?: string }
   | { kind: "Swipe"; fromX: number; fromY: number; toX: number; toY: number; durationMillis: number }
@@ -34,6 +36,12 @@ export type SerializedAction =
     }
   | { kind: "PressKey"; key: string }
   | { kind: "Wait"; durationMillis: number };
+
+// ActionSource names which of the spec's two generators produced an action.
+// Both are dispatched the same way, but only the action root explores: setup
+// drives the app into its starting position, so a per-action rate that counts
+// its login steps measures a policy's exposure as larger than it was.
+export type ActionSource = "setup" | "seeded";
 
 const DEFAULT_SWIPE_DURATION = 250;
 
@@ -59,7 +67,19 @@ function pointOf(target: unknown): (Point & { selector?: string }) | undefined {
   return undefined;
 }
 
-export function serializeAction(action: ActionDescriptor | null): SerializedAction | null {
+// serializeAction emits the wire shape, tagged with the generator that produced
+// the action when the caller knows it. The candidate enumeration the model
+// policy reads passes no source: nothing has chosen those yet.
+export function serializeAction(
+  action: ActionDescriptor | null,
+  source?: ActionSource,
+): SerializedAction | null {
+  const wire = serializeWire(action);
+  if (!wire || !source) return wire;
+  return { ...wire, source };
+}
+
+function serializeWire(action: ActionDescriptor | null): SerializedAction | null {
   if (!action) return null;
   switch (action.kind) {
     case "Tap":
@@ -184,7 +204,7 @@ export function installRuntime(
     resolveRoot();
     const setup = resolveSetup();
     if (!setup) return null;
-    return serializeAction(walk(setup, rng, host));
+    return serializeAction(walk(setup, rng, host), "setup");
   });
   defineLockedGlobal("__sanderlingNextAction__", () => {
     // resolveRoot runs first: on web it also resets the per-tick candidate
@@ -193,10 +213,10 @@ export function installRuntime(
     const setup = resolveSetup();
     if (setup) {
       const setupAction = walk(setup, rng, host);
-      if (setupAction) return serializeAction(setupAction);
+      if (setupAction) return serializeAction(setupAction, "setup");
     }
     if (!current) return null;
-    return serializeAction(nextAction(current, rng, host));
+    return serializeAction(nextAction(current, rng, host), "seeded");
   });
 }
 

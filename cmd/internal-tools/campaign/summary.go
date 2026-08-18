@@ -27,7 +27,12 @@ type traceSummary struct {
 	// counting any of them as an action inflates the denominator of every
 	// per-action rate. The inflation is policy-dependent, so it does not cancel
 	// between arms.
-	Actions                    int      `json:"actions"`
+	Actions int `json:"actions"`
+	// UnattributedActions counts the dispatched steps whose action names no
+	// producer, which only a trace recorded before actions carried one can do.
+	// Such a run's Actions is the count it was already reported with rather than
+	// a setup-excluding one, and this is what says so.
+	UnattributedActions        int      `json:"unattributed_actions,omitempty"`
 	FirstViolationOriginStep   *int     `json:"first_violation_origin_step"`
 	FirstViolationDetectedStep *int     `json:"first_violation_detected_step"`
 	FirstViolationProperties   []string `json:"first_violation_properties,omitempty"`
@@ -65,21 +70,32 @@ type actionLine struct {
 // generator's behalf, which is the exposure a per-action rate divides by. A
 // spec's setup puts the app into its starting position before the generator is
 // consulted, so its login taps are dispatched actions that explored nothing.
+// Both arms are read the same way, off the source the action names, because a
+// denominator that excludes setup on one arm and includes it on the other makes
+// the two rates incomparable.
 //
-// Only a model run separates the two: the LLM backend stamps source="llm" on
-// what it chose and leaves setup's actions unstamped. The seeded picker resolves
-// setup precedence inside the one JS call it makes and stamps nothing at all, so
-// its setup steps are indistinguishable from its generator steps in the trace
-// and are counted; reading their absent source as setup would report every
-// seeded run as having explored nothing.
+// An action naming no source at all is one recorded before the distinction
+// existed and cannot be attributed now, so each arm keeps the count it was
+// already reported with: everything the seeded picker dispatched, and only what
+// the model stamped. summarizeTrace counts those steps separately so a
+// pre-source run cannot pass its denominator off as a setup-excluding one.
 func generatorDispatched(line traceLine, generator string) bool {
 	if line.ActionSkipped != "" || line.NextAction == nil {
 		return false
 	}
-	if generator != "llm" {
+	switch line.NextAction.Source {
+	case "":
+		return generator != trace.ActionSourceModel
+	case trace.ActionSourceSetup:
+		return false
+	default:
 		return true
 	}
-	return line.NextAction.Source == "llm"
+}
+
+// actionUnattributed reports a dispatched step whose action names no producer.
+func actionUnattributed(line traceLine) bool {
+	return line.ActionSkipped == "" && line.NextAction != nil && line.NextAction.Source == ""
 }
 
 // findRunDirectory returns the run directory `sanderling test` created inside
@@ -125,9 +141,10 @@ func summarizeRun(seedDirectory string) (string, traceSummary, error) {
 	return name, summary, nil
 }
 
-// runGenerator reads which picker drove the run. The trace on its own cannot
-// say whether an unstamped action came from the seeded picker or from the
-// spec's setup under the model picker, and the two count differently.
+// runGenerator reads which picker drove the run. A trace recorded before
+// actions named their source cannot say whether an unstamped action came from
+// the seeded picker or from the spec's setup under the model picker, and the
+// two count differently.
 func runGenerator(runDirectory string) (string, error) {
 	body, err := os.ReadFile(filepath.Join(runDirectory, "meta.json"))
 	if err != nil {
@@ -170,6 +187,9 @@ func summarizeTrace(tracePath, generator string) (traceSummary, error) {
 		}
 		if !synthetic && generatorDispatched(line, generator) {
 			summary.Actions++
+		}
+		if !synthetic && actionUnattributed(line) {
+			summary.UnattributedActions++
 		}
 		if line.PreconditionFailure != "" {
 			summary.PreconditionFailures++

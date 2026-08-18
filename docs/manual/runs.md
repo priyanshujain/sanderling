@@ -59,6 +59,8 @@ Preconditions like login run through the spec's `setup` export (see the [case st
 | 30 min | ~15s | 0.8% |
 | 1 hour | ~15s | 0.4% |
 
+Those steps are still actions the app received, so the trace names them: every action it records carries a `source` saying whether `setup`, the seeded picker or the model produced it. Anything measured per action counts the last two.
+
 ## Session state
 
 Session tokens, keychain entries, shared preferences, and cookies survive the whole run. If the app logs the user out mid-run, the gating extractor flips, `setup` re-engages, and the run logs back in. No retry logic needed in the spec.

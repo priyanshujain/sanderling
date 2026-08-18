@@ -223,6 +223,62 @@ func TestRunner_SeededRunRecordsNoModelCalls(t *testing.T) {
 	}
 }
 
+// seededLoginSetupSpec drives the first two steps from setup, the way a
+// login-fronted spec does, and leaves the rest to the seeded action root.
+const seededLoginSetupSpec = `
+import { always, actions, taps, typing, weighted, Tap } from "@sanderling/spec";
+globalThis.properties = { ok: always(() => true) };
+let setupTapsLeft = 2;
+globalThis.setup = actions(() => (setupTapsLeft-- > 0 ? [Tap({ on: "id:Submit" })] : []));
+globalThis.actions = weighted([1, taps], [1, typing]);
+`
+
+// TestRunner_SeededSetupActionsAreNotTheGeneratorDrivingTheApp: a seeded run's
+// login steps used to be indistinguishable from its exploration, so the arm
+// divided its defect rate by every action it dispatched while the model arm
+// divided by the ones its policy chose. The two rates were then compared.
+func TestRunner_SeededSetupActionsAreNotTheGeneratorDrivingTheApp(t *testing.T) {
+	state := newHarnessWithSpec(t, seededLoginSetupSpec)
+	state.mock.HierarchyJSON = llmTreeJSON
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    30 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    4,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.DispatchedActions != 4 {
+		t.Errorf("DispatchedActions = %d, want 4: every step drove the app",
+			summary.DispatchedActions)
+	}
+	if summary.GeneratorActions != 2 {
+		t.Errorf("GeneratorActions = %d, want 2: the picker drove the two steps setup left it",
+			summary.GeneratorActions)
+	}
+	lines := readTraceLines(t, state.writer.Directory())
+	if len(lines) != 4 {
+		t.Fatalf("wrote %d trace lines, want 4", len(lines))
+	}
+	for _, line := range lines[:2] {
+		if line.NextAction == nil || line.NextAction.Source != trace.ActionSourceSetup {
+			t.Errorf("step %d action = %+v, want one named setup", line.Step, line.NextAction)
+		}
+	}
+	for _, line := range lines[2:] {
+		if line.NextAction == nil || line.NextAction.Source != trace.ActionSourceSeeded {
+			t.Errorf("step %d action = %+v, want one named seeded", line.Step, line.NextAction)
+		}
+	}
+}
+
 func TestRunner_MaxStepsStopsAfterExactlyNSteps(t *testing.T) {
 	state := newHarness(t)
 

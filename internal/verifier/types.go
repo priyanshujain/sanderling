@@ -38,6 +38,10 @@ type Action struct {
 	// when the apply call failed and nothing can say whether the action
 	// reached the app. The spec is told which of the two it is.
 	Applied bool
+	// Source names the generator that produced this action, "setup" or
+	// "seeded", as the runtime entry tagged it. Empty on an action the runner
+	// built itself (the model policy's pick), which the runner names instead.
+	Source string
 	// Relaunched, like Applied, is meaningful only on state.lastAction: the
 	// runner brought the app back to the foreground after this action, so the
 	// two readings the spec compares straddle a restart. The action still

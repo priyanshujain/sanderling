@@ -109,6 +109,16 @@ type Metrics struct {
 	TotalMemoryBytes int64   `json:"total_memory_bytes,omitempty"`
 }
 
+// The three producers an action can come from. The spec's setup drives the app
+// into position and explores nothing, so a per-action rate divides by the other
+// two; an action recorded before this distinction existed carries none of them
+// and cannot be attributed after the fact.
+const (
+	ActionSourceSetup  = "setup"
+	ActionSourceSeeded = "seeded"
+	ActionSourceModel  = "llm"
+)
+
 type Action struct {
 	Kind           string        `json:"kind"`
 	X              int           `json:"x,omitempty"`
@@ -123,8 +133,8 @@ type Action struct {
 	Selector       string        `json:"selector,omitempty"`
 	ResolvedBounds *BoundsRecord `json:"resolved_bounds,omitempty"`
 	TapPoint       *PointRecord  `json:"tap_point,omitempty"`
-	// Source names the backend that chose this action: "llm" when the LLM
-	// action backend selected it, empty for the seeded picker. LLMReasoning is
+	// Source names which of the three producers chose this action, and is empty
+	// only on a trace recorded before actions named themselves. LLMReasoning is
 	// the model's short rationale, shown by the replay UI to explain the pick.
 	Source       string `json:"source,omitempty"`
 	LLMReasoning string `json:"llm_reasoning,omitempty"`

@@ -1129,3 +1129,31 @@ test("a nested undefined leaves the page as a dropped key, a nested null does no
   });
   assert.equal(wire, `{"0":{"value":{"empty":null,"present":1}}}`);
 });
+
+// The web half of the cross-host marker contract: for the same spec shape, the
+// entry must name setup's action and the action root's differently, and by the
+// same two names the goja engine uses (TestNextActionNamesTheGeneratorThatProducedIt
+// in internal/verifier/setup_action_test.go asserts them there). A per-action
+// rate divides by the root's steps only, so an action that names no producer
+// puts a login's taps in the denominator of the policy's exploration.
+const { Tap, actions, taps } = await import("../src/actions.ts");
+
+test("the next-action entry names the generator each action came from", () => {
+  const button = fakeElement({
+    tag: "button", x: 0, y: 0, width: 40, height: 20, id: "SignIn", clickable: true,
+  });
+  const g = globalThis as { actions?: unknown; setup?: unknown; __sanderlingNextAction__?: unknown };
+  const nextAction = g.__sanderlingNextAction__ as () => { source?: string } | null;
+  withFakeDocument([button], () => {
+    try {
+      g.actions = taps;
+      g.setup = actions(() => [Tap({ on: "id:SignIn" })]);
+      assert.equal(nextAction()?.source, "setup");
+      g.setup = undefined;
+      assert.equal(nextAction()?.source, "seeded");
+    } finally {
+      g.actions = undefined;
+      g.setup = undefined;
+    }
+  });
+});

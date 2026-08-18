@@ -45,12 +45,14 @@ const HOST: Host = {
 
 // runParity emits the parity scenario's action stream from a fresh Pcg. It
 // drives pick.ts directly (not installRuntime, whose globals are locked once)
-// so the caller can run it repeatedly to assert determinism.
+// so the caller can run it repeatedly to assert determinism. The scenario has
+// no setup, so it stands in for the entry's action-root branch and tags what it
+// emits the way that branch does.
 export function runParity(): (SerializedAction | null)[] {
   const rng = new Pcg(PARITY_SEED_HI, 0n);
   const stream: (SerializedAction | null)[] = [];
   for (let i = 0; i < PARITY_STEPS; i++) {
-    stream.push(serializeAction(nextAction(PARITY_ROOT, rng, HOST)));
+    stream.push(serializeAction(nextAction(PARITY_ROOT, rng, HOST), "seeded"));
   }
   return stream;
 }
