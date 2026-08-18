@@ -46,6 +46,7 @@ runs:
     # it broke the staging and made the embedded version string a lie. Moving to
     # 1.5.0 is a companion change, not a CI one.
     - name: Install idb-companion, xcodegen and just
+      id: idb
       if: inputs.platform == 'ios'
       shell: bash
       env:
@@ -55,19 +56,38 @@ runs:
         brew tap facebook/fb
         git -C "$(brew --repository facebook/fb)" checkout --quiet c0386793f59da10c619787f2aa18d938ef1d69c9
         brew install facebook/fb/idb-companion
+        echo "companion-version=$(brew list --versions idb-companion | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
     # Both asset tarballs are built by the prepare scripts, and the runner
     # bundle is an xcodebuild of companion/Sources. Keyed on the scripts and
     # the versions the Makefile embeds, so a later run reuses them. This has to
     # land before `make sanderling-ios`, which is what consumes them.
+    #
+    # The formula version is in the key because it is the companion tarball's
+    # largest input and it lives outside the repository: prepare.sh copies
+    # whatever brew installed. Without it, a tap pin bumped on its own would hit
+    # a cache filled from the old formula and embed it under the new pin.
     - name: Cache the companion and runner bundles
+      id: ios-assets
       if: inputs.platform == 'ios'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           internal/driver/ioscompanion/companionassets/assets
           internal/driver/ioscompanion/runnerassets/assets
-        key: ios-assets-${{ runner.os }}-${{ hashFiles('internal/driver/ioscompanion/companionassets/prepare.sh', 'companion/prepare.sh', 'companion/project.yml', 'companion/Sources/**') }}
+        key: ios-assets-${{ runner.os }}-idb${{ steps.idb.outputs.companion-version }}-${{ hashFiles('internal/driver/ioscompanion/companionassets/prepare.sh', 'companion/prepare.sh', 'companion/project.yml', 'companion/Sources/**') }}
+
+    # A restored tarball keeps the mtime it was archived with, while the
+    # checkout stamps the prepare scripts and companion sources with checkout
+    # time, so make reads every restored bundle as older than its sources and
+    # rebuilds it. The key covers all of those sources exactly, so a hit means
+    # the bundles match them and the timestamps are the only thing lying.
+    - name: Date the restored bundles after their sources
+      if: inputs.platform == 'ios' && steps.ios-assets.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        touch -c internal/driver/ioscompanion/companionassets/assets/*.tar.gz \
+          internal/driver/ioscompanion/runnerassets/assets/*.tar.gz
 
     # Without this the emulator falls back to software rendering and every
     # step costs several seconds.

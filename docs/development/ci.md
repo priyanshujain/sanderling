@@ -346,7 +346,7 @@ The job installs npm 11.5.1 or newer before publishing, because
 `actions/setup-node` writes an empty `_authToken` line into `.npmrc` and an older
 npm reads that as "auth is configured" and never asks for an OIDC token.
 
-## The ios companion is pinned, and its cache does not save the build
+## The ios companion is pinned, and its cache now saves the build
 
 `.github/actions/folio-app/action.yml` checks the `facebook/fb` tap out at commit
 `c0386793`, the 1.1.8 formula, before installing `idb-companion`. Floating on the
@@ -358,13 +358,28 @@ top-level `Frameworks/`, and `companionassets/prepare.sh` stages `bin/` and
 called 1.1.8 out of whatever the tap was serving that day. Moving to 1.5.0 is a
 change to the companion, not to CI.
 
-The `ios-assets` cache does not protect against this, and it is worth knowing why
-before trusting it. It restores, and the build runs anyway: git stamps the
-checked-out `prepare.sh` with checkout time while the restored tarball keeps the
-mtime it was archived with, so make always reads the target as stale. The
-2026-08-18 failure logged `Cache hit` and `Cache restored successfully`, then ran
-`prepare.sh` and died. So every ios run rebuilds the companion from whatever
-`brew` just installed, and a green master says nothing about the tap.
+The `ios-assets` cache had to be taught to hold. It restored, and the build ran
+anyway: git stamps the checked-out `prepare.sh` with checkout time while the
+restored tarball keeps the mtime it was archived with, so make read the target as
+older than its prerequisite every time and rebuilt it. The 2026-08-18 failure
+logged `Cache hit` and `Cache restored successfully`, then ran `prepare.sh` and
+died copying the `Frameworks/` that 1.5.0 does not have.
+
+A step after the restore now touches both restored tarballs, which dates them
+after the sources the checkout stamped, and make leaves them alone. That fix sits
+with the cache rather than in the Makefile because the cache is what makes the
+timestamps lie: the key hashes both prepare scripts, `companion/project.yml` and
+`companion/Sources/**`, which is exactly the prerequisite set of the two make
+rules, and the step carries no `restore-keys`, so a hit is an exact match on all
+of them. Declaring those prerequisites order-only would have fixed CI and broken
+local work, where someone editing `prepare.sh` has no cache key to catch the
+edit and make would quietly keep the previous tarball.
+
+The key also carries the installed formula version, read from `brew list` right
+after the install. The companion tarball's largest input is the homebrew install
+itself, which no hash of the repository can see, so without it a bump of the tap
+pin on its own would hit a cache filled from the old formula and embed that under
+the new pin, which is the lie the pin exists to stop.
 
 Master looked green through the breakage only because its last run predated the
 tap moving, not because anything shielded it.
