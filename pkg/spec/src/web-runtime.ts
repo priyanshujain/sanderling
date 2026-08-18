@@ -129,8 +129,13 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
 // call editable, so false is every editable field that is NOT a password entry
 // rather than everything that is not one: an element that is no field reports
 // null, as android reports null for everything, and answers to neither value.
+//
+// Both arms are wrapped in `:is()` because a multi-key selector concatenates the
+// parts into one compound, where a type selector is valid only at the head:
+// `{id, secure}` built `[id="pwd"]input[type="password"]`, which is a parse
+// error, and querySelectorAll throws rather than answering with nothing.
 function secureSelector(value: string): string {
-  if (value === "true") return `input[type="password"]`;
+  if (value === "true") return `:is(input[type="password"])`;
   if (value !== "false") return ":not(*)";
   const textInput = ["password", ...NON_TEXT_INPUT_TYPES]
     .map((type) => `:not([type="${type}"])`)

@@ -185,6 +185,46 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 	}
 }
 
+// A multi-key object selector concatenates its parts into ONE compound CSS
+// selector, and a type selector is valid only at the head of a compound. secure
+// resolves to a type selector, so pairing it with any key that sorts before it
+// turned the whole selector into a parse error: querySelectorAll throws, and
+// what a spec sees is an exception out of the extractor rather than an element.
+func TestSelectors_SecureCombinesWithAnotherKey(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+	installSelectorProbe(ctx, t, d)
+
+	selector := hierarchy.Selector{Filters: []hierarchy.AttrFilter{
+		{Attr: "id", Value: "login_password"},
+		{Attr: "secure", Value: "true"},
+	}}
+	want := []string{"login_password"}
+	if native := selectorIDsFromDumpObject(tree, selector); !slices.Equal(native, want) {
+		t.Errorf("hierarchy matched %v, want %v", native, want)
+	}
+	encoded := objectSelectorJSON(selector)
+	if web := selectorIDsFromWebRuntime(ctx, t, d, encoded); !slices.Equal(web, want) {
+		t.Errorf("the web runtime matched %v for %s, want %v", web, encoded, want)
+	}
+}
+
 // `text:` is a substring match on text content wherever the spec runs
 // (docs/manual/spec-language.md), so a badge reading "Sent ✓" answers to
 // text:Sent on web the way it already does on Android and iOS, and one reading
