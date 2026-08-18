@@ -100,6 +100,13 @@ func render(out io.Writer, corpus Corpus) {
 
 	fmt.Fprintf(out, "\n%d distinct defect(s) over %d run(s); %d seen in exactly one run\n",
 		len(corpus.Instances), corpus.Runs, corpus.Singletons())
+	if degraded := corpus.DegradedIdentities(); degraded > 0 {
+		fmt.Fprintf(out,
+			"%d identity(ies) rest on the origin selector alone, because the value typed "+
+				"there is redacted in the record; two runs that typed different values into "+
+				"that field read as one, so the count above is a floor for those\n",
+			degraded)
+	}
 	if corpus.UnnamedScreen > 0 {
 		fmt.Fprintf(out,
 			"%d violation(s) witnessed on a screen the app does not name, "+

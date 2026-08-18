@@ -1,10 +1,12 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/tracecorpus"
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
 // TestOneDefectSeenTwiceIsOneInstance: two runs report the same property from
@@ -107,6 +109,74 @@ func TestTheStrictActionKeySplitsWhatTheSelectorKeyMerges(t *testing.T) {
 	if got := identified(t, byFullAction, first, second); len(got.Instances) != 2 {
 		t.Fatalf("by full action: instances = %d, want 2", len(got.Instances))
 	}
+}
+
+// TestARedactedTypedValueDegradesTheFullKeyVisibly: two runs typed different
+// values into one field, both reached the trace redacted, and the whole action
+// can no longer tell them apart. The pair is one row, and the report has to say
+// so rather than let it read as one defect found twice.
+func TestARedactedTypedValueDegradesTheFullKeyVisibly(t *testing.T) {
+	first := run(t, 3, violating(1, "/login",
+		typing("id:password", recordedText(t, "hunter2")), "staysSignedIn", 1, 1))
+	second := run(t, 5, violating(1, "/login",
+		typing("id:password", recordedText(t, "correct horse")), "staysSignedIn", 1, 1))
+
+	corpus := identified(t, byFullAction, first, second)
+	if len(corpus.Instances) != 1 {
+		t.Fatalf("instances = %d, want the redacted pair to be one row: %+v",
+			len(corpus.Instances), corpus.Instances)
+	}
+	report := rendered(corpus)
+	if !strings.Contains(report, "1 identity") || !strings.Contains(report, "redacted") {
+		t.Fatalf("report does not say one identity rests on a redacted value:\n%s", report)
+	}
+}
+
+func TestARedactedOriginKeepsTheSelectorApart(t *testing.T) {
+	first := run(t, 3, violating(1, "/login",
+		typing("id:password", recordedText(t, "hunter2")), "staysSignedIn", 1, 1))
+	second := run(t, 5, violating(1, "/login",
+		typing("id:pin", recordedText(t, "hunter2")), "staysSignedIn", 1, 1))
+
+	corpus := identified(t, byFullAction, first, second)
+	if len(corpus.Instances) != 2 {
+		t.Fatalf("instances = %d, want two fields to stay two rows: %+v",
+			len(corpus.Instances), corpus.Instances)
+	}
+	if report := rendered(corpus); !strings.Contains(report, "2 identity") {
+		t.Fatalf("report does not count both degraded identities:\n%s", report)
+	}
+}
+
+func TestARedactedOriginDegradesNothingUnderTheSelectorKey(t *testing.T) {
+	only := run(t, 3, violating(1, "/login",
+		typing("id:password", recordedText(t, "hunter2")), "staysSignedIn", 1, 1))
+
+	if report := rendered(identified(t, bySelector, only)); strings.Contains(report, "redacted") {
+		t.Fatalf("selector key reads no text, so nothing degrades:\n%s", report)
+	}
+}
+
+// recordedText renders a typed value the way the runner records it, so what the
+// key sees is redaction as it really happens and not a placeholder the test
+// wrote itself.
+func recordedText(t *testing.T, typed string) string {
+	t.Helper()
+	recorded := verifier.RecordedActionText(verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "id:password",
+		Text: typed,
+	}, nil)
+	if recorded == typed {
+		t.Fatalf("typed value %q reached the record unredacted", typed)
+	}
+	return recorded
+}
+
+func rendered(corpus Corpus) string {
+	var report strings.Builder
+	render(&report, corpus)
+	return report.String()
 }
 
 func identified(t *testing.T, mode actionKeyMode, runs ...tracecorpus.Run) Corpus {

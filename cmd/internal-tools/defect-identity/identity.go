@@ -6,6 +6,7 @@ import (
 
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/tracecorpus"
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
 // Instance is one defect as the draft identifies it across runs: the property
@@ -23,6 +24,11 @@ type Instance struct {
 	// run count only if one run reported the same property twice, and the
 	// latch says it cannot.
 	Reports int `json:"reports"`
+	// RedactedOrigin marks a row whose origin action reached the trace with its
+	// typed value redacted, so `full` keyed it by selector instead. Two runs
+	// that typed different values into that field are one row here, which makes
+	// the count of such rows a floor rather than a total.
+	RedactedOrigin bool `json:"redacted_origin,omitempty"`
 }
 
 // Unattributed is a violation that carries no origin, so the identity rule
@@ -76,6 +82,18 @@ func (c Corpus) Singletons() int {
 	return count
 }
 
+// DegradedIdentities counts instances the action key could not be computed for
+// in full, which are the rows a reader has to treat as a lower bound.
+func (c Corpus) DegradedIdentities() int {
+	count := 0
+	for _, instance := range c.Instances {
+		if instance.RedactedOrigin {
+			count++
+		}
+	}
+	return count
+}
+
 func identify(runs []tracecorpus.Run, mode actionKeyMode) (Corpus, error) {
 	corpus := Corpus{Runs: len(runs)}
 	byKey := map[identityKey]*Instance{}
@@ -111,17 +129,19 @@ func identify(runs []tracecorpus.Run, mode actionKeyMode) (Corpus, error) {
 				if detected.Screen == "" {
 					corpus.UnnamedScreen++
 				}
+				action, redactedOrigin := actionKey(origin, mode)
 				key := identityKey{
 					property: property,
-					action:   actionKey(origin, mode),
+					action:   action,
 					screen:   detected.Screen,
 				}
 				instance, seen := byKey[key]
 				if !seen {
 					instance = &Instance{
-						Property:      property,
-						OriginAction:  key.action,
-						WitnessScreen: key.screen,
+						Property:       property,
+						OriginAction:   key.action,
+						WitnessScreen:  key.screen,
+						RedactedOrigin: redactedOrigin,
 					}
 					byKey[key] = instance
 					order = append(order, key)
@@ -162,15 +182,21 @@ func index(steps []trace.Step) map[int]trace.Step {
 	return byIndex
 }
 
-// actionKey renders the action the origin step chose. The action recorded on a
-// line is the one applied after observing it, which is the alignment that
-// makes an origin index name an action at all.
-func actionKey(origin trace.Step, mode actionKeyMode) string {
+// actionKey renders the action the origin step chose, and reports whether the
+// key had to be degraded to the selector. The action recorded on a line is the
+// one applied after observing it, which is the alignment that makes an origin
+// index name an action at all.
+//
+// A typed value the record redacted is the same string for every value typed
+// into that field, so keying on it would merge distinct actions while reading
+// as a whole-action key. The key drops it and says it did, because an identity
+// that cannot be computed has to show as an undercount rather than as a count.
+func actionKey(origin trace.Step, mode actionKeyMode) (string, bool) {
 	if origin.NextAction == nil {
-		return "none"
+		return "none", false
 	}
 	if origin.ActionSkipped != "" {
-		return "none (" + origin.ActionSkipped + ")"
+		return "none (" + origin.ActionSkipped + ")", false
 	}
 	action := *origin.NextAction
 	key := action.Kind
@@ -183,8 +209,11 @@ func actionKey(origin trace.Step, mode actionKeyMode) string {
 		key += fmt.Sprintf(" (%d,%d)", action.X, action.Y)
 	}
 	if mode != byFullAction {
-		return key
+		return key, false
+	}
+	if action.Text == verifier.RedactedInputText {
+		return key + " text=redacted", true
 	}
 	return fmt.Sprintf("%s text=%q at=(%d,%d)->(%d,%d)",
-		key, action.Text, action.X, action.Y, action.ToX, action.ToY)
+		key, action.Text, action.X, action.Y, action.ToX, action.ToY), false
 }
