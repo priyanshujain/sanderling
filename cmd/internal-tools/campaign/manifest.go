@@ -35,6 +35,22 @@ type manifest struct {
 	SanderlingVersion string    `json:"sanderling_version"`
 	StartedAt         time.Time `json:"started_at"`
 	ArgumentTemplate  []string  `json:"argument_template"`
+
+	// Quarantined and UnrunSeeds are filled in when the sweep ends, so the
+	// artifact says a device dropped out and which seeds have no result rather
+	// than leaving both to be inferred from a thin runs.jsonl.
+	Quarantined []quarantinedDevice `json:"quarantined,omitempty"`
+	UnrunSeeds  []int64             `json:"unrun_seeds,omitempty"`
+}
+
+// quarantinedDevice is a device the sweep stopped assigning seeds to, with the
+// seeds it consumed on the way out. Those seeds are reported unrun rather than
+// requeued: their directories already hold the failed attempt's log, and a
+// second record for the same seed would make a seed count two runs.
+type quarantinedDevice struct {
+	Device        string  `json:"device"`
+	FastFailures  int     `json:"fast_failures"`
+	ConsumedSeeds []int64 `json:"consumed_seeds"`
 }
 
 func buildManifest(configuration config, host, binaryPath, version string, startedAt time.Time) manifest {
