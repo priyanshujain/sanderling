@@ -10,6 +10,7 @@ output     := env_var_or_default("OUTPUT", justfile_directory() / "sanderling" /
 ios_device := env_var_or_default("IOS_DEVICE", "iPhone 17 Pro")
 ios_app    := justfile_directory() / "app" / "iosApp" / "build" / "Build" / "Products" / "Debug-iphonesimulator" / "iosApp.app"
 ios_app_device := justfile_directory() / "app" / "iosApp" / "build" / "Build" / "Products" / "Debug-iphoneos" / "iosApp.app"
+apk        := justfile_directory() / "app" / "androidApp" / "build" / "outputs" / "apk" / "debug" / "androidApp-debug.apk"
 
 default:
     @just --list
@@ -92,21 +93,26 @@ build:
     export ANDROID_HOME="$(just _android-home)"
     ./gradlew :app:androidApp:assembleDebug
 
-# Build and install the folio APK on a running emulator/device.
+# Build and install the folio APK on a running emulator/device. Gradle only
+# assembles: adb does the install because it reads ADB_SERVER_SOCKET, so the
+# device may live on a remote adb server, which AGP's loopback-only client
+# cannot reach.
 install: _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
+    ./gradlew :app:androidApp:assembleDebug
     # ANDROID_SERIAL routes the install to the chosen device when several attach.
     [[ -n "{{android_device}}" ]] && export ANDROID_SERIAL="{{android_device}}"
-    ./gradlew :app:androidApp:installDebug
+    "$ANDROID_HOME/platform-tools/adb" install -r "{{apk}}"
 
 # Remove the folio APK from the connected device.
 uninstall:
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
-    ./gradlew :app:androidApp:uninstallDebug
+    [[ -n "{{android_device}}" ]] && export ANDROID_SERIAL="{{android_device}}"
+    "$ANDROID_HOME/platform-tools/adb" uninstall app.folio
 
 # Remove gradle + iOS build directories.
 clean:
@@ -177,12 +183,11 @@ test: install
     if [[ -n "{{android_device}}" ]]; then
       avd_flag+=(--device "{{android_device}}")
     fi
-    apk="{{justfile_directory()}}/app/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
     "{{sanderling}}" test \
       --spec "{{justfile_directory()}}/sanderling/spec.ts" \
       --bundle-id app.folio \
       "${avd_flag[@]}" \
-      --android-app-path "$apk" \
+      --android-app-path "{{apk}}" \
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"
@@ -200,13 +205,12 @@ test-llm: install
     if [[ -n "{{android_device}}" ]]; then
       avd_flag+=(--device "{{android_device}}")
     fi
-    apk="{{justfile_directory()}}/app/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
     "{{sanderling}}" test \
       --spec "{{justfile_directory()}}/sanderling/spec.ts" \
       --bundle-id app.folio \
       --generator llm \
       "${avd_flag[@]}" \
-      --android-app-path "$apk" \
+      --android-app-path "{{apk}}" \
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"
