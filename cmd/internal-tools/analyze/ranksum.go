@@ -49,6 +49,11 @@ func vargaDelaneyA12(first, second []float64) float64 {
 // W. The exact null distribution is used when there are no ties and both
 // samples are small; otherwise the normal approximation is used with the
 // continuity correction and the tie correction to the variance.
+//
+// It takes plain numbers, so it cannot be given campaign runs, where a clean one
+// carries a bound and not a value. What it is here for is the uncensored case
+// the pipeline's comparison has to reproduce: this implementation is checked
+// against R on a published sample, and gehanTest is checked against this one.
 func rankSum(first, second []float64) rankSumResult {
 	firstSize, secondSize := len(first), len(second)
 	result := rankSumResult{

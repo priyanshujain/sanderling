@@ -56,7 +56,7 @@ func run(arguments []string, stdout, stderr io.Writer) error {
 	flagSet.Var(&directories, "campaign", "campaign directory to read; repeat for more, or pass them as arguments")
 	flagSet.StringVar(&jsonPath, "json", "", "write the machine-readable summary here, or - for stdout")
 	flagSet.StringVar(&question, "question", "", "the research question these campaigns answer; Holm corrects within one invocation, and this records which family that was")
-	flagSet.BoolVar(&paired, "paired", false, "the two arms ran the same seeds: contrast them seed by seed with the Wilcoxon signed-rank test instead of the rank-sum test")
+	flagSet.BoolVar(&paired, "paired", false, "the two arms ran the same seeds: contrast them seed by seed with the sign test instead of pooling them into two independent samples")
 	if err := flagSet.Parse(arguments); err != nil {
 		return err
 	}

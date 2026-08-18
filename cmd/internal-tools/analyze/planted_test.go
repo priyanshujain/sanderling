@@ -311,12 +311,12 @@ func survivalAtStep(curve []survivalPoint, step float64) (float64, bool) {
 func TestPlanted_TrueNullIsNotCalledSignificantAboveItsLevel(t *testing.T) {
 	const replicates = 300
 	model := plantedModel{Hazard: 0.01, Budget: 400}
-	rejectedByRankSum, rejectedByLogRank := 0, 0
+	rejectedByGehan, rejectedByLogRank := 0, 0
 	for replicate := 0; replicate < replicates; replicate++ {
 		first, second := plantTwoArms(t, int64(1000+replicate), 30, model, model)
 		result := analyseCampaigns(t, first, second)
 		if result.Pairwise[0].PValue < 0.05 {
-			rejectedByRankSum++
+			rejectedByGehan++
 		}
 		if result.LogRank.PValue < 0.05 {
 			rejectedByLogRank++
@@ -325,7 +325,7 @@ func TestPlanted_TrueNullIsNotCalledSignificantAboveItsLevel(t *testing.T) {
 	// Three standard errors around 0.05 at 300 replicates is 0.05 +/- 0.038.
 	// The lower bound is asserted too: a test that never rejects has bought its
 	// level by losing the power the experiment is sized for.
-	for name, rejected := range map[string]int{"rank-sum": rejectedByRankSum, "log-rank": rejectedByLogRank} {
+	for name, rejected := range map[string]int{"gehan": rejectedByGehan, "log-rank": rejectedByLogRank} {
 		rate := float64(rejected) / replicates
 		if rate > 0.09 || rate < 0.015 {
 			t.Errorf("%s called a true null significant in %.1f%% of %d replicates, want about 5%%",
@@ -350,7 +350,7 @@ func TestPlanted_TrueNullUnderHeavyCensoringKeepsItsLevel(t *testing.T) {
 		}
 	}
 	if rate := float64(rejected) / replicates; rate > 0.09 {
-		t.Errorf("rank-sum called a true null significant in %.1f%% of %d replicates under heavy censoring, want at most about 5%%",
+		t.Errorf("gehan called a true null significant in %.1f%% of %d replicates under heavy censoring, want at most about 5%%",
 			100*rate, replicates)
 	}
 }

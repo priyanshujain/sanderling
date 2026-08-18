@@ -320,7 +320,7 @@ func writeCleanCampaign(t *testing.T, directory, name string, budget, steps, run
 
 // Arms censored at different budgets are not on the same clock: every clean run
 // of the wider arm outranks every clean run of the narrower one whatever the
-// app did, so the rank-sum and the paired test reach a foregone conclusion the
+// app did, so the pairwise and the paired test reach a foregone conclusion the
 // log-rank in the same report contradicts. groupArms already refuses this
 // within one arm, and comparing across arms is the same hazard.
 func TestRun_RefusesToCompareArmsCensoredAtDifferentBudgets(t *testing.T) {
