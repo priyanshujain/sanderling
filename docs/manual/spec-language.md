@@ -156,7 +156,12 @@ Fields available on every element returned by `find` / `findAll`:
   markup writes (`attrs["data-cents"]`, not `attrs.cents`).
 - `attrs.hintText` names an editable field the way a user reads it: its
   `aria-label`, the `<label>` bound to it, its `placeholder`, then its `name`.
-  The `hintText` selector key still matches the `placeholder` attribute alone.
+  The `hintText` selector key does not read that ladder on both hosts: the
+  accessibility tree resolves it against the derived attribute above, and the
+  web runtime resolves it against `placeholder` alone. A field labelled by
+  `aria-label` or a bound `<label>` therefore answers to `{hintText: "Email"}`
+  in one and not the other. Select such a field by `attrs.hintText` until the
+  two agree.
 
 ### KMP (Kotlin Multiplatform)
 
