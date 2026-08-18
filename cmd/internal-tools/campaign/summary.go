@@ -31,8 +31,11 @@ type traceSummary struct {
 	// UnattributedActions counts the dispatched steps whose action names no
 	// producer, which only a trace recorded before actions carried one can do.
 	// Such a run's Actions is the count it was already reported with rather than
-	// a setup-excluding one, and this is what says so.
-	UnattributedActions        int      `json:"unattributed_actions,omitempty"`
+	// a setup-excluding one, and this is what says so. It is written even when
+	// it is zero, because a record that omits it is one the analysis has to read
+	// as unattributable and a run where every action named a producer is the
+	// opposite of that.
+	UnattributedActions        int      `json:"unattributed_actions"`
 	FirstViolationOriginStep   *int     `json:"first_violation_origin_step"`
 	FirstViolationDetectedStep *int     `json:"first_violation_detected_step"`
 	FirstViolationProperties   []string `json:"first_violation_properties,omitempty"`
