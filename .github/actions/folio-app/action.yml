@@ -39,10 +39,22 @@ runs:
 
     # idb-companion is not in homebrew-core, only in facebook/homebrew-fb, so
     # it has to be named by its full tap path. xcodegen and just are core.
+    #
+    # The tap is checked out at the 1.1.8 formula because companionassets stages
+    # bin/ and Frameworks/ as siblings and names its output companion-1.1.8. The
+    # tap moved to 1.5.0, which drops the top-level Frameworks/, so floating on
+    # it broke the staging and made the embedded version string a lie. Moving to
+    # 1.5.0 is a companion change, not a CI one.
     - name: Install idb-companion, xcodegen and just
       if: inputs.platform == 'ios'
       shell: bash
-      run: brew install facebook/fb/idb-companion xcodegen just
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: 1
+      run: |
+        brew install xcodegen just
+        brew tap facebook/fb
+        git -C "$(brew --repository facebook/fb)" checkout --quiet c0386793f59da10c619787f2aa18d938ef1d69c9
+        brew install facebook/fb/idb-companion
 
     # Both asset tarballs are built by the prepare scripts, and the runner
     # bundle is an xcodebuild of companion/Sources. Keyed on the scripts and
