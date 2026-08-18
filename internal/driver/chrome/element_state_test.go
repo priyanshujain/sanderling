@@ -191,6 +191,43 @@ func TestElementState_ReportsTheOtherDocumentedBooleans(t *testing.T) {
 	)
 }
 
+// Every editable field states `secure`, false included. internal/verifier
+// redacts a typed value whenever the target does not positively report "not a
+// secure entry", so a dump that omitted the key on an ordinary text field would
+// redact the whole recent-action memory on web.
+func TestElementState_SecureStatesEveryEditableField(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/element-state.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	for _, testCase := range []struct {
+		selector string
+		want     bool
+	}{
+		{"id:secret", true},
+		{"id:editing", false},
+	} {
+		element := elementInHierarchyDump(ctx, t, d, testCase.selector)
+		if !element.SecureReported() {
+			t.Errorf("the dump states no secure fact for %s", testCase.selector)
+		}
+		if element.Secure != testCase.want {
+			t.Errorf("%s secure = %v, want %v", testCase.selector, element.Secure, testCase.want)
+		}
+	}
+
+	if button := elementInHierarchyDump(ctx, t, d, "id:save"); button.SecureReported() {
+		t.Error("a button is not a text entry and states nothing")
+	}
+}
+
 // Focus belongs to the node the user is typing into, not to the element the
 // shadow tree is mounted on.
 //

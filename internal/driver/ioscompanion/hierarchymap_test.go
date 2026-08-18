@@ -388,3 +388,41 @@ func TestScrollableIgnoresAContainerOffTheScreen(t *testing.T) {
 		t.Fatalf("scrollable containers = %+v, want none off the screen", got)
 	}
 }
+
+// A secure text entry is what XCUITest reports a password field as
+// (companion/Sources/ElementTypeName.swift). It has to reach the tree as a
+// fact, because that is what lets a typed value be redacted from the record
+// without redacting every other field's.
+func TestSecureFactPerEditableType(t *testing.T) {
+	cases := []struct {
+		elementType  string
+		wantReported bool
+		wantSecure   bool
+	}{
+		{"SecureTextField", true, true},
+		{"TextField", true, false},
+		{"TextArea", true, false},
+		{"Button", false, false},
+		{"StaticText", false, false},
+	}
+	for _, testCase := range cases {
+		dump := `[{"type":"` + testCase.elementType + `","frame":{"x":0,"y":0,"width":10,"height":10},"enabled":true}]`
+		element := parseSingle(t, dump)
+		if element.SecureReported() != testCase.wantReported {
+			t.Errorf("%s reported secure = %v, want %v",
+				testCase.elementType, element.SecureReported(), testCase.wantReported)
+		}
+		if element.Secure != testCase.wantSecure {
+			t.Errorf("%s secure = %v, want %v", testCase.elementType, element.Secure, testCase.wantSecure)
+		}
+	}
+}
+
+// A secure text entry is a field a run must be able to type into, or the login
+// screens every real app opens on are unreachable.
+func TestSecureTextFieldIsEditable(t *testing.T) {
+	dump := `[{"type":"SecureTextField","frame":{"x":0,"y":0,"width":10,"height":10},"enabled":true}]`
+	if element := parseSingle(t, dump); !element.Editable {
+		t.Error("a secure text entry must be editable")
+	}
+}

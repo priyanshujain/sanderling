@@ -628,11 +628,12 @@ function domElement(spec: {
   text?: string;
   checked?: boolean;
   contentEditable?: boolean;
+  type?: string;
 }): unknown {
   const attributes = spec.attributes ?? {};
   return {
     tagName: spec.tag.toUpperCase(),
-    type: spec.tag === "input" ? "text" : "",
+    type: spec.type ?? (spec.tag === "input" ? "text" : ""),
     isContentEditable: spec.contentEditable ?? false,
     checked: spec.checked,
     id: attributes.id ?? "",
@@ -717,6 +718,21 @@ test("checked reads the live property, not the markup attribute", () => {
     checked: false,
   });
   assert.equal(handleOf(cleared).checked, false);
+});
+
+// `secure` answers three ways. A consumer deciding what a typed value may be
+// written into a record has to tell "not a password field" apart from "no
+// platform said", and android says nothing: a field answering false only when
+// asked about a password would make every web field look like an android one.
+test("secure states the field type either way, and nothing off a field", () => {
+  const password = domElement({ tag: "input", attributes: { id: "pwd" }, type: "password" });
+  assert.equal(handleOf(password).secure, true);
+
+  const email = domElement({ tag: "input", attributes: { id: "email" }, type: "email" });
+  assert.equal(handleOf(email).secure, false);
+
+  const heading = domElement({ tag: "h1", attributes: { id: "title" } });
+  assert.equal(handleOf(heading).secure, null);
 });
 
 test("attrs carries every other attribute alongside tag and aria-label", () => {

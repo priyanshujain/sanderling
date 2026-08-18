@@ -54,6 +54,7 @@ type treeNode struct {
 	Clickable  *bool             `json:"clickable,omitempty"`
 	Enabled    *bool             `json:"enabled,omitempty"`
 	Editable   *bool             `json:"editable,omitempty"`
+	Secure     *bool             `json:"secure,omitempty"`
 }
 
 // MapHierarchy converts a flat describe-all dump from the simulator companion
@@ -228,6 +229,11 @@ func mapElement(element *rawElement, scrollable bool) (treeNode, bool) {
 	if editable {
 		yes := true
 		node.Editable = &yes
+		// Stated on every editable field, false included: a consumer deciding
+		// what a typed value may be recorded as has to tell "not a secure
+		// entry" apart from "nobody said".
+		secure := element.Type == "SecureTextField"
+		node.Secure = &secure
 	}
 	if element.Type == "Button" {
 		yes := true
@@ -238,7 +244,8 @@ func mapElement(element *rawElement, scrollable bool) (treeNode, bool) {
 }
 
 func isEditable(elementType string) bool {
-	return elementType == "TextArea" || elementType == "TextField"
+	return elementType == "TextArea" || elementType == "TextField" ||
+		elementType == "SecureTextField"
 }
 
 // labelIsDisplayedText reports whether an element type's AXLabel is the string

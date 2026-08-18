@@ -746,6 +746,10 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
       // emitted is the flag the field declares and not the property's value.
       checked: el.checked === true || null,
       selected: el.selected === true || null,
+      // Emitted as a plain boolean, never null, on every editable field: a
+      // consumer deciding what a typed value may be recorded as has to tell
+      // "not a secure entry" apart from "nobody said", and android says nothing.
+      secure: isEditable ? el.type === 'password' : null,
       // Emitted as a plain boolean, never null: internal/hierarchy falls back to
       // the native heuristic when the field is absent, which reads any class
       // name containing "EditText" as an Android text widget. On web that is a

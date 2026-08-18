@@ -42,6 +42,7 @@ export interface KnownAttrSelectors {
   checked?: boolean;
   selected?: boolean;
   editable?: boolean;
+  secure?: boolean;
 }
 
 /**
@@ -88,6 +89,8 @@ export interface AccessibilityElement {
   focused?: boolean;
   selected?: boolean;
   editable?: boolean;
+  /** Field masks what is typed into it; null where the platform does not report it. */
+  secure?: boolean | null;
   bounds?: { left: number; top: number; right: number; bottom: number };
   x?: number;
   y?: number;

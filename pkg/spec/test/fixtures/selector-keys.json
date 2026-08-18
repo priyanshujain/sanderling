@@ -29,6 +29,7 @@
     "placeholderValue",
     "resource-id",
     "scrollable",
+    "secure",
     "selected",
     "tag",
     "testID",
@@ -40,5 +41,5 @@
   "unknownKeyExample": [
     "descripton"
   ],
-  "unknownKeyMessage": "selector key \"descripton\" cannot match: no element carries that attribute, and it is not one of the accepted keys: accessibilityIdentifier, accessibilityLabel, accessibilityText, aria-label, ariaLabel, bounds, checked, class, className, clickable, content-desc, contentDescription, data-testid, desc, descPrefix, editable, elementType, enabled, focused, hintText, id, idPrefix, identifier, label, package, placeholder, placeholderValue, resource-id, scrollable, selected, tag, testID, testTag, text, title, value"
+  "unknownKeyMessage": "selector key \"descripton\" cannot match: no element carries that attribute, and it is not one of the accepted keys: accessibilityIdentifier, accessibilityLabel, accessibilityText, aria-label, ariaLabel, bounds, checked, class, className, clickable, content-desc, contentDescription, data-testid, desc, descPrefix, editable, elementType, enabled, focused, hintText, id, idPrefix, identifier, label, package, placeholder, placeholderValue, resource-id, scrollable, secure, selected, tag, testID, testTag, text, title, value"
 }

@@ -176,6 +176,7 @@ const SELECTOR_KEYS: readonly string[] = [
   "placeholderValue",
   "resource-id",
   "scrollable",
+  "secure",
   "selected",
   "tag",
   "testID",
@@ -552,6 +553,8 @@ function elementHandle(
   const y = Math.round(rect.top + rect.height / 2);
   const ariaLabel = element.getAttribute("aria-label") ?? "";
   const text = (element.textContent ?? "").trim().slice(0, 200);
+  const editable =
+    element.matches(EDITABLE_SELECTOR) && isEditableElement(element as HTMLElement);
   const datasetCopy: Record<string, string> = {};
   const dataset = (element as HTMLElement).dataset ?? {};
   for (const key of Object.keys(dataset)) {
@@ -579,7 +582,7 @@ function elementHandle(
     // a contenteditable container typeable here while collectTargets and the
     // hierarchy dump, which both require the element ITSELF to match
     // EDITABLE_SELECTOR, called the same span inert.
-    editable: element.matches(EDITABLE_SELECTOR) && isEditableElement(element as HTMLElement),
+    editable,
     focused: focusedElement === element,
     // Checkbox and option state lives in the DOM PROPERTY: the markup attribute
     // records only what the page started with, so a handle reading it reports a
@@ -588,6 +591,12 @@ function elementHandle(
     // dump the goja host gets.
     checked: state.checked === true,
     selected: state.selected === true,
+    // Three-valued, unlike the other state flags: null on anything that is not
+    // a field, matching the hierarchy dump in internal/driver/chrome/driver.go.
+    // A consumer deciding what a typed value may be written into a record has
+    // to tell "not a password field" apart from "nobody said", and Android says
+    // nothing.
+    secure: editable ? state.type === "password" : null,
     x,
     y,
     bounds: {

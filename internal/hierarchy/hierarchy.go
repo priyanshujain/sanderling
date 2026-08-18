@@ -72,8 +72,18 @@ type Element struct {
 	Focused    bool              `json:"focused,omitempty"`
 	Selected   bool              `json:"selected,omitempty"`
 	Editable   bool              `json:"editable,omitempty"`
+	Secure     bool              `json:"secure,omitempty"`
 	Bounds     Bounds            `json:"bounds"`
 	Attributes map[string]string `json:"attrs,omitempty"`
+}
+
+// SecureReported reports whether the producer stated this element's secure
+// fact at all. Android never does, so an element without it is unknown rather
+// than known not to be a secure entry, and a caller deciding what may be
+// written down has to tell those two apart.
+func (e *Element) SecureReported() bool {
+	_, reported := e.Attributes["secure"]
+	return reported
 }
 
 // Node is one node in the hierarchy tree.
@@ -194,6 +204,7 @@ type treeNodeJSON struct {
 	Checked    flagJSON          `json:"checked"`
 	Selected   flagJSON          `json:"selected"`
 	Editable   flagJSON          `json:"editable"`
+	Secure     flagJSON          `json:"secure"`
 }
 
 // flagJSON is one boolean field of a node. A value that is not a boolean
@@ -223,7 +234,7 @@ func (f *flagJSON) UnmarshalJSON(data []byte) error {
 
 func (n *treeNodeJSON) unreadableFlags() int {
 	count := 0
-	for _, flag := range []flagJSON{n.Clickable, n.Enabled, n.Focused, n.Checked, n.Selected, n.Editable} {
+	for _, flag := range []flagJSON{n.Clickable, n.Enabled, n.Focused, n.Checked, n.Selected, n.Editable, n.Secure} {
 		if flag.unreadable {
 			count++
 		}
@@ -305,6 +316,7 @@ var selectorKeys = []string{
 	"placeholderValue",
 	"resource-id",
 	"scrollable",
+	"secure",
 	"selected",
 	"tag",
 	"testID",
@@ -583,6 +595,9 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	if node.Selected.set {
 		element.Selected = node.Selected.value
 	}
+	if node.Secure.set {
+		element.Secure = node.Secure.value
+	}
 	if node.Editable.set {
 		element.Editable = node.Editable.value
 	} else {
@@ -612,6 +627,9 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	}
 	if node.Selected.set {
 		element.Attributes["selected"] = strconv.FormatBool(node.Selected.value)
+	}
+	if node.Secure.set {
+		element.Attributes["secure"] = strconv.FormatBool(node.Secure.value)
 	}
 	element.Attributes["editable"] = strconv.FormatBool(element.Editable)
 

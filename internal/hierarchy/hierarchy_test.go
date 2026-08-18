@@ -235,6 +235,53 @@ func TestBoolFieldsFromNode(t *testing.T) {
 	}
 }
 
+// secure is the one state flag with three answers: a producer that reports
+// nothing leaves the element unknown rather than known-not-secure, and a
+// consumer deciding what a typed value may be written into a record reads the
+// difference.
+func TestSecureIsUnknownUntilAProducerReportsIt(t *testing.T) {
+	cases := []struct {
+		name         string
+		node         string
+		wantReported bool
+		wantSecure   bool
+	}{
+		{"reported secure", `{"attributes": {"bounds": "[0,0,10,10]"}, "secure": true}`, true, true},
+		{"reported not secure", `{"attributes": {"bounds": "[0,0,10,10]"}, "secure": false}`, true, false},
+		{"never reported", `{"attributes": {"bounds": "[0,0,10,10]"}}`, false, false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tree, err := Parse(testCase.node)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			element := tree.Elements[0]
+			if element.SecureReported() != testCase.wantReported {
+				t.Errorf("SecureReported = %v, want %v", element.SecureReported(), testCase.wantReported)
+			}
+			if element.Secure != testCase.wantSecure {
+				t.Errorf("Secure = %v, want %v", element.Secure, testCase.wantSecure)
+			}
+		})
+	}
+}
+
+// A selector reaches the fact by the same route every other boolean state does.
+func TestSecureIsSelectable(t *testing.T) {
+	tree, err := Parse(`{"attributes": {"resource-id": "root", "bounds": "[0,0,10,10]"}, "children": [
+		{"attributes": {"resource-id": "pwd", "bounds": "[0,0,10,5]"}, "secure": true, "children": []},
+		{"attributes": {"resource-id": "email", "bounds": "[0,5,10,10]"}, "secure": false, "children": []}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	element := tree.Find("secure:true")
+	if element == nil || element.ResourceID != "pwd" {
+		t.Errorf("secure:true resolved to %+v, want the pwd element", element)
+	}
+}
+
 func TestEditableDerivation(t *testing.T) {
 	cases := []struct {
 		name string
