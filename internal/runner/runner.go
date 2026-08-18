@@ -574,7 +574,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 // record, and any unsupported verbs. The wall-clock duration is excluded so the
 // output is deterministic and snapshot-testable; the CLI prints it separately.
 func RenderSummary(w io.Writer, summary Summary, platform string) {
-	fmt.Fprintf(w, "\nrun complete: %d steps\n", summary.Steps)
+	fmt.Fprintf(w, "\nrun complete: %d steps, %d driven by the generator\n",
+		summary.Steps, summary.GeneratorActions)
 	if len(summary.Violations) == 0 {
 		fmt.Fprintln(w, "no violations.")
 	} else {
