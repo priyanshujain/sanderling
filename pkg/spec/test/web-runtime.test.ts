@@ -523,6 +523,17 @@ test("selectorFromObject composes testTag with a second key", () => {
   });
 });
 
+// A type selector is valid only at the HEAD of a compound, so `tag` written
+// after any other key built `[id="amount"]input` and querySelectorAll threw a
+// SyntaxError: what the spec sees is an exception out of the extractor rather
+// than an element, and which of the two it gets depends on the order the author
+// happened to write the keys in.
+test("selectorFromObject composes tag with a second key", () => {
+  assert.deepEqual(selectorFromObject({ id: "amount", tag: "input" }), {
+    css: `[id="amount"]:is(input)`,
+  });
+});
+
 // A list whose rows are named <role>_<record id> is only reachable by the role
 // half. internal/driver/chrome/translate.go builds the same CSS for the same
 // selector, and internal/hierarchy resolves it against the dump of this page.

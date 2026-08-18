@@ -199,9 +199,15 @@ const TAG_NAME = /^[a-zA-Z][a-zA-Z0-9-]*$/;
 // pseudo-class like `*:hover`, a comma, whitespace) would inject CSS into the
 // surrounding selector. Returning a never-matching selector rather than
 // throwing keeps the spec running while making the typo visible in logs.
+//
+// Wrapped in `:is()` because a multi-key selector concatenates the parts into
+// one compound, where a type selector is valid only at the head: `{id, tag}`
+// built `[id="amount"]input`, which is a parse error, so querySelectorAll threw
+// rather than answering with nothing, and which of the two a spec got depended
+// on the order its author wrote the keys in.
 function tagSelector(value: string): string {
   if (!TAG_NAME.test(value)) return ":not(*)";
-  return value;
+  return `:is(${value})`;
 }
 
 // SELECTOR_KEYS is every key an object selector may use, held identical to the
