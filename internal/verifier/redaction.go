@@ -50,12 +50,30 @@ func RecordedActionText(action Action, tree *hierarchy.Tree) string {
 	return recordedInputText(action.Text, secureFactOf(target))
 }
 
+// RecordedAction is the action as everything downstream of the dispatch sees
+// it. The runner reports the previous step's action to the spec as
+// state.lastAction, and a spec extracting it (examples/folio/sanderling/spec.ts)
+// writes it to the trace, so the copy the runner keeps carries the recorded
+// text rather than the typed one.
+//
+// The decision is made here rather than where the two hosts render
+// state.lastAction because only the caller holds the tree that can answer it.
+// The hosts hold the NEXT step's tree, where the selector may name a different
+// element (a revealed password field reports secure:false) or none at all, and
+// cmd/internal-tools/oracle-reduction replays state.lastAction from the trace's
+// already-recorded text, which redacting here matches exactly.
+func RecordedAction(action Action, tree *hierarchy.Tree) Action {
+	action.Text = RecordedActionText(action, tree)
+	return action
+}
+
 // recordedInputText is the one place a typed value is rendered for a record.
-// The prompt's recent-action memory, the numbered candidate list and the trace
-// all go through it, so a fourth record added later cannot publish a value the
-// other three withhold. The driver dispatch reads Action.Text directly and is
-// the only reader of the real value, which is what keeps the app receiving the
-// keystrokes a user would have produced.
+// The prompt's recent-action memory, the numbered candidate list, the trace and
+// the action the runner reports back as state.lastAction all go through it, so
+// a fifth record added later cannot publish a value the other four withhold.
+// The driver dispatch reads Action.Text directly and is the only reader of the
+// real value, which is what keeps the app receiving the keystrokes a user would
+// have produced.
 //
 // A target the platform reports as a secure entry is redacted, and so is a
 // target carrying no report at all. iOS and web state the fact on every

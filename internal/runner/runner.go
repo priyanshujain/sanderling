@@ -451,7 +451,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				// the effect committed. Reporting no action here would let a
 				// property convict the app for an effect with no cause, so the
 				// action is reported with its fate unknown instead.
-				unconfirmed := nextAction
+				unconfirmed := verifier.RecordedAction(nextAction, tree)
 				lastAction = &unconfirmed
 			} else if notDispatched != "" {
 				// The action was chosen but nothing reached the driver, so the
@@ -466,7 +466,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				lastAction = nil
 			} else {
 				consecutiveApplyFailures = 0
-				applied := nextAction
+				applied := verifier.RecordedAction(nextAction, tree)
 				applied.Applied = true
 				lastAction = &applied
 			}

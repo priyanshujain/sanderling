@@ -3,6 +3,8 @@ package verifier
 import (
 	"strings"
 	"testing"
+
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
 // typedCredential stands in for what a login setup types. Nothing rendered for
@@ -107,5 +109,88 @@ func TestCandidatesRedactTextTypedIntoAnAndroidElementHandle(t *testing.T) {
 	if candidates[0].Action.Text != typedCredential {
 		t.Errorf("candidate action text = %q, want the real value so the driver still types it",
 			candidates[0].Action.Text)
+	}
+}
+
+// lastActionOnBothHosts reports what a spec reading state.lastAction sees on
+// each host for an action the runner has recorded: the goja host stringifies
+// its own object, the web host receives EncodeLastAction's JSON and installs
+// the parsed value in the page.
+func lastActionOnBothHosts(t *testing.T, action Action, treeJSON string) (string, string) {
+	t.Helper()
+	tree, err := hierarchy.Parse(treeJSON)
+	if err != nil {
+		t.Fatalf("parse tree: %v", err)
+	}
+	recorded := RecordedAction(action, tree)
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, `
+		globalThis.last = __sanderling__.extract(state => JSON.stringify(state.lastAction));
+	`)
+	if err := verifier.PushSnapshot(SnapshotInput{
+		Snapshots:  Snapshots{},
+		Tree:       tree,
+		LastAction: &recorded,
+	}); err != nil {
+		t.Fatalf("PushSnapshot: %v", err)
+	}
+	handle := verifier.runtime.GlobalObject().Get("last").ToObject(verifier.runtime)
+	return handle.Get("current").String(), string(EncodeLastAction(&recorded))
+}
+
+func typedInto(selector, text string) Action {
+	return Action{Kind: ActionKindInputText, On: selector, Text: text}
+}
+
+// A spec extracting state.lastAction (examples/folio/sanderling/spec.ts) writes
+// what it reads into the trace, so state.lastAction is a record like the other
+// three and carries the same rule on both hosts.
+func TestStateLastActionRedactsATypedValueTheTargetCannotClear(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		treeJSON string
+		selector string
+	}{
+		{"secure field", secureLoginTreeJSON, "id:LoginPassword"},
+		{"android field reported as neither", androidLoginTreeJSON, "id:login_email"},
+		{"android password field", androidLoginTreeJSON, "id:login_password"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			goja, web := lastActionOnBothHosts(
+				t, typedInto(testCase.selector, typedCredential), testCase.treeJSON)
+			for _, host := range []struct{ name, reported string }{
+				{"goja", goja},
+				{"web", web},
+			} {
+				if strings.Contains(host.reported, typedCredential) {
+					t.Errorf("the %s host publishes the typed value in state.lastAction: %s",
+						host.name, host.reported)
+				}
+				if !strings.Contains(host.reported, RedactedInputText) {
+					t.Errorf("the %s host reports state.lastAction as %s, want the typed value "+
+						"redacted in place", host.name, host.reported)
+				}
+			}
+			if goja != web {
+				t.Errorf("the two hosts disagree on state.lastAction\n goja: %s\n  web: %s", goja, web)
+			}
+		})
+	}
+}
+
+func TestStateLastActionKeepsATypedValueForAFieldReportedNotSecure(t *testing.T) {
+	const address = "ada@example.com"
+	goja, web := lastActionOnBothHosts(t, typedInto("id:LoginEmail", address), secureLoginTreeJSON)
+	for _, host := range []struct{ name, reported string }{
+		{"goja", goja},
+		{"web", web},
+	} {
+		if !strings.Contains(host.reported, address) {
+			t.Errorf("the %s host reports state.lastAction as %s, want the typed value on a "+
+				"field reported not secure", host.name, host.reported)
+		}
+	}
+	if goja != web {
+		t.Errorf("the two hosts disagree on state.lastAction\n goja: %s\n  web: %s", goja, web)
 	}
 }

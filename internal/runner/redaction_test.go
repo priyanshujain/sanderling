@@ -2,8 +2,10 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 
@@ -124,6 +126,67 @@ func TestApplyActionTypesTheRealValueIntoEveryField(t *testing.T) {
 			}
 			if typed != typedCredential {
 				t.Errorf("driver received %q, want the real typed value", typed)
+			}
+		})
+	}
+}
+
+// lastActionExtractorSpec is what examples/folio/sanderling/spec.ts does with
+// the previous step's action: it extracts state.lastAction whole. Extractor
+// values are written to the trace as extractor_changes, so a typed value that
+// reaches state.lastAction.text lands in the run directory through the spec
+// rather than through the runner.
+const lastActionExtractorSpec = `
+import { actions, always, extract, InputText } from "@sanderling/spec";
+const reported = extract("lastAction", state => state.lastAction);
+globalThis.properties = {
+  theActionReachesTheSpec: always(() => reported.current !== undefined),
+};
+globalThis.actions = actions(() => [InputText({ into: "%s", text: "` + typedCredential + `" })]);
+`
+
+func TestTheTraceNeverCarriesATypedSecretThroughALastActionExtractor(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		treeJSON string
+		selector string
+	}{
+		{"ios secure field", iosLoginTreeJSON, "id:LoginPassword"},
+		{"web secure field", webLoginTreeJSON, "id:login-password"},
+		{"android field reported as neither", androidLoginTreeJSON, "id:login_email"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fastFocusSettle(t)
+			state := newHarnessWithSpec(t, fmt.Sprintf(lastActionExtractorSpec, testCase.selector))
+			state.mock.HierarchyJSON = testCase.treeJSON
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := Run(ctx, Options{
+				Duration:    time.Hour,
+				IdleTimeout: 20 * time.Millisecond,
+				MaxSteps:    2,
+				Driver:      state.mock,
+				Verifier:    state.verifier,
+				TraceWriter: state.writer,
+			}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			steps := traceSteps(t, state.writer.Directory())
+			if len(steps) < 2 {
+				t.Fatalf("trace holds %d step(s), want the step that reports the action back", len(steps))
+			}
+			change, ok := steps[1].ExtractorChanges["lastAction"]
+			if !ok {
+				t.Fatalf("step 2 recorded no reading of state.lastAction: %+v", steps[1])
+			}
+			if strings.Contains(string(change.Curr), typedCredential) {
+				t.Errorf("the trace carries the typed value through state.lastAction: %s", change.Curr)
+			}
+			if !strings.Contains(string(change.Curr), verifier.RedactedInputText) {
+				t.Errorf("state.lastAction reported %s, want the typed value redacted in place",
+					change.Curr)
 			}
 		})
 	}

@@ -47,6 +47,8 @@ interface State {
 
 `lastAction.applied` is `true` when the runner saw the dispatch succeed and `null` when the apply call failed with the action possibly already delivered: an RPC deadline can fire after the tap reached the app, and nothing can find out afterwards. So there are three states, not two. `state.lastAction === null` means no action ran; `applied === null` means one ran whose fate is unknown. A property that attributes an effect to the action ("this submit must move the balance by the typed amount") has to decline unless `applied` is `true`, or a timeout convicts a healthy app. A property that counts what the app COULD have done should include it: an unconfirmed submit belongs in an upper bound on how many submits a window holds.
 
+`lastAction.text` carries the value as the record renders it, not the value the app received. A typed value reads `[redacted]` wherever the target may be a credential entry, which on iOS and web means the fields that report themselves secure and on Android means all of them, since Android reports nothing either way. A spec extracting `state.lastAction` writes it to the trace, so it is redacted for the same reason the trace action is; see [typed values in the record](../runs/#typed-values-in-the-record). A property that has to reason about what a field holds should read the field off `ax`.
+
 ## Selectors
 
 Selectors are passed to `ax.find()`, `ax.findAll()`, and element-scoped `.find()` / `.findAll()`. A tree-level lookup scans the whole hierarchy, the root element included; an element-scoped one scans that element's descendants. Both selector forms scan the same set, so `ax.find("id:page")` and `ax.find({ id: "page" })` return the same element.

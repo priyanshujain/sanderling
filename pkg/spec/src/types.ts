@@ -134,6 +134,11 @@ export interface ExceptionRecord {
  * reported", which is weaker than "the app never restarted": a target whose
  * foreground the runner cannot read never relaunches the app and cannot promise
  * that either.
+ *
+ * `text` is the value as the record renders it: `[redacted]` wherever the
+ * target may be a credential entry, which on Android is every target, since it
+ * reports nothing either way. Read the field off `ax` to reason about what it
+ * holds.
  */
 export type LastAction = Action & { applied: true | null; relaunched: true | null };
 
