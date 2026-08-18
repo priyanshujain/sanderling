@@ -99,7 +99,7 @@ func writeReport(result analysis, out io.Writer) {
 	}
 
 	if len(result.Pairwise) > 0 {
-		fmt.Fprintln(out, "\npairwise wilcoxon rank-sum, censored runs held at the budget")
+		fmt.Fprintln(out, "\npairwise wilcoxon rank-sum, censored runs held at the steps they ran")
 		fmt.Fprintln(out, "a12 above 0.5 means the first arm takes more steps to its first violation")
 		writeTable(out, []string{"comparison", "n1", "n2", "u", "a12", "p", "holm p"}, func(add func(...string)) {
 			for _, pair := range result.Pairwise {
@@ -130,7 +130,7 @@ func writeReport(result analysis, out io.Writer) {
 }
 
 func writePaired(out io.Writer, comparison pairedComparison) {
-	fmt.Fprintf(out, "\npaired per-seed difference, %s minus %s, censored runs held at the budget\n",
+	fmt.Fprintf(out, "\npaired per-seed difference, %s minus %s, censored runs held at the steps they ran\n",
 		comparison.First, comparison.Second)
 	fmt.Fprintf(out, "%d seed pair(s): %s sooner in %d, %s sooner in %d, tied in %d\n",
 		comparison.Pairs, comparison.First, comparison.FirstSooner,

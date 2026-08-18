@@ -174,7 +174,7 @@ type pairedComparison struct {
 }
 
 // pairArms matches the two arms by seed and contrasts them pair by pair.
-// Censored runs enter at the step budget, the same convention the unpaired
+// Censored runs enter at the steps they ran, the same convention the unpaired
 // comparison uses. A seed usable in one arm and not the other is named rather
 // than dropped silently, because that is a host that lost a run and it is what
 // the campaign manifest exists to make visible.

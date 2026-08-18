@@ -67,22 +67,28 @@ type analysis struct {
 	Notes          []string          `json:"notes,omitempty"`
 }
 
-const outcomeDescription = "steps to first violation, right-censored at the step budget"
+const outcomeDescription = "steps to first violation, right-censored at the last step a clean run reached"
 
-func analyse(arms []arm, now time.Time) analysis {
-	result, testable := baseAnalysis(arms, now)
+func analyse(arms []arm, now time.Time) (analysis, error) {
+	result, testable, err := baseAnalysis(arms, now)
+	if err != nil {
+		return analysis{}, err
+	}
 	if len(testable) >= 2 {
 		result.Pairwise = comparePairs(testable)
 		result.HolmFamilySize = countCorrected(result.Pairwise)
 	}
-	return result
+	return result, nil
 }
 
 // analysePaired is the seed-matched design of the actuation ablation: two arms
 // running the same seeds, contrasted seed by seed rather than as two
 // independent samples.
 func analysePaired(arms []arm, now time.Time) (analysis, error) {
-	result, testable := baseAnalysis(arms, now)
+	result, testable, err := baseAnalysis(arms, now)
+	if err != nil {
+		return analysis{}, err
+	}
 	if len(testable) != 2 {
 		return analysis{}, fmt.Errorf("a paired comparison needs exactly two arms with usable runs, found %d", len(testable))
 	}
@@ -102,7 +108,7 @@ func analysePaired(arms []arm, now time.Time) (analysis, error) {
 	return result, nil
 }
 
-func baseAnalysis(arms []arm, now time.Time) (analysis, []arm) {
+func baseAnalysis(arms []arm, now time.Time) (analysis, []arm, error) {
 	result := analysis{GeneratedAt: now, Outcome: outcomeDescription}
 	for _, current := range arms {
 		result.Arms = append(result.Arms, summarize(current))
@@ -118,6 +124,9 @@ func baseAnalysis(arms []arm, now time.Time) (analysis, []arm) {
 		result.Notes = append(result.Notes,
 			"arms with no usable runs are reported but left out of the log-rank test and the pairwise comparisons")
 	}
+	if err := sameBudget(testable); err != nil {
+		return analysis{}, nil, err
+	}
 	if len(testable) >= 2 {
 		names := make([]string, len(testable))
 		groups := make([][]observation, len(testable))
@@ -128,7 +137,24 @@ func baseAnalysis(arms []arm, now time.Time) (analysis, []arm) {
 		test := logRank(names, groups)
 		result.LogRank = &test
 	}
-	return result, testable
+	return result, testable, nil
+}
+
+// sameBudget refuses arms that were given different exposure. A clean run is
+// censored somewhere at or below its arm's budget, so the arm with the larger
+// budget carries censored runs the smaller arm could not have produced, and
+// every test that ranks the two against each other reads that as the arm
+// surviving longer. It is the cross-arm form of what groupArms already refuses
+// within one arm.
+func sameBudget(arms []arm) error {
+	for index := 1; index < len(arms); index++ {
+		if arms[index].Budget != arms[0].Budget {
+			return fmt.Errorf("arm %q has step budget %d and arm %q has %d: "+
+				"runs censored at different budgets cannot be compared",
+				arms[0].Name, arms[0].Budget, arms[index].Name, arms[index].Budget)
+		}
+	}
+	return nil
 }
 
 func countCorrected(pairs []pairwiseResult) int {

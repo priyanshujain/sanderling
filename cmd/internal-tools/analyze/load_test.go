@@ -31,18 +31,32 @@ func TestClassify_FailedAndTimedOutRunsAreMissingDataNotCensored(t *testing.T) {
 	}
 }
 
-func TestClassify_CleanRunIsCensoredAtTheBudget(t *testing.T) {
-	item := classify(runRecord{Seed: 4, Steps: 50, DurationMillis: 1000}, 50)
-	if item.ExcludedBecause != "" {
-		t.Fatalf("excluded because %q", item.ExcludedBecause)
+// A run also ends when the campaign's wall clock does, so a clean run can stop
+// well short of the budget. Censoring it at the budget would credit it with
+// steps it never ran, and a slower arm loses fewer steps in the same wall clock
+// than a fast one, so the credit does not cancel between arms.
+func TestClassify_CleanRunIsCensoredAtTheStepsItRan(t *testing.T) {
+	cases := []struct {
+		name     string
+		steps    int
+		budget   int
+		censored float64
+	}{
+		{"stopped by the wall clock short of the budget", 12, 400, 12},
+		{"ran the whole budget", 400, 400, 400},
+		{"recorded more steps than the manifest budget", 420, 400, 400},
 	}
-	if item.Violated {
-		t.Error("clean run marked as violated")
-	}
-	current := arm{Budget: 50, Runs: []classifiedRun{item}}
-	observations := current.observations()
-	if len(observations) != 1 || observations[0].Event || observations[0].Steps != 50 {
-		t.Errorf("observations %+v, want one censored observation at 50", observations)
+	for _, test := range cases {
+		item := classify(runRecord{Seed: 4, Steps: test.steps, DurationMillis: 1000}, test.budget)
+		if item.ExcludedBecause != "" || item.Violated {
+			t.Fatalf("%s: run %+v, want a usable clean run", test.name, item)
+		}
+		current := arm{Budget: test.budget, Runs: []classifiedRun{item}}
+		observations := current.observations()
+		if len(observations) != 1 || observations[0].Event || observations[0].Steps != test.censored {
+			t.Errorf("%s: observations %+v, want one censored observation at %v",
+				test.name, observations, test.censored)
+		}
 	}
 }
 

@@ -58,7 +58,7 @@ func TestVargaDelaneyA12_BoundaryCases(t *testing.T) {
 
 // The counting definition and the rank-sum route must agree, including when the
 // samples are tied against each other, which is the case the evaluation data is
-// always in because censored runs are all held at the budget.
+// usually in because censored runs pile up on the step they stopped at.
 func TestVargaDelaneyA12_AgreesWithRankSumStatistic(t *testing.T) {
 	cases := [][2][]float64{
 		{{1, 2, 3}, {2, 3, 4}},

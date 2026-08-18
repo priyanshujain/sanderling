@@ -1,6 +1,6 @@
 // Command analyze reduces campaign directories to the statistics the
 // evaluation reports. The primary outcome is steps to first violation, with
-// clean runs right-censored at the step budget rather than discarded: defect
+// clean runs right-censored where they stopped rather than discarded: defect
 // yield per run is a binary that would need on the order of eighty runs an arm
 // to separate, while survival analysis uses every run, including the clean ones.
 package main
@@ -24,7 +24,7 @@ Usage:
 
 Each directory is one produced by the campaign tool and must hold campaign.json
 and runs.jsonl. Directories sharing an arm label are pooled and must agree on
-the step budget.
+the step budget, and arms compared against each other must agree on it too.
 
 One invocation is one research question: Holm corrects across the comparisons it
 produces and across nothing else.
@@ -87,7 +87,10 @@ func run(arguments []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	} else {
-		result = analyse(arms, time.Now().UTC())
+		result, err = analyse(arms, time.Now().UTC())
+		if err != nil {
+			return err
+		}
 	}
 	result.Question = question
 	writeReport(result, stdout)

@@ -90,7 +90,7 @@ func TestRun_EndToEndOverFixtureCampaignDirectories(t *testing.T) {
 
 	text := stdout.String()
 	for _, fragment := range []string{
-		"steps to first violation, right-censored at the step budget",
+		"steps to first violation, right-censored at the last step a clean run reached",
 		"log-rank across 2 arms",
 		"pairwise wilcoxon rank-sum",
 		"llm vs seeded",

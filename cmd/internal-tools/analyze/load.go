@@ -17,8 +17,8 @@ const (
 )
 
 // manifest mirrors the fields analyze reads from campaign.json. The step budget
-// lives here rather than in any run, because it is what clean runs are censored
-// at and every run in an arm has to share it.
+// lives here rather than in any run, because it is the exposure every run in an
+// arm was given and the ceiling a clean run can be censored at.
 type manifest struct {
 	Arm       string  `json:"arm"`
 	Generator string  `json:"generator"`
@@ -60,8 +60,8 @@ type runRecord struct {
 }
 
 // Exclusion reasons. A run that failed or timed out is missing data, not a
-// censored observation: it never ran its budget, so treating it as a clean run
-// that survived to the budget would bias the survival estimate downward.
+// censored observation: it broke off, so its step count is not exposure the app
+// survived and counting it as one would bias the survival estimate downward.
 const (
 	reasonLaunchError   = "launch error"
 	reasonTimedOut      = "timed out"
@@ -209,8 +209,8 @@ func classify(record runRecord, budget int) classifiedRun {
 // run ends, and timing that at the step that armed it would record a liveness
 // failure flushed at the budget as a violation found on the first step, which
 // is a number the run cannot support and which no censored run can be compared
-// against: the budget is the clock the clean runs are censored on, so the events
-// have to be on it too. A campaign written before the field existed carries no
+// against: the end of the run is the clock the clean runs are censored on, so
+// the events have to be on it too. A campaign written before the field existed carries no
 // detected step and keeps the origin.
 func eventStep(record runRecord, origin int) int {
 	if record.FirstViolationDetectedStep == nil {
@@ -271,7 +271,8 @@ func groupArms(directories []string) ([]arm, error) {
 }
 
 // observations returns the usable runs as survival data: an event at the step
-// that armed the first violation, or a censored observation at the step budget.
+// that armed the first violation, or a censored observation at the last step
+// the run reached.
 func (a arm) observations() []observation {
 	var result []observation
 	for _, item := range a.Runs {
@@ -287,13 +288,15 @@ func observationOf(item classifiedRun, budget int) observation {
 	if item.Violated {
 		return observation{Steps: float64(item.EventStep), Event: true}
 	}
-	return observation{Steps: float64(budget), Event: false}
+	// A run that hit the campaign's wall clock stopped short of the budget, and
+	// the steps it never ran are not exposure it survived.
+	return observation{Steps: float64(min(item.Steps, budget)), Event: false}
 }
 
 // stepTimes is the observations flattened to plain numbers, censored runs held
-// at the budget. Holding them there rather than dropping them is conservative:
-// it can only understate how much sooner a violating arm finds its first
-// defect, never overstate it.
+// at the steps they ran. Holding them there rather than dropping them is
+// conservative: it can only understate how much sooner a violating arm finds
+// its first defect, never overstate it.
 func (a arm) stepTimes() []float64 {
 	var result []float64
 	for _, item := range a.observations() {

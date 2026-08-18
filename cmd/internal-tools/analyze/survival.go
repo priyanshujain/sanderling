@@ -7,8 +7,7 @@ import (
 
 // observation is one run reduced to what the survival analysis needs: the step
 // count at which it left the risk set, and whether it left because a violation
-// was found (an event) or because it exhausted the step budget without one
-// (right-censored). A run that failed or timed out is neither and never
+// was found (an event) or because the run ended without one (right-censored). A run that failed or timed out is neither and never
 // reaches this type.
 type observation struct {
 	Steps float64

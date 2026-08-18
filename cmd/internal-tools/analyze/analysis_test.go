@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io"
 	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -227,11 +229,14 @@ func TestAnalyse_ExcludedRunsNeverBecomeObservations(t *testing.T) {
 }
 
 func TestAnalyse_ArmWithNoUsableRunsIsReportedButNotTested(t *testing.T) {
-	result := analyse([]arm{
+	result, err := analyse([]arm{
 		{Name: "a", Budget: 30, Runs: []classifiedRun{violatingRun(1, 4, 4), violatingRun(2, 6, 6)}},
 		{Name: "b", Budget: 30, Runs: []classifiedRun{cleanRun(1, 30), cleanRun(2, 30)}},
 		{Name: "c", Budget: 30, Runs: []classifiedRun{{Seed: 1, ExcludedBecause: reasonNonzeroExit}}},
 	}, time.Unix(0, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(result.Arms) != 3 {
 		t.Fatalf("%d arms reported, want all 3", len(result.Arms))
@@ -250,9 +255,12 @@ func TestAnalyse_ArmWithNoUsableRunsIsReportedButNotTested(t *testing.T) {
 // With a single testable arm there is nothing to compare against, and the tool
 // must say so instead of producing a statistic.
 func TestAnalyse_SingleArmHasNoTests(t *testing.T) {
-	result := analyse([]arm{
+	result, err := analyse([]arm{
 		{Name: "a", Budget: 30, Runs: []classifiedRun{violatingRun(1, 4, 4)}},
 	}, time.Unix(0, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.LogRank != nil || len(result.Pairwise) != 0 {
 		t.Errorf("log-rank %+v pairwise %v, want neither", result.LogRank, result.Pairwise)
 	}
@@ -294,6 +302,53 @@ func TestComparePairs_A12DirectionFollowsStepCounts(t *testing.T) {
 	})
 	if pairs[0].A12 <= 0.5 {
 		t.Errorf("a12 %v for the slower arm listed first, want above 0.5", pairs[0].A12)
+	}
+}
+
+func writeCleanCampaign(t *testing.T, directory, name string, budget, steps, runs int) {
+	t.Helper()
+	seeds := make([]int, 0, runs)
+	records := make([]map[string]any, 0, runs)
+	for seed := 1; seed <= runs; seed++ {
+		seeds = append(seeds, seed)
+		records = append(records, map[string]any{
+			"seed": seed, "exit_code": 0, "steps": steps, "actions": steps, "monotonic_millis": 60_000,
+		})
+	}
+	writeCampaign(t, directory, map[string]any{"arm": name, "max_steps": budget, "seeds": seeds}, records)
+}
+
+// Arms censored at different budgets are not on the same clock: every clean run
+// of the wider arm outranks every clean run of the narrower one whatever the
+// app did, so the rank-sum and the paired test reach a foregone conclusion the
+// log-rank in the same report contradicts. groupArms already refuses this
+// within one arm, and comparing across arms is the same hazard.
+func TestRun_RefusesToCompareArmsCensoredAtDifferentBudgets(t *testing.T) {
+	cases := []struct {
+		name      string
+		wideSteps int
+		arguments []string
+	}{
+		{name: "identical runs under different budgets", wideSteps: 100},
+		{name: "each arm run to its own budget", wideSteps: 400},
+		{name: "paired", wideSteps: 400, arguments: []string{"--paired"}},
+	}
+	for _, test := range cases {
+		root := t.TempDir()
+		wide := filepath.Join(root, "wide")
+		narrow := filepath.Join(root, "narrow")
+		writeCleanCampaign(t, wide, "wide", 400, test.wideSteps, 30)
+		writeCleanCampaign(t, narrow, "narrow", 100, 100, 30)
+
+		err := run(append(test.arguments, wide, narrow), io.Discard, io.Discard)
+		if err == nil {
+			t.Fatalf("%s: arms censored at 400 and at 100 steps were compared without complaint", test.name)
+		}
+		for _, fragment := range []string{"wide", "400", "narrow", "100", "different budgets"} {
+			if !strings.Contains(err.Error(), fragment) {
+				t.Errorf("%s: error %q is missing %q", test.name, err, fragment)
+			}
+		}
 	}
 }
 
