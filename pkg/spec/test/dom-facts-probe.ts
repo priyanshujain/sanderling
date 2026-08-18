@@ -21,6 +21,7 @@ type AxHandle = {
   attrs?: Record<string, string>;
   clickable?: boolean;
   editable?: boolean;
+  secure?: boolean | null;
 };
 type Ax = { find(selector: unknown): AxHandle | undefined };
 
@@ -50,6 +51,10 @@ function domFacts(): unknown[] {
       hintText: handle?.attrs?.hintText ?? "",
       handleClickable: handle?.clickable ?? false,
       handleEditable: handle?.editable ?? false,
+      // Three-valued, so it stays null rather than collapsing onto false: the Go
+      // side compares it against a dump that leaves the fact out entirely for an
+      // element no producer states it for.
+      secure: handle?.secure ?? null,
       width: target.width ?? 0,
       height: target.height ?? 0,
     };

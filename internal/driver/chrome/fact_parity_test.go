@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -51,6 +52,11 @@ type elementFacts struct {
 	editable   bool
 	scrollable bool
 	hintText   string
+	// secure is three-valued: "true", "false", or "" where the producer states
+	// nothing, which android states for every element. It decides whether a
+	// typed value may be written into the shared record, so the two producers
+	// disagreeing about it writes a credential into a run's trace.
+	secure string
 	// handleClickable and handleEditable are the same facts on the ax element a
 	// spec reaches through state.ax.find, a third place they are computed and the
 	// one that has twice been the odd one out: clickable answered a hardcoded
@@ -100,6 +106,7 @@ func TestHierarchy_DerivesTheSameFactsAsTheWebRuntime(t *testing.T) {
 			requireEveryElementNamed(t, "the hierarchy dump", fromDump)
 			requireEveryElementNamed(t, "the web runtime", fromWebRuntime)
 			requireBothPolarities(t, fromWebRuntime)
+			requireEverySecureState(t, fromWebRuntime)
 			requireTheHandleAgreesWithTheEnumeration(t, fromWebRuntime)
 			compareEnumeratedElements(t, fromDump, fromWebRuntime)
 			compareDerivedFacts(t, fromDump, fromWebRuntime)
@@ -127,6 +134,7 @@ func factsFromHierarchyDump(t *testing.T, dump string) []factRow {
 				editable:   element.Editable,
 				scrollable: element.Attributes["scrollable"] == "true",
 				hintText:   element.Attributes["hintText"],
+				secure:     secureFromDump(element),
 				positiveBounds: hasPositiveBounds(
 					element.Bounds.Width(),
 					element.Bounds.Height(),
@@ -175,6 +183,7 @@ func factsFromWebRuntime(
 		HintText        string `json:"hintText"`
 		HandleClickable bool   `json:"handleClickable"`
 		HandleEditable  bool   `json:"handleEditable"`
+		Secure          *bool  `json:"secure"`
 		Width           int    `json:"width"`
 		Height          int    `json:"height"`
 	}
@@ -194,11 +203,30 @@ func factsFromWebRuntime(
 				hintText:        item.HintText,
 				handleClickable: item.HandleClickable,
 				handleEditable:  item.HandleEditable,
+				secure:          secureFromWebRuntime(item.Secure),
 				positiveBounds:  hasPositiveBounds(item.Width, item.Height),
 			},
 		})
 	}
 	return rows
+}
+
+// secureFromDump and secureFromWebRuntime read the same three-valued fact off
+// the two producers. The dump leaves the field out entirely for an element it
+// states nothing about, the web runtime reports null for it, and both mean the
+// same thing: unknown, not "not a secure entry".
+func secureFromDump(element *hierarchy.Element) string {
+	if !element.SecureReported() {
+		return ""
+	}
+	return strconv.FormatBool(element.Secure)
+}
+
+func secureFromWebRuntime(secure *bool) string {
+	if secure == nil {
+		return ""
+	}
+	return strconv.FormatBool(*secure)
 }
 
 // hasPositiveBounds is the positiveBounds fact of pkg/spec/src/targets.ts,
@@ -257,6 +285,27 @@ func requireBothPolarities(t *testing.T, rows []factRow) {
 				fact.name,
 				sawTrue,
 				sawFalse,
+			)
+		}
+	}
+}
+
+// requireEverySecureState is requireBothPolarities for the one fact that is not
+// a boolean. A fixture holding no password entry would compare "false" against
+// "false" over the whole page and pass while proving nothing about the state
+// that decides whether a typed value may be written down.
+func requireEverySecureState(t *testing.T, rows []factRow) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[row.facts.secure] = true
+	}
+	for _, state := range []string{"true", "false", ""} {
+		if !seen[state] {
+			t.Errorf(
+				"the fixture no longer holds an element the web runtime reports "+
+					"secure=%q for, so comparing that state proves nothing",
+				state,
 			)
 		}
 	}
@@ -369,6 +418,17 @@ func compareDerivedFacts(t *testing.T, fromDump, fromWebRuntime []factRow) {
 				dump.tag,
 				dump.hintText,
 				web.hintText,
+			)
+		}
+		if dump.secure != web.secure {
+			t.Errorf(
+				"%q (<%s>): the hierarchy dump derives secure=%q, the web runtime "+
+					"derives secure=%q; one host would write into the record a value "+
+					"the other redacts",
+				row.id,
+				dump.tag,
+				dump.secure,
+				web.secure,
 			)
 		}
 		for _, fact := range []struct {
