@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -50,6 +51,10 @@ func registeredProperties(entryFile string) ([]string, error) {
 }
 
 func check(specSrc, entryFile string, stdout io.Writer) error {
+	return checkWithOptions(specSrc, entryFile, false, stdout)
+}
+
+func checkWithOptions(specSrc, entryFile string, allowNoProperties bool, stdout io.Writer) error {
 	result, err := bundleSpec(specSrc, entryFile)
 	if err != nil {
 		return fmt.Errorf("bundle: %w", err)
@@ -60,22 +65,33 @@ func check(specSrc, entryFile string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if len(names) == 0 {
+	if len(names) == 0 && !allowNoProperties {
 		return errors.New("the spec bundles and loads cleanly but registers no properties: " +
 			"nothing is wrong with the source, and a run against it would check nothing " +
-			"and report no violations")
+			"and report no violations. Pass --allow-no-properties for a spec that measures " +
+			"what it extracts or where the generator reaches")
 	}
 	fmt.Fprintf(stdout, "properties registered: %d (%s)\n", len(names), strings.Join(names, ", "))
 	return nil
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: bundle-check <spec.ts>")
+	flagSet := flag.NewFlagSet("bundle-check", flag.ExitOnError)
+	allowNoProperties := flagSet.Bool("allow-no-properties", false,
+		"accept a spec that registers no properties, for a pre-registration that measures what the spec extracts or where the generator reaches")
+	flagSet.Usage = func() {
+		fmt.Fprintln(flagSet.Output(), "usage: bundle-check [--allow-no-properties] <spec.ts>")
+		flagSet.PrintDefaults()
+	}
+	if err := flagSet.Parse(os.Args[1:]); err != nil {
+		os.Exit(1)
+	}
+	if flagSet.NArg() != 1 {
+		flagSet.Usage()
 		os.Exit(1)
 	}
 
-	entryFile, err := filepath.Abs(os.Args[1])
+	entryFile, err := filepath.Abs(flagSet.Arg(0))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "resolve spec path: %v\n", err)
 		os.Exit(1)
@@ -87,7 +103,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := check(filepath.Join(repoRoot, "pkg/spec/src"), entryFile, os.Stdout); err != nil {
+	if err := checkWithOptions(filepath.Join(repoRoot, "pkg/spec/src"), entryFile, *allowNoProperties, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}

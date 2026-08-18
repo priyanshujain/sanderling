@@ -81,6 +81,23 @@ func TestCheck_RejectsSpecThatRegistersNoProperties(t *testing.T) {
 	}
 }
 
+// The extraction and portability sweeps freeze a spec that registers nothing
+// on purpose, and run it with --allow-no-properties. Without the same opt-out
+// here the gate that is supposed to freeze those pre-registrations is the one
+// thing that cannot accept them.
+func TestCheck_RunsTheZeroPropertySpecUnderTheOptOut(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := checkWithOptions(repoSpecSrc(t), testdataSpec(t, "no-properties.ts"), true, &stdout); err != nil {
+		t.Fatalf("the opt-out did not admit a spec that registers nothing: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "properties registered: 0") {
+		t.Errorf("the report must still say nothing was registered, got: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "bundled: ") {
+		t.Errorf("bundle size and hash must still be reported, got: %q", stdout.String())
+	}
+}
+
 func TestCheck_ReportsRegisteredPropertyCountAndNames(t *testing.T) {
 	var stdout bytes.Buffer
 	if err := check(repoSpecSrc(t), testdataSpec(t, "spec.ts"), &stdout); err != nil {
