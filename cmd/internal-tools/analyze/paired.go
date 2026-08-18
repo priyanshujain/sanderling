@@ -65,9 +65,12 @@ type pairedComparison struct {
 	// of matched seeds on which the first arm took more steps, an unordered pair
 	// counting as half. A matched design has no reason to compare the two arms
 	// as pooled bags of runs when each seed has a partner.
-	A12        float64 `json:"a12_within_pairs"`
-	PValue     float64 `json:"p_value"`
-	HolmPValue float64 `json:"holm_p_value"`
+	A12 float64 `json:"a12_within_pairs"`
+	// PValue is undefined, and null in the summary, when censoring left no pair
+	// ordered: there is nothing for the test to be a test of, and JSON has no
+	// way to write the number that is not there.
+	PValue     *float64 `json:"p_value"`
+	HolmPValue *float64 `json:"holm_p_value"`
 }
 
 // pairArms matches the two arms by seed and contrasts them pair by pair. A seed
@@ -84,13 +87,7 @@ func pairArms(first, second arm) (pairedComparison, error) {
 		return pairedComparison{}, err
 	}
 
-	comparison := pairedComparison{
-		First:      first.Name,
-		Second:     second.Name,
-		A12:        math.NaN(),
-		PValue:     math.NaN(),
-		HolmPValue: math.NaN(),
-	}
+	comparison := pairedComparison{First: first.Name, Second: second.Name, A12: math.NaN()}
 	var differences []float64
 	for _, seed := range sortedSeeds(firstBySeed, secondBySeed) {
 		left, inFirst := firstBySeed[seed]
@@ -130,7 +127,9 @@ func pairArms(first, second arm) (pairedComparison, error) {
 		comparison.Sign = -1
 	}
 	comparison.A12 = (float64(comparison.SecondSooner) + 0.5*float64(comparison.Unordered)) / float64(comparison.Pairs)
-	comparison.PValue = signTest(comparison.FirstSooner, comparison.SecondSooner)
+	if tested := signTest(comparison.FirstSooner, comparison.SecondSooner); !math.IsNaN(tested) {
+		comparison.PValue = &tested
+	}
 	return comparison, nil
 }
 

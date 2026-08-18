@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -114,5 +117,32 @@ func TestRun_PairedContrastFollowsWhatCensoringDetermines(t *testing.T) {
 	}
 	if paired.A12 <= 0.5 {
 		t.Errorf("a12 within pairs %.4f, want above 0.5", paired.A12)
+	}
+}
+
+// Nothing orders any pair here, so there is no test to report. The summary has
+// to say that rather than failing to write a number that does not exist: a
+// NaN p-value is not JSON and the whole summary went unwritten behind it.
+func TestRun_PairedContrastWithNoOrderedPairSaysSo(t *testing.T) {
+	earlyDirectory, lateDirectory := wallClockArms(t, stoppedShort(20, 12), violatedAt(20, 100))
+	result := analyseCampaigns(t, "--paired", earlyDirectory, lateDirectory)
+
+	paired := *result.Paired
+	if paired.Pairs != 20 || paired.Unordered != 20 {
+		t.Fatalf("paired %+v, want twenty pairs and all of them unordered", paired)
+	}
+	if paired.PValue != nil || paired.HolmPValue != nil {
+		t.Errorf("p %v and holm p %v, want both undefined", paired.PValue, paired.HolmPValue)
+	}
+	if result.HolmFamilySize != 0 {
+		t.Errorf("holm family of %d, want none where nothing was tested", result.HolmFamilySize)
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"--paired", earlyDirectory, lateDirectory}, &stdout, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "sign test over the 0 ordered pair(s), p n/a, holm p n/a") {
+		t.Errorf("report does not say the test was not run:\n%s", stdout.String())
 	}
 }

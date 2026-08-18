@@ -647,11 +647,11 @@ func TestPlanted_PairedComparisonRecoversTheShiftAndItsSign(t *testing.T) {
 	if want := 0.5 * float64(unordered) / 30; paired.A12 != want {
 		t.Errorf("a12 within pairs %v, want %v where no pair favours the first arm", paired.A12, want)
 	}
-	if paired.PValue > 0.001 {
+	if paired.PValue == nil || *paired.PValue > 0.001 {
 		t.Errorf("p-value %v for a shift planted in every pair", paired.PValue)
 	}
-	if paired.HolmPValue != paired.PValue {
-		t.Errorf("holm p %v in a family of one, want the raw %v", paired.HolmPValue, paired.PValue)
+	if *paired.HolmPValue != *paired.PValue {
+		t.Errorf("holm p %v in a family of one, want the raw %v", *paired.HolmPValue, *paired.PValue)
 	}
 }
 
@@ -665,7 +665,7 @@ func TestPlanted_PairedNullIsNotCalledSignificantAboveItsLevel(t *testing.T) {
 	for replicate := 0; replicate < replicates; replicate++ {
 		first, second := plantTwoArms(t, int64(5000+replicate), 30, model, model)
 		result := analyseCampaigns(t, "--paired", first, second)
-		if result.Paired.PValue < 0.05 {
+		if *result.Paired.PValue < 0.05 {
 			rejected++
 		}
 	}

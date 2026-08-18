@@ -105,8 +105,9 @@ func analysePaired(arms []arm, now time.Time) (analysis, error) {
 		return analysis{}, fmt.Errorf("arms %q and %q share no seed with a usable run in both",
 			testable[0].Name, testable[1].Name)
 	}
-	if !math.IsNaN(comparison.PValue) {
-		comparison.HolmPValue = holm([]float64{comparison.PValue})[0]
+	if comparison.PValue != nil {
+		adjusted := holm([]float64{*comparison.PValue})[0]
+		comparison.HolmPValue = &adjusted
 		result.HolmFamilySize = 1
 	}
 	result.Paired = &comparison

@@ -87,7 +87,7 @@ func TestPairArms_ScoresEachPairByWhichRunOutlivedTheOther(t *testing.T) {
 		t.Errorf("median difference %v over %d pair(s), want 10 over 2",
 			comparison.MedianDifference, comparison.BothViolated)
 	}
-	if want := signTest(0, 2); comparison.PValue != want {
+	if want := signTest(0, 2); comparison.PValue == nil || *comparison.PValue != want {
 		t.Errorf("p %v, want the sign test's %v over the two ordered pairs", comparison.PValue, want)
 	}
 }
@@ -105,8 +105,8 @@ func TestPairArms_PairsOfCleanRunsAreNotEvidence(t *testing.T) {
 	if comparison.Unordered != 2 || comparison.Sign != 0 {
 		t.Errorf("comparison %+v, want both pairs unordered and no direction", comparison)
 	}
-	if !math.IsNaN(comparison.PValue) {
-		t.Errorf("p %v, want undefined with no ordered pair", comparison.PValue)
+	if comparison.PValue != nil {
+		t.Errorf("p %v, want undefined with no ordered pair", *comparison.PValue)
 	}
 	if comparison.MedianDifference != nil {
 		t.Errorf("median difference %v, want undefined where no pair has two violations",
@@ -181,8 +181,8 @@ func TestPairArms_DirectionReversesWithTheArms(t *testing.T) {
 		t.Errorf("median differences %v and %v, want opposites",
 			*forward.MedianDifference, *reversed.MedianDifference)
 	}
-	if math.Abs(forward.PValue-reversed.PValue) > 1e-12 {
-		t.Errorf("p-values %v and %v, want the same two-sided value", forward.PValue, reversed.PValue)
+	if math.Abs(*forward.PValue-*reversed.PValue) > 1e-12 {
+		t.Errorf("p-values %v and %v, want the same two-sided value", *forward.PValue, *reversed.PValue)
 	}
 	if math.Abs(forward.A12+reversed.A12-1) > 1e-12 {
 		t.Errorf("a12 %v and %v, want them to sum to 1", forward.A12, reversed.A12)

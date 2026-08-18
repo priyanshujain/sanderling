@@ -149,7 +149,7 @@ func writePaired(out io.Writer, comparison pairedComparison) {
 		formatStepDifference(comparison.MedianDifference), comparison.BothViolated, comparison.Sign, comparison.A12)
 	fmt.Fprintf(out, "sign test over the %d ordered pair(s), p %s, holm p %s\n",
 		comparison.FirstSooner+comparison.SecondSooner,
-		formatPValue(comparison.PValue), formatPValue(comparison.HolmPValue))
+		formatOptionalPValue(comparison.PValue), formatOptionalPValue(comparison.HolmPValue))
 	if len(comparison.UnpairedSeeds) > 0 {
 		fmt.Fprintf(out, "%d seed(s) usable in one arm only and left out of the pairing: %v\n",
 			len(comparison.UnpairedSeeds), comparison.UnpairedSeeds)
@@ -207,6 +207,13 @@ func formatSingletons(summary armSummary) string {
 		return "n/a"
 	}
 	return fmt.Sprintf("%d/%d (%.3f)", summary.SingletonDefects, summary.DistinctDefects, *summary.SingletonFraction)
+}
+
+func formatOptionalPValue(value *float64) string {
+	if value == nil {
+		return "n/a"
+	}
+	return formatPValue(*value)
 }
 
 func formatPValue(value float64) string {
