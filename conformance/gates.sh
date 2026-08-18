@@ -517,6 +517,8 @@ self_test() {
     "$(gate_no_doubled_text "${testdata}/pass" && echo PASS || echo FAIL)"
   assert "G4 doubled text caught with the typed value redacted" FAIL \
     "$(gate_no_doubled_text "${testdata}/g4-doubled-text" && echo PASS || echo FAIL)"
+  assert "G4 doubling appended to existing content caught" FAIL \
+    "$(gate_no_doubled_text "${testdata}/g4-appended-doubling" && echo PASS || echo FAIL)"
   assert "G4 repeated character is not doubling" PASS \
     "$(gate_no_doubled_text "${testdata}/g4-repeated-character" && echo PASS || echo FAIL)"
   assert "G4 doubled text caught from the recorded value" FAIL \

@@ -152,6 +152,16 @@ write_run(
     ],
 )
 
+# G4: the driver typed the value twice onto what the field already held, so the
+# whole value is not its own doubling. What it grew by is.
+write_run(
+    "g4-appended-doubling",
+    [
+        step(1, 600, login_screen("demo@", ""), input_action("LoginEmail")),
+        step(2, 600, login_screen("demo@folio.appfolio.app", "")),
+    ],
+)
+
 # G4: an action typed at coordinates names no field. The step carries nothing
 # the gate can check, and it may not stop the gate checking the rest.
 write_run(
