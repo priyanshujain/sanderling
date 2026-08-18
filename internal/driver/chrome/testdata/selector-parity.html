@@ -16,6 +16,17 @@
     <div id="unsent_row"><span id="unsent_badge">3<!-- --> unsent</span></div>
     <div id="split_row">Sen<span id="split_tail">t here</span></div>
     <div id="nested_row">Sent <span id="nested_badge">Sent</span></div>
+    <!-- secure is derived from the field type, so the fields here have to cover
+         every state it answers with: the password entry, the three shapes of
+         editable field that are not one, and a control that is no field at all
+         and answers to neither value. -->
+    <form id="login_form">
+      <input id="login_email" type="email" aria-label="login_email" />
+      <input id="login_password" type="password" aria-label="login_password" />
+      <textarea id="login_note" aria-label="login_note"></textarea>
+      <div id="login_terms" contenteditable="true">terms</div>
+      <input id="login_remember" type="checkbox" aria-label="login_remember" />
+    </form>
     <todo-app id="todo_app">
       <todo-list id="todo_list">
         <li id="todo_1">Buy milk</li>

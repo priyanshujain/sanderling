@@ -130,6 +130,26 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			want:     []string{"todo_link"},
 		},
 		{
+			// secure names no attribute the markup writes: both producers derive
+			// it from the field's type. Matched as a raw attribute it reached
+			// nothing here while resolving fine against the dump, and `secure`
+			// being an accepted key meant no unknown-key error said so.
+			name:     "secure",
+			selector: "secure:true",
+			object:   objectSelector("secure", "true"),
+			want:     []string{"login_password"},
+		},
+		{
+			// false is every editable field that is not a password entry, not
+			// everything that is not one: a control that is no field at all
+			// reports null, the way android reports null for everything, and
+			// answers to neither value.
+			name:     "not secure",
+			selector: "secure:false",
+			object:   objectSelector("secure", "false"),
+			want:     []string{"login_email", "login_note", "login_terms"},
+		},
+		{
 			// The root element answers a selector like any other: the string
 			// form scans from the root down, and the object form used to start
 			// at the root's children and lose it.
