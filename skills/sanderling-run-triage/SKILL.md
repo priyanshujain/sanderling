@@ -18,8 +18,9 @@ complete and useful answer.
 
 - **0** means the run completed. It does **not** mean no violations. Without
   `--exit-on-violation` a run that recorded violations still exits 0: measured
-  on a ten step web run that recorded two, `run complete: 10 steps` and
-  `2 violation record(s)`, exit code 0.
+  on a ten step web run of the `throwing` fixture,
+  `run complete: 10 steps, 10 driven by the generator` and
+  `1 violation record(s)`, exit code 0.
 - **2** means the run recorded a violation under `--exit-on-violation` and
   stopped there. The same ten step run with the flag exits 2 after four steps.
 - **1** means the harness broke. A bad target gives
@@ -27,8 +28,8 @@ complete and useful answer.
   writes no run directory at all, because the trace is created after the launch
   succeeds. A run that finished also exits 1 when it holds no verdict to report:
   a spec with no properties, a run no step of which reached the verifier, or one
-  whose action generator never drove the app (section 5). Those do leave a full
-  run directory behind.
+  whose action generator never drove the app and found nothing (section 5).
+  Those do leave a full run directory behind.
 
 Anything other than 0 and 2 means the run did not complete, and a missing
 `trace.jsonl` under a 0 or a 2 means there is nothing to judge rather than
@@ -193,6 +194,13 @@ of them`, followed by the per reason tally of what never reached the app.
 `llm-calls.jsonl` carries the cause, one record per step, and the trace's
 `action_skipped` names it on each step that produced nothing.
 
+Two runs are not refused. One that recorded a violation exits 0 whatever drove
+it there, because it holds the verdict the refusal exists to demand, and a
+campaign passes no flags, so refusing it would write `exit_code: 1` and lose the
+detection to the analysis as missing data. And a sweep measuring where a
+generator reaches passes `--allow-no-generator-actions`, for which reaching
+nothing on this build is the measurement.
+
 None of the others change the exit code. All of them change what the run proves,
 which is nothing.
 
@@ -211,7 +219,7 @@ The run says so itself:
 7 step(s) judged by nothing: the screen was still moving when it was read
 ```
 
-Subtract it. `run complete: 240 steps` with that line is a 233 step run for
+Subtract it. A 240 step run with that line is a 233 step run for
 every purpose that matters, and `replay-ui-summary.sh` reports the pair as
 "N steps recorded, M verified" for the same reason. A run with many of these is
 telling you the driver could not get a clean read of your app, which is a

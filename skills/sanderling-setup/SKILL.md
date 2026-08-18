@@ -205,15 +205,18 @@ step index=10 screen="/index.html" nodes=6
 
 elapsed: 1.715s
 
-run complete: 10 steps
+run complete: 10 steps, 10 driven by the generator
 no violations.
 ```
 
 `nodes=` is the first number to read and the cheapest lie detector you have. On
 that page, four elements plus html and body gave `nodes=6`. The same command
-against an empty page gives `nodes=2` for every step, and still exits 0 with no
-violations. If `nodes` is a handful and never grows, the run is looking at
-something that is not your app.
+against an empty page gives `nodes=2` for every step, and the run then refuses
+itself: the generator has nothing to pick, so the summary reads
+`run complete: 10 steps, 0 driven by the generator` and
+`10 action(s) never reached the app: no_action_produced 10`, and the process
+exits 1 having judged one blank screen ten times. If `nodes` is a handful and
+never grows, the run is looking at something that is not your app.
 
 `screen=` is web-only and has nothing to do with your spec's screen hooks: the
 Chrome driver puts the URL hash, or the pathname when there is no hash, on the
