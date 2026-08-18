@@ -10,11 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/priyanshujain/sanderling/internal/android"
 )
 
 // commandExecutor runs one sanderling invocation and returns its exit code.
@@ -45,6 +48,23 @@ func executeCommand(ctx context.Context, binary string, arguments []string, outp
 	}
 	return -1, err
 }
+
+// connectedDevices lists the devices the host currently has. A variable so a
+// preflight test runs without a device farm attached.
+var connectedDevices = android.ConnectedDevices
+
+// A failure that came back in less than fastFailureThreshold never did the
+// work the run was asked to do: a step-budgeted run takes tens of minutes,
+// while a worker pointed at a device that is gone gives up in about half a
+// minute. fastFailuresBeforeQuarantine of those in a row, with no run that
+// worked in between to reset the count, is a property of the device rather
+// than a flake, and it is where the cost of being wrong (one worker's
+// throughput, since the seeds stay on the shared queue) is still smaller than
+// the cost of being right one seed later.
+const (
+	fastFailureThreshold         = 2 * time.Minute
+	fastFailuresBeforeQuarantine = 3
+)
 
 // runShutdownGrace bounds how long a signalled run gets to stop its sidecar
 // before it is killed. It exceeds the sidecar's own 15s shutdown grace, or the
@@ -96,12 +116,71 @@ type campaign struct {
 	mutex         sync.Mutex
 	failures      int
 	unreadable    int
+	quarantined   []quarantinedDevice
+	// unrunSeeds are the seeds left without a trustworthy result: those a
+	// quarantined device consumed on its way out, and those still queued when
+	// the last worker stopped.
+	unrunSeeds []int64
+}
+
+// failureStreak is one worker's run of fast failures, and the seeds they cost.
+type failureStreak struct {
+	fastFailures  int
+	consumedSeeds []int64
+}
+
+// failedFast reports a run that came back non-zero too quickly to have done the
+// work it was given. A killed run is excluded: it outlived the run timeout,
+// which is the opposite of failing fast.
+func failedFast(record runRecord) bool {
+	return record.ExitCode != 0 && !record.TimedOut &&
+		time.Duration(record.MonotonicMillis)*time.Millisecond < fastFailureThreshold
+}
+
+// preflightDevices refuses to start until every serial in --devices is present.
+// A worker aimed at a serial that is gone fails in seconds and pulls the next
+// seed, so a handful of dead serials drain the queue while the healthy workers
+// are still inside their first run. Discovering that on run 1 of 20 is already
+// too late: the sweep is spent, and its output does not say why.
+func preflightDevices(ctx context.Context, configuration config) error {
+	// Android is the platform whose worker names a device this can enumerate: a
+	// web worker is a label with nothing behind it, and an --ios-device is
+	// resolved by simctl or by devicectl depending on whether it names a
+	// simulator or a paired phone.
+	if configuration.platform != "android" || len(configuration.devices) == 0 {
+		return nil
+	}
+	present, err := connectedDevices(ctx)
+	if err != nil {
+		return fmt.Errorf("list android devices: %w", err)
+	}
+	var missing []string
+	for _, device := range configuration.devices {
+		if !slices.Contains(present, device) {
+			missing = append(missing, device)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("not starting: %d of %d --devices not connected: %s (adb reports %s)",
+		len(missing), len(configuration.devices), strings.Join(missing, ", "), presentDevices(present))
+}
+
+func presentDevices(present []string) string {
+	if len(present) == 0 {
+		return "no devices"
+	}
+	return strings.Join(present, ", ")
 }
 
 func runCampaign(ctx context.Context, configuration config, executor commandExecutor, stdout io.Writer) error {
 	if _, err := os.Stat(filepath.Join(configuration.outputDirectory, manifestFileName)); err == nil {
 		return fmt.Errorf("%s already exists in %s: pick a fresh --output so two campaigns do not share a directory",
 			manifestFileName, configuration.outputDirectory)
+	}
+	if err := preflightDevices(ctx, configuration); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(configuration.outputDirectory, 0o755); err != nil {
 		return fmt.Errorf("create campaign dir: %w", err)
@@ -117,7 +196,8 @@ func runCampaign(ctx context.Context, configuration config, executor commandExec
 		return err
 	}
 	host, _ := os.Hostname()
-	if err := writeManifest(configuration.outputDirectory, buildManifest(configuration, host, binaryPath, version, time.Now().UTC())); err != nil {
+	intended := buildManifest(configuration, host, binaryPath, version, time.Now().UTC())
+	if err := writeManifest(configuration.outputDirectory, intended); err != nil {
 		return fmt.Errorf("write %s: %w", manifestFileName, err)
 	}
 
@@ -135,6 +215,19 @@ func runCampaign(ctx context.Context, configuration config, executor commandExec
 
 	fmt.Fprintf(stdout, "campaign complete: %d of %d runs failed, %d produced an unreadable trace\n",
 		sweep.failures, len(configuration.seeds), sweep.unreadable)
+	if len(sweep.quarantined) > 0 || len(sweep.unrunSeeds) > 0 {
+		intended.Quarantined = sweep.quarantined
+		intended.UnrunSeeds = sweep.unrunSeeds
+		if err := writeManifest(configuration.outputDirectory, intended); err != nil {
+			fmt.Fprintf(stdout, "warning: rewrite %s: %v\n", manifestFileName, err)
+		}
+		fmt.Fprintf(stdout, "%d of %d seeds have no result: %v\n",
+			len(sweep.unrunSeeds), len(configuration.seeds), sweep.unrunSeeds)
+	}
+	if len(sweep.quarantined) > 0 && len(sweep.quarantined) == len(workerDevices(configuration.devices)) {
+		return fmt.Errorf("every device was quarantined (%s); %d of %d seeds have no result",
+			strings.Join(quarantinedNames(sweep.quarantined), ", "), len(sweep.unrunSeeds), len(configuration.seeds))
+	}
 	if sweep.failures > 0 {
 		return fmt.Errorf("%d of %d runs failed", sweep.failures, len(configuration.seeds))
 	}
@@ -180,15 +273,68 @@ func (c *campaign) sweep(ctx context.Context) {
 		waitGroup.Add(1)
 		go func(device string) {
 			defer waitGroup.Done()
-			for seed := range queue {
-				if ctx.Err() != nil {
-					return
-				}
-				c.report(c.runSeed(ctx, seed, device))
-			}
+			c.work(ctx, device, queue)
 		}(device)
 	}
 	waitGroup.Wait()
+
+	for seed := range queue {
+		c.unrunSeeds = append(c.unrunSeeds, seed)
+	}
+	slices.Sort(c.unrunSeeds)
+}
+
+// work runs seeds on one device until the queue is empty or the device has
+// failed fast often enough in a row to be quarantined. The streak is worker
+// local: one worker drives one device, and any run that did its work clears it.
+func (c *campaign) work(ctx context.Context, device string, queue <-chan int64) {
+	var streak failureStreak
+	for seed := range queue {
+		if ctx.Err() != nil {
+			return
+		}
+		record := c.runSeed(ctx, seed, device)
+		c.report(record)
+		// A cancelled campaign fails every run in flight in seconds, which is
+		// the shutdown and not the device.
+		if ctx.Err() != nil {
+			return
+		}
+		if !failedFast(record) {
+			streak = failureStreak{}
+			continue
+		}
+		streak.fastFailures++
+		streak.consumedSeeds = append(streak.consumedSeeds, seed)
+		if streak.fastFailures >= fastFailuresBeforeQuarantine {
+			c.quarantine(device, streak)
+			return
+		}
+	}
+}
+
+// quarantine takes a device out of the sweep. The seeds it burned are reported
+// unrun rather than requeued: each already holds that attempt's log, and a
+// second record for the same seed would make one seed count as two runs.
+func (c *campaign) quarantine(device string, streak failureStreak) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.quarantined = append(c.quarantined, quarantinedDevice{
+		Device:        device,
+		FastFailures:  streak.fastFailures,
+		ConsumedSeeds: streak.consumedSeeds,
+	})
+	c.unrunSeeds = append(c.unrunSeeds, streak.consumedSeeds...)
+	fmt.Fprintf(c.stdout, "quarantined device %q: %d runs in a row failed in under %s; seeds %v have no result\n",
+		device, streak.fastFailures, fastFailureThreshold, streak.consumedSeeds)
+}
+
+func quarantinedNames(devices []quarantinedDevice) []string {
+	names := make([]string, 0, len(devices))
+	for _, device := range devices {
+		names = append(names, device.Device)
+	}
+	return names
 }
 
 func (c *campaign) runSeed(ctx context.Context, seed int64, device string) runRecord {
