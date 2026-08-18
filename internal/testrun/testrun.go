@@ -280,10 +280,12 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 // run drove nothing. The count is the generator's alone because a spec's setup
 // drives the app before the generator is consulted, so a login that ran leaves
 // dispatched actions behind whatever the generator then did.
-// --exit-on-violation keeps precedence over it so a run that found something
-// still exits on its evidence, and the property-free opt-out exempts the sweeps,
-// whose measurement is where a generator reaches and for which "nowhere on this
-// build" is a result rather than a broken run.
+//
+// A recorded violation carries such a run through whether or not
+// --exit-on-violation was passed: the refusal exists because a run with no
+// verdict must not read as a clean one, and a run that recorded a violation
+// holds a verdict. Campaigns pass no flags, so refusing them there would write
+// exit_code 1 and lose a real detection to the analysis as missing data.
 func runOutcome(options Options, summary runner.Summary) error {
 	if summary.Steps > 0 && summary.SkippedVerification == summary.Steps {
 		return VacuousRunError{Steps: summary.Steps}
@@ -291,7 +293,8 @@ func runOutcome(options Options, summary runner.Summary) error {
 	if options.ExitOnViolation && len(summary.Violations) > 0 {
 		return ViolationsError{Count: len(summary.Violations)}
 	}
-	if !options.AllowNoProperties && summary.Steps > 0 && summary.GeneratorActions == 0 {
+	if !options.AllowNoProperties && len(summary.Violations) == 0 &&
+		summary.Steps > 0 && summary.GeneratorActions == 0 {
 		return NoGeneratorActionsError{
 			Steps:          summary.Steps,
 			SkippedActions: summary.SkippedActions,

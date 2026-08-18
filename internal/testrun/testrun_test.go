@@ -473,6 +473,27 @@ func TestRunOutcome_SetupActionsDoNotCarryARunWhoseGeneratorDroveNothing(t *test
 	}
 }
 
+// A recorded violation is a verdict, and a run that reached one is not a dead
+// run whatever drove the app to it. Campaigns are where this bites: they never
+// pass --exit-on-violation, so refusing such a run writes exit_code 1 into the
+// record and the analysis drops a real detection as missing data.
+func TestRunOutcome_ARecordedViolationCarriesARunWhoseGeneratorDroveNothing(t *testing.T) {
+	setupReachedTheBug := runner.Summary{
+		Steps:             40,
+		DispatchedActions: 3,
+		GeneratorActions:  0,
+		SkippedActions:    map[string]int{"no_action_produced": 40},
+		Violations: []runner.ViolationRecord{
+			{StepIndex: 3, Properties: []string{"noUncaughtExceptions"}},
+		},
+	}
+
+	if err := runOutcome(Options{}, setupReachedTheBug); err != nil {
+		t.Fatalf("a run that recorded a violation came back %v, want the run to succeed "+
+			"so the campaign records exit_code 0 and the detection survives", err)
+	}
+}
+
 // wedgedLaunchDriver never returns from Launch, standing in for a driver whose
 // device-side session is stuck.
 type wedgedLaunchDriver struct {
