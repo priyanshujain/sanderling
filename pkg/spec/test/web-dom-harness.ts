@@ -109,7 +109,7 @@ export function fakeElement(spec: FakeElementSpec): FakeElement {
   const element: FakeElement = {
     ...spec,
     tagName: spec.tag.toUpperCase(),
-    type: spec.tag === "input" ? "text" : "",
+    type: spec.tag === "input" ? (attributes.type ?? "text") : "",
     isContentEditable: editable && spec.tag !== "input" && spec.tag !== "textarea",
     id: spec.id ?? "",
     className: attributes.class ?? "",

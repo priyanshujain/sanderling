@@ -735,6 +735,37 @@ test("secure states the field type either way, and nothing off a field", () => {
   assert.equal(handleOf(heading).secure, null);
 });
 
+// The fact above and the selector below have to name the same field. `secure` is
+// derived from the field's type, not written by the markup, so matching it as a
+// raw attribute reaches nothing: `secure` is an accepted key, no unknown-key
+// error fires, and find answers undefined here for the field it answers with on
+// ios. A spec that names the password entry that way types the password into
+// nothing and every property over it passes vacuously.
+test("secure selects the field this host reports secure", () => {
+  const password = fakeElement({
+    tag: "input", x: 0, y: 0, width: 100, height: 20,
+    id: "login_password", editable: true, attrs: { type: "password" },
+  });
+  const email = fakeElement({
+    tag: "input", x: 0, y: 20, width: 100, height: 20,
+    id: "login_email", editable: true, attrs: { type: "email" },
+  });
+  const heading = fakeElement({ tag: "h1", x: 0, y: 40, width: 100, height: 20, id: "title" });
+  withFakeDocument([password, email, heading], () => {
+    const ax = __testing__.buildAx() as { findAll(selector: unknown): Record<string, unknown>[] };
+    assert.deepEqual(
+      ax.findAll({ secure: true }).map((field) => [field.id, field.secure]),
+      [["login_password", true]],
+    );
+    // Not the heading: an element that is no field at all reports null, the way
+    // android reports null for every element, and answers to neither value.
+    assert.deepEqual(
+      ax.findAll({ secure: false }).map((field) => [field.id, field.secure]),
+      [["login_email", false]],
+    );
+  });
+});
+
 test("attrs carries every other attribute alongside tag and aria-label", () => {
   const attrs = attrsOf(
     domElement({ tag: "input", attributes: { id: "txn-note", placeholder: "What's this for?" } }),

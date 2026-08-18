@@ -119,7 +119,24 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   placeholder: (v) => `[placeholder="${cssEscape(v)}"]`,
   placeholderValue: (v) => `[placeholder="${cssEscape(v)}"]`,
   hintText: (v) => `[placeholder="${cssEscape(v)}"]`,
+  secure: secureSelector,
 };
+
+// secure is derived from the field's type rather than written by the markup, so
+// matching it as a raw attribute reaches nothing at all. Both producers of the
+// fact, elementHandle below and the hierarchy dump in
+// internal/driver/chrome/driver.go, read `type === "password"` off a field they
+// call editable, so false is every editable field that is NOT a password entry
+// rather than everything that is not one: an element that is no field reports
+// null, as android reports null for everything, and answers to neither value.
+function secureSelector(value: string): string {
+  if (value === "true") return `input[type="password"]`;
+  if (value !== "false") return ":not(*)";
+  const textInput = ["password", ...NON_TEXT_INPUT_TYPES]
+    .map((type) => `:not([type="${type}"])`)
+    .join("");
+  return `:is(input${textInput}, textarea, [contenteditable]:not([contenteditable="false"]))`;
+}
 
 // cssEscape delegates to the platform CSS.escape (per CSSOM spec). It produces
 // output safe for both identifier and string contexts, since CSS string
