@@ -1,0 +1,180 @@
+package runner
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
+
+	"github.com/priyanshujain/sanderling/internal/verifier"
+)
+
+// typedCredential stands in for what a login setup types. Nothing the run
+// records or sends may carry it.
+const typedCredential = "fixture-passphrase-9f21"
+
+// iosLoginTreeJSON is the shape internal/driver/ioscompanion produces for a
+// login form: every editable field reports `secure`, so a field carrying
+// `secure:false` is positively known not to be a credential entry.
+const iosLoginTreeJSON = `{
+  "attributes": {"bounds": "[0,0,390,844]", "class": "Window"},
+  "children": [
+    {"attributes": {"identifier": "LoginEmail", "class": "TextField", "hintText": "Email", "bounds": "[20,200,370,244]"},
+     "editable": true, "enabled": true, "secure": false, "children": []},
+    {"attributes": {"identifier": "LoginPassword", "class": "SecureTextField", "hintText": "Password", "bounds": "[20,260,370,304]"},
+     "editable": true, "enabled": true, "secure": true, "children": []}
+  ]
+}`
+
+// webLoginTreeJSON is the same form as the chrome dump reports it.
+const webLoginTreeJSON = `{
+  "attributes": {"bounds": "[0,0,1280,800]", "tag": "html"},
+  "children": [
+    {"attributes": {"resource-id": "login-email", "tag": "input", "hintText": "Email", "bounds": "[20,200,400,240]"},
+     "editable": true, "enabled": true, "secure": false, "children": []},
+    {"attributes": {"resource-id": "login-password", "tag": "input", "hintText": "Password", "bounds": "[20,260,400,300]"},
+     "editable": true, "enabled": true, "secure": true, "children": []}
+  ]
+}`
+
+// androidLoginTreeJSON is the same form on Android, where the native tree
+// mapper drops uiautomator's password attribute and neither field carries the
+// fact.
+const androidLoginTreeJSON = `{
+  "attributes": {"bounds": "[0,0,1080,2340]"},
+  "children": [
+    {"attributes": {"resource-id": "login_email", "class": "android.widget.EditText", "hintText": "Email", "bounds": "[20,200,1060,300]"},
+     "enabled": true, "children": []},
+    {"attributes": {"resource-id": "login_password", "class": "android.widget.EditText", "hintText": "Password", "bounds": "[20,320,1060,420]"},
+     "enabled": true, "children": []}
+  ]
+}`
+
+func typeInto(selector string) verifier.Action {
+	return verifier.Action{Kind: verifier.ActionKindInputText, On: selector, Text: typedCredential}
+}
+
+func TestTraceActionForRedactsTypedValuesTheTargetCannotClear(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		treeJSON string
+		selector string
+	}{
+		{"ios secure field", iosLoginTreeJSON, "id:LoginPassword"},
+		{"web secure field", webLoginTreeJSON, "id:login-password"},
+		{"android field reported as neither", androidLoginTreeJSON, "id:login_email"},
+		{"android password field", androidLoginTreeJSON, "id:login_password"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			traceAction := traceActionFor(typeInto(testCase.selector), mustParseTree(t, testCase.treeJSON))
+			if traceAction.Text != verifier.RedactedInputText {
+				t.Errorf("trace action text = %q, want it redacted", traceAction.Text)
+			}
+			if traceAction.Selector != testCase.selector {
+				t.Errorf("trace selector = %q, want %q so the record still shows which field was typed into",
+					traceAction.Selector, testCase.selector)
+			}
+		})
+	}
+}
+
+func TestTraceActionForKeepsTypedValuesForAFieldReportedNotSecure(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		treeJSON string
+		selector string
+	}{
+		{"ios", iosLoginTreeJSON, "id:LoginEmail"},
+		{"web", webLoginTreeJSON, "id:login-email"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			const address = "ada@example.com"
+			action := verifier.Action{Kind: verifier.ActionKindInputText, On: testCase.selector, Text: address}
+			traceAction := traceActionFor(action, mustParseTree(t, testCase.treeJSON))
+			if traceAction.Text != address {
+				t.Errorf("trace action text = %q, want the typed value on a field reported not secure", traceAction.Text)
+			}
+		})
+	}
+}
+
+// The redaction is a rendering rule, never a change to what is dispatched: the
+// app has to receive the keystrokes a user would have produced.
+func TestApplyActionTypesTheRealValueIntoEveryField(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		treeJSON string
+		selector string
+	}{
+		{"ios secure field", iosLoginTreeJSON, "id:LoginPassword"},
+		{"web secure field", webLoginTreeJSON, "id:login-password"},
+		{"android field", androidLoginTreeJSON, "id:login_password"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fastFocusSettle(t)
+			driverMock := mockdriver.New()
+			mustDispatch(t, driverMock, typeInto(testCase.selector), mustParseTree(t, testCase.treeJSON))
+
+			typed := ""
+			for _, recorded := range driverMock.Actions() {
+				if recorded.Kind == mockdriver.ActionInputText {
+					typed = recorded.Text
+				}
+			}
+			if typed != typedCredential {
+				t.Errorf("driver received %q, want the real typed value", typed)
+			}
+		})
+	}
+}
+
+const secureLoginSpec = `
+import { llm, always, actions, InputText, taps, typing, weighted } from "@sanderling/spec";
+globalThis.properties = { ok: always(() => true) };
+globalThis.setup = actions(() => {
+  if (globalThis.__typed) return [];
+  globalThis.__typed = true;
+  return [InputText({ into: "id:LoginPassword", text: "` + typedCredential + `" })];
+});
+globalThis.actions = weighted([1, taps], [1, typing]);
+globalThis.generator = llm({ model: "test/model" });
+`
+
+// The recorded call is llm-calls.jsonl: its user prompt carries the
+// recent-action memory and its candidates carry the numbered list, which is
+// where a login run put the account password in cleartext beside a screenshot
+// of the same screen.
+func TestLLMCallRecordKeepsTypedSecretsOutOfThePromptAndCandidates(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	source, verifierInstance := newLLMSourceWithSpec(t, fake, secureLoginSpec)
+
+	pushSnapshotTree(t, verifierInstance, iosLoginTreeJSON)
+	action, err := source.NextAction(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("setup NextAction: %v", err)
+	}
+	if action.Text != typedCredential {
+		t.Fatalf("setup action text = %q, want the real value dispatched to the app", action.Text)
+	}
+
+	pushSnapshotTree(t, verifierInstance, iosLoginTreeJSON)
+	fake.choice = 1
+	fake.chosenAction = mustCandidates(t, verifierInstance, verifier.LabelSourceVisibleText)[0].Description
+	if _, err := source.NextAction(context.Background(), 1); err != nil {
+		t.Fatalf("llm NextAction: %v", err)
+	}
+
+	call := lastCall(t, source)
+	if strings.Contains(call.UserPrompt, typedCredential) {
+		t.Error("the recorded user prompt carries the typed value")
+	}
+	if !strings.Contains(call.UserPrompt, "InputText") {
+		t.Errorf("the recorded user prompt lost the recent-action memory entirely: %q", call.UserPrompt)
+	}
+	for _, candidate := range call.Candidates {
+		if strings.Contains(candidate.Description, typedCredential) {
+			t.Errorf("recorded candidate %d carries the typed value: %q", candidate.Index, candidate.Description)
+		}
+	}
+}

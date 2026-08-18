@@ -425,7 +425,9 @@ func TestCandidatesCallsAuthoredLeafOnce(t *testing.T) {
 		t.Errorf("authored action on a disabled control was dropped: %v", descriptions(candidates))
 	}
 	// Authored InputText replays its own sampled value (LLM does not supply it).
-	authored, ok := findCandidate(candidates, `Type "42" into "Amount"`)
+	// The fixture is an android tree, which reports no secure fact, so the
+	// rendered value is redacted while the action still carries it.
+	authored, ok := findCandidate(candidates, `Type "[redacted]" into "Amount"`)
 	if !ok {
 		t.Fatalf("authored typing missing: %v", descriptions(candidates))
 	}
@@ -747,8 +749,8 @@ func TestCandidatesAcceptASingleItemAuthoredSampler(t *testing.T) {
 const webFieldTreeJSON = `{
   "attributes": {"tag": "html", "bounds": "[0,0,400,800]"},
   "children": [
-    {"attributes": {"resource-id": "txn-amount", "tag": "input", "class": "input amount-input", "bounds": "[0,100,400,160]"}, "editable": true, "enabled": true, "children": []},
-    {"attributes": {"resource-id": "txn-note", "tag": "input", "class": "input", "bounds": "[0,200,400,260]"}, "editable": true, "enabled": true, "children": []}
+    {"attributes": {"resource-id": "txn-amount", "tag": "input", "class": "input amount-input", "bounds": "[0,100,400,160]"}, "editable": true, "enabled": true, "secure": false, "children": []},
+    {"attributes": {"resource-id": "txn-note", "tag": "input", "class": "input", "bounds": "[0,200,400,260]"}, "editable": true, "enabled": true, "secure": false, "children": []}
   ]
 }`
 
@@ -761,14 +763,14 @@ const webFieldTreeJSON = `{
 func TestCandidatesNameWebAuthoredFieldsByTheirHint(t *testing.T) {
 	const amountHandle = `{
       "id": "txn-amount", "text": "", "desc": "", "class": "input amount-input",
-      "clickable": true, "enabled": true, "editable": true, "focused": false,
+      "clickable": true, "enabled": true, "editable": true, "focused": false, "secure": false,
       "x": 200, "y": 130, "bounds": {"left": 0, "top": 100, "right": 400, "bottom": 160},
       "attrs": {"tag": "input", "aria-label": "", "id": "txn-amount",
                 "class": "input amount-input", "placeholder": "0.00", "hintText": "Amount"}
     }`
 	const noteHandle = `{
       "id": "txn-note", "text": "", "desc": "", "class": "input",
-      "clickable": true, "enabled": true, "editable": true, "focused": false,
+      "clickable": true, "enabled": true, "editable": true, "focused": false, "secure": false,
       "x": 200, "y": 230, "bounds": {"left": 0, "top": 200, "right": 400, "bottom": 260},
       "attrs": {"tag": "input", "aria-label": "", "id": "txn-note", "class": "input",
                 "placeholder": "What's this for?", "hintText": "Note (optional)"}
@@ -807,7 +809,7 @@ func TestCandidatesNameWebAuthoredFieldsByTheirHint(t *testing.T) {
 // The identifier arm must stay blind to anything a user reads, hint included.
 func TestCandidatesNameWebAuthoredFieldsByIdentifierOnThatArm(t *testing.T) {
 	const amountHandle = `{
-      "id": "txn-amount", "text": "", "editable": true, "enabled": true,
+      "id": "txn-amount", "text": "", "editable": true, "enabled": true, "secure": false,
       "x": 200, "y": 130,
       "attrs": {"tag": "input", "hintText": "Amount"}
     }`

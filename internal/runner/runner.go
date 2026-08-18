@@ -1586,7 +1586,7 @@ func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action 
 		traceAction.Selector = action.On
 		stampSelectorTarget(traceAction, action, tree)
 	case verifier.ActionKindInputText:
-		traceAction.Text = action.Text
+		traceAction.Text = verifier.RecordedActionText(action, tree)
 		traceAction.Selector = action.On
 		stampSelectorTarget(traceAction, action, tree)
 	case verifier.ActionKindSwipe:

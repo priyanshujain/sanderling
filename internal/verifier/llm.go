@@ -82,6 +82,12 @@ func (v *Verifier) CurrentScreen() string {
 	return v.lastTree.Elements[0].Screen
 }
 
+// Tree returns the hierarchy of the most recent snapshot, nil when none was
+// pushed. It is what a caller resolves an action's target against.
+func (v *Verifier) Tree() *hierarchy.Tree {
+	return v.lastTree
+}
+
 // SampleInput draws one InputText value from the shared corpus via the bundled
 // __sanderlingSampleInput__. It errors when the bundle did not install the
 // callable (a raw-JS fixture) so the caller can skip typing rather than send an
@@ -139,6 +145,10 @@ type ActionCandidate struct {
 	// prob is the internal accumulated selection probability, summed across
 	// dedup, then rounded into Weight. Not exposed in the prompt directly.
 	prob float64
+	// secure is what the target reports about being a secure text entry, which
+	// is what Description is rendered under. It is not part of what the model
+	// sees.
+	secure secureFact
 }
 
 // maxLabelRunes caps a visible-text label so joined descendant text stays short
@@ -402,6 +412,7 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext
 			Kind:      kind,
 			Label:     target.label,
 			InputType: target.inputType,
+			secure:    target.secure,
 			Action:    Action{Kind: kind, On: target.selector, X: target.x, Y: target.y, Text: text},
 		}, true
 	case ActionKindScroll:
@@ -464,6 +475,7 @@ type resolvedTarget struct {
 	selector  string
 	label     string
 	inputType string
+	secure    secureFact
 }
 
 // resolveTarget reads an authored action's target. Ax element handles carry
@@ -498,10 +510,13 @@ func (v *Verifier) resolveTarget(value goja.Value, labels labelContext) (resolve
 	if selector == "" {
 		selector = stringField(object, "selector")
 	}
-	target := resolvedTarget{x: x, y: y, selector: selector}
+	target := resolvedTarget{x: x, y: y, selector: selector, secure: secureFactFromHandle(object)}
 	if element := v.findBySelector(selector); element != nil {
 		target.label = labels.label(element)
 		target.inputType = inputTypeHint(element)
+		if !target.secure.reported {
+			target.secure = secureFactOf(element)
+		}
 	}
 	if target.label == "" {
 		target.label = truncateLabel(v.handleLabel(object, labels))
@@ -519,6 +534,7 @@ func (v *Verifier) targetFromSelector(selector string, labels labelContext) reso
 	target.x, target.y = element.Bounds.Center()
 	target.label = labels.label(element)
 	target.inputType = inputTypeHint(element)
+	target.secure = secureFactOf(element)
 	return target
 }
 
@@ -556,6 +572,7 @@ func (v *Verifier) collectBuiltin(verb string, prob float64, weighted bool, labe
 			element := targets[entry.targetIndex].element
 			candidate.Label = labels.label(element)
 			candidate.InputType = inputTypeHint(element)
+			candidate.secure = secureFactOf(element)
 		}
 		*out = append(*out, candidate)
 	}
@@ -664,7 +681,8 @@ func describeCandidate(candidate ActionCandidate) string {
 			}
 			return fmt.Sprintf("Type into %q", candidate.Label)
 		}
-		return fmt.Sprintf("Type %q into %q", candidate.Action.Text, candidate.Label)
+		return fmt.Sprintf("Type %q into %q",
+			recordedInputText(candidate.Action.Text, candidate.secure), candidate.Label)
 	case ActionKindScroll:
 		return "Scroll " + candidate.Direction
 	case ActionKindSwipe:

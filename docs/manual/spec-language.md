@@ -78,7 +78,7 @@ s.ax.find({ testTag: "AccountCard", clickable: true })
 
 Every key-value pair must match. A key means the same thing here as in the string form: `id`, `desc`, `idPrefix`, `descPrefix` and `tag` keep their matching rules, and every other key is an attribute name, with substring and boolean rules per attribute.
 
-Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
+Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`, `secure`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
 
 A key that names neither an accepted selector key nor an attribute some element on screen carries fails the run, naming the key and the accepted list. Such a key can never match, and an empty result is indistinguishable from a screen with no matching element: the generator declines to act, the runner waits out the step, and the run ends clean having explored nothing. The string form keeps its open kind space, since `<attr>:<value>` is the documented way to reach a raw driver attribute.
 
@@ -126,6 +126,7 @@ Fields available on every element returned by `find` / `findAll`:
 | `checked` | `boolean` | Checkbox or toggle state |
 | `focused` | `boolean` | Element has input focus |
 | `selected` | `boolean` | Selection state |
+| `secure` | `boolean \| null` | Field masks what is typed into it; `null` where the platform does not report it (Android never does) |
 | `bounds` | `{ left, top, right, bottom }` | Bounding box in device pixels |
 | `x` | `number` | Center X (derived from bounds) |
 | `y` | `number` | Center Y (derived from bounds) |

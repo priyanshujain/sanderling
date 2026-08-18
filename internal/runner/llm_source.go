@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 	"github.com/priyanshujain/sanderling/internal/llmclient"
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
@@ -107,7 +108,7 @@ func (s *llmSource) NextAction(ctx context.Context, stepIndex int) (verifier.Act
 	if err == nil {
 		s.lastFromSetup = true
 		s.record(stepIndex, trace.LLMCall{Outcome: trace.LLMOutcomeSetupAction})
-		s.history.add(describeAction(action))
+		s.history.add(describeAction(action, s.verifier.Tree()))
 		return action, nil
 	}
 	if !errors.Is(err, verifier.ErrNoAction) {
@@ -129,7 +130,7 @@ func (s *llmSource) NextAction(ctx context.Context, stepIndex int) (verifier.Act
 	s.lastReasoning = selection.reasoning
 	s.lastChoice = selection.choice
 	s.lastChosenAction = selection.chosenAction
-	s.history.add(describeAction(selection.action))
+	s.history.add(describeAction(selection.action, s.verifier.Tree()))
 	return selection.action, nil
 }
 
@@ -427,10 +428,13 @@ func parseChoice(content string) (choiceOutput, error) {
 }
 
 // describeAction renders a short action summary for the recent-action memory.
-func describeAction(action verifier.Action) string {
+// The tree is the one the action was chosen against, which is what says whether
+// a typed value may be written into the memory at all.
+func describeAction(action verifier.Action, tree *hierarchy.Tree) string {
 	switch action.Kind {
 	case verifier.ActionKindInputText:
-		return fmt.Sprintf("InputText %s = %q", actionTarget(action), action.Text)
+		return fmt.Sprintf("InputText %s = %q",
+			actionTarget(action), verifier.RecordedActionText(action, tree))
 	case verifier.ActionKindScroll:
 		// A builtin gesture carries endpoints rather than a selector, so name the
 		// container by where the drag starts; that is what tells two scrollable

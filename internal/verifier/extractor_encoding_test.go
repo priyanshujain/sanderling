@@ -43,6 +43,7 @@ const canonicalElement = `{
 	"enabled": true,
 	"focused": false,
 	"id": "TxnAmountField",
+	"secure": null,
 	"selected": false,
 	"text": "199",
 	"x": 200,

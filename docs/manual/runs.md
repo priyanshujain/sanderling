@@ -29,6 +29,12 @@ sanderling test --spec spec.ts --bundle-id com.example.app --duration 30m
 
 The trace is written incrementally. An interrupted run is complete up to the step where it stopped.
 
+## Typed values in the record
+
+A run types into whatever the app puts on screen, login forms included, and the trace and the model call record are both shared. So a typed value is written down as `[redacted]` whenever the target may be a credential entry: the trace action, the recent-action memory the prompt carries, and the numbered candidate list all render it that way. The app still receives the real keystrokes; only the record is redacted, and the record still names the field that was typed into.
+
+Which values that covers differs by platform, because the platforms differ in what they report. iOS and web state on every editable field whether it masks its input, so only the fields that do are redacted and the rest of the memory keeps its values. Android reports nothing: uiautomator's password attribute is dropped by the native tree mapper before the driver sees it, a password field is indistinguishable from a search box there, and so every typed value on Android is redacted.
+
 ## App state across runs
 
 By default each run wipes app data before launch and starts cold. Pass `--clear-data=false` to resume whatever the previous run left behind (an account, cached responses, completed onboarding). See the [CLI reference](../cli/#sanderling-test).

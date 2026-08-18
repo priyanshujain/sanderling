@@ -124,6 +124,14 @@ func nodeObject(runtime *goja.Runtime, tree *hierarchy.Tree, node *hierarchy.Nod
 	_ = object.Set("focused", element.Focused)
 	_ = object.Set("selected", element.Selected)
 	_ = object.Set("editable", element.Editable)
+	// Three-valued, unlike the other state flags: null where the platform
+	// reported nothing at all, which is what separates an ordinary field from a
+	// password field on a platform that cannot tell them apart.
+	var secure any
+	if element.SecureReported() {
+		secure = element.Secure
+	}
+	_ = object.Set("secure", secure)
 	_ = object.Set("x", centerX)
 	_ = object.Set("y", centerY)
 	_ = object.Set(tagSelector, unambiguousSelector(tree, node, selector))
