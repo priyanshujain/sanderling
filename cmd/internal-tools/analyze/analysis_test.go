@@ -352,6 +352,67 @@ func TestRun_RefusesToCompareArmsCensoredAtDifferentBudgets(t *testing.T) {
 	}
 }
 
+func writeSourcedCampaign(t *testing.T, directory, name string, steps, unattributed int) {
+	t.Helper()
+	const budget, runs, actions = 40, 6, 20
+	seeds := make([]int, 0, runs)
+	records := make([]map[string]any, 0, runs)
+	for seed := 1; seed <= runs; seed++ {
+		seeds = append(seeds, seed)
+		records = append(records, map[string]any{
+			"seed": seed, "exit_code": 0, "steps": steps, "actions": actions,
+			"monotonic_millis": 60_000, "unattributed_actions": unattributed,
+		})
+	}
+	writeCampaign(t, directory, map[string]any{"arm": name, "max_steps": budget, "seeds": seeds}, records)
+}
+
+// An arm whose actions name no producer counts whatever the spec's setup
+// dispatched in the denominator of every per-action rate, and an arm whose
+// actions name one leaves the login out of it. The two denominators measure
+// different things, so a test that ranks one arm against the other reads a
+// difference in what was counted as a difference in what the arms found.
+func TestRun_RefusesToCompareArmsWhoseActionsWereCountedDifferently(t *testing.T) {
+	cases := []struct {
+		name      string
+		arguments []string
+	}{
+		{name: "independent samples"},
+		{name: "paired", arguments: []string{"--paired"}},
+	}
+	for _, test := range cases {
+		root := t.TempDir()
+		attributed := filepath.Join(root, "attributed")
+		legacy := filepath.Join(root, "legacy")
+		writeSourcedCampaign(t, attributed, "attributed", 40, 0)
+		writeSourcedCampaign(t, legacy, "legacy", 30, 20)
+
+		err := run(append(test.arguments, attributed, legacy), io.Discard, io.Discard)
+		if err == nil {
+			t.Fatalf("%s: an arm of unknown provenance was tested against an attributed one without complaint", test.name)
+		}
+		for _, fragment := range []string{"attributed", "legacy", "120", "unknown provenance"} {
+			if !strings.Contains(err.Error(), fragment) {
+				t.Errorf("%s: error %q is missing %q", test.name, err, fragment)
+			}
+		}
+	}
+}
+
+// Two arms recorded before actions named their producer are on the same
+// denominator as each other, diluted the same way, so they compare.
+func TestRun_ComparesTwoArmsThatBothNameNoProducer(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "first")
+	second := filepath.Join(root, "second")
+	writeSourcedCampaign(t, first, "first", 40, 20)
+	writeSourcedCampaign(t, second, "second", 30, 20)
+
+	if err := run([]string{first, second}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("two arms of the same unknown provenance were refused: %v", err)
+	}
+}
+
 func manyRuns(count, originStep int) []classifiedRun {
 	runs := make([]classifiedRun, 0, count)
 	for index := 0; index < count; index++ {

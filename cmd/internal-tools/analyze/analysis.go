@@ -29,6 +29,7 @@ type armSummary struct {
 	ViolationRate               *float64        `json:"violation_rate"`
 	TotalSteps                  int             `json:"total_steps"`
 	TotalActions                int             `json:"total_actions"`
+	UnattributedActions         int             `json:"unattributed_actions"`
 	TotalRunHours               float64         `json:"total_run_hours"`
 	Detections                  int             `json:"detections"`
 	DefectsPerThousandActions   *float64        `json:"defects_per_thousand_actions"`
@@ -127,6 +128,9 @@ func baseAnalysis(arms []arm, now time.Time) (analysis, []arm, error) {
 	if err := sameBudget(testable); err != nil {
 		return analysis{}, nil, err
 	}
+	if err := sameAttribution(testable); err != nil {
+		return analysis{}, nil, err
+	}
 	if len(testable) >= 2 {
 		names := make([]string, len(testable))
 		groups := make([][]observation, len(testable))
@@ -153,6 +157,28 @@ func sameBudget(arms []arm) error {
 				"runs censored at different budgets cannot be compared",
 				arms[0].Name, arms[0].Budget, arms[index].Name, arms[index].Budget)
 		}
+	}
+	return nil
+}
+
+// sameAttribution refuses arms whose actions were counted against different
+// denominators. An arm recorded before an action named its producer counts
+// whatever the spec's setup dispatched among its actions, and an arm recorded
+// after leaves the login out, so the same rate over the two divides by
+// different things and the tests rank a bookkeeping difference. Two arms of the
+// same unknown provenance are diluted alike and compare; one of each does not.
+func sameAttribution(arms []arm) error {
+	for index := 1; index < len(arms); index++ {
+		unknown, attributed := arms[0], arms[index]
+		if (unknown.unattributedActions() == 0) == (attributed.unattributedActions() == 0) {
+			continue
+		}
+		if unknown.unattributedActions() == 0 {
+			unknown, attributed = attributed, unknown
+		}
+		return fmt.Errorf("arm %q counts %d action(s) of unknown provenance and arm %q counts none: "+
+			"a denominator that may include the spec's setup cannot be compared against one that excludes it",
+			unknown.Name, unknown.unattributedActions(), attributed.Name)
 	}
 	return nil
 }
@@ -205,13 +231,14 @@ func comparePairs(arms []arm) []pairwiseResult {
 
 func summarize(current arm) armSummary {
 	summary := armSummary{
-		Arm:          current.Name,
-		Generator:    current.Generator,
-		Platform:     current.Platform,
-		StepBudget:   current.Budget,
-		Directories:  current.Directories,
-		Recorded:     len(current.Runs),
-		MissingSeeds: current.MissingSeeds,
+		Arm:                 current.Name,
+		Generator:           current.Generator,
+		Platform:            current.Platform,
+		StepBudget:          current.Budget,
+		Directories:         current.Directories,
+		Recorded:            len(current.Runs),
+		MissingSeeds:        current.MissingSeeds,
+		UnattributedActions: current.unattributedActions(),
 	}
 	runsPerDefect := map[string]int{}
 	for _, item := range current.Runs {
