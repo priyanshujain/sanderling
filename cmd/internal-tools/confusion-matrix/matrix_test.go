@@ -122,6 +122,36 @@ func TestCrossTabulateScoresEachImplementationIntoOneCell(t *testing.T) {
 	}
 }
 
+// TestACampaignThatDiedIsMissingDataNotATrueNegative covers the sweep it was
+// interrupted on: the one seed the campaign got through wrote a clean run
+// before the process died, and scoring the implementation on it reads the nine
+// seeds that never ran as agreement between the checker and the reviewer.
+func TestACampaignThatDiedIsMissingDataNotATrueNegative(t *testing.T) {
+	interrupted := cleanRun(1)
+	interrupted.CampaignExitCode = -1
+
+	emitted, stdout := runTool(t, writeFixture(t, []fixtureImplementation{{
+		Name: "impl-07", Model: "Opus 5",
+		Runs:   []fixtureRun{interrupted},
+		Review: &fixtureReview{Overall: overallNotDefective},
+	}}, defaultMapping))
+
+	entry := exclusionFor(t, emitted, "impl-07")
+	if entry.Reason != missingNoUsableRun {
+		t.Fatalf("impl-07 excluded as %q, want %q", entry.Reason, missingNoUsableRun)
+	}
+	if !strings.Contains(entry.Detail, reasonNonzeroExit) {
+		t.Errorf("exclusion detail %q does not name %q", entry.Detail, reasonNonzeroExit)
+	}
+	if emitted.Implementations.TrueNegative != 0 || emitted.Implementations.Scored != 0 {
+		t.Errorf("implementation matrix = %+v, want no cell: a dead campaign is absent evidence",
+			emitted.Implementations)
+	}
+	if !strings.Contains(stdout, "carry no cell") {
+		t.Errorf("the report never separates the dead campaign from the matrix:\n%s", stdout)
+	}
+}
+
 // TestUnlocatableSurfaceIsNeitherAPositiveNorANegative pins the rule the
 // pre-registration turns on: a clause whose every covering property a
 // never-located surface left unrunnable is a portability miss. Counting it as a

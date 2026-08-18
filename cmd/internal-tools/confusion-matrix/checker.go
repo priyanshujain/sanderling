@@ -170,8 +170,8 @@ func readImplementation(sweepDirectory string, record sweepImplementationRecord)
 	fired := map[string]bool{}
 	for _, run := range record.Runs {
 		verdict.RunsRecorded++
-		if run.LaunchError != "" {
-			verdict.ExcludedByReason[reasonLaunchError]++
+		if reason := sweepRunExcludedBecause(run); reason != "" {
+			verdict.ExcludedByReason[reason]++
 			continue
 		}
 		directory := resolveCampaignDirectory(sweepDirectory, record.Name, run)
@@ -252,6 +252,22 @@ func readCampaignRuns(directory string) ([]campaignRunRecord, error) {
 		return nil, fmt.Errorf("read %s in %s: %w", campaignRecordsFileName, directory, err)
 	}
 	return records, nil
+}
+
+// sweepRunExcludedBecause reads the outcome of the campaign process itself,
+// which the records inside its directory cannot report. One sweep run is one
+// campaign of one seed, so a campaign that died left a runs.jsonl that is
+// partial or empty, and scoring the runs it did write reads the seeds it never
+// reached as agreement.
+func sweepRunExcludedBecause(record sweepRunRecord) string {
+	switch {
+	case record.LaunchError != "":
+		return reasonLaunchError
+	case record.ExitCode != 0:
+		return reasonNonzeroExit
+	default:
+		return ""
+	}
 }
 
 func excludedBecause(record campaignRunRecord) string {

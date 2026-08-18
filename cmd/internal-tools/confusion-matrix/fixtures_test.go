@@ -16,8 +16,12 @@ import (
 type fixtureRun struct {
 	Seed     int64
 	ExitCode int
-	TimedOut bool
-	Violated []string
+	// CampaignExitCode is the campaign process's own exit status, which the
+	// sweep records beside the campaign directory. It is not the exit status of
+	// the run inside that campaign.
+	CampaignExitCode int
+	TimedOut         bool
+	Violated         []string
 	// Surfaces is the locatableSurfaces reading the trace records. A nil map
 	// with NoTrace false still writes a reading of every surface false.
 	Surfaces map[string]bool
@@ -141,7 +145,7 @@ func writeImplementation(t *testing.T, built fixture, implementation fixtureImpl
 		}
 		runs = append(runs, map[string]any{
 			"seed":               run.Seed,
-			"exit_code":          run.ExitCode,
+			"exit_code":          run.CampaignExitCode,
 			"campaign_directory": campaignDirectory,
 		})
 	}
