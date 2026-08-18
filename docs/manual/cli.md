@@ -29,6 +29,7 @@ Run a spec against an app for a fixed duration.
 | `--arm` | optional | Experiment label recorded in the run's metadata. Used by the campaign tool to tell one sweep cell from another. |
 | `--seed` | `0` | PRNG seed. `0` uses a random seed and records it in `meta.json`. |
 | `--generator` | `seeded` | Who picks each action: `seeded` (the run's PRNG) or `llm` (a vision model). See [the LLM generator](../spec-language/#llm-generator). |
+| `--label-source` | `visible-text` | How candidates are named to the `llm` generator: `visible-text` (what a user reads) or `resource-id` (the identifier the app assigned). The seeded generator picks by index and ignores this. |
 | `--output` | `./runs` | Output directory for traces. |
 | `--clear-data` | `true` | Clear app data before launching so the run starts from a fresh install. Pass `--clear-data=false` to resume prior state. |
 
