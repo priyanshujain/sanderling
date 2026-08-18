@@ -425,6 +425,38 @@ func TestParseTestArgs_AllowNoPropertiesReachesThePipeline(t *testing.T) {
 	}
 }
 
+// The exploration sweeps ask for a run the generator never drove, and they ask
+// for that alone. Riding on --allow-no-properties made one flag name two
+// unrelated waivers, so a sweep that wanted the property-free one silently lost
+// the dead-run detector as well.
+func TestParseTestArgs_AllowNoGeneratorActionsIsItsOwnFlag(t *testing.T) {
+	base := []string{"--spec", "s.ts", "--bundle-id", "com.example"}
+
+	options, err := parseTestArgs(base, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pipelineOptions(options).AllowNoGeneratorActions {
+		t.Error("allowNoGeneratorActions default: got true, want false")
+	}
+
+	options, err = parseTestArgs(append(base, "--allow-no-generator-actions"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pipelineOptions(options).AllowNoGeneratorActions {
+		t.Error("--allow-no-generator-actions never reached the pipeline options")
+	}
+
+	options, err = parseTestArgs(append(base, "--allow-no-properties"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pipelineOptions(options).AllowNoGeneratorActions {
+		t.Error("--allow-no-properties still waives the dead-run refusal it does not name")
+	}
+}
+
 // TestExitCode_SeparatesFoundBugsFromBrokenHarnesses pins the three statuses CI
 // reads: 0 clean, 2 the run found violations, 1 everything else. A workflow
 // that asserts "the known bug is still found" is only meaningful while 2 and 1
