@@ -225,6 +225,211 @@ func TestSelectors_SecureCombinesWithAnotherKey(t *testing.T) {
 	}
 }
 
+// The other five boolean states are derived from the live element the same way
+// secure is, and were reached the same wrong way: as a markup attribute, which
+// builds [clickable="true"] and matches nothing on any page. The key is
+// accepted, so no unknown-key error fires, and the worked example in
+// docs/manual/spec-language.md, find({testTag: ..., clickable: true}), resolved
+// to no element at all on web while resolving against the dump on the goja host.
+//
+// Half the states are asked inside one container, because a state the whole page
+// has an opinion about (everything is enabled, almost nothing is checked)
+// answers with most of the document and a want list nobody can check by reading.
+func TestSelectors_BooleanStatesNameWhatBothProducersReport(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+	installSelectorProbe(ctx, t, d)
+
+	cases := []struct {
+		name     string
+		selector string
+		scope    string
+		want     []string
+	}{
+		{
+			name:     "clickable",
+			selector: "clickable:true",
+			want: []string{
+				"login_email", "login_password", "login_note", "login_remember",
+				"state_save", "state_cancel", "state_submit", "state_remember",
+				"state_agree", "state_month", "todo_link",
+			},
+		},
+		{
+			name:     "not clickable",
+			selector: "clickable:false",
+			scope:    "state_row",
+			want:     []string{"state_january", "state_february"},
+		},
+		{
+			// A control that carries no disabled property is marked by
+			// aria-disabled alone, and both producers read both.
+			name:     "not enabled",
+			selector: "enabled:false",
+			want:     []string{"state_cancel", "state_submit"},
+		},
+		{
+			name:     "enabled",
+			selector: "enabled:true",
+			scope:    "state_row",
+			want: []string{
+				"state_save", "state_remember", "state_agree", "state_month",
+				"state_january", "state_february",
+			},
+		},
+		{
+			name:     "focused",
+			selector: "focused:true",
+			want:     []string{"state_save"},
+		},
+		{
+			name:     "not focused",
+			selector: "focused:false",
+			scope:    "state_row",
+			want: []string{
+				"state_cancel", "state_submit", "state_remember", "state_agree",
+				"state_month", "state_january", "state_february",
+			},
+		},
+		{
+			// state_remember was ticked by script and carries no checked
+			// attribute; state_agree carries the attribute and was cleared. The
+			// markup attribute is the page's starting state, so a selector
+			// reading it names the pair the wrong way round.
+			name:     "checked",
+			selector: "checked:true",
+			want:     []string{"state_remember"},
+		},
+		{
+			name:     "not checked",
+			selector: "checked:false",
+			scope:    "state_row",
+			want: []string{
+				"state_save", "state_cancel", "state_submit", "state_agree",
+				"state_month", "state_january", "state_february",
+			},
+		},
+		{
+			// The first option of a select is selected without the markup
+			// saying so anywhere.
+			name:     "selected",
+			selector: "selected:true",
+			want:     []string{"state_january"},
+		},
+		{
+			name:     "not selected",
+			selector: "selected:false",
+			scope:    "state_row",
+			want: []string{
+				"state_save", "state_cancel", "state_submit", "state_remember",
+				"state_agree", "state_month", "state_february",
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			key, value, _ := strings.Cut(testCase.selector, ":")
+			object := objectSelector(key, value)
+			encoded := objectSelectorJSON(object)
+			if testCase.scope != "" {
+				scope := objectSelector("id", testCase.scope)
+				path := []hierarchy.Selector{scope, object}
+				encoded = "[" + objectSelectorJSON(scope) + "," + encoded + "]"
+				if native := selectorIDsFromDumpPath(tree, path); !slices.Equal(
+					native,
+					testCase.want,
+				) {
+					t.Errorf("the dump matched %v under %s, want %v",
+						native, testCase.scope, testCase.want)
+				}
+			} else {
+				if native := selectorIDsFromDump(tree, testCase.selector); !slices.Equal(
+					native,
+					testCase.want,
+				) {
+					t.Errorf("the dump matched %v for %s, want %v",
+						native, testCase.selector, testCase.want)
+				}
+				if web := selectorIDsFromWebRuntime(
+					ctx, t, d, testCase.selector,
+				); !slices.Equal(web, testCase.want) {
+					t.Errorf("the web runtime matched %v for %s, want %v",
+						web, testCase.selector, testCase.want)
+				}
+				if native := selectorIDsFromDumpObject(tree, object); !slices.Equal(
+					native,
+					testCase.want,
+				) {
+					t.Errorf("the dump object form matched %v, want %v",
+						native, testCase.want)
+				}
+			}
+			if web := selectorIDsFromWebRuntime(ctx, t, d, encoded); !slices.Equal(
+				web,
+				testCase.want,
+			) {
+				t.Errorf("the web runtime matched %v for %s, want %v",
+					web, encoded, testCase.want)
+			}
+		})
+	}
+}
+
+// A type selector is valid only at the head of a compound, and a multi-key
+// object selector concatenates its parts into one, so {id, tag} built
+// '[id="state_month"]select' and querySelectorAll threw a SyntaxError. Which of
+// the two a spec got depended on the order its author wrote the keys in.
+func TestSelectors_TagCombinesWithAnotherKey(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+	installSelectorProbe(ctx, t, d)
+
+	selector := hierarchy.Selector{Filters: []hierarchy.AttrFilter{
+		{Attr: "id", Value: "state_month"},
+		{Attr: "tag", Value: "select"},
+	}}
+	want := []string{"state_month"}
+	if native := selectorIDsFromDumpObject(tree, selector); !slices.Equal(native, want) {
+		t.Errorf("hierarchy matched %v, want %v", native, want)
+	}
+	encoded := objectSelectorJSON(selector)
+	if web := selectorIDsFromWebRuntime(ctx, t, d, encoded); !slices.Equal(web, want) {
+		t.Errorf("the web runtime matched %v for %s, want %v", web, encoded, want)
+	}
+}
+
 // `text:` is a substring match on text content wherever the spec runs
 // (docs/manual/spec-language.md), so a badge reading "Sent ✓" answers to
 // text:Sent on web the way it already does on Android and iOS, and one reading
@@ -472,6 +677,14 @@ func objectSelectorJSON(sel hierarchy.Selector) string {
 		panic(err)
 	}
 	return string(encoded)
+}
+
+func selectorIDsFromDumpPath(tree *hierarchy.Tree, path []hierarchy.Selector) []string {
+	var ids []string
+	for _, node := range tree.FindAllBySelectorPath(path) {
+		ids = append(ids, node.Element.ResourceID)
+	}
+	return ids
 }
 
 func selectorIDsFromDumpObject(tree *hierarchy.Tree, sel hierarchy.Selector) []string {

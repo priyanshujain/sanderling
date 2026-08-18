@@ -27,6 +27,27 @@
       <div id="login_terms" contenteditable="true">terms</div>
       <input id="login_remember" type="checkbox" aria-label="login_remember" />
     </form>
+    <!-- The boolean states are derived from the live element, never written by
+         the markup, so these controls differ one state at a time: a disabled
+         button and an aria-disabled role control, a box ticked by script with
+         no checked attribute beside one cleared by script that has the
+         attribute, and a select whose first option is selected without one. -->
+    <div id="state_row">
+      <button id="state_save">save</button>
+      <button id="state_cancel" disabled>cancel</button>
+      <div id="state_submit" role="button" aria-disabled="true">submit</div>
+      <input id="state_remember" type="checkbox" aria-label="state_remember" />
+      <input id="state_agree" type="checkbox" checked aria-label="state_agree" />
+      <select id="state_month" aria-label="state_month">
+        <option id="state_january">January</option>
+        <option id="state_february">February</option>
+      </select>
+    </div>
+    <script id="state_script">
+      document.getElementById("state_remember").checked = true;
+      document.getElementById("state_agree").checked = false;
+      document.getElementById("state_save").focus();
+    </script>
     <todo-app id="todo_app">
       <todo-list id="todo_list">
         <li id="todo_1">Buy milk</li>
