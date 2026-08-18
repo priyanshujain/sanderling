@@ -45,11 +45,15 @@ type pairwiseResult struct {
 	Second     string  `json:"second"`
 	FirstSize  int     `json:"first_size"`
 	SecondSize int     `json:"second_size"`
-	Statistic  float64 `json:"mann_whitney_u"`
+	Statistic  float64 `json:"u"`
 	A12        float64 `json:"a12"`
+	// Unordered is how many of the run pairs behind U and A12 have no order
+	// between them, because they were tied or because censoring stopped one run
+	// before the other violated. Each of them counts as half, so it is also how
+	// much of the effect size is the null value rather than an observation.
+	Unordered  int     `json:"unordered_pairs"`
 	PValue     float64 `json:"p_value"`
 	HolmPValue float64 `json:"holm_p_value"`
-	Exact      bool    `json:"exact"`
 }
 
 type analysis struct {
@@ -197,7 +201,7 @@ func comparePairs(arms []arm) []pairwiseResult {
 	var pairs []pairwiseResult
 	for first := 0; first < len(arms); first++ {
 		for second := first + 1; second < len(arms); second++ {
-			test := rankSum(arms[first].stepTimes(), arms[second].stepTimes())
+			test := gehanTest(arms[first].observations(), arms[second].observations())
 			pairs = append(pairs, pairwiseResult{
 				First:      arms[first].Name,
 				Second:     arms[second].Name,
@@ -205,9 +209,9 @@ func comparePairs(arms []arm) []pairwiseResult {
 				SecondSize: test.SecondSize,
 				Statistic:  test.Statistic,
 				A12:        test.A12,
+				Unordered:  test.Unordered,
 				PValue:     test.PValue,
 				HolmPValue: math.NaN(),
-				Exact:      test.Exact,
 			})
 		}
 	}

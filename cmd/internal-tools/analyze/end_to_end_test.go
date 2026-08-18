@@ -92,7 +92,7 @@ func TestRun_EndToEndOverFixtureCampaignDirectories(t *testing.T) {
 	for _, fragment := range []string{
 		"steps to first violation, right-censored at the last step a clean run reached",
 		"log-rank across 2 arms",
-		"pairwise wilcoxon rank-sum",
+		"pairwise gehan generalized wilcoxon",
 		"llm vs seeded",
 		"excluded 1 run(s) as missing data",
 	} {
@@ -185,8 +185,10 @@ func TestRun_EndToEndOverFixtureCampaignDirectories(t *testing.T) {
 	if pair.HolmPValue != pair.PValue {
 		t.Errorf("holm p %v differs from raw p %v in a family of one", pair.HolmPValue, pair.PValue)
 	}
-	if pair.Exact {
-		t.Error("used the exact null distribution despite the tie mass at the budget")
+	// Six seeded runs and one llm run ran the budget clean, and two censored
+	// runs have no order between them whatever step either stopped on.
+	if pair.Unordered < 6 {
+		t.Errorf("%d unordered pair(s), want at least the six pairs of censored runs", pair.Unordered)
 	}
 }
 

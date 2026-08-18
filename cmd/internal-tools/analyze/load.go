@@ -328,15 +328,3 @@ func observationOf(item classifiedRun, budget int) observation {
 	// the steps it never ran are not exposure it survived.
 	return observation{Steps: float64(min(item.Steps, budget)), Event: false}
 }
-
-// stepTimes is the observations flattened to plain numbers, censored runs held
-// at the steps they ran. Holding them there rather than dropping them is
-// conservative: it can only understate how much sooner a violating arm finds
-// its first defect, never overstate it.
-func (a arm) stepTimes() []float64 {
-	var result []float64
-	for _, item := range a.observations() {
-		result = append(result, item.Steps)
-	}
-	return result
-}

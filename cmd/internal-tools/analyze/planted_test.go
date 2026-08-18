@@ -401,11 +401,11 @@ func TestPlanted_HeavyCensoringLeavesTheMedianUndefinedAndKeepsTheEffect(t *test
 	}
 }
 
-// Every censored run is recorded at the same step, so an arm at a real budget
-// is mostly one enormous tied group. The exact null distribution is not
-// available there and the tie-corrected normal approximation has to be, which
-// is checked against a permutation p-value over the pipeline's own two samples.
-func TestPlanted_TiesAtTheBudgetUseTheTieCorrectedApproximation(t *testing.T) {
+// An arm at a real budget is mostly one enormous group of runs censored
+// together at it. No exact null distribution covers that, so the conditional
+// variance carries the p-value, and it is checked against a permutation p-value
+// over the pipeline's own two samples.
+func TestPlanted_CensoringAtTheBudgetTracksThePermutationPValue(t *testing.T) {
 	cases := []struct {
 		sourceSeed  int64
 		quiet, loud float64
@@ -429,45 +429,43 @@ func TestPlanted_TiesAtTheBudgetUseTheTieCorrectedApproximation(t *testing.T) {
 		loudDirectory := writePlantedCampaign(t, filepath.Join(root, "loud"), "loud", loud.Budget, loudRuns)
 		pair := analyseCampaigns(t, loudDirectory, quietDirectory).Pairwise[0]
 
-		if pair.Exact {
-			t.Error("used the exact null distribution on samples tied at the budget")
-		}
-		permuted := permutationRankSumTwoSided(recordedSteps(loudRuns, loud.Budget), recordedSteps(quietRuns, quiet.Budget))
+		permuted := permutationGehanTwoSided(plantedObservations(loudRuns), plantedObservations(quietRuns))
 		if permuted > 0.01 {
 			discriminating++
 		}
-		if math.Abs(pair.PValue-permuted) > 0.01 {
+		// The conditional variance and the permutation variance are two
+		// estimators and not one, so they are near rather than equal. Over these
+		// four samples the gap is at most 0.011, at a p-value of 0.49 where
+		// nothing is decided; where a decision is made it is under 0.005. A
+		// variance wrong by a factor moves the p-value across orders of
+		// magnitude, which is what this catches.
+		if math.Abs(pair.PValue-permuted) > 0.015 {
 			t.Errorf("hazards %v against %v: p-value %.4f, want near the permutation p-value %.4f",
 				test.quiet, test.loud, pair.PValue, permuted)
 		}
 	}
-	// Dropping the tie term moves a p-value by roughly a hundredth here, which
-	// only shows against a permutation p-value that is not already at the
-	// floor, so the check has to include cases that are not overwhelming.
+	// A permutation p-value already at the floor cannot show a variance moving
+	// by a fraction, so the check has to include cases that are not overwhelming.
 	if discriminating < 3 {
 		t.Fatalf("%d of %d cases carry a p-value large enough to discriminate", discriminating, len(cases))
 	}
 }
 
-func recordedSteps(runs []plantedRun, budget int) []float64 {
-	values := make([]float64, 0, len(runs))
+func plantedObservations(runs []plantedRun) []observation {
+	items := make([]observation, 0, len(runs))
 	for _, run := range runs {
-		if run.violated {
-			values = append(values, float64(run.steps))
-			continue
-		}
-		values = append(values, float64(budget))
+		items = append(items, observation{Steps: float64(run.steps), Event: run.violated})
 	}
-	return values
+	return items
 }
 
-// permutationRankSumTwoSided is the randomization p-value of the Mann-Whitney
-// statistic: relabel the pooled sample many times and count how often the
-// statistic lands at least as far from its null mean as the observed one.
-func permutationRankSumTwoSided(first, second []float64) float64 {
-	pooled := append(append([]float64{}, first...), second...)
-	observed := rankSum(first, second).Statistic
-	mean := float64(len(first)) * float64(len(second)) / 2
+// permutationGehanTwoSided is the randomization p-value of Gehan's statistic:
+// relabel the pooled runs many times, censoring and all, and count how often the
+// statistic lands at least as far from zero as the observed one. Both arms here
+// censor on the same schedule, which is what makes relabelling them a null.
+func permutationGehanTwoSided(first, second []observation) float64 {
+	pooled := append(append([]observation{}, first...), second...)
+	observed, _ := gehanReference(first, second)
 	source := rand.New(rand.NewSource(99))
 	const shuffles = 20000
 	extreme := 0
@@ -475,8 +473,8 @@ func permutationRankSumTwoSided(first, second []float64) float64 {
 		source.Shuffle(len(pooled), func(left, right int) {
 			pooled[left], pooled[right] = pooled[right], pooled[left]
 		})
-		statistic := rankSum(pooled[:len(first)], pooled[len(first):]).Statistic
-		if math.Abs(statistic-mean) >= math.Abs(observed-mean)-1e-9 {
+		statistic, _ := gehanReference(pooled[:len(first)], pooled[len(first):])
+		if math.Abs(statistic) >= math.Abs(observed)-1e-9 {
 			extreme++
 		}
 	}

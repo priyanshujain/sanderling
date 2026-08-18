@@ -107,9 +107,10 @@ func writeReport(result analysis, out io.Writer) {
 	}
 
 	if len(result.Pairwise) > 0 {
-		fmt.Fprintln(out, "\npairwise wilcoxon rank-sum, censored runs held at the steps they ran")
-		fmt.Fprintln(out, "a12 above 0.5 means the first arm takes more steps to its first violation")
-		writeTable(out, []string{"comparison", "n1", "n2", "u", "a12", "p", "holm p"}, func(add func(...string)) {
+		fmt.Fprintln(out, "\npairwise gehan generalized wilcoxon, which reads a censored run as the bound it is")
+		fmt.Fprintln(out, "a12 above 0.5 means the first arm takes more steps to its first violation; u counts the run")
+		fmt.Fprintln(out, "pairs the first arm outlived, and the unordered pairs count as half in both u and a12")
+		writeTable(out, []string{"comparison", "n1", "n2", "u", "a12", "unordered", "p", "holm p"}, func(add func(...string)) {
 			for _, pair := range result.Pairwise {
 				add(
 					pair.First+" vs "+pair.Second,
@@ -117,6 +118,7 @@ func writeReport(result analysis, out io.Writer) {
 					strconv.Itoa(pair.SecondSize),
 					fmt.Sprintf("%.1f", pair.Statistic),
 					fmt.Sprintf("%.3f", pair.A12),
+					fmt.Sprintf("%d of %d", pair.Unordered, pair.FirstSize*pair.SecondSize),
 					formatPValue(pair.PValue),
 					formatPValue(pair.HolmPValue),
 				)
