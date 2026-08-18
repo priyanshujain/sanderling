@@ -164,9 +164,10 @@ gate_clear_state() {
 # placeholder (internal/verifier/redaction.go), and android reports that fact
 # for nothing, so on that backend every InputText records the placeholder. The
 # OBSERVED value is never redacted, and a field holding one string twice over is
-# the doubling itself. A value that is a single character repeated is exempt:
-# the input corpus types "a" 4096 times and a pair of spaces, and neither can be
-# told apart from its own doubling.
+# the doubling itself, whether that is the whole value or what the value grew by
+# over the snapshot the action was chosen against. A value that is a single
+# character repeated is exempt: the input corpus types "a" 4096 times and a pair
+# of spaces, and neither can be told apart from its own doubling.
 gate_no_doubled_text() {
   local run_directory="$1"
   local trace_file="${run_directory}/trace.jsonl"
@@ -200,10 +201,16 @@ gate_no_doubled_text() {
             | ($current.next_action.text // "") as $typed
             | (($next.hierarchy.elements // [])
                | map(select(.resourceId == $field)) | first) as $element
+            | (($current.hierarchy.elements // [])
+               | map(select(.resourceId == $field)) | first) as $before
             | if $element != null
               then
                 (($element.attrs.text // $element.text // "")) as $value
+                | (($before.attrs.text // $before.text // "")) as $previous
+                | (if $previous != "" and ($value | startswith($previous))
+                   then $value[($previous | length):] else "" end) as $appended
                 | if self_doubled($value)
+                     or self_doubled($appended)
                      or ($typed != "" and $typed != $redacted
                          and ($value | contains($typed + $typed)))
                   then . + [{field: $field, value: $value}]
