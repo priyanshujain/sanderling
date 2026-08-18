@@ -302,3 +302,22 @@ func TestLogRank_NoEventsAnywhere(t *testing.T) {
 		t.Errorf("chi-square %v p-value %v, want 0 and 1", result.ChiSquare, result.PValue)
 	}
 }
+
+// The weighted family reports event counts, not weighted ones: the report
+// prints observed against expected as counts of violations, and a weight that
+// changes the statistic must leave those alone.
+func TestWeightedLogRank_WeightsTheStatisticAndNotTheCounts(t *testing.T) {
+	names := []string{"6-mp", "placebo"}
+	groups := [][]observation{gehanSixMercaptopurine, gehanPlacebo}
+	plain := logRank(names, groups)
+	weighted := weightedLogRank(names, groups, atRiskWeight)
+
+	if !slices.Equal(plain.Observed, weighted.Observed) || !slices.Equal(plain.Expected, weighted.Expected) {
+		t.Errorf("weighted observed %v expected %v, want the counts %v and %v",
+			weighted.Observed, weighted.Expected, plain.Observed, plain.Expected)
+	}
+	if math.Abs(weighted.ChiSquare-plain.ChiSquare) < 1e-9 {
+		t.Errorf("chi-square %v under Gehan's weight and %v unweighted, want the weight to reach the statistic",
+			weighted.ChiSquare, plain.ChiSquare)
+	}
+}

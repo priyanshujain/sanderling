@@ -88,13 +88,21 @@ type logRankResult struct {
 	PValue           float64   `json:"p_value"`
 }
 
-// logRank is the k-sample Mantel-Haenszel log-rank test. At every distinct
-// event time it contrasts observed with expected events under the null of equal
-// hazards, then combines the k-1 independent differences through their
-// covariance matrix: chi-square = U' V^-1 U on k-1 degrees of freedom.
-// Mantel (1966); Peto and Peto (1972); Klein and Moeschberger, Survival
-// Analysis, 2nd ed., section 7.3.
+// logRank is the k-sample Mantel-Haenszel log-rank test, the member of the
+// weighted family that counts every event time alike. Mantel (1966); Peto and
+// Peto (1972).
 func logRank(names []string, groups [][]observation) logRankResult {
+	return weightedLogRank(names, groups, func(atRisk float64) float64 { return 1 })
+}
+
+// weightedLogRank is the family the log-rank belongs to. At every distinct event
+// time it contrasts observed with expected events under the null of equal
+// hazards, weights that difference by weight(atRisk), and combines the k-1
+// independent weighted differences through their covariance matrix:
+// chi-square = U' V^-1 U on k-1 degrees of freedom. Observed and Expected stay
+// event counts whatever the weight, because a weighted count is not one.
+// Klein and Moeschberger, Survival Analysis, 2nd ed., section 7.3.
+func weightedLogRank(names []string, groups [][]observation, weight func(atRisk float64) float64) logRankResult {
 	var keptNames []string
 	var kept [][]observation
 	for index, group := range groups {
@@ -130,6 +138,7 @@ func logRank(names []string, groups [][]observation) logRankResult {
 	}
 	atRisk := make([]float64, count)
 	deaths := make([]float64, count)
+	weightedDifference := make([]float64, count)
 
 	for _, steps := range distinctSteps(pooled) {
 		totalAtRisk, totalDeaths := 0.0, 0.0
@@ -149,14 +158,17 @@ func logRank(names []string, groups [][]observation) logRankResult {
 		if totalDeaths == 0 {
 			continue
 		}
+		weightAtStep := weight(totalAtRisk)
 		for index := range groups {
+			expected := totalDeaths * atRisk[index] / totalAtRisk
 			result.Observed[index] += deaths[index]
-			result.Expected[index] += totalDeaths * atRisk[index] / totalAtRisk
+			result.Expected[index] += expected
+			weightedDifference[index] += weightAtStep * (deaths[index] - expected)
 		}
 		if totalAtRisk <= 1 {
 			continue
 		}
-		scale := totalDeaths * (totalAtRisk - totalDeaths) / (totalAtRisk - 1)
+		scale := weightAtStep * weightAtStep * totalDeaths * (totalAtRisk - totalDeaths) / (totalAtRisk - 1)
 		for row := range groups {
 			share := atRisk[row] / totalAtRisk
 			covariance[row][row] += scale * share * (1 - share)
@@ -174,7 +186,7 @@ func logRank(names []string, groups [][]observation) logRankResult {
 	for row := 0; row < count-1; row++ {
 		reduced[row] = make([]float64, count-1)
 		copy(reduced[row], covariance[row][:count-1])
-		difference[row] = result.Observed[row] - result.Expected[row]
+		difference[row] = weightedDifference[row]
 	}
 	solution, ok := solveLinearSystem(reduced, difference)
 	if !ok {
