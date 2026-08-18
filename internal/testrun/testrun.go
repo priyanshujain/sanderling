@@ -90,6 +90,15 @@ type Options struct {
 // recorded only when the LLM picker is the one that will actually run, so a
 // spec that declares generator = llm() but is run under the seeded picker does
 // not label its trace with a model it never called.
+// runDevice reads whichever flag named the hardware for this platform. An ios
+// run is selected with --ios-device and leaves --device empty.
+func runDevice(options Options) string {
+	if options.Platform == "ios" {
+		return options.IosDevice
+	}
+	return options.Device
+}
+
 func buildRunMeta(options Options, bundleSHA256 string, seed int64, host string, llmConfig verifier.LLMConfig, hasLLMConfig bool) trace.Meta {
 	meta := trace.Meta{
 		Seed:              seed,
@@ -105,7 +114,7 @@ func buildRunMeta(options Options, bundleSHA256 string, seed int64, host string,
 		MaxSteps:          options.MaxSteps,
 		DurationMillis:    options.Duration.Milliseconds(),
 		Host:              host,
-		Device:            options.Device,
+		Device:            runDevice(options),
 	}
 	if options.Generator == "llm" && hasLLMConfig {
 		meta.Model = llmConfig.Model

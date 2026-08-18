@@ -282,6 +282,36 @@ func TestBuildRunMeta_RecordsLabelSourceForASeededRun(t *testing.T) {
 	}
 }
 
+// An ios run names its simulator with --ios-device, so reading the android
+// --device flag left every ios trace unable to say what it executed on.
+func TestBuildRunMeta_NamesTheIosSimulatorItRanOn(t *testing.T) {
+	options := Options{
+		Platform:  "ios",
+		Generator: "seeded",
+		Duration:  time.Minute,
+		IosDevice: "iPhone 17 Pro",
+	}
+	meta := buildRunMeta(options, "deadbeef", 1, "farm-01", verifier.LLMConfig{}, false)
+
+	if meta.Device != "iPhone 17 Pro" {
+		t.Errorf("device: got %q, want the ios simulator the run named", meta.Device)
+	}
+}
+
+func TestBuildRunMeta_NamesTheAndroidDeviceItRanOn(t *testing.T) {
+	options := Options{
+		Platform:  "android",
+		Generator: "seeded",
+		Duration:  time.Minute,
+		Device:    "emulator-5554",
+	}
+	meta := buildRunMeta(options, "deadbeef", 1, "farm-01", verifier.LLMConfig{}, false)
+
+	if meta.Device != "emulator-5554" {
+		t.Errorf("device: got %q, want the android device the run named", meta.Device)
+	}
+}
+
 func TestBuildRunMeta_OmitsModelWhenSpecDeclaresNoLLMGenerator(t *testing.T) {
 	options := Options{Platform: "android", Generator: "llm", Duration: time.Minute}
 	meta := buildRunMeta(options, "deadbeef", 1, "farm-01", verifier.LLMConfig{}, false)
