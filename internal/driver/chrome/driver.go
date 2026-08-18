@@ -739,13 +739,18 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     return {
       attributes: attrs,
       children: children,
-      clickable: isClickable || null,
-      enabled: isEnabled(el) || null,
-      focused: focusedElement === el || null,
+      // Emitted as plain booleans, never null: internal/hierarchy writes the
+      // attribute a selector matches on only where the producer stated the
+      // flag, so a state that arrives as null is one no selector can ask about.
+      // {clickable: false} and {enabled: false} matched nothing at all here
+      // while matching on android, which states every flag both ways.
+      clickable: isClickable,
+      enabled: isEnabled(el),
+      focused: focusedElement === el,
       // A component keeps what it likes in these two properties, so what is
       // emitted is the flag the field declares and not the property's value.
-      checked: el.checked === true || null,
-      selected: el.selected === true || null,
+      checked: el.checked === true,
+      selected: el.selected === true,
       // Emitted as a plain boolean, never null, on every editable field: a
       // consumer deciding what a typed value may be recorded as has to tell
       // "not a secure entry" apart from "nobody said", and android says nothing.
