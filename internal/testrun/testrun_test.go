@@ -411,11 +411,11 @@ func TestRunOutcome_ARunThatDroveNothingIsNotASuccess(t *testing.T) {
 		t.Errorf("a run whose generator dispatched one action must succeed, got %v", err)
 	}
 
-	// The sweeps that measure what a spec extracts and where a generator reaches
-	// ask for a run that judges nothing by name, and "the generator reached
-	// nothing here" is their measurement rather than their failure.
-	if err := runOutcome(Options{AllowNoProperties: true}, droveNothing); err != nil {
-		t.Errorf("the property-free opt-out no longer carries a run through, got %v", err)
+	// The sweeps that measure where a generator reaches ask for a run that
+	// explores nothing by name, and "the generator reached nothing here" is
+	// their measurement rather than their failure.
+	if err := runOutcome(Options{AllowNoGeneratorActions: true}, droveNothing); err != nil {
+		t.Errorf("the dead-run opt-out no longer carries a run through, got %v", err)
 	}
 
 	// A run cut short before it took a step never got going, which the deadline
@@ -470,6 +470,25 @@ func TestRunOutcome_SetupActionsDoNotCarryARunWhoseGeneratorDroveNothing(t *test
 	var violations ViolationsError
 	if err := runOutcome(Options{ExitOnViolation: true}, found); !errors.As(err, &violations) {
 		t.Errorf("a setup-only run that found a violation came back %v, want a ViolationsError", err)
+	}
+}
+
+// Two refusals, two flags. A sweep that runs a property-free spec asked to
+// judge nothing, not to explore nothing, and a run with properties that needs
+// the dead-run exemption must be able to say so without claiming a waiver it
+// does not want.
+func TestRunOutcome_TheDeadRunRefusalHasItsOwnOptOut(t *testing.T) {
+	droveNothing := runner.Summary{
+		Steps:          200,
+		SkippedActions: map[string]int{"no_action_produced": 200},
+	}
+
+	var dead NoGeneratorActionsError
+	if err := runOutcome(Options{AllowNoProperties: true}, droveNothing); !errors.As(err, &dead) {
+		t.Errorf("--allow-no-properties waived the dead-run refusal, which it does not name: got %v", err)
+	}
+	if err := runOutcome(Options{AllowNoGeneratorActions: true}, droveNothing); err != nil {
+		t.Errorf("--allow-no-generator-actions did not carry a run that drove nothing through, got %v", err)
 	}
 }
 

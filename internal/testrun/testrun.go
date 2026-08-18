@@ -66,10 +66,15 @@ type Options struct {
 	// "the run found the bug" from "the run finished clean".
 	ExitOnViolation bool
 	// AllowNoProperties lets a run proceed against a spec that registers no
-	// properties. The extraction and portability sweeps pass it: they measure
-	// what a spec can read and where the generator reaches, and they report no
-	// detection count. Every other run without it is a false green.
+	// properties. The extraction sweeps pass it: they measure what a spec can
+	// read and report no detection count. Every other run without it is a false
+	// green.
 	AllowNoProperties bool
+	// AllowNoGeneratorActions lets a run finish having never been driven by its
+	// action generator. The exploration-reach sweeps pass it, because "the
+	// generator reached nothing on this build" is their measurement rather than
+	// a broken run.
+	AllowNoGeneratorActions bool
 	// Generator selects the action picker: "llm" or the default seeded picker.
 	Generator string
 	// LabelSource selects how candidates are named to the model picker, and is
@@ -293,7 +298,7 @@ func runOutcome(options Options, summary runner.Summary) error {
 	if options.ExitOnViolation && len(summary.Violations) > 0 {
 		return ViolationsError{Count: len(summary.Violations)}
 	}
-	if !options.AllowNoProperties && len(summary.Violations) == 0 &&
+	if !options.AllowNoGeneratorActions && len(summary.Violations) == 0 &&
 		summary.Steps > 0 && summary.GeneratorActions == 0 {
 		return NoGeneratorActionsError{
 			Steps:          summary.Steps,
@@ -363,7 +368,7 @@ func (e NoPropertiesError) Error() string {
 		"%s bundled and loaded into the verifier cleanly and registers no properties: "+
 			"nothing is wrong with the spec and nothing is wrong with the run, but this run "+
 			"would check nothing and report no violations. Pass --allow-no-properties for a "+
-			"run that measures extraction or exploration instead of judging the app",
+			"run that measures what the spec extracts instead of judging the app",
 		e.Spec)
 }
 
@@ -387,7 +392,8 @@ func (e NoGeneratorActionsError) Error() string {
 		"%d step(s) ran and the action generator drove the app in none of them: whatever "+
 			"the spec's setup did to get the app into position, nothing explored it from "+
 			"there, so the run judged one screen over and over and its violation count "+
-			"says nothing about the rest of the app%s",
+			"says nothing about the rest of the app%s. Pass --allow-no-generator-actions "+
+			"for a run that measures where a generator reaches instead of judging the app",
 		e.Steps, skipReasonSuffix(e.SkippedActions))
 }
 
