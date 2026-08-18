@@ -42,7 +42,7 @@ func writeReport(result analysis, out io.Writer) {
 				add(
 					summary.Arm,
 					strconv.Itoa(summary.TotalSteps),
-					strconv.Itoa(summary.TotalActions),
+					formatActions(summary),
 					fmt.Sprintf("%.2f", summary.TotalRunHours),
 					strconv.Itoa(summary.Detections),
 					formatRatio(summary.DefectsPerThousandActions, 2),
@@ -63,6 +63,13 @@ func writeReport(result analysis, out io.Writer) {
 		}
 		fmt.Fprintf(out, "\n%s excluded %d run(s) as missing data, not as censored observations: %s",
 			summary.Arm, summary.Excluded, strings.Join(parts, ", "))
+	}
+	for _, summary := range result.Arms {
+		if summary.UnattributedActions > 0 {
+			fmt.Fprintf(out, "\n%s counts %d action(s) of unknown provenance, recorded before an action named its producer: "+
+				"its per-action denominator may include the login the spec's setup drove",
+				summary.Arm, summary.UnattributedActions)
+		}
 	}
 	for _, summary := range result.Arms {
 		if summary.EventsHeldAtBudget > 0 {
@@ -166,6 +173,16 @@ func formatMedian(value *float64) string {
 		return "undefined"
 	}
 	return strconv.FormatFloat(*value, 'f', -1, 64)
+}
+
+// formatActions marks a denominator with actions whose producer nothing names,
+// because the rate beside it then divides by a count that may include the
+// login the spec's setup drove.
+func formatActions(summary armSummary) string {
+	if summary.UnattributedActions == 0 {
+		return strconv.Itoa(summary.TotalActions)
+	}
+	return fmt.Sprintf("%d (%d unattributed)", summary.TotalActions, summary.UnattributedActions)
 }
 
 func formatRatio(value *float64, digits int) string {

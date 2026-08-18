@@ -258,3 +258,55 @@ func TestRun_RequiresACampaignDirectory(t *testing.T) {
 		t.Fatal("expected an error with no campaign directories")
 	}
 }
+
+// A campaign recorded before actions named their producer cannot say whether
+// the login taps of the spec's setup are inside its per-action denominator, and
+// the report has to say so where that denominator is read rather than leave the
+// reader to date the file.
+func TestRun_MarksAnArmWhoseActionsNameNoProducer(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "before-source")
+	buildFixtureCampaign(t, directory, "before-source", 30, []map[string]any{
+		{"seed": 1, "exit_code": 0, "steps": 30, "actions": 28, "duration_millis": 60000},
+		{"seed": 2, "exit_code": 0, "steps": 9, "actions": 9, "duration_millis": 60000,
+			"first_violation_origin_step": 9, "violated_properties": []string{"cartTotalMatches"}},
+	})
+
+	var stdout bytes.Buffer
+	if err := run([]string{"--json", "-", directory}, &stdout, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	text := stdout.String()
+	if !strings.Contains(text, "37 (37 unattributed)") {
+		t.Errorf("the actions cell does not carry the unattributed count\n%s", text)
+	}
+	if !strings.Contains(text, "unknown provenance") {
+		t.Errorf("the report does not say the denominator's provenance is unknown\n%s", text)
+	}
+
+	var result analysis
+	if err := json.Unmarshal([]byte(text[strings.Index(text, "{"):]), &result); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if len(result.Arms) != 1 || result.Arms[0].UnattributedActions != 37 {
+		t.Errorf("arms %+v, want 37 unattributed actions", result.Arms)
+	}
+}
+
+func TestRun_LeavesAnArmWhoseActionsAllNameAProducerUnmarked(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "sourced")
+	buildFixtureCampaign(t, directory, "sourced", 30, []map[string]any{
+		{"seed": 1, "exit_code": 0, "steps": 30, "actions": 28, "duration_millis": 60000, "unattributed_actions": 0},
+		{"seed": 2, "exit_code": 0, "steps": 9, "actions": 9, "duration_millis": 60000, "unattributed_actions": 0,
+			"first_violation_origin_step": 9, "violated_properties": []string{"cartTotalMatches"}},
+	})
+
+	var stdout bytes.Buffer
+	if err := run([]string{directory}, &stdout, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout.String(), "unattributed") || strings.Contains(stdout.String(), "unknown provenance") {
+		t.Errorf("an arm whose every action names a producer was marked\n%s", stdout.String())
+	}
+}
