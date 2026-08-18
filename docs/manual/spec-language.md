@@ -84,6 +84,8 @@ Known attribute names are typed; you get autocomplete on `testTag`, `text`, `con
 
 A boolean state matches only where the platform reports it. `{secure: true}` names the password entry and `{secure: false}` names an editable field that is not one, so neither value names an element that is no field at all, and neither matches anything on Android, which reports the fact for nothing.
 
+`clickable`, `enabled`, `focused`, `checked` and `selected` are reported for every element, so both values of each match: `{clickable: false}` names every element that is not a tap target. They are read off the element as it stands, never off a markup attribute of the same name, so a box the user ticked answers to `{checked: true}` on a page whose markup never wrote `checked` anywhere.
+
 A key that names neither an accepted selector key nor an attribute some element on screen carries fails the run, naming the key and the accepted list. Such a key can never match, and an empty result is indistinguishable from a screen with no matching element: the generator declines to act, the runner waits out the step, and the run ends clean having explored nothing. The string form keeps its open kind space, since `<attr>:<value>` is the documented way to reach a raw driver attribute.
 
 ### Path selectors
@@ -161,6 +163,13 @@ Fields available on every element returned by `find` / `findAll`:
   markup writes (`attrs["data-cents"]`, not `attrs.cents`).
 - `secure` is `type="password"` on a field the driver calls editable, which is
   what `{secure: true}` and `{secure: false}` resolve against here.
+- `checked` and `selected` are the DOM properties, which is the state the user
+  left the control in; the `checked` and `selected` markup attributes are the
+  state the page loaded with and go stale on the first click. `focused` is the
+  innermost active element, so it names a field inside a shadow root rather than
+  the element hosting it.
+- A selector resolves against the rendered document only. Nothing inside `<head>`
+  answers to one, on either host.
 - `attrs.hintText` names an editable field the way a user reads it: its
   `aria-label`, the `<label>` bound to it, its `placeholder`, then its `name`.
   The `hintText` selector key does not read that ladder on both hosts: the
