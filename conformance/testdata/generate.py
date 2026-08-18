@@ -152,6 +152,17 @@ write_run(
     ],
 )
 
+# G4: an action typed at coordinates names no field. The step carries nothing
+# the gate can check, and it may not stop the gate checking the rest.
+write_run(
+    "g4-selectorless-input",
+    [
+        step(1, 600, login_screen("", ""), {"kind": "InputText", "text": REDACTED}),
+        step(2, 600, login_screen("demo@folio.app", ""), input_action("LoginPassword")),
+        step(3, 600, login_screen("demo@folio.app", "ledger123")),
+    ],
+)
+
 # G4: the same regression on a backend that records the typed value. The driver
 # appended the value twice to what the field already held, so the observed value
 # is not its own doubling and only the recorded text reveals it.
