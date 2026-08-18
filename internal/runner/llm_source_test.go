@@ -752,6 +752,72 @@ func TestLLMSourceSkipsOnHTTPError(t *testing.T) {
 	}
 }
 
+// TestRunner_EveryModelCallFailingIsNotACleanRun drives the whole loop against a
+// provider that answers every call with a rate limit. The picker hands back no
+// action on every step, so the run observes the app, judges the same launch
+// screen over and over and never touches it. Only llm-calls.jsonl used to know:
+// the trace, the summary and the exit status were a healthy run's.
+func TestRunner_EveryModelCallFailingIsNotACleanRun(t *testing.T) {
+	fake := newFakeOpenRouter(t)
+	fake.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", fake.server.URL)
+
+	state := newHarnessWithSpec(t, llmFixtureSpec)
+	state.mock.HierarchyJSON = llmTreeJSON
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    30 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Generator:   "llm",
+		LabelSource: verifier.LabelSourceVisibleText,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	calls := readLLMCalls(t, state.writer.Directory())
+	if len(calls) != 3 {
+		t.Fatalf("recorded %d model calls, want 3", len(calls))
+	}
+	for _, call := range calls {
+		if call.Outcome != trace.LLMOutcomeRequestFailed {
+			t.Fatalf("call at step %d ended %q, want %q: the fixture must fail every call",
+				call.Step, call.Outcome, trace.LLMOutcomeRequestFailed)
+		}
+	}
+
+	if summary.DispatchedActions != 0 {
+		t.Fatalf("DispatchedActions = %d, want 0: every model call failed",
+			summary.DispatchedActions)
+	}
+	if got := summary.SkippedActions[string(actionSkippedNoActionProduced)]; got != 3 {
+		t.Errorf("summary counted %d step(s) as %q, want 3: %v",
+			got, actionSkippedNoActionProduced, summary.SkippedActions)
+	}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
+		if line.ActionSkipped != string(actionSkippedNoActionProduced) {
+			t.Errorf("step %d action_skipped = %q, want %q",
+				line.Step, line.ActionSkipped, actionSkippedNoActionProduced)
+		}
+	}
+	for _, action := range state.mock.Actions() {
+		switch action.Kind {
+		case mockdriver.ActionTap, mockdriver.ActionTapSelector, mockdriver.ActionInputText:
+			t.Errorf("the run drove the app with %v after every model call failed", action)
+		}
+	}
+}
+
 // llmSetupFixtureSpec drives the first action from setup, so the model is never
 // consulted for that step.
 const llmSetupFixtureSpec = `

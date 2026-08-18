@@ -48,9 +48,10 @@ type Step struct {
 	// retry budget. The verifier is skipped for these steps so transient
 	// state does not poison the previous/current extractor advance.
 	Transitional bool `json:"transitional,omitempty"`
-	// ActionSkipped names why NextAction was chosen but never dispatched, so a
-	// count of executed actions cannot be inflated by steps whose action the
-	// runner threw away. Empty when the action ran (or when none was chosen).
+	// ActionSkipped names why this step dispatched nothing: an action chosen and
+	// then thrown away, or a source that was asked and produced none. A count of
+	// executed actions cannot be inflated by either. Empty when the action ran,
+	// and empty on a held step, which never asked for one.
 	ActionSkipped string `json:"action_skipped,omitempty"`
 	// ObservationError names why this step's device read produced no tree,
 	// empty when a tree was read. A screen with no elements on it is a tree,

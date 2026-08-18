@@ -75,6 +75,10 @@ type Summary struct {
 	// all. Such a step verifies nothing, so a run that failed every observation
 	// finishes with no violations and reads as a clean one.
 	FailedObservations int
+	// DispatchedActions counts the steps whose chosen action reached the driver.
+	// A run at zero never touched the app, whatever its step count says, so its
+	// empty violation list is the reading of an instrument that measured nothing.
+	DispatchedActions int
 }
 
 type ViolationRecord struct {
@@ -365,7 +369,14 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 
 		applySkipped := held
 		var actionSkipped actionSkipReason
-		if nextErr == nil && !appIsForeground(ctx, options) {
+		if nextErr != nil && !held {
+			// The source was asked and handed nothing back. Recorded like every
+			// other non-action, because unrecorded it is the one that survives a
+			// whole run: a picker declining on all 200 steps leaves a trace, a
+			// summary and an exit status a run that exercised all 200 produces.
+			actionSkipped = actionSkippedNoActionProduced
+			lastAction = nil
+		} else if nextErr == nil && !appIsForeground(ctx, options) {
 			// The app left the foreground between observe and apply (a prior
 			// action's gesture settling late, or an async navigation). The
 			// chosen action's coordinates reference a tree that no longer
@@ -452,8 +463,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				applied.Applied = true
 				lastAction = &applied
 			}
-		} else if !held {
-			lastAction = nil
 		}
 		// A held step leaves lastAction alone on purpose: nothing ran here, and
 		// the action it points at is still the one the next verified step has to
@@ -487,6 +496,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				summary.SkippedActions = map[string]int{}
 			}
 			summary.SkippedActions[string(actionSkipped)]++
+		}
+		if nextErr == nil && !applySkipped {
+			summary.DispatchedActions++
 		}
 		summary.Steps = stepIndex
 		if len(violations) > 0 {
@@ -1743,6 +1755,11 @@ const (
 	// the gesture was never dispatched. Recorded rather than counted as a
 	// device fault: a run that acts on nothing has to say so.
 	actionSkippedGestureUndelivered actionSkipReason = "gesture_undelivered"
+	// The step asked the action source for an action and was handed none: a
+	// generator with no candidate for this screen, or a model call that failed.
+	// The step then drives nothing, which is the one non-action a run can take
+	// on every one of its steps and still finish reporting a full step count.
+	actionSkippedNoActionProduced actionSkipReason = "no_action_produced"
 )
 
 // maxConsecutiveApplyFailures bounds how many transient apply failures in a

@@ -57,6 +57,16 @@ globalThis.properties = {
 globalThis.actions = actions(() => [Tap({ on: "id:absent" })]);
 `
 
+// noActionSpec's generator offers nothing on any screen, so every step asks the
+// source for an action and is handed none.
+const noActionSpec = `
+import { actions, always } from "@sanderling/spec";
+globalThis.properties = {
+  alwaysHolds: always(() => true),
+};
+globalThis.actions = actions(() => []);
+`
+
 const violationSpec = `
 import { actions, always } from "@sanderling/spec";
 globalThis.properties = {
@@ -1429,12 +1439,101 @@ func TestRunner_DispatchedActionRecordsNoSkipReason(t *testing.T) {
 	}
 }
 
+// TestRunner_ASourceAskedAndHandedNothingSaysSo covers the run that touched the
+// app zero times: every step asked the source for an action and got none, which
+// is what a picker whose every model call fails does. Without a reason on the
+// step the trace, the summary and the exit status of that run are the ones a run
+// that exercised all three steps produces.
+func TestRunner_ASourceAskedAndHandedNothingSaysSo(t *testing.T) {
+	state := newHarnessWithSpec(t, noActionSpec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps != 3 {
+		t.Fatalf("Steps = %d, want 3", summary.Steps)
+	}
+	if summary.DispatchedActions != 0 {
+		t.Fatalf("DispatchedActions = %d, want 0: the fixture offers no action to dispatch",
+			summary.DispatchedActions)
+	}
+	if got := summary.SkippedActions[string(actionSkippedNoActionProduced)]; got != 3 {
+		t.Errorf("summary counted %d step(s) as %q, want 3: %v",
+			got, actionSkippedNoActionProduced, summary.SkippedActions)
+	}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
+		if line.NextAction != nil {
+			t.Errorf("step %d carries a next_action the source never produced", line.Step)
+		}
+		if line.ActionSkipped != string(actionSkippedNoActionProduced) {
+			t.Errorf("step %d action_skipped = %q, want %q",
+				line.Step, line.ActionSkipped, actionSkippedNoActionProduced)
+		}
+		if line.SkippedVerification {
+			t.Errorf("step %d reads as held; the source was asked on it", line.Step)
+		}
+	}
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "android")
+	if !strings.Contains(rendered.String(), "3 action(s) never reached the app") {
+		t.Errorf("the run reports as a clean one:\n%s", rendered.String())
+	}
+}
+
+// The other half: a held step never asked the source for anything, so it must
+// stay distinguishable from one that asked and was handed nothing. The fixture
+// here has an action to offer, and no step of this run gets to hear it.
+func TestRunner_AHeldStepIsNotRecordedAsASourceThatDeclined(t *testing.T) {
+	state := newHarness(t)
+	state.mock.Failures[mockdriver.ActionSnapshot] = errors.New("adb: device offline")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.SkippedVerification != 3 {
+		t.Fatalf("SkippedVerification = %d, want 3", summary.SkippedVerification)
+	}
+	if len(summary.SkippedActions) != 0 {
+		t.Errorf("held steps counted as skipped actions: %v", summary.SkippedActions)
+	}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
+		if !line.SkippedVerification {
+			t.Errorf("step %d was not recorded as held", line.Step)
+		}
+		if line.ActionSkipped != "" {
+			t.Errorf("step %d action_skipped = %q; the source was never asked",
+				line.Step, line.ActionSkipped)
+		}
+	}
+}
+
 type traceStepLine struct {
-	Step             int           `json:"step"`
-	NextAction       *trace.Action `json:"next_action"`
-	ActionSkipped    string        `json:"action_skipped"`
-	Transitional     bool          `json:"transitional"`
-	ObservationError string        `json:"observation_error"`
+	Step                int           `json:"step"`
+	NextAction          *trace.Action `json:"next_action"`
+	ActionSkipped       string        `json:"action_skipped"`
+	Transitional        bool          `json:"transitional"`
+	ObservationError    string        `json:"observation_error"`
+	SkippedVerification bool          `json:"skipped_verification"`
 }
 
 func readTraceLines(t *testing.T, directory string) []traceStepLine {
