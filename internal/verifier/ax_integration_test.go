@@ -67,7 +67,7 @@ func TestStateAxObjectSelectorTestTagAlias(t *testing.T) {
 func TestStateAxFindWorks(t *testing.T) {
 	jsonText, err := os.ReadFile("testdata/ax_find_tree.json")
 	if err != nil {
-		t.Skip("ax_find_tree.json fixture unreadable")
+		t.Fatalf("committed fixture unreadable, so the round trip never ran: %v", err)
 	}
 	tree, err := hierarchy.Parse(string(jsonText))
 	if err != nil {
