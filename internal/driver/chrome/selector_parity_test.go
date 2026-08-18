@@ -150,6 +150,22 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			want:     []string{"login_email", "login_note", "login_terms"},
 		},
 		{
+			// The head subtree renders nothing, so the hierarchy dump drops it
+			// (buildTree in driver.go) and so does the enumeration the picker
+			// walks (targetElements in web-runtime.ts). A selector resolving
+			// into it names an element the goja host cannot see at all.
+			name:     "tag naming the head element",
+			selector: "tag:head",
+			object:   objectSelector("tag", "head"),
+			want:     nil,
+		},
+		{
+			name:     "tag naming an element inside the head",
+			selector: "tag:title",
+			object:   objectSelector("tag", "title"),
+			want:     nil,
+		},
+		{
 			// The root element answers a selector like any other: the string
 			// form scans from the root down, and the object form used to start
 			// at the root's children and lose it.

@@ -426,12 +426,22 @@ function deepQueryAll(selector: string, root: ParentNode): Element[] {
 
 // matchedElements resolves one compiled selector: the document query first, then
 // the states it named, which no query can express.
+//
+// The head subtree is dropped here the way targetElements drops it from the
+// enumeration and buildTree (internal/driver/chrome/driver.go) drops it from the
+// dump: it renders nothing, so a selector reaching into it names an element the
+// goja host cannot see at all. document.head is absent only from the small fake
+// documents the unit tests install.
 function matchedElements(root: ParentNode, compiled: CompiledSelector): Element[] {
   const { css, xpath, match } = compiled;
   let found: Element[] = [];
   if (css) found = deepQueryAll(css, root);
   else if (xpath) found = evaluateXPathAll(xpath, root as Node);
-  return match === undefined ? found : found.filter(match);
+  const head: Element | undefined = document.head;
+  return found.filter(
+    (element) =>
+      !(head !== undefined && head.contains(element)) && (match === undefined || match(element)),
+  );
 }
 
 function queryElement(
