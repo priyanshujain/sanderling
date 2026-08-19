@@ -82,13 +82,17 @@ Every key-value pair must match. A key means the same thing here as in the strin
 
 `text` is ANDed like any other key, and the innermost rule then holds over what the whole selector matched: `{ class: "status", text: "Sent" }` drops a row whose badge carries the class and the text both, and keeps one whose badge carries the text alone.
 
-Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`, `secure`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `className`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
+Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`, `editable`, `secure`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `ariaLabel`, `contentDescription`, `label`, `testID`, `resource-id`, `class`, `className`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
 
 A boolean state matches only where the platform reports it. `{secure: true}` names the password entry and `{secure: false}` names an editable field that is not one, so neither value names an element that is no field at all, and neither matches anything on Android, which reports the fact for nothing.
 
-`clickable`, `enabled`, `focused`, `checked` and `selected` are reported for every element, so both values of each match: `{clickable: false}` names every element that is not a tap target. They are read off the element as it stands, never off a markup attribute of the same name, so a box the user ticked answers to `{checked: true}` on a page whose markup never wrote `checked` anywhere.
+`clickable`, `enabled`, `focused`, `checked`, `selected` and `editable` are reported for every element, so both values of each match: `{clickable: false}` names every element that is not a tap target. They are read off the element as it stands, never off a markup attribute of the same name, so a box the user ticked answers to `{checked: true}` on a page whose markup never wrote `checked` anywhere.
+
+`{scrollable: true}` names the containers whose content overflows their box. The web and iOS drivers state the fact where it holds and nowhere else, so `{scrollable: false}` names nothing on either.
 
 A key that names neither an accepted selector key nor an attribute some element on screen carries fails the run, naming the key and the accepted list. Such a key can never match, and an empty result is indistinguishable from a screen with no matching element: the generator declines to act, the runner waits out the step, and the run ends clean having explored nothing. The string form keeps its open kind space, since `<attr>:<value>` is the documented way to reach a raw driver attribute.
+
+`bounds` is one of those raw attributes rather than an accepted key: the native dumps write the rectangle out as a string and no DOM element carries an attribute of that name, so a selector naming it resolves on the platforms that write it and fails the run on web.
 
 ### Path selectors
 
@@ -114,11 +118,16 @@ These key aliases are resolved automatically so selectors work across platforms 
 |---|---|
 | `content-desc` | `accessibilityText` |
 | `accessibilityText` | `content-desc` |
-| `label` | `accessibilityText` |
-| `accessibilityLabel` | `accessibilityText` |
+| `label` | `accessibilityText`, `content-desc` |
+| `accessibilityLabel` | `accessibilityText`, `content-desc` |
+| `ariaLabel` | `accessibilityText`, `content-desc` |
+| `contentDescription` | `accessibilityText`, `content-desc` |
 | `identifier` | `resource-id` |
 | `accessibilityIdentifier` | `resource-id` |
+| `testTag` | `resource-id`, `identifier`, `accessibilityIdentifier`, `data-testid` |
+| `testID` | `data-testid` |
 | `className` | `class` |
+| `elementType` | `class` |
 
 ## AccessibilityElement fields
 
