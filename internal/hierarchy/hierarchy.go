@@ -302,7 +302,6 @@ var selectorKeys = []string{
 	"accessibilityText",
 	"aria-label",
 	"ariaLabel",
-	"bounds",
 	"checked",
 	"class",
 	"className",

@@ -597,6 +597,27 @@ test("selectorFromObject accepts a raw attribute the page carries", () => {
   });
 });
 
+// bounds is a raw driver attribute rather than a cross-platform key: every
+// native dump writes the rectangle out as a string and no DOM element carries an
+// attribute of that name, so the key resolved against the dump and matched
+// nothing here on every page there is. Being on the accepted list is what kept
+// that silent, and no mapping can be invented for it. Off the list it raises the
+// unknown-key error here, and it still resolves wherever a producer writes it,
+// through the escape hatch every other raw attribute uses.
+test("bounds is a raw attribute rather than an accepted key", () => {
+  assert.equal(__testing__.SELECTOR_KEYS.includes("bounds"), false);
+  withDocumentCarrying([], () => {
+    assert.throws(
+      () => selectorFromObject({ bounds: "[0,0,120,40]" }),
+      (error: Error) =>
+        error.message.includes('"bounds"') && error.message.includes("accepted keys"),
+    );
+  });
+  withDocumentCarrying(["bounds"], () => {
+    assert.doesNotThrow(() => selectorFromObject({ bounds: "[0,0,120,40]" }));
+  });
+});
+
 // The string form's kind space stays open on both sides: "<attr>:<value>" is
 // the documented way to reach a raw driver attribute, and internal/hierarchy
 // resolves an unknown kind to an empty result rather than an error.

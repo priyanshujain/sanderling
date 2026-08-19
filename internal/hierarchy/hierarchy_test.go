@@ -690,6 +690,31 @@ func TestTestTagStillReachesTheIdentifierKeys(t *testing.T) {
 	}
 }
 
+// bounds is a raw driver attribute rather than a cross-platform key: every dump
+// writes the rectangle out as a string and no DOM element carries an attribute
+// of that name, so the key resolved here and matched nothing on web on every
+// page there is, with no unknown-key error to say so and no mapping to invent
+// for it. Off the accepted list the web runtime raises that error, and the
+// escape hatch for an attribute the tree carries is what keeps it resolving
+// where a producer writes it.
+func TestBoundsIsAReachableRawAttributeAndNotAnAcceptedKey(t *testing.T) {
+	if slices.Contains(SelectorKeys(), "bounds") {
+		t.Error("bounds names no fact a DOM carries, so it cannot be a cross-platform key")
+	}
+	tree, _ := Parse(androidAttrDump)
+	selector := Selector{Filters: []AttrFilter{{Attr: "bounds", Value: "[0,0,1080,200]"}}}
+	if unknown := tree.UnknownSelectorKeys(selector); len(unknown) != 0 {
+		t.Errorf("bounds is an attribute this dump carries, got unknown %v", unknown)
+	}
+	node := tree.FindBySelector(selector)
+	if node == nil {
+		t.Fatal("expected bounds to match the raw attribute the dump writes")
+	}
+	if node.ResourceID != "com.app:id/row1" {
+		t.Fatalf("bounds matched %q, want row1", node.ResourceID)
+	}
+}
+
 func TestContentDescAliasOnIOS(t *testing.T) {
 	tree, _ := Parse(iosAttrDump)
 	el := tree.Find("content-desc:Close")

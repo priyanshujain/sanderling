@@ -248,7 +248,6 @@ const SELECTOR_KEYS: readonly string[] = [
   "accessibilityText",
   "aria-label",
   "ariaLabel",
-  "bounds",
   "checked",
   "class",
   "className",
