@@ -80,6 +80,8 @@ s.ax.find({ testTag: "AccountCard", clickable: true })
 
 Every key-value pair must match. A key means the same thing here as in the string form: `id`, `desc`, `idPrefix`, `descPrefix` and `tag` keep their matching rules, and every other key is an attribute name, with substring and boolean rules per attribute.
 
+`text` is ANDed like any other key, and the innermost rule then holds over what the whole selector matched: `{ class: "status", text: "Sent" }` drops a row whose badge carries the class and the text both, and keeps one whose badge carries the text alone.
+
 Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`, `secure`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `label`, `resource-id`, `class`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
 
 A boolean state matches only where the platform reports it. `{secure: true}` names the password entry and `{secure: false}` names an editable field that is not one, so neither value names an element that is no field at all, and neither matches anything on Android, which reports the fact for nothing.
