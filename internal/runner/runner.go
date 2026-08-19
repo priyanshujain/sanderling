@@ -236,10 +236,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 		lastLogTime = stepStart
 
-		screen := ""
-		if tree != nil && len(tree.Elements) > 0 {
-			screen = tree.Elements[0].Screen
-		}
+		screen := tree.ScreenName()
 
 		// A transitional tree is one nothing can vouch for: a NavHost mid
 		// cross-fade, a screen that changed shape between two reads, or a
@@ -332,8 +329,6 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			logger.Warn("unsettled tree; skipping verifier",
 				"step", stepIndex, "screen", screen, "nodes", treeSize)
 		}
-		logger.Info("step", "index", stepIndex, "screen", screen, "nodes", treeSize)
-
 		// A frame the verifier would not look at is not one to act on either.
 		// #75 is the fuzzer tapping into a screen that is still filling in, and
 		// holding the action back is also what keeps the spec's view of the run
@@ -473,6 +468,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// A held step leaves lastAction alone on purpose: nothing ran here, and
 		// the action it points at is still the one the next verified step has to
 		// be told about.
+
+		logStep(logger, stepIndex, screen, treeSize, nextAction, nextErr, actionSkipped, tree)
 
 		step := trace.Step{
 			Index:               stepIndex,
@@ -1576,6 +1573,35 @@ func driverIsAndroid(ctx context.Context, options Options, logger *slog.Logger) 
 		return false
 	}
 	return health.Platform == "android"
+}
+
+// logStep prints the one line a run emits per step: what screen it saw and what
+// it did there. The typed value goes through the same redaction the trace and
+// the prompt use, so the console cannot publish a credential the records
+// withhold.
+func logStep(
+	logger *slog.Logger,
+	stepIndex int,
+	screen string,
+	treeSize int,
+	action verifier.Action,
+	actionErr error,
+	skipped actionSkipReason,
+	tree *hierarchy.Tree,
+) {
+	attrs := []any{"index", stepIndex, "screen", screen, "nodes", treeSize}
+	if actionErr != nil {
+		attrs = append(attrs, "action", "none")
+	} else {
+		attrs = append(attrs, "action", string(action.Kind), "target", actionTarget(action))
+		if action.Kind == verifier.ActionKindInputText {
+			attrs = append(attrs, "text", verifier.RecordedActionText(action, tree))
+		}
+	}
+	if skipped != "" {
+		attrs = append(attrs, "skipped", string(skipped))
+	}
+	logger.Info("step", attrs...)
 }
 
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {
