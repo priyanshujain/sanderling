@@ -942,6 +942,22 @@ test("text is ANDed with a state key before the innermost rule", () => {
   });
 });
 
+// class and className are two names for the one attribute every producer
+// writes as class, and internal/hierarchy aliases the second onto the first.
+// This host answers both, so the pair is pinned here: a name dropped from this
+// table matches nothing on web while the dump still answers it, and an empty
+// result reads exactly like a screen with no such element.
+test("className and class name the same elements", () => {
+  const badge = fakeElement({
+    tag: "span", x: 0, y: 0, width: 40, height: 20, id: "status_badge",
+    attrs: { class: "status" }, text: "Sent",
+  });
+  withFakeDocument([badge], () => {
+    assert.deepEqual(matchedIDs({ className: "status" }), ["status_badge"]);
+    assert.deepEqual(matchedIDs({ class: "status" }), ["status_badge"]);
+  });
+});
+
 test("attrs carries every other attribute alongside tag and aria-label", () => {
   const attrs = attrsOf(
     domElement({ tag: "input", attributes: { id: "txn-note", placeholder: "What's this for?" } }),
