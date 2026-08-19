@@ -653,6 +653,43 @@ func TestAccessibilityLabelAliasesStillReachAccessibilityText(t *testing.T) {
 	}
 }
 
+// Compose for Web writes a test tag as data-testid, the key the web runtime
+// resolves testTag and testID against. testTag reached the three identifier
+// keys and not that one, and testID aliased onto nothing at all, so a tag the
+// web runtime found on both rows named no element here.
+func TestTestTagAliasesReachDataTestID(t *testing.T) {
+	tree, _ := Parse(webAttrDump)
+	for _, key := range []string{"testTag", "testID"} {
+		element := tree.Find(key + ":customer-row")
+		if element == nil {
+			t.Fatalf("expected %s: to match the data-testid attribute via alias", key)
+		}
+		if element.ResourceID != "customer_row_a1" {
+			t.Fatalf("%s: matched %q, want customer_row_a1", key, element.ResourceID)
+		}
+		object := tree.FindBySelector(Selector{Filters: []AttrFilter{
+			{Attr: key, Value: "customer-row"},
+		}})
+		if object == nil {
+			t.Fatalf("expected the object form of %s to match data-testid via alias", key)
+		}
+		if object.ResourceID != element.ResourceID {
+			t.Fatalf("the object form of %s matched %q, want %q",
+				key, object.ResourceID, element.ResourceID)
+		}
+	}
+}
+
+// testTag keeps reaching the identifier keys android and ios write it under.
+func TestTestTagStillReachesTheIdentifierKeys(t *testing.T) {
+	if tree, _ := Parse(androidAttrDump); tree.Find("testTag:row1") == nil {
+		t.Fatal("expected testTag: to match the resource-id attribute via alias")
+	}
+	if tree, _ := Parse(iosAttrDump); tree.Find("testTag:Feed") == nil {
+		t.Fatal("expected testTag: to match the identifier attribute via alias")
+	}
+}
+
 func TestContentDescAliasOnIOS(t *testing.T) {
 	tree, _ := Parse(iosAttrDump)
 	el := tree.Find("content-desc:Close")

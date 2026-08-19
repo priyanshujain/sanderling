@@ -274,8 +274,11 @@ var attributeAliases = map[string][]string{
 	// iOS identifier names
 	"identifier":              {"resource-id", "accessibilityIdentifier"},
 	"accessibilityIdentifier": {"resource-id", "identifier"},
-	// Compose testTag surfaces as resource-id on Android, accessibilityIdentifier on iOS
-	"testTag": {"resource-id", "identifier", "accessibilityIdentifier"},
+	// Compose testTag surfaces as resource-id on Android, accessibilityIdentifier
+	// on iOS and data-testid on web, which is the key the web runtime resolves
+	// both names against.
+	"testTag": {"resource-id", "identifier", "accessibilityIdentifier", "data-testid"},
+	"testID":  {"data-testid"},
 	// iOS AXElement raw name for hintText
 	"placeholderValue": {"hintText"},
 	// iOS AXElement raw name for class
