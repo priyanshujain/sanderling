@@ -297,12 +297,14 @@ function cssPart(key: string, value: string): string {
 }
 
 // A compiled selector is what a lookup resolves: the CSS or XPath a document
-// query takes, and the states no query can express, which the elements it
-// answered with are held against afterwards.
+// query takes, the facts no query can express, which the elements it answered
+// with are held against afterwards, and whether the matches an outer element
+// makes are the ones a descendant already made.
 interface CompiledSelector {
   css?: string;
   xpath?: string;
   match?: (element: Element) => boolean;
+  innermost?: boolean;
 }
 
 // A selector key that can never match yields an empty result, which reads
@@ -313,7 +315,7 @@ function selectorFromObject(
   selector: Record<string, string | boolean | undefined>,
 ): CompiledSelector {
   const parts: string[] = [];
-  const stateMatchers: Array<(element: Element) => boolean> = [];
+  const matchers: Array<(element: Element) => boolean> = [];
   let textValue: string | undefined;
   const unknown: string[] = [];
   for (const key of Object.keys(selector)) {
@@ -330,7 +332,7 @@ function selectorFromObject(
     }
     const state = KNOWN_KEY_TO_STATE[key];
     if (state) {
-      stateMatchers.push(state(value));
+      matchers.push(state(value));
       continue;
     }
     parts.push(cssPart(key, value));
@@ -338,21 +340,38 @@ function selectorFromObject(
   if (unknown.length > 0) {
     throw new Error(unknownSelectorKeyMessage(unknown));
   }
-  if (textValue !== undefined && parts.length === 0) {
-    return withStates({ xpath: innermostTextXPath(textValue) }, stateMatchers);
+  if (textValue !== undefined && parts.length === 0 && matchers.length === 0) {
+    return { xpath: innermostTextXPath(textValue) };
   }
-  // A selector that names states alone still has to name a document query to
-  // hold them against, and every element is what it asks about.
-  const css = parts.length === 0 && stateMatchers.length > 0 ? "*" : parts.join("");
-  return withStates({ css }, stateMatchers);
+  // text beside another key was DROPPED here, and the selector then matched on
+  // the other keys alone: `{testTag: "Row", text: "Alice"}` selected every row
+  // carrying the tag, where internal/hierarchy ANDs the two and selects the one
+  // the author named. Matching MORE than the spec said is silent: the find
+  // lands on a row nobody wrote and every property over it still passes.
+  //
+  // It is answered against the element rather than compiled into the query
+  // because the two halves share no query language: CSS cannot ask what an
+  // element's text says, and the XPath that can cannot ask about the rest.
+  if (textValue !== undefined) matchers.push(textMatcher(textValue));
+  // A selector that names no query of its own still has to name one to hold its
+  // matchers against, and every element is what it asks about.
+  const css = parts.length === 0 && matchers.length > 0 ? "*" : parts.join("");
+  const compiled: CompiledSelector = { css };
+  if (matchers.length > 0) {
+    compiled.match = (element) => matchers.every((matcher) => matcher(element));
+  }
+  // Held over what the WHOLE selector matched, where internal/hierarchy holds
+  // it: an ancestor whose only matching descendant a sibling key excludes was
+  // never a match to drop it by.
+  if (textValue !== undefined) compiled.innermost = true;
+  return compiled;
 }
 
-function withStates(
-  compiled: CompiledSelector,
-  stateMatchers: Array<(element: Element) => boolean>,
-): CompiledSelector {
-  if (stateMatchers.length === 0) return compiled;
-  return { ...compiled, match: (element) => stateMatchers.every((state) => state(element)) };
+// The substring rule innermostTextXPath applies, read off the element: an
+// element's text is its whole subtree's text, whitespace collapsed the way
+// normalize-space collapses it.
+function textMatcher(value: string): (element: Element) => boolean {
+  return (element) => (element.textContent ?? "").replace(/\s+/g, " ").trim().includes(value);
 }
 
 // innermostTextXPath matches an element whose text contains value and whose
@@ -433,15 +452,32 @@ function deepQueryAll(selector: string, root: ParentNode): Element[] {
 // goja host cannot see at all. document.head is absent only from the small fake
 // documents the unit tests install.
 function matchedElements(root: ParentNode, compiled: CompiledSelector): Element[] {
-  const { css, xpath, match } = compiled;
+  const { css, xpath, match, innermost } = compiled;
   let found: Element[] = [];
   if (css) found = deepQueryAll(css, root);
   else if (xpath) found = evaluateXPathAll(xpath, root as Node);
   const head: Element | undefined = document.head;
-  return found.filter(
+  const matched = found.filter(
     (element) =>
       !(head !== undefined && head.contains(element)) && (match === undefined || match(element)),
   );
+  return innermost ? innermostMatches(matched) : matched;
+}
+
+// innermostMatches drops a match a descendant of it also makes, which is what
+// innermostMatches in internal/hierarchy drops and what the not() clause of
+// innermostTextXPath keeps out. An element's text is its whole subtree's text,
+// so every ancestor of a match up to the root matches too, and the deepest one
+// is the element the author named.
+function innermostMatches(elements: Element[]): Element[] {
+  const matched = new Set(elements);
+  const outer = new Set<Element>();
+  for (const element of elements) {
+    for (let node = element.parentElement; node; node = node.parentElement) {
+      if (matched.has(node)) outer.add(node);
+    }
+  }
+  return elements.filter((element) => !outer.has(element));
 }
 
 function queryElement(
