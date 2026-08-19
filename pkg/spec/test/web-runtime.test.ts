@@ -958,6 +958,46 @@ test("className and class name the same elements", () => {
   });
 });
 
+// Four more names internal/hierarchy resolves through an alias and this host
+// resolved through nothing: they fell through to a raw attribute lookup, and no
+// DOM element carries an attribute called accessibilityIdentifier. Each one
+// matched on the goja host and NOTHING here, with no unknown-key error to say
+// so, so a property over the element that was never found passed having checked
+// nothing. Each is pinned beside the key it aliases onto, so a name dropped
+// from the table is a name that stops naming the same element.
+test("the identifier aliases name the element id names", () => {
+  const card = fakeElement({
+    tag: "div", x: 0, y: 0, width: 120, height: 40, id: "summary_card", text: "summary",
+  });
+  withFakeDocument([card], () => {
+    assert.deepEqual(matchedIDs({ identifier: "summary_card" }), ["summary_card"]);
+    assert.deepEqual(matchedIDs({ accessibilityIdentifier: "summary_card" }), ["summary_card"]);
+    assert.deepEqual(matchedIDs({ "resource-id": "summary_card" }), ["summary_card"]);
+  });
+});
+
+test("accessibilityText names the element the accessible label names", () => {
+  const email = fakeElement({
+    tag: "input", x: 0, y: 0, width: 120, height: 20, id: "login_email",
+    label: "login_email", editable: true,
+  });
+  withFakeDocument([email], () => {
+    assert.deepEqual(matchedIDs({ accessibilityText: "login_email" }), ["login_email"]);
+    assert.deepEqual(matchedIDs({ "aria-label": "login_email" }), ["login_email"]);
+  });
+});
+
+test("elementType names the elements class names", () => {
+  const badge = fakeElement({
+    tag: "span", x: 0, y: 0, width: 40, height: 20, id: "status_badge",
+    attrs: { class: "status" }, text: "Sent",
+  });
+  withFakeDocument([badge], () => {
+    assert.deepEqual(matchedIDs({ elementType: "status" }), ["status_badge"]);
+    assert.deepEqual(matchedIDs({ class: "status" }), ["status_badge"]);
+  });
+});
+
 test("attrs carries every other attribute alongside tag and aria-label", () => {
   const attrs = attrsOf(
     domElement({ tag: "input", attributes: { id: "txn-note", placeholder: "What's this for?" } }),

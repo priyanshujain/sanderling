@@ -91,6 +91,13 @@ function noopFormula(): unknown {
 const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   id: (v) => `[id="${cssEscape(v)}"]`,
   "resource-id": (v) => `[id="${cssEscape(v)}"]`,
+  // The names ios writes the identifier under, which internal/hierarchy aliases
+  // onto resource-id. Left out of this table they fell through to a raw
+  // attribute lookup, and no element carries an attribute called
+  // accessibilityIdentifier, so they resolved against the dump and named
+  // nothing here.
+  identifier: (v) => `[id="${cssEscape(v)}"]`,
+  accessibilityIdentifier: (v) => `[id="${cssEscape(v)}"]`,
   // The native rule also accepts the local name after Android's "<package>:id/".
   // The DOM has no such prefix, so a plain starts-with is the same rule here.
   idPrefix: (v) => `[id^="${cssEscape(v)}"]`,
@@ -109,6 +116,9 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   "data-testid": (v) => `[data-testid="${cssEscape(v)}"]`,
   className: (v) => `[class~="${cssEscape(v)}"]`,
   class: (v) => `[class~="${cssEscape(v)}"]`,
+  // The name ios writes the class under, which internal/hierarchy aliases onto
+  // class. It read a raw `elementType` attribute here, which nothing carries.
+  elementType: (v) => `[class~="${cssEscape(v)}"]`,
   tag: tagSelector,
   "aria-label": (v) => `[aria-label="${cssEscape(v)}"]`,
   ariaLabel: (v) => `[aria-label="${cssEscape(v)}"]`,
@@ -116,6 +126,9 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   contentDescription: (v) => `[aria-label="${cssEscape(v)}"]`,
   "content-desc": (v) => `[aria-label="${cssEscape(v)}"]`,
   label: (v) => `[aria-label="${cssEscape(v)}"]`,
+  // The name the ios sidecar writes the label under, and the canonical key
+  // internal/hierarchy resolves the whole family through.
+  accessibilityText: (v) => `[aria-label="${cssEscape(v)}"]`,
   placeholder: (v) => `[placeholder="${cssEscape(v)}"]`,
   placeholderValue: (v) => `[placeholder="${cssEscape(v)}"]`,
   hintText: (v) => `[placeholder="${cssEscape(v)}"]`,
