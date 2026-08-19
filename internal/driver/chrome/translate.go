@@ -64,7 +64,15 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 		return `:is([data-testid="` + escaped + `"], [id="` + escaped + `"])`, false, nil
 	case "testID", "testid", "data-testid":
 		return `[data-testid="` + cssEscape(value) + `"]`, false, nil
-	case "placeholder", "placeholderValue", "hintText":
+	case "placeholder":
+		// The attribute the markup writes. hintText and placeholderValue name
+		// the accessible-name ladder above it instead (fieldHint in driver.go),
+		// which no CSS says, so they fall through to a match that reaches
+		// nothing and the step fails by name. Building this selector for them
+		// tapped a field whose hint is its aria-label and whose placeholder
+		// happens to carry the value, which is an element neither matcher
+		// names: a selector reaches here only where the dump resolved it to no
+		// coordinates at all.
 		return `[placeholder="` + cssEscape(value) + `"]`, false, nil
 	default:
 		if !attrNamePattern.MatchString(kind) {

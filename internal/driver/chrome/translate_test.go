@@ -44,6 +44,13 @@ func TestTranslateStringSelector_KnownKeys(t *testing.T) {
 		{"testTag:submit", `:is([data-testid="submit"], [id="submit"])`, false},
 		{"testID:submit", `[data-testid="submit"]`, false},
 		{"placeholder:Email", `[placeholder="Email"]`, false},
+		// hintText and placeholderValue name the accessible-name ladder, which
+		// no CSS says, so they reach nothing here rather than the field whose
+		// placeholder happens to carry the value and whose hint is its
+		// aria-label. Both matchers name that field by its aria-label alone, so
+		// a tap by placeholder acts on an element nobody selected.
+		{"hintText:Email", `[hintText*="Email"]`, false},
+		{"placeholderValue:Email", `[placeholderValue*="Email"]`, false},
 	}
 	for _, testCase := range cases {
 		got, isXPath, err := TranslateStringSelector(testCase.selector)
