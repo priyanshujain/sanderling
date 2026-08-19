@@ -128,6 +128,7 @@ These key aliases are resolved automatically so selectors work across platforms 
 | `testID` | `data-testid` |
 | `className` | `class` |
 | `elementType` | `class` |
+| `placeholderValue` | `hintText` |
 
 ## AccessibilityElement fields
 
@@ -184,12 +185,20 @@ Fields available on every element returned by `find` / `findAll`:
   answers to one, on either host.
 - `attrs.hintText` names an editable field the way a user reads it: its
   `aria-label`, the `<label>` bound to it, its `placeholder`, then its `name`.
-  The `hintText` selector key does not read that ladder on both hosts: the
-  accessibility tree resolves it against the derived attribute above, and the
-  web runtime resolves it against `placeholder` alone. A field labelled by
-  `aria-label` or a bound `<label>` therefore answers to `{hintText: "Email"}`
-  in one and not the other. Select such a field by `attrs.hintText` until the
-  two agree.
+  The `hintText` and `placeholderValue` selector keys read that same ladder,
+  and both hosts derive it with the same function, so a field labelled by
+  `aria-label` or by a bound `<label>` answers to `{hintText: "Email"}` here
+  the way it does on the accessibility tree. A rung the ladder passed over is
+  not the field's hint, so a field whose `aria-label` outranks its
+  `placeholder` answers to the label and not to the placeholder. A field with
+  no hint at all answers to neither key, never to `{hintText: ""}`.
+- `placeholder` is the attribute the markup writes and nothing more. It names
+  a field whose hint is something else, and it names nothing on Android or
+  iOS, neither of which writes an attribute by that name.
+- A `hintText` or `placeholderValue` target reaches the tap path only where the
+  hierarchy dump resolved it to no coordinates, and no CSS says what the ladder
+  says, so the step fails naming the selector rather than tapping whichever
+  field carries the value as a `placeholder`.
 
 ### KMP (Kotlin Multiplatform)
 
