@@ -871,6 +871,77 @@ test("selected selects the live property, not the markup attribute", () => {
   });
 });
 
+// text written beside another key was DROPPED, so `{testID, text}` resolved to
+// the testID alone and selected every row carrying it. internal/hierarchy ANDs
+// the two, so the goja host answered with the one row the author named while
+// this host answered with all of them: a find landed on a row nobody wrote, and
+// a property over it passed having checked a different element.
+function matchedIDs(selector: unknown): string[] {
+  const ax = __testing__.buildAx() as { findAll(selector: unknown): { id: string }[] };
+  return ax.findAll(selector).map((element) => element.id);
+}
+
+test("text is ANDed with the key beside it, in either order", () => {
+  const alice = fakeElement({
+    tag: "div", x: 0, y: 0, width: 120, height: 20, id: "customer_row_a1",
+    testid: "customer-row", text: "Alice",
+  });
+  const bob = fakeElement({
+    tag: "div", x: 0, y: 20, width: 120, height: 20, id: "customer_row_b2",
+    testid: "customer-row", text: "Bob",
+  });
+  withFakeDocument([alice, bob], () => {
+    assert.deepEqual(matchedIDs({ testID: "customer-row", text: "Alice" }), ["customer_row_a1"]);
+    assert.deepEqual(matchedIDs({ text: "Alice", testID: "customer-row" }), ["customer_row_a1"]);
+    assert.deepEqual(matchedIDs({ id: "customer_row_a1", text: "Alice" }), ["customer_row_a1"]);
+    assert.deepEqual(matchedIDs({ id: "customer_row_a1", text: "Bob" }), []);
+    assert.deepEqual(matchedIDs({ text: "Bob", id: "customer_row_a1" }), []);
+  });
+});
+
+// The innermost rule holds over what the WHOLE selector matched, the way
+// internal/hierarchy holds it: an ancestor whose only matching descendant a
+// sibling key excludes was never a match to drop it by. Resolving text to its
+// own innermost match first and filtering afterwards loses plain_row.
+test("text keeps the innermost element the whole selector matched", () => {
+  const nested = fakeElement({
+    tag: "div", x: 0, y: 0, width: 120, height: 20, id: "nested_row",
+    attrs: { class: "row" }, text: "Sent Sent",
+    children: [{
+      tag: "span", x: 0, y: 0, width: 40, height: 20, id: "nested_badge",
+      attrs: { class: "row" }, text: "Sent",
+    }],
+  });
+  const plain = fakeElement({
+    tag: "div", x: 0, y: 20, width: 120, height: 20, id: "plain_row",
+    attrs: { class: "row" }, text: "Sent",
+    children: [{
+      tag: "span", x: 0, y: 20, width: 40, height: 20, id: "plain_badge", text: "Sent",
+    }],
+  });
+  withFakeDocument([nested, plain], () => {
+    assert.deepEqual(matchedIDs({ className: "row", text: "Sent" }), ["nested_badge", "plain_row"]);
+  });
+});
+
+// A state key is answered against the live element rather than compiled into
+// the query, and text has to be ANDed with it before the innermost rule runs:
+// the innermost element carrying "January" is the option, and the select is the
+// only element that is both.
+test("text is ANDed with a state key before the innermost rule", () => {
+  const month = fakeElement({
+    tag: "select", x: 0, y: 0, width: 120, height: 20, id: "month", clickable: true,
+    text: "January February",
+    children: [
+      { tag: "option", x: 0, y: 0, width: 120, height: 20, id: "january", text: "January" },
+      { tag: "option", x: 0, y: 20, width: 120, height: 20, id: "february", text: "February" },
+    ],
+  });
+  withFakeDocument([month], () => {
+    assert.deepEqual(matchedIDs({ text: "January", clickable: true }), ["month"]);
+  });
+});
+
 test("attrs carries every other attribute alongside tag and aria-label", () => {
   const attrs = attrsOf(
     domElement({ tag: "input", attributes: { id: "txn-note", placeholder: "What's this for?" } }),
