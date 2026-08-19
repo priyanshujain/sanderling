@@ -1017,12 +1017,18 @@ internal fun secureFactsFromXml(xml: String): Map<String, Boolean> {
 
 private fun secureFactKey(id: String, bounds: String) = "$id@$bounds"
 
+// A text field is what the Go side calls editable off the same two attributes
+// (internal/hierarchy): stating the fact on a narrower set would leave fields
+// the rest of the system treats as typeable answering for nothing.
 private fun collectTextFields(
     node: com.fasterxml.jackson.databind.JsonNode,
     into: MutableList<com.fasterxml.jackson.databind.node.ObjectNode>,
 ) {
     if (node is com.fasterxml.jackson.databind.node.ObjectNode &&
-        nodeAttribute(node, "class").contains("EditText")
+        (
+            nodeAttribute(node, "class").contains("EditText") ||
+                nodeAttribute(node, "hintText").isNotEmpty()
+            )
     ) {
         into.add(node)
     }
@@ -1256,7 +1262,11 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     // can tell the runner the gesture reached nothing.
     private fun requireOnScreen(x: Int, y: Int) {
         val cached = extent
-        if (cached != null && !offScreen(x, y, cached.first, cached.second)) return
+        if (cached != null &&
+            !offScreen(x, y, cached.first, cached.second)
+        ) {
+            return
+        }
         val info = driver.deviceInfo()
         val fresh = Pair(info.widthPixels, info.heightPixels)
         extent = fresh

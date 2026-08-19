@@ -79,6 +79,23 @@ class SecureFactsTest {
         )
     }
 
+    // The Go side calls a node editable off its class or its hint, and a field
+    // it will happily type into has to be a field this can speak for.
+    @Test fun aFieldNamedByItsHintAloneIsStatedToo() {
+        val hinted = """
+        {"attributes":{"bounds":"[0,0,1080,2340]"},"children":[
+          {"attributes":{"resource-id":"Search","class":"android.view.View","hintText":"Search","bounds":"[10,10,200,50]"},"children":[]}
+        ]}
+        """
+        val xml = """<?xml version='1.0' encoding='UTF-8'?>
+        <hierarchy rotation="0">
+          <node index="0" resource-id="Search" class="android.view.View" password="false" bounds="[10,10,200,50]" />
+        </hierarchy>
+        """
+
+        assertEquals(false, secureOf(withSecureFacts(hinted) { xml }, "Search"))
+    }
+
     // Unstated means "may be a credential" downstream. Every way this can fail
     // has to land there rather than on a false "not secure".
     @Test fun aFactThatCannotBeReadIsLeftUnstated() {
