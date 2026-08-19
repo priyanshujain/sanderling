@@ -128,6 +128,80 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			want:     []string{"nested_row", "nested_badge"},
 		},
 		{
+			// Every name for the accessible label has to name one element. Four
+			// of the six reached it on one host only: label and
+			// accessibilityLabel aliased onto accessibilityText alone, which
+			// the ios sidecar writes and this dump does not, and alias
+			// expansion is one level; ariaLabel and contentDescription aliased
+			// onto nothing. accessibilityText was the mirror image, resolving
+			// against the dump and reaching no DOM attribute of that name.
+			name:     "ariaLabel",
+			selector: "ariaLabel:login_email",
+			object:   objectSelector("ariaLabel", "login_email"),
+			want:     []string{"login_email"},
+		},
+		{
+			name:     "contentDescription",
+			selector: "contentDescription:login_email",
+			object:   objectSelector("contentDescription", "login_email"),
+			want:     []string{"login_email"},
+		},
+		{
+			name:     "label",
+			selector: "label:login_email",
+			object:   objectSelector("label", "login_email"),
+			want:     []string{"login_email"},
+		},
+		{
+			name:     "accessibilityLabel",
+			selector: "accessibilityLabel:login_email",
+			object:   objectSelector("accessibilityLabel", "login_email"),
+			want:     []string{"login_email"},
+		},
+		{
+			name:     "accessibilityText",
+			selector: "accessibilityText:login_email",
+			object:   objectSelector("accessibilityText", "login_email"),
+			want:     []string{"login_email"},
+		},
+		{
+			// The two ios names for the identifier, which resolved against the
+			// dump through an alias and against no DOM attribute at all.
+			name:     "identifier",
+			selector: "identifier:summary_card",
+			object:   objectSelector("identifier", "summary_card"),
+			want:     []string{"summary_card"},
+		},
+		{
+			name:     "accessibilityIdentifier",
+			selector: "accessibilityIdentifier:summary_card",
+			object:   objectSelector("accessibilityIdentifier", "summary_card"),
+			want:     []string{"summary_card"},
+		},
+		{
+			// The ios name for the class, the same way round.
+			name:     "elementType",
+			selector: "elementType:status",
+			object:   objectSelector("elementType", "status"),
+			want:     []string{"nested_row", "nested_badge"},
+		},
+		{
+			// Compose for Web writes a test tag as data-testid. testTag reached
+			// the three identifier keys and not that one, and testID reached
+			// nothing at all, so both named every row of the list on web and no
+			// element here.
+			name:     "testID",
+			selector: "testID:customer-row",
+			object:   objectSelector("testID", "customer-row"),
+			want:     []string{"customer_row_a1", "customer_row_b2"},
+		},
+		{
+			name:     "testTag",
+			selector: "testTag:customer-row",
+			object:   objectSelector("testTag", "customer-row"),
+			want:     []string{"customer_row_a1", "customer_row_b2"},
+		},
+		{
 			// A custom element's tag name holds a real tag name inside it, so a
 			// substring rule answered tag:li with <todo-list> and tag:a with
 			// <todo-app>: the container, not the row the author named.
@@ -260,7 +334,7 @@ func TestSelectors_SecureCombinesWithAnotherKey(t *testing.T) {
 	}
 }
 
-// The other five boolean states are derived from the live element the same way
+// The other seven boolean states are derived from the live element the same way
 // secure is, and were reached the same wrong way: as a markup attribute, which
 // builds [clickable="true"] and matches nothing on any page. The key is
 // accepted, so no unknown-key error fires, and the worked example in
@@ -375,6 +449,35 @@ func TestSelectors_BooleanStatesNameWhatBothProducersReport(t *testing.T) {
 				"state_save", "state_cancel", "state_submit", "state_remember",
 				"state_agree", "state_month", "state_february",
 			},
+		},
+		{
+			// editable and scrollable are derived the same way and were reached
+			// the same wrong way, as markup attributes nothing carries.
+			name:     "editable",
+			selector: "editable:true",
+			want:     []string{"login_email", "login_password", "login_note", "login_terms"},
+		},
+		{
+			name:     "not editable",
+			selector: "editable:false",
+			scope:    "login_form",
+			want:     []string{"login_remember"},
+		},
+		{
+			name:     "scrollable",
+			selector: "scrollable:true",
+			scope:    "scroll_row",
+			want:     []string{"scroll_box"},
+		},
+		{
+			// Both producers state scrollable only where it holds, so the
+			// container that does not scroll answers to neither value, the way
+			// an element that is no field at all answers to neither value of
+			// secure.
+			name:     "not scrollable",
+			selector: "scrollable:false",
+			scope:    "scroll_row",
+			want:     nil,
 		},
 	}
 	for _, testCase := range cases {

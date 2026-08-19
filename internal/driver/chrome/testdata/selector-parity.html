@@ -43,6 +43,15 @@
         <option id="state_february">February</option>
       </select>
     </div>
+    <!-- scrollable is derived from the box rather than written by the markup,
+         and both producers state it only where it holds, so one container here
+         overflows its box and its neighbour does not. -->
+    <div id="scroll_row">
+      <div id="scroll_box" style="height: 20px; overflow: auto">
+        <div id="scroll_content" style="height: 200px">scrolls</div>
+      </div>
+      <div id="scroll_still">still</div>
+    </div>
     <script id="state_script">
       document.getElementById("state_remember").checked = true;
       document.getElementById("state_agree").checked = false;
