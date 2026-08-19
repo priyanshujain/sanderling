@@ -19,11 +19,14 @@
 //	Path queries (global scan only, string form):
 //	  <sel> > <sel> > ...  - each segment matched within subtree of previous match
 //
-// Cross-platform aliases are expanded automatically: "label" / "accessibilityLabel"
-// resolve to accessibilityText; "content-desc" also checks accessibilityText and
-// vice-versa; "identifier" / "accessibilityIdentifier" / "testTag" resolve to
-// resource-id (and to each other) so a Compose testTag matches whether the
-// underlying platform exposes it as resource-id (Android) or accessibilityIdentifier (iOS).
+// Cross-platform aliases are expanded automatically, one level deep: every name
+// for a fact lists every key a producer writes it under rather than hopping
+// through another alias. "label" / "accessibilityLabel" / "ariaLabel" /
+// "contentDescription" resolve to accessibilityText and content-desc, which also
+// check each other; "identifier" / "accessibilityIdentifier" / "testTag" /
+// "testID" resolve to resource-id, to each other and to data-testid, so a
+// Compose testTag matches whether the platform exposes it as resource-id
+// (Android), accessibilityIdentifier (iOS) or data-testid (web).
 package hierarchy
 
 import (
