@@ -57,6 +57,10 @@ data class SnapshotSample(
     val screenshot: Triple<ByteArray, Int, Int>,
 )
 
+// VIEW_HIERARCHY_ATTEMPTS is maestro's own default for the same call: one try,
+// retried internally on a transport fault.
+internal const val VIEW_HIERARCHY_ATTEMPTS = 1
+
 // STABILITY_POLL_INTERVAL_MILLIS is set wide enough that UiAutomation /
 // Maestro's contentDescriptor doesn't get hammered: tighter intervals were
 // observed to back the sidecar gRPC stream up under fuzz load to the point
@@ -948,6 +952,96 @@ internal fun treeWithoutKeyboard(
     return current
 }
 
+// withSecureFacts states, on every text field in the tree, whether the platform
+// calls it a secure entry. maestro's host-side mapper copies a fixed attribute
+// list off the device's XML and `password` is not on it, so the tree alone
+// cannot tell a password field from a search box and everything typed anywhere
+// gets recorded as a credential. The XML the same read produced does carry the
+// fact, so it is fetched (lazily: a screen with no text field never pays for
+// it) and matched back onto the fields by identity and bounds.
+//
+// A field the XML cannot be matched to is left unstated rather than guessed.
+// Unstated reads as "may be a credential" downstream, which is the safe way to
+// be wrong.
+internal fun withSecureFacts(
+    treeJson: String,
+    viewHierarchyXml: () -> String?,
+): String {
+    val root = try {
+        jsonMapper.readTree(treeJson)
+    } catch (_: Exception) {
+        return treeJson
+    }
+    val fields = mutableListOf<com.fasterxml.jackson.databind.node.ObjectNode>()
+    collectTextFields(root, fields)
+    if (fields.isEmpty()) return treeJson
+    val facts = secureFactsFromXml(viewHierarchyXml() ?: return treeJson)
+    var stated = false
+    for (field in fields) {
+        val key = secureFactKey(
+            nodeAttribute(field, "resource-id"),
+            nodeAttribute(field, "bounds"),
+        )
+        field.put("secure", facts[key] ?: continue)
+        stated = true
+    }
+    return if (stated) jsonMapper.writeValueAsString(root) else treeJson
+}
+
+// secureFactsFromXml reads the password attribute uiautomator states on every
+// node. A key two nodes share answers for neither, so it is dropped: matching
+// the wrong node is how a credential ends up recorded in the clear.
+internal fun secureFactsFromXml(xml: String): Map<String, Boolean> {
+    val document = try {
+        javax.xml.parsers.DocumentBuilderFactory.newInstance()
+            .newDocumentBuilder()
+            .parse(java.io.ByteArrayInputStream(xml.toByteArray()))
+    } catch (_: Exception) {
+        return emptyMap()
+    }
+    val facts = mutableMapOf<String, Boolean>()
+    val shared = mutableSetOf<String>()
+    val nodes = document.getElementsByTagName("node")
+    for (index in 0 until nodes.length) {
+        val element = nodes.item(index) as? org.w3c.dom.Element ?: continue
+        val key = secureFactKey(
+            element.getAttribute("resource-id"),
+            element.getAttribute("bounds"),
+        )
+        val password = element.getAttribute("password") == "true"
+        if (facts.put(key, password) != null) shared.add(key)
+    }
+    shared.forEach(facts::remove)
+    return facts
+}
+
+private fun secureFactKey(id: String, bounds: String) = "$id@$bounds"
+
+private fun collectTextFields(
+    node: com.fasterxml.jackson.databind.JsonNode,
+    into: MutableList<com.fasterxml.jackson.databind.node.ObjectNode>,
+) {
+    if (node is com.fasterxml.jackson.databind.node.ObjectNode &&
+        nodeAttribute(node, "class").contains("EditText")
+    ) {
+        into.add(node)
+    }
+    val children = node.get("children")
+    if (children != null && children.isArray) {
+        for (child in children) collectTextFields(child, into)
+    }
+}
+
+private fun nodeAttribute(
+    node: com.fasterxml.jackson.databind.JsonNode,
+    key: String,
+): String {
+    val attributes = node.get("attributes") ?: return ""
+    if (!attributes.isObject) return ""
+    val value = attributes.get(key) ?: return ""
+    return if (value.isNull) "" else value.asText()
+}
+
 // SELECT_ALL_COMMAND selects the focused field's whole content with
 // CTRL+A (keycodes 113 and 29) and DELETE_KEY_COMMAND then deletes the
 // selection (keycode 67). Two key events, whatever the field holds.
@@ -1302,12 +1396,38 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     // not: it fetched the hierarchy ~4 more times on every mutating step. The
     // keyboard leg costs nothing either when no IME is standing in the tree,
     // which is what lets the Hierarchy RPC serve this too.
-    override fun snapshotTree(): String = treeWithoutKeyboard(
-        awaitSettledTree { hierarchy() },
-        imePackage,
-        dismiss = { runCatching { dadb.shell("input keyevent 4") } },
-        reread = { awaitSettledTree { hierarchy() } },
+    override fun snapshotTree(): String = withSecureFacts(
+        treeWithoutKeyboard(
+            awaitSettledTree { hierarchy() },
+            imePackage,
+            dismiss = { runCatching { dadb.shell("input keyevent 4") } },
+            reread = { awaitSettledTree { hierarchy() } },
+        ),
+        ::deviceViewHierarchyXml,
     )
+
+    // deviceViewHierarchyXml re-reads the device tree in the form maestro parsed
+    // it from, which is the only form still carrying the password attribute
+    // maestro's own mapper drops. The call is private to maestro, so a version
+    // that renames it leaves every typed value redacted rather than exposed;
+    // the warning is what says that happened.
+    private fun deviceViewHierarchyXml(): String? = runCatching {
+        val attempts = Int::class.javaPrimitiveType
+        val call = maestro.drivers.AndroidDriver::class.java
+            .getDeclaredMethod("callViewHierarchy", attempts)
+        call.isAccessible = true
+        val response = call.invoke(driver, VIEW_HIERARCHY_ATTEMPTS)
+        response.javaClass.getMethod("getHierarchy").invoke(response) as String
+    }.onFailure {
+        if (viewHierarchyXmlWarned.compareAndSet(false, true)) {
+            System.err.println(
+                "warn: view hierarchy unreadable; typed values redacted: $it",
+            )
+        }
+    }.getOrNull()
+
+    private val viewHierarchyXmlWarned =
+        java.util.concurrent.atomic.AtomicBoolean(false)
 
     override fun waitForIdle(durationMillis: Long) {
         // waitForAppToSettle blocks on the View-system animation and maestro's
