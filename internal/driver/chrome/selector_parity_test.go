@@ -240,7 +240,88 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			name:     "not secure",
 			selector: "secure:false",
 			object:   objectSelector("secure", "false"),
-			want:     []string{"login_email", "login_note", "login_terms"},
+			want: []string{
+				"login_email", "login_note", "login_terms",
+				"hint_phone", "hint_search", "hint_amount", "hint_code",
+			},
+		},
+		{
+			// hintText is the accessible-name ladder both producers derive:
+			// the field's aria-label, the <label> bound to it, its placeholder,
+			// then its name. The dump writes what fieldHint (driver.go) answers
+			// and the web runtime compiled the key to [placeholder="..."], so
+			// every field whose hint comes from a rung above the placeholder
+			// resolved against the dump on the goja host and named nothing at
+			// all here. The key is accepted, so no unknown-key error fires.
+			name:     "hintText from the fields aria-label",
+			selector: "hintText:login_email",
+			object:   objectSelector("hintText", "login_email"),
+			want:     []string{"login_email"},
+		},
+		{
+			name:     "hintText from the label bound to the field",
+			selector: "hintText:Phone number",
+			object:   objectSelector("hintText", "Phone number"),
+			want:     []string{"hint_phone"},
+		},
+		{
+			name:     "hintText from the placeholder",
+			selector: "hintText:Search customers",
+			object:   objectSelector("hintText", "Search customers"),
+			want:     []string{"hint_search"},
+		},
+		{
+			name:     "hintText from the name the form gives the field",
+			selector: "hintText:verification_code",
+			object:   objectSelector("hintText", "verification_code"),
+			want:     []string{"hint_code"},
+		},
+		{
+			name:     "hintText where the aria-label outranks the placeholder",
+			selector: "hintText:Amount in rupees",
+			object:   objectSelector("hintText", "Amount in rupees"),
+			want:     []string{"hint_amount"},
+		},
+		{
+			// The rung the ladder passed over is not the field's hint, so
+			// naming it names nothing. Compiling the key to the placeholder
+			// attribute answered with the field here and with no element on the
+			// goja host: matching MORE than the spec said is the half of this
+			// that lands a find on an element nobody wrote.
+			name:     "hintText naming the placeholder the aria-label outranks",
+			selector: "hintText:0.00",
+			object:   objectSelector("hintText", "0.00"),
+			want:     nil,
+		},
+		{
+			// The ios name for the same ladder, which internal/hierarchy
+			// aliases onto hintText.
+			name:     "placeholderValue",
+			selector: "placeholderValue:login_email",
+			object:   objectSelector("placeholderValue", "login_email"),
+			want:     []string{"login_email"},
+		},
+		{
+			name:     "placeholderValue naming the placeholder the aria-label outranks",
+			selector: "placeholderValue:0.00",
+			object:   objectSelector("placeholderValue", "0.00"),
+			want:     nil,
+		},
+		{
+			// placeholder is the attribute the markup writes, on both hosts:
+			// the dump carries every attribute under the name it was written
+			// with, so the key reads the same string on either side of the
+			// wire and says nothing about the ladder above it.
+			name:     "placeholder",
+			selector: "placeholder:0.00",
+			object:   objectSelector("placeholder", "0.00"),
+			want:     []string{"hint_amount"},
+		},
+		{
+			name:     "placeholder on a field labelled by aria-label alone",
+			selector: "placeholder:login_email",
+			object:   objectSelector("placeholder", "login_email"),
+			want:     nil,
 		},
 		{
 			// The head subtree renders nothing, so the hierarchy dump drops it
@@ -376,6 +457,7 @@ func TestSelectors_BooleanStatesNameWhatBothProducersReport(t *testing.T) {
 			selector: "clickable:true",
 			want: []string{
 				"login_email", "login_password", "login_note", "login_remember",
+				"hint_phone", "hint_search", "hint_amount", "hint_code",
 				"state_save", "state_cancel", "state_submit", "state_remember",
 				"state_agree", "state_month", "todo_link",
 			},
@@ -455,7 +537,10 @@ func TestSelectors_BooleanStatesNameWhatBothProducersReport(t *testing.T) {
 			// the same wrong way, as markup attributes nothing carries.
 			name:     "editable",
 			selector: "editable:true",
-			want:     []string{"login_email", "login_password", "login_note", "login_terms"},
+			want: []string{
+				"login_email", "login_password", "login_note", "login_terms",
+				"hint_phone", "hint_search", "hint_amount", "hint_code",
+			},
 		},
 		{
 			name:     "not editable",
@@ -929,6 +1014,81 @@ func TestSelectors_DataTestIDNamesTheSameElementInTheDumpAndOverCDP(t *testing.T
 		t.Errorf("the dump resolves %s to %q, the CDP selector %q to %q",
 			selector, element.ResourceID, css, overCDP)
 	}
+}
+
+// The same third resolver reads a hint selector, and no CSS says what the
+// accessible-name ladder says. Building [placeholder="..."] for hintText made
+// this resolver name a field whose hint is its aria-label and whose placeholder
+// happens to carry the value, which is an element neither matcher names.
+// TapSelector runs only where the dump resolved the target to no coordinates at
+// all, so a CSS that matches there taps something nobody selected; matching
+// nothing fails the step by name instead, the way every other derived key here
+// already does. placeholder keeps its CSS: it is the attribute the markup
+// writes, which is what all three resolvers read it as.
+func TestSelectors_HintSelectorsResolveOverCDPToWhatBothMatchersName(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+	installSelectorProbe(ctx, t, d)
+
+	cases := []struct {
+		selector string
+		want     []string
+	}{
+		{selector: "hintText:0.00", want: nil},
+		{selector: "placeholderValue:0.00", want: nil},
+		{selector: "hintText:Amount in rupees", want: nil},
+		{selector: "placeholder:0.00", want: []string{"hint_amount"}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.selector, func(t *testing.T) {
+			css, isXPath, err := TranslateStringSelector(testCase.selector)
+			if err != nil {
+				t.Fatalf("TranslateStringSelector(%q): %v", testCase.selector, err)
+			}
+			if isXPath {
+				t.Fatalf("TranslateStringSelector(%q) returned an XPath, want CSS", testCase.selector)
+			}
+			if overCDP := cssIDsOverCDP(ctx, t, d, css); !slices.Equal(overCDP, testCase.want) {
+				t.Errorf("the CDP selector %q matched %v, want %v", css, overCDP, testCase.want)
+			}
+		})
+	}
+
+	// hintText:Amount in rupees names the field on both matchers and on neither
+	// resolver CDP can express, so the step fails by name rather than tapping
+	// the field whose placeholder reads 0.00.
+	const named = "hintText:Amount in rupees"
+	if ids := selectorIDsFromDump(tree, named); !slices.Equal(ids, []string{"hint_amount"}) {
+		t.Errorf("the dump matched %v for %s, want [hint_amount]", ids, named)
+	}
+}
+
+// cssIDsOverCDP resolves a CSS selector the way TapSelector does, over CDP
+// against the live document, and reads back the ids it matched.
+func cssIDsOverCDP(ctx context.Context, t *testing.T, d *Driver, css string) []string {
+	t.Helper()
+	var ids []string
+	script := `Array.from(document.querySelectorAll(` + jsArgument(css) + `)).map((e) => e.id)`
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(script, &ids)); err != nil {
+		t.Fatalf("resolve %q over CDP: %v", css, err)
+	}
+	return ids
 }
 
 func objectSelector(key, value string) hierarchy.Selector {

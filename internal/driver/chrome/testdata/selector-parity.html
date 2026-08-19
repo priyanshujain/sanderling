@@ -27,6 +27,17 @@
       <div id="login_terms" contenteditable="true">terms</div>
       <input id="login_remember" type="checkbox" aria-label="login_remember" />
     </form>
+    <!-- hintText is the accessible-name ladder rather than one attribute, so
+         these fields differ one rung at a time: a bound label, a placeholder,
+         a placeholder an aria-label outranks, and the name the form gives the
+         field. -->
+    <div id="hint_row">
+      <label id="hint_phone_label" for="hint_phone">Phone number</label>
+      <input id="hint_phone" />
+      <input id="hint_search" placeholder="Search customers" />
+      <input id="hint_amount" aria-label="Amount in rupees" placeholder="0.00" />
+      <input id="hint_code" name="verification_code" />
+    </div>
     <!-- The boolean states are derived from the live element, never written by
          the markup, so these controls differ one state at a time: a disabled
          button and an aria-disabled role control, a box ticked by script with
