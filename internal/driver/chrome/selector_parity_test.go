@@ -606,6 +606,136 @@ func TestSelectors_TextNamesTheInnermostMatchInEveryResolver(t *testing.T) {
 	}
 }
 
+// text written beside another key was dropped, so the web runtime matched on
+// the other key alone: {data-testid, text} selected every row carrying the tag
+// where internal/hierarchy selected the one row the author named. Matching MORE
+// than the spec said is silent, which is the failure this file exists to catch:
+// a find lands on a row nobody wrote and every property over it still passes.
+//
+// The innermost rule stays where internal/hierarchy holds it, over what the
+// WHOLE selector matched. nested_row keeps its match because the badge under it
+// carries a different id, and state_month keeps one because the option carrying
+// "January" is not clickable: resolving text to its own innermost match before
+// the other keys narrow anything answers with nothing in both.
+func TestSelectors_TextCombinesWithAnotherKey(t *testing.T) {
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+	installSelectorProbe(ctx, t, d)
+
+	cases := []struct {
+		name    string
+		filters []hierarchy.AttrFilter
+		want    []string
+	}{
+		{
+			name: "text beside the tag every row of the list carries",
+			filters: []hierarchy.AttrFilter{
+				{Attr: "data-testid", Value: "customer-row"},
+				{Attr: "text", Value: "Alice"},
+			},
+			want: []string{"customer_row_a1"},
+		},
+		{
+			// Object keys iterate in the order the author wrote them, and an
+			// earlier fix had to keep a rule valid wherever in the compound it
+			// lands.
+			name: "text before the tag every row of the list carries",
+			filters: []hierarchy.AttrFilter{
+				{Attr: "text", Value: "Alice"},
+				{Attr: "data-testid", Value: "customer-row"},
+			},
+			want: []string{"customer_row_a1"},
+		},
+		{
+			name: "text beside the id of the row carrying it",
+			filters: []hierarchy.AttrFilter{
+				{Attr: "id", Value: "customer_row_a1"},
+				{Attr: "text", Value: "Alice"},
+			},
+			want: []string{"customer_row_a1"},
+		},
+		{
+			// The row named by the id carries different text, so the selector
+			// names nothing at all. Dropping text answered with the row.
+			name: "text beside the id of a row carrying something else",
+			filters: []hierarchy.AttrFilter{
+				{Attr: "id", Value: "customer_row_a1"},
+				{Attr: "text", Value: "Bob"},
+			},
+			want: nil,
+		},
+		{
+			name: "text before the id of a row carrying something else",
+			filters: []hierarchy.AttrFilter{
+				{Attr: "text", Value: "Bob"},
+				{Attr: "id", Value: "customer_row_a1"},
+			},
+			want: nil,
+		},
+		{
+			name: "text beside the id of the row a badge repeats it in",
+			filters: []hierarchy.AttrFilter{
+				{Attr: "id", Value: "nested_row"},
+				{Attr: "text", Value: "Sent"},
+			},
+			want: []string{"nested_row"},
+		},
+		{
+			// Both carry the class and both carry the text, so the row is a
+			// match the badge under it already made.
+			name: "text beside a class the row and the badge under it share",
+			filters: []hierarchy.AttrFilter{
+				{Attr: "class", Value: "status"},
+				{Attr: "text", Value: "Sent"},
+			},
+			want: []string{"nested_badge"},
+		},
+		{
+			name: "text beside a state no query can express",
+			filters: []hierarchy.AttrFilter{
+				{Attr: "text", Value: "January"},
+				{Attr: "clickable", Value: "true"},
+			},
+			want: []string{"state_month"},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			selector := hierarchy.Selector{Filters: testCase.filters}
+			if native := selectorIDsFromDumpObject(tree, selector); !slices.Equal(
+				native,
+				testCase.want,
+			) {
+				t.Errorf("the dump matched %v, want %v", native, testCase.want)
+			}
+			encoded := objectSelectorJSON(selector)
+			if web := selectorIDsFromWebRuntime(ctx, t, d, encoded); !slices.Equal(
+				web,
+				testCase.want,
+			) {
+				t.Errorf("the web runtime matched %v for %s, want %v",
+					web, encoded, testCase.want)
+			}
+		})
+	}
+}
+
 // xpathIDsOverCDP resolves an XPath the way TapSelector does, over CDP against
 // the live document, and reads back the ids it matched in document order.
 func xpathIDsOverCDP(
@@ -683,16 +813,24 @@ func objectSelector(key, value string) hierarchy.Selector {
 	return hierarchy.Selector{Filters: []hierarchy.AttrFilter{{Attr: key, Value: value}}}
 }
 
+// objectSelectorJSON encodes the selector as the object a spec writes, keys in
+// the order the filters state them. A JS object iterates in insertion order, and
+// where in the compound a key lands is what decided whether the selector parsed
+// at all, so a map here would only ever test the alphabetical order.
 func objectSelectorJSON(sel hierarchy.Selector) string {
-	fields := map[string]string{}
+	parts := make([]string, 0, len(sel.Filters))
 	for _, filter := range sel.Filters {
-		fields[filter.Attr] = filter.Value
+		key, err := json.Marshal(filter.Attr)
+		if err != nil {
+			panic(err)
+		}
+		value, err := json.Marshal(filter.Value)
+		if err != nil {
+			panic(err)
+		}
+		parts = append(parts, string(key)+":"+string(value))
 	}
-	encoded, err := json.Marshal(fields)
-	if err != nil {
-		panic(err)
-	}
-	return string(encoded)
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 func selectorIDsFromDumpPath(tree *hierarchy.Tree, path []hierarchy.Selector) []string {
