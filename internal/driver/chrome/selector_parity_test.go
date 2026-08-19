@@ -109,6 +109,25 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			want:     []string{"status_badge"},
 		},
 		{
+			name:     "class",
+			selector: "class:status",
+			object:   objectSelector("class", "status"),
+			want:     []string{"nested_row", "nested_badge"},
+		},
+		{
+			// className is the DOM property name for the same attribute, and
+			// the two names have to name the same elements: the web runtime
+			// compiles both to the same class query, while the dump carries
+			// the fact under `class` alone and no alias reached it, so this
+			// key matched the row and the badge on one host and NOTHING on the
+			// other. The key is accepted, so no unknown-key error fires, and a
+			// property over the missing element passes having checked nothing.
+			name:     "className",
+			selector: "className:status",
+			object:   objectSelector("className", "status"),
+			want:     []string{"nested_row", "nested_badge"},
+		},
+		{
 			// A custom element's tag name holds a real tag name inside it, so a
 			// substring rule answered tag:li with <todo-list> and tag:a with
 			// <todo-app>: the container, not the row the author named.
