@@ -1063,6 +1063,63 @@ test("scrollable selects the containers this host offers a scroll on", () => {
   });
 });
 
+// hintText is the accessible-name ladder, not one attribute, and compiling it
+// to [placeholder="..."] reached the wrong field or none: the fields labelled
+// from a rung above the placeholder resolved against the dump on the goja host
+// and named nothing here, and the one carrying both answered to its placeholder
+// here where the dump answers to its aria-label. Matching MORE than the spec
+// said is the half that lands a find on an element nobody wrote.
+const hintFields = (): FakeElementSpec[] => [
+  { tag: "input", x: 0, y: 0, width: 120, height: 20, id: "email", label: "Email" },
+  {
+    tag: "input", x: 0, y: 20, width: 120, height: 20, id: "search",
+    attrs: { placeholder: "Search customers" },
+  },
+  {
+    tag: "input", x: 0, y: 40, width: 120, height: 20, id: "amount",
+    label: "Amount in rupees", attrs: { placeholder: "0.00" },
+  },
+  {
+    tag: "input", x: 0, y: 60, width: 120, height: 20, id: "code",
+    attrs: { name: "verification_code" },
+  },
+  { tag: "h1", x: 0, y: 80, width: 120, height: 20, id: "title", label: "Email" },
+];
+
+test("hintText selects the field by the name this host derives for it", () => {
+  withFakeDocument(hintFields().map(fakeElement), () => {
+    assert.deepEqual(matchedIDs({ hintText: "Email" }), ["email"]);
+    assert.deepEqual(matchedIDs("hintText:Email"), ["email"]);
+    assert.deepEqual(matchedIDs({ hintText: "Search customers" }), ["search"]);
+    assert.deepEqual(matchedIDs({ hintText: "Amount in rupees" }), ["amount"]);
+    assert.deepEqual(matchedIDs({ hintText: "verification_code" }), ["code"]);
+    // The rung the ladder passed over is not the field's hint, and a heading
+    // is no field at all, so neither answers.
+    assert.deepEqual(matchedIDs({ hintText: "0.00" }), []);
+    // Both producers write the fact only where the ladder answered, so an empty
+    // hint names nothing rather than everything that is no field.
+    assert.deepEqual(matchedIDs({ hintText: "" }), []);
+  });
+});
+
+test("placeholderValue names the ladder hintText names", () => {
+  withFakeDocument(hintFields().map(fakeElement), () => {
+    assert.deepEqual(matchedIDs({ placeholderValue: "Email" }), ["email"]);
+    assert.deepEqual(matchedIDs({ placeholderValue: "Amount in rupees" }), ["amount"]);
+    assert.deepEqual(matchedIDs({ placeholderValue: "0.00" }), []);
+  });
+});
+
+// placeholder stays the attribute the markup writes, which is what the dump
+// carries under that name too, so the two hosts read the same string for it.
+test("placeholder names the attribute the markup writes", () => {
+  withFakeDocument(hintFields().map(fakeElement), () => {
+    assert.deepEqual(matchedIDs({ placeholder: "0.00" }), ["amount"]);
+    assert.deepEqual(matchedIDs({ placeholder: "Search customers" }), ["search"]);
+    assert.deepEqual(matchedIDs({ placeholder: "Email" }), []);
+  });
+});
+
 test("attrs carries every other attribute alongside tag and aria-label", () => {
   const attrs = attrsOf(
     domElement({ tag: "input", attributes: { id: "txn-note", placeholder: "What's this for?" } }),

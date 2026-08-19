@@ -129,9 +129,10 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   // The name the ios sidecar writes the label under, and the canonical key
   // internal/hierarchy resolves the whole family through.
   accessibilityText: (v) => `[aria-label="${cssEscape(v)}"]`,
+  // The attribute the markup writes, which is what the hierarchy dump carries
+  // under this name too. It says nothing about the ladder hintText climbs: a
+  // field whose placeholder an aria-label outranks still answers here.
   placeholder: (v) => `[placeholder="${cssEscape(v)}"]`,
-  placeholderValue: (v) => `[placeholder="${cssEscape(v)}"]`,
-  hintText: (v) => `[placeholder="${cssEscape(v)}"]`,
   secure: secureSelector,
 };
 
@@ -179,7 +180,25 @@ const KNOWN_KEY_TO_STATE: Record<
   selected: stateMatcher(isSelected),
   editable: stateMatcher(isEditable),
   scrollable: scrollableMatcher,
+  hintText: hintMatcher,
+  placeholderValue: hintMatcher,
 };
+
+// hintText is the accessible-name ladder, derived from the live element, and
+// compiling it to [placeholder="..."] made it name the wrong field or none: a
+// field labelled by an aria-label or a bound <label> carries no placeholder at
+// all, so it resolved against the dump on the goja host and reached nothing
+// here, and one carrying both answered to the placeholder here where the dump
+// answers to the aria-label. It reads the same fieldHint elementHandle and the
+// hierarchy dump (internal/driver/chrome/driver.go) derive the fact with, so a
+// selector cannot name a field this host calls something else.
+//
+// An empty hint names nothing rather than everything that is no field: both
+// producers write the attribute only where the ladder answered.
+function hintMatcher(value: string): (element: Element) => boolean {
+  if (value === "") return () => false;
+  return (element) => fieldHint(element) === value;
+}
 
 // A value that is neither true nor false can match nothing, the way a CSS part
 // built from one resolves to `:not(*)`.
