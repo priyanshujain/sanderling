@@ -33,7 +33,7 @@ The trace is written incrementally. An interrupted run is complete up to the ste
 
 A run types into whatever the app puts on screen, login forms included, and the trace and the model call record are both shared. So a typed value is written down as `[redacted]` whenever the target may be a credential entry: the trace action, the recent-action memory the prompt carries, the numbered candidate list, and the `state.lastAction` a spec reads (and can extract into the trace) all render it that way. The app still receives the real keystrokes; only the record is redacted, and the record still names the field that was typed into.
 
-Which values that covers differs by platform, because the platforms differ in what they report. iOS and web state on every editable field whether it masks its input, so only the fields that do are redacted and the rest of the memory keeps its values. Android reports nothing: uiautomator's password attribute is dropped by the native tree mapper before the driver sees it, a password field is indistinguishable from a search box there, and so every typed value on Android is redacted.
+Which values that covers is decided per field, from what the platform says about it. iOS and web state on every editable field whether it masks its input. Android states it too, though the tree the sidecar gets from maestro does not: maestro's mapper copies a fixed attribute list off the device's view hierarchy and `password` is not on it, so the sidecar re-reads that hierarchy once per settled snapshot and puts the fact back on the text fields it can match. A field it cannot match is left unstated, and an unstated field is redacted.
 
 ## App state across runs
 

@@ -76,11 +76,11 @@ func RecordedAction(action Action, tree *hierarchy.Tree) Action {
 // have produced.
 //
 // A target the platform reports as a secure entry is redacted, and so is a
-// target carrying no report at all. iOS and web state the fact on every
-// editable element, so a missing one means Android, whose native tree mapper
-// drops uiautomator's password attribute before the sidecar sees it. There a
-// password field cannot be told from a search box, and the target that cannot
-// be told apart is treated as the credential.
+// target carrying no report at all. All three platforms state the fact on their
+// editable elements, so a missing one is a field none of them could speak for:
+// an action that named no target, or an Android text field the sidecar could
+// not match against the device's own view hierarchy. The target that cannot be
+// told apart is treated as the credential.
 func recordedInputText(text string, target secureFact) string {
 	if target.reported && !target.secure {
 		return text

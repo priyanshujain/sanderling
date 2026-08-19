@@ -40,9 +40,9 @@ const webLoginTreeJSON = `{
   ]
 }`
 
-// androidLoginTreeJSON is the same form on Android, where the native tree
-// mapper drops uiautomator's password attribute and neither field carries the
-// fact.
+// androidLoginTreeJSON is the same form with the fact missing from both fields,
+// which is what an Android tree looks like when the sidecar could not match its
+// text fields against the device's own view hierarchy.
 const androidLoginTreeJSON = `{
   "attributes": {"bounds": "[0,0,1080,2340]"},
   "children": [
@@ -65,8 +65,8 @@ func TestTraceActionForRedactsTypedValuesTheTargetCannotClear(t *testing.T) {
 	}{
 		{"ios secure field", iosLoginTreeJSON, "id:LoginPassword"},
 		{"web secure field", webLoginTreeJSON, "id:login-password"},
-		{"android field reported as neither", androidLoginTreeJSON, "id:login_email"},
-		{"android password field", androidLoginTreeJSON, "id:login_password"},
+		{"field reported as neither", androidLoginTreeJSON, "id:login_email"},
+		{"password field reported as neither", androidLoginTreeJSON, "id:login_password"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			traceAction := traceActionFor(typeInto(testCase.selector), mustParseTree(t, testCase.treeJSON))
