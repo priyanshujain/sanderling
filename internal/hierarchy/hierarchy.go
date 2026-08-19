@@ -259,9 +259,14 @@ type AttrFilter struct {
 var attributeAliases = map[string][]string{
 	// Android XML legacy name; web driver uses content-desc; the sidecar normalises to accessibilityText
 	"content-desc": {"accessibilityText"},
-	// iOS AXElement / UIKit names
-	"label":              {"accessibilityText"},
-	"accessibilityLabel": {"accessibilityText"},
+	// Every other name for the accessible label. Alias expansion is one level,
+	// so each name lists both keys a producer writes the fact under rather than
+	// hopping through accessibilityText: android and the chrome dump write
+	// content-desc, the ios sidecar writes accessibilityText.
+	"label":              {"accessibilityText", "content-desc"},
+	"accessibilityLabel": {"accessibilityText", "content-desc"},
+	"ariaLabel":          {"accessibilityText", "content-desc"},
+	"contentDescription": {"accessibilityText", "content-desc"},
 	// accessibilityText is the canonical key; also check content-desc for Android/web
 	"accessibilityText": {"content-desc"},
 	// resource-id canonical key; also check identifier (iOS AXElement raw field)

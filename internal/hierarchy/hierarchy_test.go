@@ -552,6 +552,24 @@ const classAttrDump = `{
   ]
 }`
 
+const webAttrDump = `{
+  "attributes": {"resource-id": "page", "tag": "html", "bounds": "[0,0,1280,720]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "login_email", "content-desc": "login_email", "tag": "input", "bounds": "[0,0,300,40]"},
+      "children": [],
+      "editable": true,
+      "enabled": true
+    },
+    {
+      "attributes": {"resource-id": "customer_row_a1", "data-testid": "customer-row", "tag": "div", "bounds": "[0,40,300,80]"},
+      "children": [],
+      "clickable": true,
+      "enabled": true
+    }
+  ]
+}`
+
 func TestRawResourceIDSubstringMatch(t *testing.T) {
 	tree, _ := Parse(androidAttrDump)
 	el := tree.Find("resource-id:row1")
@@ -589,6 +607,49 @@ func TestClassNameAliasMatchesClass(t *testing.T) {
 	}
 	if object.ResourceID != el.ResourceID {
 		t.Fatalf("the object form matched %q, want %q", object.ResourceID, el.ResourceID)
+	}
+}
+
+// One fact, four names, and only two of them reached it. Android and the chrome
+// dump write the accessible name under content-desc; ios writes it under
+// accessibilityText. label and accessibilityLabel aliased onto accessibilityText
+// alone, and alias expansion is ONE level, so the hop from there to content-desc
+// was never taken: both keys matched nothing on the two platforms that write
+// content-desc. ariaLabel and contentDescription aliased onto nothing at all and
+// matched nothing anywhere. The web runtime resolves all four against the live
+// DOM, so a selector naming a field this way found it on one host and no element
+// at all on the other, with no unknown-key error to say so.
+func TestAccessibilityLabelAliasesReachContentDesc(t *testing.T) {
+	tree, _ := Parse(webAttrDump)
+	for _, key := range []string{"label", "accessibilityLabel", "ariaLabel", "contentDescription"} {
+		element := tree.Find(key + ":login_email")
+		if element == nil {
+			t.Fatalf("expected %s: to match the content-desc attribute via alias", key)
+		}
+		if element.ResourceID != "login_email" {
+			t.Fatalf("%s: matched %q, want login_email", key, element.ResourceID)
+		}
+		object := tree.FindBySelector(Selector{Filters: []AttrFilter{
+			{Attr: key, Value: "login_email"},
+		}})
+		if object == nil {
+			t.Fatalf("expected the object form of %s to match content-desc via alias", key)
+		}
+		if object.ResourceID != element.ResourceID {
+			t.Fatalf("the object form of %s matched %q, want %q",
+				key, object.ResourceID, element.ResourceID)
+		}
+	}
+}
+
+// The iOS sidecar writes the same fact under accessibilityText, which the two
+// names already reached and have to keep reaching.
+func TestAccessibilityLabelAliasesStillReachAccessibilityText(t *testing.T) {
+	tree, _ := Parse(iosAttrDump)
+	for _, key := range []string{"label", "accessibilityLabel", "ariaLabel", "contentDescription"} {
+		if tree.Find(key+":Close") == nil {
+			t.Fatalf("expected %s: to match the accessibilityText attribute via alias", key)
+		}
 	}
 }
 
