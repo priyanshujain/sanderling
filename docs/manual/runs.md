@@ -23,10 +23,17 @@ sanderling test --spec spec.ts --bundle-id com.example.app --duration 30m
         └── trace written to ./runs/<timestamp>/
               ├── trace.jsonl
               ├── screenshots/
+              ├── llm-calls.jsonl   (--generator llm only)
               └── meta.json
 ```
 
 The trace is written incrementally. An interrupted run is complete up to the step where it stopped.
+
+## Typed values in the record
+
+A run types into whatever the app puts on screen, login forms included, and the trace and the model call record are both shared. So a typed value is written down as `[redacted]` whenever the target may be a credential entry: the trace action, the recent-action memory the prompt carries, the numbered candidate list, and the `state.lastAction` a spec reads (and can extract into the trace) all render it that way. The app still receives the real keystrokes; only the record is redacted, and the record still names the field that was typed into.
+
+Which values that covers differs by platform, because the platforms differ in what they report. iOS and web state on every editable field whether it masks its input, so only the fields that do are redacted and the rest of the memory keeps its values. Android reports nothing: uiautomator's password attribute is dropped by the native tree mapper before the driver sees it, a password field is indistinguishable from a search box there, and so every typed value on Android is redacted.
 
 ## App state across runs
 
@@ -51,6 +58,10 @@ Preconditions like login run through the spec's `setup` export (see the [case st
 | 5 min | ~15s | 5% |
 | 30 min | ~15s | 0.8% |
 | 1 hour | ~15s | 0.4% |
+
+Those steps are still actions the app received, so the trace names them: every action it records carries a `source` saying whether `setup`, the seeded picker or the model produced it. Anything measured per action counts the last two.
+
+A trace recorded before actions carried a `source` names no producer for any of them, so nothing can say whether its login is inside a per-action count. The analysis marks such a count unattributed and prints how much of it that is, rather than discarding the runs; what it refuses is testing that count against one the login was taken out of, since the two divide by different things.
 
 ## Session state
 

@@ -22,7 +22,7 @@ import type {
   WeightedEntry,
 } from "./types.ts";
 import type { ActionDescriptor, BuiltinVerb, GeneratorNode } from "./action-tree.ts";
-import { getSamplerRng } from "./sampler-rng.ts";
+import { getSamplerRng, refuseWhileEnumerating } from "./sampler-rng.ts";
 
 export { setSamplerRng } from "./sampler-rng.ts";
 
@@ -67,6 +67,7 @@ export function from<T>(items: readonly T[]): Sampler<T> {
   return {
     generate(): T {
       if (items.length <= 1) return items[0] as T;
+      refuseWhileEnumerating(items.length);
       const rng = getSamplerRng();
       const index = rng ? rng.intN(items.length) : 0;
       return items[index] as T;

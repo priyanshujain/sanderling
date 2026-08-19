@@ -6,9 +6,11 @@
 //	String selectors (global scan or element-scoped):
 //	  attribute:value      - substring match; exact for "true"/"false" booleans
 //	  id:<suffix>          - substring on resource-id / identifier (backward compat)
-//	  text:<value>         - substring on text attribute
+//	  idPrefix:<prefix>    - starts-with on resource-id / identifier, package prefix skipped
+//	  text:<value>         - substring on text attribute, innermost match only
 //	  desc:<value>         - substring on content-desc / accessibilityText
 //	  descPrefix:<prefix>  - starts-with on content-desc / accessibilityText
+//	  tag:<value>          - exact match on the element's tag name (web)
 //
 //	Object selectors (multi-attribute AND, element-scoped or global):
 //	  { attr: value, ... } - all key/value pairs must match, each key resolved by
@@ -17,11 +19,14 @@
 //	Path queries (global scan only, string form):
 //	  <sel> > <sel> > ...  - each segment matched within subtree of previous match
 //
-// Cross-platform aliases are expanded automatically: "label" / "accessibilityLabel"
-// resolve to accessibilityText; "content-desc" also checks accessibilityText and
-// vice-versa; "identifier" / "accessibilityIdentifier" / "testTag" resolve to
-// resource-id (and to each other) so a Compose testTag matches whether the
-// underlying platform exposes it as resource-id (Android) or accessibilityIdentifier (iOS).
+// Cross-platform aliases are expanded automatically, one level deep: every name
+// for a fact lists every key a producer writes it under rather than hopping
+// through another alias. "label" / "accessibilityLabel" / "ariaLabel" /
+// "contentDescription" resolve to accessibilityText and content-desc, which also
+// check each other; "identifier" / "accessibilityIdentifier" / "testTag" /
+// "testID" resolve to resource-id, to each other and to data-testid, so a
+// Compose testTag matches whether the platform exposes it as resource-id
+// (Android), accessibilityIdentifier (iOS) or data-testid (web).
 package hierarchy
 
 import (
@@ -29,6 +34,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -69,8 +75,18 @@ type Element struct {
 	Focused    bool              `json:"focused,omitempty"`
 	Selected   bool              `json:"selected,omitempty"`
 	Editable   bool              `json:"editable,omitempty"`
+	Secure     bool              `json:"secure,omitempty"`
 	Bounds     Bounds            `json:"bounds"`
 	Attributes map[string]string `json:"attrs,omitempty"`
+}
+
+// SecureReported reports whether the producer stated this element's secure
+// fact at all. Android never does, so an element without it is unknown rather
+// than known not to be a secure entry, and a caller deciding what may be
+// written down has to tell those two apart.
+func (e *Element) SecureReported() bool {
+	_, reported := e.Attributes["secure"]
+	return reported
 }
 
 // Node is one node in the hierarchy tree.
@@ -84,18 +100,149 @@ type Node struct {
 type Tree struct {
 	Root     *Node      `json:"-"`
 	Elements []*Element `json:"elements"`
+	// UnreadableFlags counts the boolean fields the producer sent as something
+	// other than a boolean. They are dropped rather than failing the dump, so
+	// the count is what keeps the drop from being silent.
+	UnreadableFlags int `json:"unreadableFlags,omitempty"`
+}
+
+// treeJSON is the stored form of a Tree. `depths` is the pre-order depth of
+// each element, which is what turns the flat array back into Root: a stored
+// tree without it (every trace written before the field existed) decodes with
+// a nil Root and resolves no selector, exactly as it did before.
+//
+// A depth per element rather than a parent index per element: the numbers are
+// one digit deep into most hierarchies where a parent index is three, and a
+// step already costs 86 KB on android.
+type treeJSON struct {
+	Elements        []*Element `json:"elements"`
+	Depths          []int      `json:"depths,omitempty"`
+	UnreadableFlags int        `json:"unreadable_flags,omitempty"`
+}
+
+func (t Tree) MarshalJSON() ([]byte, error) {
+	return json.Marshal(treeJSON{
+		Elements:        t.Elements,
+		Depths:          t.depths(),
+		UnreadableFlags: t.UnreadableFlags,
+	})
+}
+
+// depths walks Root, and yields nothing unless the walk covers exactly the
+// elements the flat array holds: a hand-built Tree whose Root and Elements
+// disagree would otherwise store a shape that rebuilds into a different tree.
+func (t Tree) depths() []int {
+	if t.Root == nil {
+		return nil
+	}
+	depths := make([]int, 0, len(t.Elements))
+	var walk func(node *Node, depth int)
+	walk = func(node *Node, depth int) {
+		depths = append(depths, depth)
+		for _, child := range node.Children {
+			walk(child, depth+1)
+		}
+	}
+	walk(t.Root, 0)
+	if len(depths) != len(t.Elements) {
+		return nil
+	}
+	return depths
+}
+
+func (t *Tree) UnmarshalJSON(data []byte) error {
+	var stored treeJSON
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return err
+	}
+	t.Elements = stored.Elements
+	t.UnreadableFlags = stored.UnreadableFlags
+	t.Root = t.rebuild(stored.Depths)
+	return nil
+}
+
+// rebuild re-parents the flat pre-order array from the stored depths. Every
+// element is re-seated inside its Node so Tree.Elements and &node.Element stay
+// the same pointer, which is the identity the verifier's element scope and the
+// picker's target list are keyed on.
+func (t *Tree) rebuild(depths []int) *Node {
+	if !wellFormedDepths(depths, len(t.Elements)) {
+		return nil
+	}
+	stack := make([]*Node, 0, 32)
+	for index, depth := range depths {
+		node := &Node{Element: *t.Elements[index], tree: t}
+		t.Elements[index] = &node.Element
+		stack = stack[:depth]
+		if depth > 0 {
+			parent := stack[depth-1]
+			parent.Children = append(parent.Children, node)
+		}
+		stack = append(stack, node)
+	}
+	return stack[0]
+}
+
+// wellFormedDepths accepts only a single-rooted pre-order sequence: one root at
+// the head and no child deeper than one level below its predecessor.
+func wellFormedDepths(depths []int, elementCount int) bool {
+	if len(depths) == 0 || len(depths) != elementCount || depths[0] != 0 {
+		return false
+	}
+	for index := 1; index < len(depths); index++ {
+		if depths[index] < 1 || depths[index] > depths[index-1]+1 {
+			return false
+		}
+	}
+	return true
 }
 
 // treeNodeJSON mirrors the sidecar TreeNode JSON structure.
 type treeNodeJSON struct {
 	Attributes map[string]string `json:"attributes"`
 	Children   []treeNodeJSON    `json:"children"`
-	Clickable  *bool             `json:"clickable"`
-	Enabled    *bool             `json:"enabled"`
-	Focused    *bool             `json:"focused"`
-	Checked    *bool             `json:"checked"`
-	Selected   *bool             `json:"selected"`
-	Editable   *bool             `json:"editable"`
+	Clickable  flagJSON          `json:"clickable"`
+	Enabled    flagJSON          `json:"enabled"`
+	Focused    flagJSON          `json:"focused"`
+	Checked    flagJSON          `json:"checked"`
+	Selected   flagJSON          `json:"selected"`
+	Editable   flagJSON          `json:"editable"`
+	Secure     flagJSON          `json:"secure"`
+}
+
+// flagJSON is one boolean field of a node. A value that is not a boolean
+// leaves the flag unset and marks itself unreadable rather than failing the
+// document: a dump is one observation of a whole screen, and one node's bit is
+// no reason to discard every element on it. Malformed bounds are already
+// treated this way.
+type flagJSON struct {
+	set        bool
+	value      bool
+	unreadable bool
+}
+
+func (f *flagJSON) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+	var value bool
+	if err := json.Unmarshal(data, &value); err != nil {
+		f.unreadable = true
+		return nil
+	}
+	f.set = true
+	f.value = value
+	return nil
+}
+
+func (n *treeNodeJSON) unreadableFlags() int {
+	count := 0
+	for _, flag := range []flagJSON{n.Clickable, n.Enabled, n.Focused, n.Checked, n.Selected, n.Editable, n.Secure} {
+		if flag.unreadable {
+			count++
+		}
+	}
+	return count
 }
 
 // Selector describes a multi-attribute AND match.
@@ -115,9 +262,14 @@ type AttrFilter struct {
 var attributeAliases = map[string][]string{
 	// Android XML legacy name; web driver uses content-desc; the sidecar normalises to accessibilityText
 	"content-desc": {"accessibilityText"},
-	// iOS AXElement / UIKit names
-	"label":              {"accessibilityText"},
-	"accessibilityLabel": {"accessibilityText"},
+	// Every other name for the accessible label. Alias expansion is one level,
+	// so each name lists both keys a producer writes the fact under rather than
+	// hopping through accessibilityText: android and the chrome dump write
+	// content-desc, the ios sidecar writes accessibilityText.
+	"label":              {"accessibilityText", "content-desc"},
+	"accessibilityLabel": {"accessibilityText", "content-desc"},
+	"ariaLabel":          {"accessibilityText", "content-desc"},
+	"contentDescription": {"accessibilityText", "content-desc"},
 	// accessibilityText is the canonical key; also check content-desc for Android/web
 	"accessibilityText": {"content-desc"},
 	// resource-id canonical key; also check identifier (iOS AXElement raw field)
@@ -125,19 +277,188 @@ var attributeAliases = map[string][]string{
 	// iOS identifier names
 	"identifier":              {"resource-id", "accessibilityIdentifier"},
 	"accessibilityIdentifier": {"resource-id", "identifier"},
-	// Compose testTag surfaces as resource-id on Android, accessibilityIdentifier on iOS
-	"testTag": {"resource-id", "identifier", "accessibilityIdentifier"},
+	// Compose testTag surfaces as resource-id on Android, accessibilityIdentifier
+	// on iOS and data-testid on web, which is the key the web runtime resolves
+	// both names against.
+	"testTag": {"resource-id", "identifier", "accessibilityIdentifier", "data-testid"},
+	"testID":  {"data-testid"},
 	// iOS AXElement raw name for hintText
 	"placeholderValue": {"hintText"},
 	// iOS AXElement raw name for class
 	"elementType": {"class"},
+	// DOM property name for class; every producer writes the attribute as class
+	"className": {"class"},
 }
 
-// matchAttr returns true when the element has an attribute matching attr:value.
-// Alias expansion is applied so cross-platform names resolve correctly.
-// Boolean values ("true"/"false") use exact comparison; all others use substring.
-// Returns false gracefully when no candidate attribute has data.
+// selectorKeys is every key an object selector may use. It is the union of the
+// selector kinds, the attribute names the drivers emit on some platform, and
+// the cross-platform aliases, so a key that is meaningful on ONE platform stays
+// silently empty on the others rather than failing the run there.
+//
+// pkg/spec/test/fixtures/selector-keys.json holds the same list for the web
+// runtime; a test on each side asserts its own list against that file, which is
+// what keeps one spec from being accepted by one runtime and rejected by the
+// other.
+var selectorKeys = []string{
+	"accessibilityIdentifier",
+	"accessibilityLabel",
+	"accessibilityText",
+	"aria-label",
+	"ariaLabel",
+	"checked",
+	"class",
+	"className",
+	"clickable",
+	"content-desc",
+	"contentDescription",
+	"data-testid",
+	"desc",
+	"descPrefix",
+	"editable",
+	"elementType",
+	"enabled",
+	"focused",
+	"hintText",
+	"id",
+	"idPrefix",
+	"identifier",
+	"label",
+	"package",
+	"placeholder",
+	"placeholderValue",
+	"resource-id",
+	"scrollable",
+	"secure",
+	"selected",
+	"tag",
+	"testID",
+	"testTag",
+	"text",
+	"title",
+	"value",
+}
+
+var selectorKeySet = func() map[string]bool {
+	set := make(map[string]bool, len(selectorKeys))
+	for _, key := range selectorKeys {
+		set[key] = true
+	}
+	return set
+}()
+
+// SelectorKeys returns the accepted object-selector keys, sorted.
+func SelectorKeys() []string {
+	return slices.Clone(selectorKeys)
+}
+
+// UnknownSelectorKeys returns the keys in sel that name neither an accepted
+// selector key nor an attribute some element in the tree carries. Such a key
+// can never match: the caller gets an empty result on every screen, which reads
+// exactly like a screen that has no matching element.
+func (t *Tree) UnknownSelectorKeys(sel Selector) []string {
+	if t == nil {
+		return nil
+	}
+	var unknown []string
+	for _, filter := range sel.Filters {
+		if selectorKeySet[filter.Attr] || t.carriesAttribute(filter.Attr) {
+			continue
+		}
+		if !slices.Contains(unknown, filter.Attr) {
+			unknown = append(unknown, filter.Attr)
+		}
+	}
+	return unknown
+}
+
+// carriesAttribute is the escape hatch for raw driver attributes this package
+// does not enumerate: a key some element actually has is a key that can match.
+func (t *Tree) carriesAttribute(key string) bool {
+	for _, element := range t.Elements {
+		if _, ok := element.Attributes[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// UnknownSelectorKeyMessage is the diagnostic for keys UnknownSelectorKeys
+// returned. pkg/spec/src/web-runtime.ts raises the identical text, so one
+// mistake reads the same whichever runtime the spec ran on.
+func UnknownSelectorKeyMessage(keys []string) string {
+	quoted := make([]string, len(keys))
+	for i, key := range keys {
+		quoted[i] = strconv.Quote(key)
+	}
+	return fmt.Sprintf(
+		"selector key %s cannot match: no element carries that attribute, and it is not one of the accepted keys: %s",
+		strings.Join(quoted, ", "),
+		strings.Join(selectorKeys, ", "),
+	)
+}
+
+// matchSelectorKind resolves the selector keys that name a matching rule rather
+// than an attribute: they read a derived field and compare it their own way,
+// where an ordinary key does a substring test against the raw attribute map.
+// The second return is false when kind names an ordinary attribute.
+//
+// The string form and the object form both come through here, so one key cannot
+// mean one thing in "id:save" and another in {id: "save"}. It used to: the
+// object form fell through to the attribute map, which carries no `id` or
+// `desc` key on any platform, so those selectors matched nothing at all and
+// said nothing about it.
+func matchSelectorKind(element *Element, kind, value string) (bool, bool) {
+	switch kind {
+	case "id":
+		return element.ResourceID == value ||
+			strings.HasSuffix(element.ResourceID, ":id/"+value), true
+	case "idPrefix":
+		return matchIDPrefix(element.ResourceID, value), true
+	case "desc":
+		return element.Description == value ||
+			strings.HasPrefix(element.Description, value+", "), true
+	case "descPrefix":
+		return strings.HasPrefix(element.Description, value), true
+	case "tag":
+		// Both DOM resolvers compile this to a CSS type selector, which is the
+		// whole tag name. A substring rule here made {tag: "li"} name
+		// <todo-list> and {tag: "a"} name <todo-app>, so a selector meant for a
+		// row resolved to the container holding it.
+		tag, ok := element.Attributes["tag"]
+		return ok && tag == value, true
+	default:
+		return false, false
+	}
+}
+
+// matchIDPrefix is the id: rule with starts-with in place of equality: the
+// whole identifier, or the local name after Android's "<package>:id/". Without
+// the second form a role prefix would only match when the caller wrote the
+// package out, which is exactly the string that varies between build variants.
+func matchIDPrefix(resourceID, value string) bool {
+	if strings.HasPrefix(resourceID, value) {
+		return true
+	}
+	const marker = ":id/"
+	if index := strings.Index(resourceID, marker); index >= 0 {
+		return strings.HasPrefix(resourceID[index+len(marker):], value)
+	}
+	return false
+}
+
+// matchAttr returns true when the element matches key:value. It is the one
+// entry point for both selector forms: the string form's kind and the object
+// form's key are the same name and get the same rule.
+//
+// Keys naming a rule (id, desc and the prefix forms) resolve in
+// matchSelectorKind; everything else is an attribute name, with alias expansion
+// so cross-platform names resolve correctly. Boolean values ("true"/"false")
+// use exact comparison; all others use substring. Returns false gracefully when
+// no candidate attribute has data.
 func matchAttr(element *Element, attr, value string) bool {
+	if matched, handled := matchSelectorKind(element, attr, value); handled {
+		return matched
+	}
 	candidates := append([]string{attr}, attributeAliases[attr]...)
 	for _, key := range candidates {
 		attrVal, ok := element.Attributes[key]
@@ -158,20 +479,60 @@ func matchAttr(element *Element, attr, value string) bool {
 }
 
 // matchSelector returns true when all filters in sel match the element (AND
-// semantics). Each filter goes through match, the same rule the string form
+// semantics). Each filter goes through matchAttr, the same rule the string form
 // resolves a "kind:value" segment by, so {id: "Submit"} and "id:Submit" can
-// never resolve to different elements. Applying matchAttr directly here made
-// the object form skip the kind arms entirely: id, desc and descPrefix name no
-// attribute any producer writes, so those keys matched NOTHING through an
-// object selector while the string form matched, and every property over the
+// never resolve to different elements. Reaching the attribute map directly here
+// made the object form skip the kind arms entirely: id, desc and descPrefix
+// name no attribute any producer writes, so those keys matched NOTHING through
+// an object selector while the string form matched, and every property over the
 // missing element passed vacuously.
 func matchSelector(element *Element, sel Selector) bool {
 	for _, f := range sel.Filters {
-		if !match(element, f.Attr, f.Value) {
+		if !matchAttr(element, f.Attr, f.Value) {
 			return false
 		}
 	}
 	return true
+}
+
+func selectorReadsText(sel Selector) bool {
+	for _, f := range sel.Filters {
+		if f.Attr == "text" {
+			return true
+		}
+	}
+	return false
+}
+
+// innermostMatches drops a match a descendant of it also makes. An element's
+// text is its whole subtree's text on web and on iOS, so every ancestor of a
+// matching element matches too, up to the root, and the deepest match is the
+// element the author named. An ancestor whose own text carries the value where
+// no descendant of it does keeps its match.
+func innermostMatches(nodes []*Node) []*Node {
+	if len(nodes) == 0 {
+		return nodes
+	}
+	matched := make(map[*Node]bool, len(nodes))
+	for _, node := range nodes {
+		matched[node] = true
+	}
+	var kept []*Node
+	for _, node := range nodes {
+		if !hasMatchingDescendant(node, matched) {
+			kept = append(kept, node)
+		}
+	}
+	return kept
+}
+
+func hasMatchingDescendant(node *Node, matched map[*Node]bool) bool {
+	for _, child := range node.Children {
+		if matched[child] || hasMatchingDescendant(child, matched) {
+			return true
+		}
+	}
+	return false
 }
 
 // Parse parses a sidecar TreeNode JSON hierarchy.
@@ -190,6 +551,7 @@ func Parse(text string) (*Tree, error) {
 }
 
 func walkNode(node *treeNodeJSON, tree *Tree) *Node {
+	tree.UnreadableFlags += node.unreadableFlags()
 	n := &Node{Element: *elementFromNode(node), tree: tree}
 	tree.Elements = append(tree.Elements, &n.Element)
 	for i := range node.Children {
@@ -230,23 +592,26 @@ func elementFromNode(node *treeNodeJSON) *Element {
 	}
 	element.Screen = attrs["sanderling-screen"]
 
-	if node.Clickable != nil {
-		element.Clickable = *node.Clickable
+	if node.Clickable.set {
+		element.Clickable = node.Clickable.value
 	}
-	if node.Enabled != nil {
-		element.Enabled = *node.Enabled
+	if node.Enabled.set {
+		element.Enabled = node.Enabled.value
 	}
-	if node.Focused != nil {
-		element.Focused = *node.Focused
+	if node.Focused.set {
+		element.Focused = node.Focused.value
 	}
-	if node.Checked != nil {
-		element.Checked = *node.Checked
+	if node.Checked.set {
+		element.Checked = node.Checked.value
 	}
-	if node.Selected != nil {
-		element.Selected = *node.Selected
+	if node.Selected.set {
+		element.Selected = node.Selected.value
 	}
-	if node.Editable != nil {
-		element.Editable = *node.Editable
+	if node.Secure.set {
+		element.Secure = node.Secure.value
+	}
+	if node.Editable.set {
+		element.Editable = node.Editable.value
 	} else {
 		element.Editable = strings.Contains(element.Class, "EditText") || attrs["hintText"] != ""
 	}
@@ -260,20 +625,23 @@ func elementFromNode(node *treeNodeJSON) *Element {
 
 	element.Attributes = make(map[string]string, len(attrs)+5)
 	maps.Copy(element.Attributes, attrs)
-	if node.Clickable != nil {
-		element.Attributes["clickable"] = strconv.FormatBool(*node.Clickable)
+	if node.Clickable.set {
+		element.Attributes["clickable"] = strconv.FormatBool(node.Clickable.value)
 	}
-	if node.Enabled != nil {
-		element.Attributes["enabled"] = strconv.FormatBool(*node.Enabled)
+	if node.Enabled.set {
+		element.Attributes["enabled"] = strconv.FormatBool(node.Enabled.value)
 	}
-	if node.Focused != nil {
-		element.Attributes["focused"] = strconv.FormatBool(*node.Focused)
+	if node.Focused.set {
+		element.Attributes["focused"] = strconv.FormatBool(node.Focused.value)
 	}
-	if node.Checked != nil {
-		element.Attributes["checked"] = strconv.FormatBool(*node.Checked)
+	if node.Checked.set {
+		element.Attributes["checked"] = strconv.FormatBool(node.Checked.value)
 	}
-	if node.Selected != nil {
-		element.Attributes["selected"] = strconv.FormatBool(*node.Selected)
+	if node.Selected.set {
+		element.Attributes["selected"] = strconv.FormatBool(node.Selected.value)
+	}
+	if node.Secure.set {
+		element.Attributes["secure"] = strconv.FormatBool(node.Secure.value)
 	}
 	element.Attributes["editable"] = strconv.FormatBool(element.Editable)
 
@@ -346,20 +714,54 @@ func (t *Tree) FindAllNodes(selector string) []*Node {
 	return searchSubtree(t.Root, kind, value)
 }
 
-// FindBySelectorPath walks the selector chain starting from the tree root.
-func (t *Tree) FindBySelectorPath(path []Selector) *Node {
-	if t == nil || t.Root == nil {
+// FindBySelector returns the first Node in the tree matching sel, or nil. The
+// root is a candidate, the way it is for the string form: one selector cannot
+// mean one thing written "id:page" and another written {id: "page"}.
+func (t *Tree) FindBySelector(sel Selector) *Node {
+	if t == nil {
 		return nil
 	}
-	return t.Root.FindBySelectorPath(path)
+	return firstNode(searchSubtreeBySelector(t.Root, sel))
+}
+
+// FindAllBySelector returns every Node in the tree matching sel, root included.
+func (t *Tree) FindAllBySelector(sel Selector) []*Node {
+	if t == nil {
+		return nil
+	}
+	return searchSubtreeBySelector(t.Root, sel)
+}
+
+// FindBySelectorPath walks the selector chain starting from the tree root.
+func (t *Tree) FindBySelectorPath(path []Selector) *Node {
+	if t == nil || t.Root == nil || len(path) == 0 {
+		return nil
+	}
+	for _, candidate := range t.FindAllBySelector(path[0]) {
+		if len(path) == 1 {
+			return candidate
+		}
+		if deeper := candidate.FindBySelectorPath(path[1:]); deeper != nil {
+			return deeper
+		}
+	}
+	return nil
 }
 
 // FindAllBySelectorPath walks the selector chain starting from the tree root.
 func (t *Tree) FindAllBySelectorPath(path []Selector) []*Node {
-	if t == nil || t.Root == nil {
+	if t == nil || t.Root == nil || len(path) == 0 {
 		return nil
 	}
-	return t.Root.FindAllBySelectorPath(path)
+	var result []*Node
+	for _, candidate := range t.FindAllBySelector(path[0]) {
+		if len(path) == 1 {
+			result = append(result, candidate)
+			continue
+		}
+		result = append(result, candidate.FindAllBySelectorPath(path[1:])...)
+	}
+	return result
 }
 
 // Find returns the first Node scoped to this node (descendants, with spatial
@@ -376,9 +778,13 @@ func (n *Node) FindAll(selector string) []*Node {
 	if !ok {
 		return nil
 	}
-	return n.scopedNodes(func(element *Element) bool {
-		return match(element, kind, value)
+	nodes := n.scopedNodes(func(element *Element) bool {
+		return matchAttr(element, kind, value)
 	})
+	if kind == "text" {
+		return innermostMatches(nodes)
+	}
+	return nodes
 }
 
 // FindBySelector returns the first Node scoped to this node matching sel (AND semantics).
@@ -388,9 +794,13 @@ func (n *Node) FindBySelector(sel Selector) *Node {
 
 // FindAllBySelector returns all Nodes scoped to this node matching sel (AND semantics).
 func (n *Node) FindAllBySelector(sel Selector) []*Node {
-	return n.scopedNodes(func(element *Element) bool {
+	nodes := n.scopedNodes(func(element *Element) bool {
 		return matchSelector(element, sel)
 	})
+	if selectorReadsText(sel) {
+		return innermostMatches(nodes)
+	}
+	return nodes
 }
 
 // FindBySelectorPath walks a chain of selectors. The first selector is matched
@@ -578,11 +988,11 @@ func searchSubtree(root *Node, kind, value string) []*Node {
 		return nil
 	}
 	var result []*Node
-	if match(&root.Element, kind, value) {
-		result = append(result, root)
-	}
-	for _, child := range root.Children {
-		result = append(result, searchSubtree(child, kind, value)...)
+	collectMatches(root, func(element *Element) bool {
+		return matchAttr(element, kind, value)
+	}, &result)
+	if kind == "text" {
+		return innermostMatches(result)
 	}
 	return result
 }
@@ -593,11 +1003,11 @@ func searchSubtreeBySelector(root *Node, sel Selector) []*Node {
 		return nil
 	}
 	var result []*Node
-	if matchSelector(&root.Element, sel) {
-		result = append(result, root)
-	}
-	for _, child := range root.Children {
-		result = append(result, searchSubtreeBySelector(child, sel)...)
+	collectMatches(root, func(element *Element) bool {
+		return matchSelector(element, sel)
+	}, &result)
+	if selectorReadsText(sel) {
+		return innermostMatches(result)
 	}
 	return result
 }
@@ -608,24 +1018,6 @@ func parseSelector(selector string) (string, string, bool) {
 		return "", "", false
 	}
 	return selector[:index], selector[index+1:], true
-}
-
-func match(element *Element, kind, value string) bool {
-	switch kind {
-	case "id":
-		if element.ResourceID == value {
-			return true
-		}
-		return strings.HasSuffix(element.ResourceID, ":id/"+value)
-	case "text":
-		return matchAttr(element, "text", value)
-	case "desc":
-		return element.Description == value || strings.HasPrefix(element.Description, value+", ")
-	case "descPrefix":
-		return strings.HasPrefix(element.Description, value)
-	default:
-		return matchAttr(element, kind, value)
-	}
 }
 
 // boundsPattern matches "[l,t,r,b]" (4-value Android/sidecar format).
@@ -658,4 +1050,14 @@ func parseBounds(text string) (Bounds, error) {
 		return Bounds{Left: coords[0], Top: coords[1], Right: coords[2], Bottom: coords[3]}, nil
 	}
 	return Bounds{}, fmt.Errorf("bounds %q: not in [L,T,R,B] or [x1,y1][x2,y2] form", text)
+}
+
+// Tree returns the tree this node belongs to, or nil for a node built outside
+// Parse. Selector validation needs the whole tree: a key absent from one
+// subtree but present elsewhere is a key that can match.
+func (n *Node) Tree() *Tree {
+	if n == nil {
+		return nil
+	}
+	return n.tree
 }

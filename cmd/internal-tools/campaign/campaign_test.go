@@ -69,6 +69,91 @@ func writeFakeRun(t *testing.T, arguments []string, steps []trace.Step) {
 	writeRunDirectory(t, argumentValue(arguments, "--output"), "20260101-000000", steps)
 }
 
+// readings hands out the given instants in turn, so a test can script a clock
+// that jumps across a host sleep independently of one that stops through it.
+func readings(instants ...time.Time) func() time.Time {
+	var index int
+	return func() time.Time {
+		instant := instants[min(index, len(instants)-1)]
+		index++
+		return instant
+	}
+}
+
+// A sleeping host stops the monotonic clock and not the wall clock, so a run
+// timed on the monotonic clock alone reports the sleep as time that never
+// passed. The record carries both, named for the clock each came from.
+func TestRunSeed_RecordsTheTimeWorkedAndTheTimeThatPassed(t *testing.T) {
+	directory := t.TempDir()
+	startedAt := time.Date(2026, 8, 14, 2, 0, 0, 0, time.UTC)
+	var records bytes.Buffer
+	sweep := &campaign{
+		configuration: testConfiguration(t, directory, "--seeds", "1"),
+		executor: func(context.Context, string, []string, io.Writer) (int, error) {
+			return 0, nil
+		},
+		stdout:  io.Discard,
+		records: &records,
+		clocks: clocks{
+			monotonicNow: readings(startedAt, startedAt.Add(2*time.Minute)),
+			wallClockNow: readings(startedAt, startedAt.Add(17*time.Minute)),
+		},
+	}
+
+	sweep.report(sweep.runSeed(context.Background(), 1, ""))
+
+	var written map[string]any
+	if err := json.Unmarshal(records.Bytes(), &written); err != nil {
+		t.Fatalf("decode %q: %v", records.String(), err)
+	}
+	if written["monotonic_millis"] != float64((2 * time.Minute).Milliseconds()) {
+		t.Errorf("monotonic_millis %v, want the two minutes of work", written["monotonic_millis"])
+	}
+	if written["wall_clock_millis"] != float64((17 * time.Minute).Milliseconds()) {
+		t.Errorf("wall_clock_millis %v, want the seventeen minutes that passed", written["wall_clock_millis"])
+	}
+}
+
+func TestRunCampaign_RecordsDispatchedActionsNotSteps(t *testing.T) {
+	directory := t.TempDir()
+	configuration := testConfiguration(t, directory, "--seeds", "1")
+
+	executor := versionAnswering(func(_ context.Context, _ string, arguments []string, _ io.Writer) (int, error) {
+		writeFakeRun(t, arguments, []trace.Step{
+			actingStep(1), observedStep(2), skippedActionStep(3, "unresolved_selector"), actingStep(4),
+		})
+		return 0, nil
+	})
+	if err := runCampaign(context.Background(), configuration, executor, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	records := readRecords(t, directory)
+	if len(records) != 1 {
+		t.Fatalf("records: got %d, want 1", len(records))
+	}
+	if records[0].Steps != 4 || records[0].Actions != 2 {
+		t.Errorf("steps %d actions %d, want 4 and 2", records[0].Steps, records[0].Actions)
+	}
+}
+
+// A run that never produced a readable trace still has to carry the field, so
+// analysis can tell a zero-action run from a file written before the count. The
+// same holds for the unattributed count: a run whose every action named its
+// producer says so with a zero, and a file that says nothing is one recorded
+// before actions named one at all.
+func TestRunRecord_AlwaysCarriesTheActionCounts(t *testing.T) {
+	body, err := json.Marshal(runRecord{Seed: 7, TraceError: "no run directory with meta.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"actions":0`, `"unattributed_actions":0`} {
+		if !strings.Contains(string(body), field) {
+			t.Errorf("record %s omits %s", body, field)
+		}
+	}
+}
+
 func TestRunCampaign_WritesManifestBeforeAnyRun(t *testing.T) {
 	directory := t.TempDir()
 	configuration := testConfiguration(t, directory)
@@ -172,6 +257,7 @@ func TestRunCampaign_RecordsPerRunSummary(t *testing.T) {
 func TestRunCampaign_DistributesSeedsAcrossDeviceWorkers(t *testing.T) {
 	directory := t.TempDir()
 	configuration := testConfiguration(t, directory, "--seeds", "1-9", "--devices", "device-a,device-b,device-c")
+	devicesPresent(t, "device-a", "device-b", "device-c")
 
 	var mutex sync.Mutex
 	assignments := map[int64]string{}
@@ -260,6 +346,28 @@ func TestRunCampaign_ContinuesAfterFailingRun(t *testing.T) {
 		if record.ExitCode != 0 {
 			t.Errorf("seed %d exit code: got %d", record.Seed, record.ExitCode)
 		}
+	}
+}
+
+func TestRunCampaign_GivesEveryRunTheCellsLabelSource(t *testing.T) {
+	directory := t.TempDir()
+	configuration := testConfiguration(t, directory, "--seeds", "1-3", "--label-source", "resource-id")
+
+	var mutex sync.Mutex
+	var dispatched []string
+	executor := versionAnswering(func(_ context.Context, _ string, arguments []string, _ io.Writer) (int, error) {
+		mutex.Lock()
+		dispatched = append(dispatched, argumentValue(arguments, "--label-source"))
+		mutex.Unlock()
+		writeFakeRun(t, arguments, []trace.Step{observedStep(1)})
+		return 0, nil
+	})
+	if err := runCampaign(context.Background(), configuration, executor, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(dispatched, []string{"resource-id", "resource-id", "resource-id"}) {
+		t.Errorf("--label-source reaching sanderling: got %v, want resource-id on every run", dispatched)
 	}
 }
 
@@ -359,4 +467,209 @@ func TestParseArguments_RunTimeoutDefaultsToThreeTimesDuration(t *testing.T) {
 	if configuration.runTimeout != 12*time.Minute {
 		t.Errorf("run timeout default: got %s, want 12m", configuration.runTimeout)
 	}
+}
+
+// devicesPresent points the preflight at a fixed set of serials, so a campaign
+// can be preflighted on a host with no device farm attached.
+func devicesPresent(t *testing.T, present ...string) {
+	t.Helper()
+	original := connectedDevices
+	connectedDevices = func(context.Context) ([]string, error) { return present, nil }
+	t.Cleanup(func() { connectedDevices = original })
+}
+
+// A worker aimed at a serial that no longer exists fails in seconds and pulls
+// the next seed, so a few dead serials drain the queue while the healthy
+// workers are still inside their first run. That has to be caught before the
+// first seed is dispatched: a sweep that discovers it on run 1 of 20 has
+// already been destroyed, and its output does not say so.
+func TestRunCampaign_RefusesToStartWhenADeviceIsMissing(t *testing.T) {
+	directory := t.TempDir()
+	configuration := testConfiguration(t, directory,
+		"--seeds", "1-20", "--devices", "emulator-5554,emulator-5564,emulator-5556")
+	devicesPresent(t, "emulator-5554", "emulator-5556")
+
+	executor := func(_ context.Context, _ string, arguments []string, _ io.Writer) (int, error) {
+		t.Errorf("the campaign dispatched %v despite a missing device", arguments)
+		return 0, nil
+	}
+	err := runCampaign(context.Background(), configuration, executor, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "not connected: emulator-5564") {
+		t.Fatalf("the error must name the missing serial, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(directory, manifestFileName)); statErr == nil {
+		t.Error("a campaign that cannot run wrote a manifest")
+	}
+}
+
+func TestRunCampaign_RunsWhenEveryDeviceIsPresent(t *testing.T) {
+	directory := t.TempDir()
+	configuration := testConfiguration(t, directory, "--seeds", "1-2", "--devices", "emulator-5554,emulator-5556")
+	devicesPresent(t, "emulator-5556", "emulator-5580", "emulator-5554")
+
+	executor := versionAnswering(func(_ context.Context, _ string, arguments []string, _ io.Writer) (int, error) {
+		writeFakeRun(t, arguments, []trace.Step{observedStep(1)})
+		return 0, nil
+	})
+	if err := runCampaign(context.Background(), configuration, executor, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(readRecords(t, directory)); got != 2 {
+		t.Errorf("records: got %d, want 2", got)
+	}
+}
+
+// Preflight only means something where the worker names a device. A campaign
+// without --devices has one worker and no serial, and a web worker is a label
+// with no device behind it; neither may be blocked by a device check.
+func TestRunCampaign_PreflightsOnlyWhereWorkersNameADevice(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		extra []string
+	}{
+		{"no devices", []string{"--seeds", "1"}},
+		{"web workers", []string{"--seeds", "1", "--platform", "web", "--devices", "worker-a,worker-b"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			directory := t.TempDir()
+			configuration := testConfiguration(t, directory, testCase.extra...)
+			original := connectedDevices
+			connectedDevices = func(context.Context) ([]string, error) {
+				t.Error("preflight looked for devices where the workers name none")
+				return nil, fmt.Errorf("no adb server")
+			}
+			t.Cleanup(func() { connectedDevices = original })
+
+			executor := versionAnswering(func(_ context.Context, _ string, arguments []string, _ io.Writer) (int, error) {
+				writeFakeRun(t, arguments, []trace.Step{observedStep(1)})
+				return 0, nil
+			})
+			if err := runCampaign(context.Background(), configuration, executor, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// Preflight cannot catch a device that disappears mid-campaign. A device that
+// keeps failing in seconds is drained of seeds by exactly the speed of its
+// failure, so it has to stop being given any.
+func TestRunCampaign_QuarantinesADeviceThatKeepsFailingFast(t *testing.T) {
+	directory := t.TempDir()
+	configuration := testConfiguration(t, directory, "--seeds", "1-8", "--devices", "device-a,device-b")
+	devicesPresent(t, "device-a", "device-b")
+
+	failedEnough := make(chan struct{})
+	var closeOnce sync.Once
+	var timedOut atomic.Bool
+	var mutex sync.Mutex
+	dispatched := map[string][]int64{}
+
+	executor := versionAnswering(func(_ context.Context, _ string, arguments []string, output io.Writer) (int, error) {
+		device := argumentValue(arguments, "--device")
+		seed, err := strconv.ParseInt(argumentValue(arguments, "--seed"), 10, 64)
+		if err != nil {
+			t.Errorf("seed argument: %v", err)
+		}
+		mutex.Lock()
+		dispatched[device] = append(dispatched[device], seed)
+		failures := len(dispatched["device-a"])
+		mutex.Unlock()
+		if device == "device-a" {
+			fmt.Fprintln(output, "device 'device-a' not found")
+			if failures >= fastFailuresBeforeQuarantine {
+				closeOnce.Do(func() { close(failedEnough) })
+			}
+			return 1, nil
+		}
+		// The healthy worker holds its seed until the sick one has failed its
+		// way to quarantine, so the split of the queue is the scheduler's
+		// decision and not a race between two equally fast fakes.
+		select {
+		case <-failedEnough:
+		case <-time.After(5 * time.Second):
+			timedOut.Store(true)
+		}
+		writeFakeRun(t, arguments, []trace.Step{observedStep(1)})
+		return 0, nil
+	})
+
+	var stdout bytes.Buffer
+	err := runCampaign(context.Background(), configuration, executor, &stdout)
+	if timedOut.Load() {
+		t.Fatal("device-a never reached quarantine")
+	}
+	if err == nil || !strings.Contains(err.Error(), "3 of 8 runs failed") {
+		t.Fatalf("expected the three fast failures to be reported, got %v", err)
+	}
+	if got := len(dispatched["device-a"]); got != fastFailuresBeforeQuarantine {
+		t.Errorf("seeds sent to the failing device: got %d, want %d", got, fastFailuresBeforeQuarantine)
+	}
+	if got := len(dispatched["device-b"]); got != 8-fastFailuresBeforeQuarantine {
+		t.Errorf("seeds sent to the healthy device: got %d, want %d", got, 8-fastFailuresBeforeQuarantine)
+	}
+	ran := append(append([]int64{}, dispatched["device-a"]...), dispatched["device-b"]...)
+	slices.Sort(ran)
+	if !slices.Equal(ran, []int64{1, 2, 3, 4, 5, 6, 7, 8}) {
+		t.Errorf("every seed must be dispatched exactly once: got %v", ran)
+	}
+	if !strings.Contains(stdout.String(), `quarantined device "device-a"`) {
+		t.Errorf("the quarantine must be reported in the campaign output:\n%s", stdout.String())
+	}
+
+	recorded := readManifest(t, directory)
+	if len(recorded.Quarantined) != 1 || recorded.Quarantined[0].Device != "device-a" {
+		t.Fatalf("the manifest must record the quarantine: %+v", recorded.Quarantined)
+	}
+	burned := slices.Clone(dispatched["device-a"])
+	slices.Sort(burned)
+	if !slices.Equal(recorded.Quarantined[0].ConsumedSeeds, burned) {
+		t.Errorf("consumed seeds: got %v, want %v", recorded.Quarantined[0].ConsumedSeeds, burned)
+	}
+	if !slices.Equal(recorded.UnrunSeeds, burned) {
+		t.Errorf("the seeds the quarantined device burned have no result and must be reported unrun: got %v, want %v",
+			recorded.UnrunSeeds, burned)
+	}
+}
+
+// Every device gone is not a campaign that should keep pulling seeds: the rest
+// of the queue would be spent producing the same failure.
+func TestRunCampaign_AbortsWhenEveryDeviceIsQuarantined(t *testing.T) {
+	directory := t.TempDir()
+	configuration := testConfiguration(t, directory, "--seeds", "1-10", "--devices", "device-a,device-b")
+	devicesPresent(t, "device-a", "device-b")
+
+	var dispatches atomic.Int32
+	executor := versionAnswering(func(_ context.Context, _ string, _ []string, output io.Writer) (int, error) {
+		dispatches.Add(1)
+		fmt.Fprintln(output, "sidecar health check: context deadline exceeded")
+		return 1, nil
+	})
+
+	var stdout bytes.Buffer
+	err := runCampaign(context.Background(), configuration, executor, &stdout)
+	if err == nil || !strings.Contains(err.Error(), "every device was quarantined") {
+		t.Fatalf("a campaign with no device left must abort with a clear error, got %v", err)
+	}
+	if got := dispatches.Load(); got != int32(2*fastFailuresBeforeQuarantine) {
+		t.Errorf("runs dispatched: got %d, want %d: the sweep must stop rather than spin through the queue",
+			got, 2*fastFailuresBeforeQuarantine)
+	}
+	recorded := readManifest(t, directory)
+	if !slices.Equal(recorded.UnrunSeeds, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}) {
+		t.Errorf("every seed is either burned by a quarantined device or never dispatched: got %v", recorded.UnrunSeeds)
+	}
+}
+
+func readManifest(t *testing.T, campaignDirectory string) manifest {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(campaignDirectory, manifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded manifest
+	if err := json.Unmarshal(body, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	return recorded
 }

@@ -70,7 +70,13 @@ function seedBigInt(): bigint {
   }
 }
 
-const SEED_HI = seedBigInt();
+// Read on every call rather than once at module scope. The bundler replaces the
+// seed expression with a literal, so production reads a constant either way,
+// and parsing one decimal string per run costs nothing. Binding it at module
+// scope bound it instead to whenever this module was first imported, which made
+// the seed depend on test file ordering: a file importing this module before
+// the seed was set froze it at zero, and the failure then surfaced in a
+// different file that had set it correctly.
 
 function noopFormula(): unknown {
   const formula: Record<string, unknown> = { __sanderlingFormula: true };
@@ -85,6 +91,21 @@ function noopFormula(): unknown {
 const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   id: (v) => `[id="${cssEscape(v)}"]`,
   "resource-id": (v) => `[id="${cssEscape(v)}"]`,
+  // The names ios writes the identifier under, which internal/hierarchy aliases
+  // onto resource-id. Left out of this table they fell through to a raw
+  // attribute lookup, and no element carries an attribute called
+  // accessibilityIdentifier, so they resolved against the dump and named
+  // nothing here.
+  identifier: (v) => `[id="${cssEscape(v)}"]`,
+  accessibilityIdentifier: (v) => `[id="${cssEscape(v)}"]`,
+  // The native rule also accepts the local name after Android's "<package>:id/".
+  // The DOM has no such prefix, so a plain starts-with is the same rule here.
+  idPrefix: (v) => `[id^="${cssEscape(v)}"]`,
+  // The native rule accepts the label itself or the label at the head of an
+  // iOS merged label ("account_card:7, Tim, $100"). `:is()` keeps that one
+  // compound piece, since a multi-key selector concatenates the parts.
+  desc: (v) => `:is([aria-label="${cssEscape(v)}"], [aria-label^="${cssEscape(v)}, "])`,
+  descPrefix: (v) => `[aria-label^="${cssEscape(v)}"]`,
   // The native table aliases testTag onto resource-id, which the host DOM walk
   // fills from el.id, so the native path already accepts a testTag emitted as
   // an id (what Compose Multiplatform does on web). Accept both here so the
@@ -95,6 +116,9 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   "data-testid": (v) => `[data-testid="${cssEscape(v)}"]`,
   className: (v) => `[class~="${cssEscape(v)}"]`,
   class: (v) => `[class~="${cssEscape(v)}"]`,
+  // The name ios writes the class under, which internal/hierarchy aliases onto
+  // class. It read a raw `elementType` attribute here, which nothing carries.
+  elementType: (v) => `[class~="${cssEscape(v)}"]`,
   tag: tagSelector,
   "aria-label": (v) => `[aria-label="${cssEscape(v)}"]`,
   ariaLabel: (v) => `[aria-label="${cssEscape(v)}"]`,
@@ -102,10 +126,109 @@ const KNOWN_KEY_TO_CSS: Record<string, (value: string) => string> = {
   contentDescription: (v) => `[aria-label="${cssEscape(v)}"]`,
   "content-desc": (v) => `[aria-label="${cssEscape(v)}"]`,
   label: (v) => `[aria-label="${cssEscape(v)}"]`,
+  // The name the ios sidecar writes the label under, and the canonical key
+  // internal/hierarchy resolves the whole family through.
+  accessibilityText: (v) => `[aria-label="${cssEscape(v)}"]`,
+  // The attribute the markup writes, which is what the hierarchy dump carries
+  // under this name too. It says nothing about the ladder hintText climbs: a
+  // field whose placeholder an aria-label outranks still answers here.
   placeholder: (v) => `[placeholder="${cssEscape(v)}"]`,
-  placeholderValue: (v) => `[placeholder="${cssEscape(v)}"]`,
-  hintText: (v) => `[placeholder="${cssEscape(v)}"]`,
+  secure: secureSelector,
 };
+
+// secure is derived from the field's type rather than written by the markup, so
+// matching it as a raw attribute reaches nothing at all. Both producers of the
+// fact, elementHandle below and the hierarchy dump in
+// internal/driver/chrome/driver.go, read `type === "password"` off a field they
+// call editable, so false is every editable field that is NOT a password entry
+// rather than everything that is not one: an element that is no field reports
+// null, as android reports null for everything, and answers to neither value.
+//
+// Both arms are wrapped in `:is()` because a multi-key selector concatenates the
+// parts into one compound, where a type selector is valid only at the head:
+// `{id, secure}` built `[id="pwd"]input[type="password"]`, which is a parse
+// error, and querySelectorAll throws rather than answering with nothing.
+function secureSelector(value: string): string {
+  if (value === "true") return `:is(input[type="password"])`;
+  if (value !== "false") return ":not(*)";
+  const textInput = ["password", ...NON_TEXT_INPUT_TYPES]
+    .map((type) => `:not([type="${type}"])`)
+    .join("");
+  return `:is(input${textInput}, textarea, [contenteditable]:not([contenteditable="false"]))`;
+}
+
+// The other five boolean states are derived from the live element too, and
+// matching them as an attribute reached nothing at all: `[clickable="true"]` is
+// a match no page carries, the key is accepted so no unknown-key error fires,
+// and a spec naming a control that way, as the worked example in
+// docs/manual/spec-language.md does, finds none and passes having checked
+// nothing. They are answered against the element rather than compiled into CSS
+// because no CSS says what any of them says: `:focus` names the shadow HOST of a
+// focused field as well, and never the field Compose keeps behind its caret,
+// `:checked` misses a checked custom element and answers for a selected <option>
+// besides, and `[checked]` is the state the page loaded with rather than the one
+// the user left it in. Each reads the SAME function elementHandle derives the
+// fact with, so a selector cannot name an element this host calls something else.
+const KNOWN_KEY_TO_STATE: Record<
+  string,
+  (value: string) => (element: Element) => boolean
+> = {
+  clickable: stateMatcher(isClickable),
+  enabled: stateMatcher(isEnabled),
+  focused: focusedMatcher,
+  checked: stateMatcher(isChecked),
+  selected: stateMatcher(isSelected),
+  editable: stateMatcher(isEditable),
+  scrollable: scrollableMatcher,
+  hintText: hintMatcher,
+  placeholderValue: hintMatcher,
+};
+
+// hintText is the accessible-name ladder, derived from the live element, and
+// compiling it to [placeholder="..."] made it name the wrong field or none: a
+// field labelled by an aria-label or a bound <label> carries no placeholder at
+// all, so it resolved against the dump on the goja host and reached nothing
+// here, and one carrying both answered to the placeholder here where the dump
+// answers to the aria-label. It reads the same fieldHint elementHandle and the
+// hierarchy dump (internal/driver/chrome/driver.go) derive the fact with, so a
+// selector cannot name a field this host calls something else.
+//
+// An empty hint names nothing rather than everything that is no field: both
+// producers write the attribute only where the ladder answered.
+function hintMatcher(value: string): (element: Element) => boolean {
+  if (value === "") return () => false;
+  return (element) => fieldHint(element) === value;
+}
+
+// A value that is neither true nor false can match nothing, the way a CSS part
+// built from one resolves to `:not(*)`.
+function stateMatcher(
+  fact: (element: Element) => boolean,
+): (value: string) => (element: Element) => boolean {
+  return (value) => {
+    if (value !== "true" && value !== "false") return () => false;
+    const wanted = value === "true";
+    return (element) => fact(element) === wanted;
+  };
+}
+
+// scrollable is stated only where it holds: buildTree in
+// internal/driver/chrome/driver.go writes the attribute on the containers whose
+// content overflows and on nothing else, as the ios map does, so `false` names
+// no element rather than every element that does not scroll, the way an element
+// that is no field at all answers to neither value of secure.
+function scrollableMatcher(value: string): (element: Element) => boolean {
+  if (value !== "true") return () => false;
+  return isScrollable;
+}
+
+// The focused element is resolved once per selector rather than once per
+// element: finding it descends every shadow root and, on a Compose page, sweeps
+// the editable fields for the box the caret sits in.
+function focusedMatcher(value: string): (element: Element) => boolean {
+  const focusedElement = deepestActiveElement();
+  return stateMatcher((element) => element === focusedElement)(value);
+}
 
 // cssEscape delegates to the platform CSS.escape (per CSSOM spec). It produces
 // output safe for both identifier and string contexts, since CSS string
@@ -120,46 +243,188 @@ const TAG_NAME = /^[a-zA-Z][a-zA-Z0-9-]*$/;
 // pseudo-class like `*:hover`, a comma, whitespace) would inject CSS into the
 // surrounding selector. Returning a never-matching selector rather than
 // throwing keeps the spec running while making the typo visible in logs.
+//
+// Wrapped in `:is()` because a multi-key selector concatenates the parts into
+// one compound, where a type selector is valid only at the head: `{id, tag}`
+// built `[id="amount"]input`, which is a parse error, so querySelectorAll threw
+// rather than answering with nothing, and which of the two a spec got depended
+// on the order its author wrote the keys in.
 function tagSelector(value: string): string {
   if (!TAG_NAME.test(value)) return ":not(*)";
-  return value;
+  return `:is(${value})`;
 }
 
-function selectorFromObject(selector: Record<string, string | boolean | undefined>): {
+// SELECTOR_KEYS is every key an object selector may use, held identical to the
+// native list in internal/hierarchy: test/selector-keys.test.ts and
+// internal/hierarchy/selector_keys_test.go each assert their own side against
+// test/fixtures/selector-keys.json, so a spec cannot be accepted by one runtime
+// and rejected by the other. Keys that mean nothing to a DOM (scrollable,
+// package, elementType) stay accepted and simply match nothing here, the way an
+// iOS-only key matches nothing on Android.
+const SELECTOR_KEYS: readonly string[] = [
+  "accessibilityIdentifier",
+  "accessibilityLabel",
+  "accessibilityText",
+  "aria-label",
+  "ariaLabel",
+  "checked",
+  "class",
+  "className",
+  "clickable",
+  "content-desc",
+  "contentDescription",
+  "data-testid",
+  "desc",
+  "descPrefix",
+  "editable",
+  "elementType",
+  "enabled",
+  "focused",
+  "hintText",
+  "id",
+  "idPrefix",
+  "identifier",
+  "label",
+  "package",
+  "placeholder",
+  "placeholderValue",
+  "resource-id",
+  "scrollable",
+  "secure",
+  "selected",
+  "tag",
+  "testID",
+  "testTag",
+  "text",
+  "title",
+  "value",
+];
+
+const SELECTOR_KEY_SET = new Set(SELECTOR_KEYS);
+
+const ATTRIBUTE_NAME = /^[a-zA-Z][a-zA-Z0-9_.:-]*$/;
+
+// domCarriesAttribute is the escape hatch for attributes this list does not
+// enumerate: a key some element actually has is a key that can match. A key
+// that is not even a legal attribute name can carry no value and would inject
+// into the surrounding selector, so it is rejected rather than probed.
+function domCarriesAttribute(key: string): boolean {
+  if (!ATTRIBUTE_NAME.test(key)) return false;
+  try {
+    return document.querySelector(`[${key}]`) !== null;
+  } catch {
+    return false;
+  }
+}
+
+// unknownSelectorKeyMessage is character for character what
+// hierarchy.UnknownSelectorKeyMessage produces, so one mistake reads the same
+// whichever runtime the spec ran on.
+function unknownSelectorKeyMessage(keys: string[]): string {
+  const named = keys.map((key) => JSON.stringify(key)).join(", ");
+  return (
+    `selector key ${named} cannot match: no element carries that attribute, ` +
+    `and it is not one of the accepted keys: ${SELECTOR_KEYS.join(", ")}`
+  );
+}
+
+// A key naming no rule is a raw attribute name, and a raw attribute matches on a
+// substring, a boolean value exactly (docs/manual/spec-language.md), which is
+// what internal/hierarchy does with the same key. Matching exactly here made
+// `data-state:sent` name the badge on Android and nothing at all on web.
+function cssPart(key: string, value: string): string {
+  const builder = KNOWN_KEY_TO_CSS[key];
+  if (builder) return builder(value);
+  const operator = value === "true" || value === "false" ? "=" : "*=";
+  return `[${key}${operator}"${cssEscape(value)}"]`;
+}
+
+// A compiled selector is what a lookup resolves: the CSS or XPath a document
+// query takes, the facts no query can express, which the elements it answered
+// with are held against afterwards, and whether the matches an outer element
+// makes are the ones a descendant already made.
+interface CompiledSelector {
   css?: string;
   xpath?: string;
-} {
+  match?: (element: Element) => boolean;
+  innermost?: boolean;
+}
+
+// A selector key that can never match yields an empty result, which reads
+// exactly like a screen with no such element: the generator declines to act,
+// the runner waits out the step, and the run ends clean having explored
+// nothing. Throwing is what makes the mistake visible.
+function selectorFromObject(
+  selector: Record<string, string | boolean | undefined>,
+): CompiledSelector {
   const parts: string[] = [];
+  const matchers: Array<(element: Element) => boolean> = [];
   let textValue: string | undefined;
-  let descPrefix: string | undefined;
+  const unknown: string[] = [];
   for (const key of Object.keys(selector)) {
     const raw = selector[key];
     if (raw === undefined) continue;
     const value = typeof raw === "boolean" ? String(raw) : raw;
+    if (!SELECTOR_KEY_SET.has(key) && !domCarriesAttribute(key)) {
+      if (!unknown.includes(key)) unknown.push(key);
+      continue;
+    }
     if (key === "text") {
       textValue = value;
       continue;
     }
-    if (key === "descPrefix") {
-      descPrefix = value;
+    const state = KNOWN_KEY_TO_STATE[key];
+    if (state) {
+      matchers.push(state(value));
       continue;
     }
-    const builder = KNOWN_KEY_TO_CSS[key];
-    if (builder) {
-      parts.push(builder(value));
-    } else {
-      parts.push(`[${key}="${cssEscape(value)}"]`);
-    }
+    parts.push(cssPart(key, value));
   }
-  if (descPrefix !== undefined) {
-    parts.push(`[aria-label^="${cssEscape(descPrefix)}"]`);
+  if (unknown.length > 0) {
+    throw new Error(unknownSelectorKeyMessage(unknown));
   }
-  if (textValue !== undefined && parts.length === 0) {
-    return {
-      xpath: `//*[normalize-space(text())=${xpathStringLiteral(textValue)}]`,
-    };
+  if (textValue !== undefined && parts.length === 0 && matchers.length === 0) {
+    return { xpath: innermostTextXPath(textValue) };
   }
-  return { css: parts.join("") };
+  // text beside another key was DROPPED here, and the selector then matched on
+  // the other keys alone: `{testTag: "Row", text: "Alice"}` selected every row
+  // carrying the tag, where internal/hierarchy ANDs the two and selects the one
+  // the author named. Matching MORE than the spec said is silent: the find
+  // lands on a row nobody wrote and every property over it still passes.
+  //
+  // It is answered against the element rather than compiled into the query
+  // because the two halves share no query language: CSS cannot ask what an
+  // element's text says, and the XPath that can cannot ask about the rest.
+  if (textValue !== undefined) matchers.push(textMatcher(textValue));
+  // A selector that names no query of its own still has to name one to hold its
+  // matchers against, and every element is what it asks about.
+  const css = parts.length === 0 && matchers.length > 0 ? "*" : parts.join("");
+  const compiled: CompiledSelector = { css };
+  if (matchers.length > 0) {
+    compiled.match = (element) => matchers.every((matcher) => matcher(element));
+  }
+  // Held over what the WHOLE selector matched, where internal/hierarchy holds
+  // it: an ancestor whose only matching descendant a sibling key excludes was
+  // never a match to drop it by.
+  if (textValue !== undefined) compiled.innermost = true;
+  return compiled;
+}
+
+// The substring rule innermostTextXPath applies, read off the element: an
+// element's text is its whole subtree's text, whitespace collapsed the way
+// normalize-space collapses it.
+function textMatcher(value: string): (element: Element) => boolean {
+  return (element) => (element.textContent ?? "").replace(/\s+/g, " ").trim().includes(value);
+}
+
+// innermostTextXPath matches an element whose text contains value and whose
+// descendants do not. An element's XPath string value is its whole subtree's
+// text, so without the not() clause a badge's ancestors up to <html> answer for
+// it and find lands on the document. internal/hierarchy suppresses the same
+// matches, and internal/driver/chrome/translate.go builds the same predicate.
+function innermostTextXPath(value: string): string {
+  const contains = `contains(normalize-space(.), ${xpathStringLiteral(value)})`;
+  return `.//*[${contains} and not(.//*[${contains}])]`;
 }
 
 // xpathStringLiteral wraps the value in a valid XPath 1.0 string literal.
@@ -172,20 +437,29 @@ function xpathStringLiteral(value: string): string {
   return `concat(${parts.map((p) => `"${p}"`).join(`, '"', `)})`;
 }
 
-function selectorFromString(selector: string): { css?: string; xpath?: string } {
+function selectorFromString(selector: string): CompiledSelector {
   const colon = selector.indexOf(":");
   if (colon <= 0) {
     return { css: selector };
   }
   const kind = selector.slice(0, colon);
   const value = selector.slice(colon + 1);
+  // Substring of the element's whole text, the way internal/hierarchy reads the
+  // same selector: an element reading "Sent ✓" answers to text:Sent on every
+  // platform, and one React wrote as `{count} unsent` answers to text:unsent
+  // though its text arrives as two text nodes, which normalize-space(text())
+  // reads only the first of. Anchored at the context node, so a scoped .find
+  // reads its own subtree rather than the page.
   if (kind === "text") {
-    return { xpath: `//*[normalize-space(text())=${xpathStringLiteral(value)}]` };
+    return { xpath: innermostTextXPath(value) };
   }
-  if (kind === "descPrefix") {
-    return { css: `[aria-label^="${cssEscape(value)}"]` };
-  }
-  return selectorFromObject({ [kind]: value });
+  const state = KNOWN_KEY_TO_STATE[kind];
+  if (state) return { css: "*", match: state(value) };
+  // The string form's kind space stays open: "<attr>:<value>" is the documented
+  // way to reach a raw driver attribute, and internal/hierarchy resolves an
+  // unknown kind to an empty result rather than an error. Only the object form
+  // validates, on both sides.
+  return { css: cssPart(kind, value) };
 }
 
 // deepQueryAll resolves a CSS selector against a root AND every shadow root
@@ -212,24 +486,49 @@ function deepQueryAll(selector: string, root: ParentNode): Element[] {
   return found;
 }
 
+// matchedElements resolves one compiled selector: the document query first, then
+// the states it named, which no query can express.
+//
+// The head subtree is dropped here the way targetElements drops it from the
+// enumeration and buildTree (internal/driver/chrome/driver.go) drops it from the
+// dump: it renders nothing, so a selector reaching into it names an element the
+// goja host cannot see at all. document.head is absent only from the small fake
+// documents the unit tests install.
+function matchedElements(root: ParentNode, compiled: CompiledSelector): Element[] {
+  const { css, xpath, match, innermost } = compiled;
+  let found: Element[] = [];
+  if (css) found = deepQueryAll(css, root);
+  else if (xpath) found = evaluateXPathAll(xpath, root as Node);
+  const head: Element | undefined = document.head;
+  const matched = found.filter(
+    (element) =>
+      !(head !== undefined && head.contains(element)) && (match === undefined || match(element)),
+  );
+  return innermost ? innermostMatches(matched) : matched;
+}
+
+// innermostMatches drops a match a descendant of it also makes, which is what
+// innermostMatches in internal/hierarchy drops and what the not() clause of
+// innermostTextXPath keeps out. An element's text is its whole subtree's text,
+// so every ancestor of a match up to the root matches too, and the deepest one
+// is the element the author named.
+function innermostMatches(elements: Element[]): Element[] {
+  const matched = new Set(elements);
+  const outer = new Set<Element>();
+  for (const element of elements) {
+    for (let node = element.parentElement; node; node = node.parentElement) {
+      if (matched.has(node)) outer.add(node);
+    }
+  }
+  return elements.filter((element) => !outer.has(element));
+}
+
 function queryElement(
   root: ParentNode,
   selector: unknown,
 ): Element | null {
   if (typeof selector === "string") {
-    const { css, xpath } = selectorFromString(selector);
-    if (css) return deepQueryAll(css, root)[0] ?? null;
-    if (xpath) {
-      const result = document.evaluate(
-        xpath,
-        root as Node,
-        null,
-        XPathResult.FIRST_ORDERED_NODE_TYPE,
-        null,
-      );
-      return result.singleNodeValue as Element | null;
-    }
-    return null;
+    return matchedElements(root, selectorFromString(selector))[0] ?? null;
   }
   if (Array.isArray(selector)) {
     let node: ParentNode | null = root;
@@ -242,28 +541,15 @@ function queryElement(
     return node as Element;
   }
   if (selector && typeof selector === "object") {
-    const { css, xpath } = selectorFromObject(selector as Record<string, string | boolean | undefined>);
-    if (css) return deepQueryAll(css, root)[0] ?? null;
-    if (xpath) {
-      const result = document.evaluate(
-        xpath,
-        root as Node,
-        null,
-        XPathResult.FIRST_ORDERED_NODE_TYPE,
-        null,
-      );
-      return result.singleNodeValue as Element | null;
-    }
+    const compiled = selectorFromObject(selector as Record<string, string | boolean | undefined>);
+    return matchedElements(root, compiled)[0] ?? null;
   }
   return null;
 }
 
 function queryAllElements(root: ParentNode, selector: unknown): Element[] {
   if (typeof selector === "string") {
-    const { css, xpath } = selectorFromString(selector);
-    if (css) return deepQueryAll(css, root);
-    if (xpath) return evaluateXPathAll(xpath, root as Node);
-    return [];
+    return matchedElements(root, selectorFromString(selector));
   }
   // A selector path: every match of the first segment is searched for the rest,
   // concatenated in walk order, mirroring FindAllBySelectorPath in
@@ -280,9 +566,8 @@ function queryAllElements(root: ParentNode, selector: unknown): Element[] {
     return heads.flatMap((element) => queryAllElements(element, rest));
   }
   if (selector && typeof selector === "object" && !Array.isArray(selector)) {
-    const { css, xpath } = selectorFromObject(selector as Record<string, string | boolean | undefined>);
-    if (css) return deepQueryAll(css, root);
-    if (xpath) return evaluateXPathAll(xpath, root as Node);
+    const compiled = selectorFromObject(selector as Record<string, string | boolean | undefined>);
+    return matchedElements(root, compiled);
   }
   return [];
 }
@@ -301,6 +586,38 @@ function evaluateXPathAll(xpath: string, root: Node): Element[] {
     if (node) out.push(node as Element);
   }
   return out;
+}
+
+// rawAttributes keys an element's attributes by the names the markup writes,
+// which is what `attrs` means on every other backend. element.dataset would key
+// `data-cents` as `cents`, so a spec reading attrs["data-cents"] the way the
+// native hosts report it read undefined on web and every assertion over it
+// passed vacuously.
+function rawAttributes(element: Element): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const attribute of Array.from(element.attributes ?? [])) {
+    out[attribute.name] = attribute.value;
+  }
+  return out;
+}
+
+// fieldHint names an editable field the way a user reads it, in the order the
+// accessible name is computed: its own aria-label, the <label> bound to it, the
+// placeholder standing in the empty box, then the name the form gives it. It
+// lands on `hintText`, the rung visibleLabel (internal/verifier/llm.go) reads
+// first for an editable element, so an authored InputText on web names its field
+// the way the same action names it on Android.
+function fieldHint(element: Element): string {
+  if (!isEditableElement(element as HTMLElement)) return "";
+  const ariaLabel = element.getAttribute("aria-label");
+  if (ariaLabel) return ariaLabel;
+  for (const label of Array.from((element as HTMLInputElement).labels ?? [])) {
+    const text = (label.textContent ?? "").trim();
+    if (text) return text;
+  }
+  const placeholder = element.getAttribute("placeholder");
+  if (placeholder) return placeholder;
+  return element.getAttribute("name") ?? "";
 }
 
 // SELECTOR_TAG is the key an ax element carries the selector it was found by,
@@ -333,6 +650,21 @@ function selectorTag(selector: unknown): string {
   return "";
 }
 
+// selectorTagFor names the element only when no other element in the document
+// answers to the selector. The runner prefers tree.Find(action.On) over the
+// coordinates the element reported (resolveCoordinates in internal/runner) and
+// Find takes the first match, so naming an element by a selector its siblings
+// share sends every one of their actions to the first sibling. It is the rule
+// selectorsFor already applies to the builtin target enumeration, and it is
+// checked document-wide even for a child lookup because the runner re-resolves
+// against the whole dump rather than the parent's subtree.
+function selectorTagFor(element: Element, selector: unknown): string {
+  for (const match of queryAllElements(document, selector)) {
+    if (match !== element) return "";
+  }
+  return selectorTag(selector);
+}
+
 // isEnabled answers the `enabled` fact. `.disabled` is a property only real form
 // controls have, so it reads undefined on the role-based controls the tappable
 // set now covers, and every one of them looked enabled however plainly it was
@@ -343,26 +675,106 @@ function isEnabled(element: Element): boolean {
   return element.getAttribute("aria-disabled") !== "true";
 }
 
-function elementHandle(element: Element, selector: unknown): Record<string, unknown> {
+function isClickable(element: Element): boolean {
+  return element.matches(TAPPABLE_SELECTOR);
+}
+
+// Checkbox and option state lives in the DOM PROPERTY: the markup attribute
+// records only what the page started with, so anything reading it reports a
+// box's initial state however often the user ticks it.
+// internal/driver/chrome/driver.go reads the same two properties for the dump
+// the goja host gets.
+function isChecked(element: Element): boolean {
+  return (element as Partial<HTMLInputElement>).checked === true;
+}
+
+function isSelected(element: Element): boolean {
+  return (element as Partial<HTMLOptionElement>).selected === true;
+}
+
+// document.activeElement stops at a shadow boundary and names the HOST, so a
+// Compose for Web page reported focus on its mount element and never on the
+// field. selectAllScript in internal/driver/chrome/driver.go carries the rest of
+// it; buildAx descends once per pass and hands the answer down.
+function deepestActiveElement(): Element | null {
+  let element = document.activeElement;
+  while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+  return fieldBehindTheCaret(element) ?? element;
+}
+
+// Compose for Web takes keystrokes on a 1px input pinned to the caret, a SIBLING
+// of the accessibility tree, so descending the shadow roots lands on a node no
+// selector can name and the field carrying the test tag reads unfocused.
+// selectAllScript in internal/driver/chrome/driver.go re-attributes focus the
+// same way for the dump the goja host reads, and carries the reasoning,
+// including why the caret's CENTRE decides rather than its whole box.
+const CARET_ORIGIN_PROPERTY = "--compose-internal-web-backing-input-left";
+
+function fieldBehindTheCaret(caretInput: Element | null): Element | null {
+  if (!caretInput || caretInput.tagName !== "INPUT") return null;
+  if (!getComputedStyle(caretInput).getPropertyValue(CARET_ORIGIN_PROPERTY).trim()) return null;
+  const caret = caretInput.getBoundingClientRect();
+  const x = (caret.left + caret.right) / 2;
+  const y = (caret.top + caret.bottom) / 2;
+  let field: Element | null = null;
+  let fieldArea = Infinity;
+  for (const candidate of editableElements()) {
+    if (candidate === caretInput) continue;
+    const box = candidate.getBoundingClientRect();
+    const area = box.width * box.height;
+    if (area <= 0 || area >= fieldArea) continue;
+    if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue;
+    field = candidate;
+    fieldArea = area;
+  }
+  return field;
+}
+
+function elementHandle(
+  element: Element,
+  selector: unknown,
+  focusedElement: Element | null,
+): Record<string, unknown> {
+  const state = element as Partial<HTMLInputElement & HTMLOptionElement>;
   const rect = element.getBoundingClientRect();
   const x = Math.round(rect.left + rect.width / 2);
   const y = Math.round(rect.top + rect.height / 2);
   const ariaLabel = element.getAttribute("aria-label") ?? "";
   const text = (element.textContent ?? "").trim().slice(0, 200);
+  const editable = isEditable(element);
   const datasetCopy: Record<string, string> = {};
   const dataset = (element as HTMLElement).dataset ?? {};
   for (const key of Object.keys(dataset)) {
     const value = (dataset as Record<string, string | undefined>)[key];
     if (value !== undefined) datasetCopy[key] = value;
   }
+  const attrs: Record<string, string> = {
+    tag: element.tagName.toLowerCase(),
+    "aria-label": ariaLabel,
+    ...rawAttributes(element),
+  };
+  const hint = fieldHint(element);
+  if (hint) attrs.hintText = hint;
   return {
     id: element.id,
     text,
     desc: ariaLabel,
     class: (element as HTMLElement).className ?? "",
-    clickable: true,
+    // The selector collectTargets and the hierarchy dump (driver.go) both
+    // resolve clickable through. Hardcoded true here, every text node and
+    // container a spec reached through state.ax claimed to be a tap target.
+    clickable: isClickable(element),
     enabled: isEnabled(element),
-    focused: document.activeElement === element,
+    editable,
+    focused: focusedElement === element,
+    checked: isChecked(element),
+    selected: isSelected(element),
+    // Three-valued, unlike the other state flags: null on anything that is not
+    // a field, matching the hierarchy dump in internal/driver/chrome/driver.go.
+    // A consumer deciding what a typed value may be written into a record has
+    // to tell "not a password field" apart from "nobody said", and Android says
+    // nothing.
+    secure: editable ? state.type === "password" : null,
     x,
     y,
     bounds: {
@@ -371,34 +783,31 @@ function elementHandle(element: Element, selector: unknown): Record<string, unkn
       right: Math.round(rect.right),
       bottom: Math.round(rect.bottom),
     },
-    attrs: {
-      tag: element.tagName.toLowerCase(),
-      "aria-label": ariaLabel,
-      ...datasetCopy,
-    },
+    attrs,
     dataset: datasetCopy,
-    [SELECTOR_TAG]: selectorTag(selector),
+    [SELECTOR_TAG]: selectorTagFor(element, selector),
     find(childSelector: unknown): unknown {
       const child = queryElement(element, childSelector);
-      return child ? elementHandle(child, childSelector) : undefined;
+      return child ? elementHandle(child, childSelector, focusedElement) : undefined;
     },
     findAll(childSelector: unknown): unknown[] {
       return queryAllElements(element, childSelector).map((child) =>
-        elementHandle(child, childSelector),
+        elementHandle(child, childSelector, focusedElement),
       );
     },
   };
 }
 
 function buildAx(): unknown {
+  const focusedElement = deepestActiveElement();
   return {
     find(selector: unknown): unknown {
       const element = queryElement(document, selector);
-      return element ? elementHandle(element, selector) : undefined;
+      return element ? elementHandle(element, selector, focusedElement) : undefined;
     },
     findAll(selector: unknown): unknown[] {
       return queryAllElements(document, selector).map((element) =>
-        elementHandle(element, selector),
+        elementHandle(element, selector, focusedElement),
       );
     },
   };
@@ -516,6 +925,12 @@ defineLockedGlobal("__sanderlingSetLogs__", (value: unknown) => {
   logs = Array.isArray(value) ? value : [];
 });
 
+// The host reads the same buffer buildState puts behind state.exceptions, so
+// the goja-side state.exceptions is the page's list rather than the empty one
+// it held before, and the trace records an error surface an offline oracle can
+// read back.
+defineLockedGlobal("__sanderlingExceptions__", () => capturedExceptions.slice());
+
 // writable:false stops a page script from shadowing the runtime via plain
 // assignment (the realistic in-page threat). configurable:true is required so
 // unit tests sharing one process can reinstall a fake via defineProperty; a
@@ -631,11 +1046,25 @@ function isEditableElement(element: HTMLElement): boolean {
   return false;
 }
 
+// isContentEditable is inherited, so reading it alone makes every span inside a
+// contenteditable container typeable, where the hierarchy dump in
+// internal/driver/chrome/driver.go requires the element ITSELF to match
+// EDITABLE_SELECTOR. The handle, the picker's target list and the `editable`
+// selector all derive the fact here, so none of the three can call an element
+// something the other two do not.
+function isEditable(element: Element): boolean {
+  return element.matches(EDITABLE_SELECTOR) && isEditableElement(element as HTMLElement);
+}
+
+function editableElements(): Set<Element> {
+  return new Set<Element>(deepQueryAll(EDITABLE_SELECTOR, document).filter(isEditable));
+}
+
 // isScrollable mirrors the native `scrollable` accessibility attribute: the
 // container can actually scroll, i.e. its content overflows its box. The
 // document scrolling root is not special-cased in: when the page does not
 // overflow there is no scroll to perform, and native would offer none either.
-function isScrollable(element: HTMLElement): boolean {
+function isScrollable(element: Element): boolean {
   return element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth;
 }
 
@@ -736,9 +1165,7 @@ function selectorsFor(elements: readonly HTMLElement[]): Array<string | undefine
 // stays expressed in CSS, as it always was.
 function collectTargets(): TargetElement[] {
   const clickable = new Set<Element>(deepQueryAll(TAPPABLE_SELECTOR, document));
-  const editable = new Set<Element>(
-    (deepQueryAll(EDITABLE_SELECTOR, document) as HTMLElement[]).filter(isEditableElement),
-  );
+  const editable = editableElements();
   const elements = targetElements();
   const selectors = selectorsFor(elements);
   return elements.map((element, index) => ({
@@ -762,7 +1189,7 @@ function resetTargetCache(): void {
 
 const host: Host = {
   platform: () => "web",
-  seedHi: () => SEED_HI,
+  seedHi: () => seedBigInt(),
   // lo = 0 matches the goja side's rand.NewPCG(seed, 0).
   seedLo: () => 0n,
   queryTargets(): TargetElement[] {
@@ -792,6 +1219,7 @@ installRuntime(
 // so these are stripped from production output; they only exist for unit tests.
 export const __testing__ = {
   host,
+  buildAx,
   seedBigInt,
   collectTargets,
   targetElements,
@@ -803,6 +1231,8 @@ export const __testing__ = {
   evaluateExtractors,
   selectorFromString,
   selectorFromObject,
+  SELECTOR_KEYS,
+  unknownSelectorKeyMessage,
   selectorTag,
   xpathStringLiteral,
 };

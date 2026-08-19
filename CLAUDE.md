@@ -30,6 +30,15 @@
     order to accommodate a signature change. Its original subject must survive.
   - Carry intent through test names and assertions rather than through prose comments.
 
+## Verification Targets
+
+  - All three targets run on this machine when it is macOS: the Android emulator, the iOS
+    simulator, and Chrome. A change to a driver, the runner, the verifier or the spec surface
+    is verified on every target it can affect, not on whichever one is already booted.
+  - If a simulator is not running, start it. "Nothing was booted" is not a reason to skip a
+    target, and neither is a missing tool on PATH: fix discovery or the install flow rather
+    than prefixing the run with environment variables.
+
 ## Git Branch Rules
 
   - No slashes in branch names (e.g., use `fix-something` not `fix/something`).
@@ -58,3 +67,30 @@
   - Keep commits small: aim for under 20 lines changed per commit.
   - Don't batch multiple unrelated changes into one commit.
   - Commit early and often. A working 5-line change is better than a pending 200-line change.
+
+## Delegation
+
+  - Do the work in subagents, not in the main context. Installs, builds, test runs,
+    file-by-file writing, greps across the tree and any multi-step verification go to an
+    Agent that reports back a short result.
+  - The main context is for deciding what to do, reviewing what comes back, and talking to
+    the user. Keep it clean. Never paste build output, test output or file listings into it.
+  - One specific task per subagent, with the context it needs. Launch independent tasks in
+    parallel in a single message.
+  - Give each agent its own scratchpad subdirectory, named for its task, and tell it to
+    delete nothing it did not create. Agents run concurrently and a shared scratch directory
+    means one deletes another's work mid-run.
+
+## Keeping the record
+
+  - Finishing a task includes updating the files that describe its subject. Status lines,
+    schedules, gates and readiness notes go stale the moment work lands, and a plan that
+    says "not started" about something that ran is worse than no plan.
+  - Write down what was found, not just what was changed. A measurement, a number, a thing
+    that turned out not to work: it goes in the file where someone would look for it, with
+    the path, commit or number behind it.
+  - Correct old assumptions explicitly. When something turns out to be wrong, fix the
+    sentence that said it rather than adding a newer sentence beside it. Say what it used
+    to claim if the change matters.
+  - Verify against the repository rather than recalling. A file that says it was checked
+    against HEAD and was not is the failure this project exists to catch.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -329,5 +330,99 @@ func TestDumpIsCollapsed(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func scrollableBounds(tree *hierarchy.Tree) []hierarchy.Bounds {
+	var bounds []hierarchy.Bounds
+	for _, element := range tree.FindAllNodes("scrollable:true") {
+		bounds = append(bounds, element.Bounds)
+	}
+	return bounds
+}
+
+func TestScrollableMarksTheContainerThatClipsOverflowingContent(t *testing.T) {
+	tree := mapAndParse(
+		t,
+		readDump(t, "home-scrolling-describe.json"),
+		402,
+		874,
+	)
+	got := scrollableBounds(tree)
+	want := []hierarchy.Bounds{{Left: 0, Top: 122, Right: 402, Bottom: 699}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("scrollable containers = %+v, want %+v", got, want)
+	}
+}
+
+func TestScrollableIsAbsentWhenNothingOverflows(t *testing.T) {
+	tree := mapAndParse(t, readDump(t, "home-fixed-describe.json"), 402, 874)
+	if got := scrollableBounds(tree); len(got) != 0 {
+		t.Fatalf(
+			"scrollable containers = %+v, want none on a screen that does not scroll",
+			got,
+		)
+	}
+}
+
+func TestScrollableIsAbsentWithoutTreeDepth(t *testing.T) {
+	tree := mapAndParse(t, readDump(t, "accounts-describe.json"), 402, 874)
+	if got := scrollableBounds(tree); len(got) != 0 {
+		t.Fatalf(
+			"scrollable containers = %+v, want none from a dump that carries no depth",
+			got,
+		)
+	}
+}
+
+func TestScrollableIgnoresAContainerOffTheScreen(t *testing.T) {
+	// The dismissed keyboard is reported below the screen, and its prediction
+	// bar clips a much taller child, so it satisfies every other condition.
+	dump := `[
+		{"type":"Application","depth":0,"frame":{"x":0,"y":0,"width":402,"height":874},"enabled":true},
+		{"type":"Other","depth":1,"frame":{"x":0,"y":874,"width":402,"height":54},"enabled":true},
+		{"type":"Other","depth":2,"frame":{"x":0,"y":274,"width":402,"height":1254},"enabled":true}
+	]`
+	tree := mapAndParse(t, []byte(dump), 402, 874)
+	if got := scrollableBounds(tree); len(got) != 0 {
+		t.Fatalf("scrollable containers = %+v, want none off the screen", got)
+	}
+}
+
+// A secure text entry is what XCUITest reports a password field as
+// (companion/Sources/ElementTypeName.swift). It has to reach the tree as a
+// fact, because that is what lets a typed value be redacted from the record
+// without redacting every other field's.
+func TestSecureFactPerEditableType(t *testing.T) {
+	cases := []struct {
+		elementType  string
+		wantReported bool
+		wantSecure   bool
+	}{
+		{"SecureTextField", true, true},
+		{"TextField", true, false},
+		{"TextArea", true, false},
+		{"Button", false, false},
+		{"StaticText", false, false},
+	}
+	for _, testCase := range cases {
+		dump := `[{"type":"` + testCase.elementType + `","frame":{"x":0,"y":0,"width":10,"height":10},"enabled":true}]`
+		element := parseSingle(t, dump)
+		if element.SecureReported() != testCase.wantReported {
+			t.Errorf("%s reported secure = %v, want %v",
+				testCase.elementType, element.SecureReported(), testCase.wantReported)
+		}
+		if element.Secure != testCase.wantSecure {
+			t.Errorf("%s secure = %v, want %v", testCase.elementType, element.Secure, testCase.wantSecure)
+		}
+	}
+}
+
+// A secure text entry is a field a run must be able to type into, or the login
+// screens every real app opens on are unreachable.
+func TestSecureTextFieldIsEditable(t *testing.T) {
+	dump := `[{"type":"SecureTextField","frame":{"x":0,"y":0,"width":10,"height":10},"enabled":true}]`
+	if element := parseSingle(t, dump); !element.Editable {
+		t.Error("a secure text entry must be editable")
 	}
 }

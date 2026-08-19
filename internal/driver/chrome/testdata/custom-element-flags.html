@@ -1,0 +1,22 @@
+<!doctype html>
+<html id="page">
+  <head id="page-head">
+    <meta id="page-charset" charset="utf-8" />
+    <title id="page-title">custom element flags</title>
+  </head>
+  <body id="page-body">
+    <div id="tabs">
+      <a id="tab-all" href="#/">All</a>
+      <a id="tab-active" href="#/active">Active</a>
+    </div>
+    <div id="picker"></div>
+    <input id="toggle" type="checkbox" checked />
+    <script id="page-script">
+      // What a component keeps in these properties is whatever the component
+      // means by them: a selector element names the selected item here rather
+      // than saying whether it is itself selected.
+      document.getElementById('tabs').selected = 'active';
+      document.getElementById('picker').checked = 'partial';
+    </script>
+  </body>
+</html>

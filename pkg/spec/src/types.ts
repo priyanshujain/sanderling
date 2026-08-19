@@ -42,6 +42,19 @@ export interface KnownAttrSelectors {
   checked?: boolean;
   selected?: boolean;
   editable?: boolean;
+  secure?: boolean;
+}
+
+/**
+ * Keys that name a matching rule rather than an attribute a driver reports.
+ * They belong to the selector surface only, which is why they are not part of
+ * `KnownAttrSelectors` (and so never appear in `RawAttrs`).
+ */
+export interface PrefixSelectors {
+  /** Identifier starts with this, after Android's "<package>:id/" if present. */
+  idPrefix?: string;
+  /** Accessibility description starts with this. */
+  descPrefix?: string;
 }
 
 /**
@@ -49,9 +62,10 @@ export interface KnownAttrSelectors {
  * via `KnownAttrSelectors`; arbitrary string keys are still allowed for
  * raw driver attributes the typed surface doesn't yet cover.
  */
-export type AttrSelector = KnownAttrSelectors & {
-  [key: string]: string | boolean | undefined;
-};
+export type AttrSelector = KnownAttrSelectors &
+  PrefixSelectors & {
+    [key: string]: string | boolean | undefined;
+  };
 
 export type SelectorPath = readonly AttrSelector[];
 
@@ -75,6 +89,8 @@ export interface AccessibilityElement {
   focused?: boolean;
   selected?: boolean;
   editable?: boolean;
+  /** Field masks what is typed into it; null where the platform does not report it. */
+  secure?: boolean | null;
   bounds?: { left: number; top: number; right: number; bottom: number };
   x?: number;
   y?: number;
@@ -118,6 +134,11 @@ export interface ExceptionRecord {
  * reported", which is weaker than "the app never restarted": a target whose
  * foreground the runner cannot read never relaunches the app and cannot promise
  * that either.
+ *
+ * `text` is the value as the record renders it: `[redacted]` wherever the
+ * target may be a credential entry, which on Android is every target, since it
+ * reports nothing either way. Read the field off `ax` to reason about what it
+ * holds.
  */
 export type LastAction = Action & { applied: true | null; relaunched: true | null };
 
@@ -190,6 +211,7 @@ export type Key =
   | "home"
   | "enter"
   | "tab"
+  | "escape"
   | "up"
   | "down"
   | "left"
@@ -209,6 +231,10 @@ export interface Formula {
 }
 
 export interface EventuallyFormula extends Formula {
+  // `"milliseconds"` and `"seconds"` bound the window in wall-clock time, which
+  // is what a user-perceived deadline means. `"steps"` bounds it in observed
+  // steps, so the same window costs the same regardless of how long each step
+  // took: use it for anything compared across runs of different speeds.
   within(amount: number, unit: "milliseconds" | "seconds" | "steps"): Formula;
 }
 

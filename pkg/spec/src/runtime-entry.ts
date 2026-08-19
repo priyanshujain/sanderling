@@ -10,6 +10,7 @@
 import { Pcg } from "./pcg.ts";
 import { builtinCandidates, nextAction, walk } from "./pick.ts";
 import { INPUT_CORPUS } from "./corpus.ts";
+import { setEnumeratingCandidates } from "./sampler-rng.ts";
 import type { ActionDescriptor, BuiltinVerb, GeneratorNode, Host } from "./action-tree.ts";
 import type { Point } from "./types.ts";
 
@@ -17,7 +18,9 @@ import type { Point } from "./types.ts";
 // (ONE decoder on each side). Builtin targets are already resolved to a Point,
 // and serializeAction collapses author targets that carry {x, y}; a target that
 // does not resolve to coordinates drops the action (returns null).
-export type SerializedAction =
+export type SerializedAction = SerializedActionShape & { source?: ActionSource };
+
+type SerializedActionShape =
   | { kind: "Tap" | "DoubleTap" | "LongPress"; x: number; y: number; selector?: string }
   | { kind: "InputText"; x: number; y: number; text: string; selector?: string }
   | { kind: "Swipe"; fromX: number; fromY: number; toX: number; toY: number; durationMillis: number }
@@ -29,9 +32,16 @@ export type SerializedAction =
       toX: number;
       toY: number;
       durationMillis: number;
+      selector?: string;
     }
   | { kind: "PressKey"; key: string }
   | { kind: "Wait"; durationMillis: number };
+
+// ActionSource names which of the spec's two generators produced an action.
+// Both are dispatched the same way, but only the action root explores: setup
+// drives the app into its starting position, so a per-action rate that counts
+// its login steps measures a policy's exposure as larger than it was.
+export type ActionSource = "setup" | "seeded";
 
 const DEFAULT_SWIPE_DURATION = 250;
 
@@ -57,7 +67,19 @@ function pointOf(target: unknown): (Point & { selector?: string }) | undefined {
   return undefined;
 }
 
-export function serializeAction(action: ActionDescriptor | null): SerializedAction | null {
+// serializeAction emits the wire shape, tagged with the generator that produced
+// the action when the caller knows it. The candidate enumeration the model
+// policy reads passes no source: nothing has chosen those yet.
+export function serializeAction(
+  action: ActionDescriptor | null,
+  source?: ActionSource,
+): SerializedAction | null {
+  const wire = serializeWire(action);
+  if (!wire || !source) return wire;
+  return { ...wire, source };
+}
+
+function serializeWire(action: ActionDescriptor | null): SerializedAction | null {
   if (!action) return null;
   switch (action.kind) {
     case "Tap":
@@ -90,20 +112,27 @@ export function serializeAction(action: ActionDescriptor | null): SerializedActi
       };
     }
     case "Scroll": {
-      const from = pointOf(action.from) ?? pointOf(action.in);
-      if (!from) return null;
-      // The builtin generator pre-computes `to`; an author Scroll without it
-      // collapses to a zero-length gesture the runner re-derives from bounds.
-      const to = pointOf(action.to) ?? from;
-      return {
+      // The builtin generator pre-computes the whole gesture. An author names
+      // the container instead and leaves the drag to the runner, which sizes it
+      // from that container's bounds: sending the container's own point as both
+      // endpoints would be a drag from a point to itself, which the runner
+      // executes as written, and sending no container at all would scroll
+      // whatever else is on screen.
+      const from = pointOf(action.from);
+      const to = pointOf(action.to);
+      const gesture =
+        from && to
+          ? { fromX: from.x, fromY: from.y, toX: to.x, toY: to.y }
+          : { fromX: 0, fromY: 0, toX: 0, toY: 0 };
+      const out: SerializedAction = {
         kind: "Scroll",
         direction: action.direction,
-        fromX: from.x,
-        fromY: from.y,
-        toX: to.x,
-        toY: to.y,
+        ...gesture,
         durationMillis: DEFAULT_SWIPE_DURATION,
       };
+      const container = pointOf(action.in);
+      if (container?.selector) out.selector = container.selector;
+      return out;
     }
     case "PressKey":
       return { kind: "PressKey", key: action.key };
@@ -148,6 +177,24 @@ export function installRuntime(
       targetIndex: candidate.targetIndex,
     })),
   );
+  // The model policy calls the authored leaves itself, from Go, outside the
+  // picker's rng scope. It brackets those calls with this so a multi-item
+  // sampler refuses rather than handing back its first item forever.
+  defineLockedGlobal("__sanderlingSetEnumeratingCandidates__", setEnumeratingCandidates);
+  // The picker's draw position, as "hi,lo" decimal (a bigint pair survives no
+  // JSON hop). A web run's runtime is reinstalled by every page navigation, so
+  // the host reads the position back after each decision and puts it in place
+  // before the next one; without that the seed's stream restarts at its first
+  // draw every time the page reloads.
+  defineLockedGlobal("__sanderlingPickerState__", () => {
+    const { hi, lo } = rng.state();
+    return `${hi},${lo}`;
+  });
+  defineLockedGlobal("__sanderlingRestorePickerState__", (state: string) => {
+    const [hi, lo] = state.split(",");
+    if (hi === undefined || lo === undefined) return;
+    rng.restore(BigInt(hi), BigInt(lo));
+  });
   defineLockedGlobal("__sanderlingExtractors__", () => evaluateExtractors());
   // __sanderlingSetupAction__ walks ONLY the setup generator once, for the LLM
   // action generator (Go), which drives selection itself and must not run the
@@ -157,7 +204,7 @@ export function installRuntime(
     resolveRoot();
     const setup = resolveSetup();
     if (!setup) return null;
-    return serializeAction(walk(setup, rng, host));
+    return serializeAction(walk(setup, rng, host), "setup");
   });
   defineLockedGlobal("__sanderlingNextAction__", () => {
     // resolveRoot runs first: on web it also resets the per-tick candidate
@@ -166,10 +213,10 @@ export function installRuntime(
     const setup = resolveSetup();
     if (setup) {
       const setupAction = walk(setup, rng, host);
-      if (setupAction) return serializeAction(setupAction);
+      if (setupAction) return serializeAction(setupAction, "setup");
     }
     if (!current) return null;
-    return serializeAction(nextAction(current, rng, host));
+    return serializeAction(nextAction(current, rng, host), "seeded");
   });
 }
 

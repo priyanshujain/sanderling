@@ -58,7 +58,7 @@ type TextEditor interface {
 	// EraseText deletes characterCount characters from the focused field.
 	EraseText(ctx context.Context, characterCount int) error
 
-	// PressKey presses the named logical key (currently only return/enter).
+	// PressKey presses the named logical key (return/enter and escape).
 	PressKey(ctx context.Context, key string) error
 }
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -45,12 +46,33 @@ import (
 // elementFacts is one element as a producer reports it: the tag, for readable
 // failures, and every fact acceptsTarget consults.
 type elementFacts struct {
-	tag            string
-	clickable      bool
-	enabled        bool
-	editable       bool
-	scrollable     bool
-	positiveBounds bool
+	tag        string
+	clickable  bool
+	enabled    bool
+	editable   bool
+	scrollable bool
+	hintText   string
+	// secure is three-valued: "true", "false", or "" where the producer states
+	// nothing, which android states for every element. It decides whether a
+	// typed value may be written into the shared record, so the two producers
+	// disagreeing about it writes a credential into a run's trace.
+	secure string
+	// checked, selected and focused reach a spec through the ax handle alone:
+	// they decide nothing about which action is offered, so the target
+	// enumeration does not carry them, and a selector naming one of them
+	// resolves against this same reading.
+	checked  bool
+	selected bool
+	focused  bool
+	// handleClickable and handleEditable are the same facts on the ax element a
+	// spec reaches through state.ax.find, a third place they are computed and the
+	// one that has twice been the odd one out: clickable answered a hardcoded
+	// true while the other two resolved a selector, and editable read the
+	// INHERITED isContentEditable, which makes every span inside a contenteditable
+	// container typeable.
+	handleClickable bool
+	handleEditable  bool
+	positiveBounds  bool
 }
 
 // factRow pairs an element's facts with the id both producers key on, kept in
@@ -91,6 +113,8 @@ func TestHierarchy_DerivesTheSameFactsAsTheWebRuntime(t *testing.T) {
 			requireEveryElementNamed(t, "the hierarchy dump", fromDump)
 			requireEveryElementNamed(t, "the web runtime", fromWebRuntime)
 			requireBothPolarities(t, fromWebRuntime)
+			requireEverySecureState(t, fromWebRuntime)
+			requireTheHandleAgreesWithTheEnumeration(t, fromWebRuntime)
 			compareEnumeratedElements(t, fromDump, fromWebRuntime)
 			compareDerivedFacts(t, fromDump, fromWebRuntime)
 		})
@@ -116,6 +140,11 @@ func factsFromHierarchyDump(t *testing.T, dump string) []factRow {
 				enabled:    element.Enabled,
 				editable:   element.Editable,
 				scrollable: element.Attributes["scrollable"] == "true",
+				hintText:   element.Attributes["hintText"],
+				secure:     secureFromDump(element),
+				checked:    element.Checked,
+				selected:   element.Selected,
+				focused:    element.Focused,
 				positiveBounds: hasPositiveBounds(
 					element.Bounds.Width(),
 					element.Bounds.Height(),
@@ -155,14 +184,21 @@ func factsFromWebRuntime(
 		t.Fatalf("read web runtime facts: %v", err)
 	}
 	var wire []struct {
-		ID         string `json:"id"`
-		Tag        string `json:"tag"`
-		Clickable  bool   `json:"clickable"`
-		Enabled    bool   `json:"enabled"`
-		Editable   bool   `json:"editable"`
-		Scrollable bool   `json:"scrollable"`
-		Width      int    `json:"width"`
-		Height     int    `json:"height"`
+		ID              string `json:"id"`
+		Tag             string `json:"tag"`
+		Clickable       bool   `json:"clickable"`
+		Enabled         bool   `json:"enabled"`
+		Editable        bool   `json:"editable"`
+		Scrollable      bool   `json:"scrollable"`
+		HintText        string `json:"hintText"`
+		HandleClickable bool   `json:"handleClickable"`
+		HandleEditable  bool   `json:"handleEditable"`
+		Secure          *bool  `json:"secure"`
+		Checked         bool   `json:"checked"`
+		Selected        bool   `json:"selected"`
+		Focused         bool   `json:"focused"`
+		Width           int    `json:"width"`
+		Height          int    `json:"height"`
 	}
 	if err := json.Unmarshal([]byte(encoded), &wire); err != nil {
 		t.Fatalf("decode web runtime facts: %v", err)
@@ -172,16 +208,41 @@ func factsFromWebRuntime(
 		rows = append(rows, factRow{
 			id: item.ID,
 			facts: elementFacts{
-				tag:            item.Tag,
-				clickable:      item.Clickable,
-				enabled:        item.Enabled,
-				editable:       item.Editable,
-				scrollable:     item.Scrollable,
-				positiveBounds: hasPositiveBounds(item.Width, item.Height),
+				tag:             item.Tag,
+				clickable:       item.Clickable,
+				enabled:         item.Enabled,
+				editable:        item.Editable,
+				scrollable:      item.Scrollable,
+				hintText:        item.HintText,
+				handleClickable: item.HandleClickable,
+				handleEditable:  item.HandleEditable,
+				secure:          secureFromWebRuntime(item.Secure),
+				checked:         item.Checked,
+				selected:        item.Selected,
+				focused:         item.Focused,
+				positiveBounds:  hasPositiveBounds(item.Width, item.Height),
 			},
 		})
 	}
 	return rows
+}
+
+// secureFromDump and secureFromWebRuntime read the same three-valued fact off
+// the two producers. The dump leaves the field out entirely for an element it
+// states nothing about, the web runtime reports null for it, and both mean the
+// same thing: unknown, not "not a secure entry".
+func secureFromDump(element *hierarchy.Element) string {
+	if !element.SecureReported() {
+		return ""
+	}
+	return strconv.FormatBool(element.Secure)
+}
+
+func secureFromWebRuntime(secure *bool) string {
+	if secure == nil {
+		return ""
+	}
+	return strconv.FormatBool(*secure)
 }
 
 // hasPositiveBounds is the positiveBounds fact of pkg/spec/src/targets.ts,
@@ -222,6 +283,10 @@ func requireBothPolarities(t *testing.T, rows []factRow) {
 		{"enabled", func(f elementFacts) bool { return f.enabled }},
 		{"editable", func(f elementFacts) bool { return f.editable }},
 		{"scrollable", func(f elementFacts) bool { return f.scrollable }},
+		{"hintText", func(f elementFacts) bool { return f.hintText != "" }},
+		{"checked", func(f elementFacts) bool { return f.checked }},
+		{"selected", func(f elementFacts) bool { return f.selected }},
+		{"focused", func(f elementFacts) bool { return f.focused }},
 		{"positiveBounds", func(f elementFacts) bool { return f.positiveBounds }},
 	} {
 		var sawTrue, sawFalse bool
@@ -240,6 +305,63 @@ func requireBothPolarities(t *testing.T, rows []factRow) {
 				sawTrue,
 				sawFalse,
 			)
+		}
+	}
+}
+
+// requireEverySecureState is requireBothPolarities for the one fact that is not
+// a boolean. A fixture holding no password entry would compare "false" against
+// "false" over the whole page and pass while proving nothing about the state
+// that decides whether a typed value may be written down.
+func requireEverySecureState(t *testing.T, rows []factRow) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[row.facts.secure] = true
+	}
+	for _, state := range []string{"true", "false", ""} {
+		if !seen[state] {
+			t.Errorf(
+				"the fixture no longer holds an element the web runtime reports "+
+					"secure=%q for, so comparing that state proves nothing",
+				state,
+			)
+		}
+	}
+}
+
+// requireTheHandleAgreesWithTheEnumeration compares the V8 host against itself.
+// An element a spec reaches through state.ax and the same element in the
+// enumeration must be clickable, and typeable, to the same degree, or a spec
+// taps a container the picker calls inert and types into a box the picker calls
+// read-only. The handle resolves each fact by element.matches over a selector
+// while the enumeration resolves it by membership of the set that selector
+// queried, and this is where the two answers are held together over a real page:
+// an [onclick] attribute, an onclick property that is not one, a <span> whose
+// contenteditable is inherited from its container, elements inside a shadow root.
+func requireTheHandleAgreesWithTheEnumeration(t *testing.T, rows []factRow) {
+	t.Helper()
+	for _, row := range rows {
+		for _, fact := range []struct {
+			name        string
+			handle      bool
+			enumeration bool
+		}{
+			{"clickable", row.facts.handleClickable, row.facts.clickable},
+			{"editable", row.facts.handleEditable, row.facts.editable},
+		} {
+			if fact.handle != fact.enumeration {
+				t.Errorf(
+					"%q (<%s>): the ax handle reports %s=%v, the enumeration reports "+
+						"%s=%v",
+					row.id,
+					row.facts.tag,
+					fact.name,
+					fact.handle,
+					fact.name,
+					fact.enumeration,
+				)
+			}
 		}
 	}
 }
@@ -307,6 +429,27 @@ func compareDerivedFacts(t *testing.T, fromDump, fromWebRuntime []factRow) {
 				web.tag,
 			)
 		}
+		if dump.hintText != web.hintText {
+			t.Errorf(
+				"%q (<%s>): the hierarchy dump names the field %q, the web runtime "+
+					"names it %q; the model is shown a different control on each host",
+				row.id,
+				dump.tag,
+				dump.hintText,
+				web.hintText,
+			)
+		}
+		if dump.secure != web.secure {
+			t.Errorf(
+				"%q (<%s>): the hierarchy dump derives secure=%q, the web runtime "+
+					"derives secure=%q; one host would write into the record a value "+
+					"the other redacts",
+				row.id,
+				dump.tag,
+				dump.secure,
+				web.secure,
+			)
+		}
 		for _, fact := range []struct {
 			name string
 			dump bool
@@ -316,6 +459,9 @@ func compareDerivedFacts(t *testing.T, fromDump, fromWebRuntime []factRow) {
 			{"enabled", dump.enabled, web.enabled},
 			{"editable", dump.editable, web.editable},
 			{"scrollable", dump.scrollable, web.scrollable},
+			{"checked", dump.checked, web.checked},
+			{"selected", dump.selected, web.selected},
+			{"focused", dump.focused, web.focused},
 			{"positiveBounds", dump.positiveBounds, web.positiveBounds},
 		} {
 			if fact.dump != fact.web {

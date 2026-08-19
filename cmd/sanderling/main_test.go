@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/testrun"
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
 func TestParseTestArgs_Defaults(t *testing.T) {
@@ -129,6 +130,63 @@ func TestParseTestArgs_RejectsUnknownGenerator(t *testing.T) {
 	}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unsupported generator") {
 		t.Fatalf("expected unsupported-generator error, got %v", err)
+	}
+}
+
+// The label-source cases compare against the verifier's own constants, because
+// the flag and the code that reads it are the two halves of one contract: a
+// rename on either side would otherwise leave every run silently labelled by
+// the default channel while meta.json claimed the other one.
+func TestParseTestArgs_LabelSourceDefaultsToVisibleText(t *testing.T) {
+	options, err := parseTestArgs([]string{"--spec", "s.ts", "--bundle-id", "com.example"}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.labelSource != verifier.LabelSourceVisibleText {
+		t.Fatalf("label source default: got %q, want %q", options.labelSource, verifier.LabelSourceVisibleText)
+	}
+}
+
+func TestParseTestArgs_AcceptsResourceIDLabelSource(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--label-source", verifier.LabelSourceResourceID,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.labelSource != verifier.LabelSourceResourceID {
+		t.Fatalf("label source: got %q, want %q", options.labelSource, verifier.LabelSourceResourceID)
+	}
+}
+
+func TestParseTestArgs_RejectsUnknownLabelSource(t *testing.T) {
+	_, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--label-source", "resource_id",
+	}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unsupported label source") {
+		t.Fatalf("expected unsupported-label-source error, got %v", err)
+	}
+}
+
+func TestPipelineOptionsCarriesTheExperimentCell(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "com.example",
+		"--generator", "llm",
+		"--label-source", verifier.LabelSourceResourceID,
+		"--arm", "llm-resource-id",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	pipeline := pipelineOptions(options)
+	if pipeline.Generator != "llm" || pipeline.LabelSource != verifier.LabelSourceResourceID || pipeline.Arm != "llm-resource-id" {
+		t.Errorf("cell lost between the flags and the pipeline: generator=%q labelSource=%q arm=%q",
+			pipeline.Generator, pipeline.LabelSource, pipeline.Arm)
 	}
 }
 
@@ -343,6 +401,62 @@ func TestParseTestArgs_ExitOnViolation(t *testing.T) {
 	}
 }
 
+// TestParseTestArgs_AllowNoPropertiesReachesThePipeline pins the opt-out the
+// extraction and portability sweeps pass. Dropped here, the guard is either
+// unreachable or permanent: a sweep that deliberately judges nothing cannot ask
+// for it, and every other run keeps the false green the guard exists to stop.
+func TestParseTestArgs_AllowNoPropertiesReachesThePipeline(t *testing.T) {
+	base := []string{"--spec", "s.ts", "--bundle-id", "com.example"}
+
+	options, err := parseTestArgs(base, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pipelineOptions(options).AllowNoProperties {
+		t.Error("allowNoProperties default: got true, want false")
+	}
+
+	options, err = parseTestArgs(append(base, "--allow-no-properties"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pipelineOptions(options).AllowNoProperties {
+		t.Error("--allow-no-properties never reached the pipeline options")
+	}
+}
+
+// The exploration sweeps ask for a run the generator never drove, and they ask
+// for that alone. Riding on --allow-no-properties made one flag name two
+// unrelated waivers, so a sweep that wanted the property-free one silently lost
+// the dead-run detector as well.
+func TestParseTestArgs_AllowNoGeneratorActionsIsItsOwnFlag(t *testing.T) {
+	base := []string{"--spec", "s.ts", "--bundle-id", "com.example"}
+
+	options, err := parseTestArgs(base, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pipelineOptions(options).AllowNoGeneratorActions {
+		t.Error("allowNoGeneratorActions default: got true, want false")
+	}
+
+	options, err = parseTestArgs(append(base, "--allow-no-generator-actions"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pipelineOptions(options).AllowNoGeneratorActions {
+		t.Error("--allow-no-generator-actions never reached the pipeline options")
+	}
+
+	options, err = parseTestArgs(append(base, "--allow-no-properties"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pipelineOptions(options).AllowNoGeneratorActions {
+		t.Error("--allow-no-properties still waives the dead-run refusal it does not name")
+	}
+}
+
 // TestExitCode_SeparatesFoundBugsFromBrokenHarnesses pins the three statuses CI
 // reads: 0 clean, 2 the run found violations, 1 everything else. A workflow
 // that asserts "the known bug is still found" is only meaningful while 2 and 1
@@ -358,6 +472,7 @@ func TestExitCode_SeparatesFoundBugsFromBrokenHarnesses(t *testing.T) {
 		{"help", flag.ErrHelp, 0, ""},
 		{"violations found", testrun.ViolationsError{Count: 2}, 2, "violations: 2"},
 		{"broken harness", errors.New("launch app: no device"), 1, "error: launch app"},
+		{"spec judges nothing", testrun.NoPropertiesError{Spec: "s.ts"}, 1, "registers no properties"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			var stderr bytes.Buffer

@@ -9,11 +9,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/priyanshujain/sanderling/internal/driver"
+	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
 
 // TestLaunch_ClearStateWipesStorageForTheTargetOrigin covers the CLI's default
@@ -303,6 +306,91 @@ func TestHierarchy_ScrollableAttribute(t *testing.T) {
 	}
 	if scrollableByID["fits"] != "" {
 		t.Errorf("%q: scrollable = %q, want absent", "fits", scrollableByID["fits"])
+	}
+}
+
+// TestHierarchy_HintTextNamesAnEditableField covers the attribute visibleLabel
+// (internal/verifier/llm.go) reads FIRST for an editable element. Without it a
+// web field reached the model named by its CSS class, an identifier no user can
+// read, on exactly the channel the label-source experiment varies. The ladder is
+// fieldHint's in pkg/spec/src/web-runtime.ts, rung for rung.
+func TestHierarchy_HintTextNamesAnEditableField(t *testing.T) {
+	const html = `<body>` +
+		`<label id="amount-label" for="amount">Amount</label>` +
+		`<input id="amount" class="input amount-input" placeholder="0.00" name="amount-field">` +
+		`<input id="search" class="input search-input" aria-label="Search" placeholder="Type here" name="q">` +
+		`<label id="note-label" for="note"> </label>` +
+		`<input id="note" class="input note-input" placeholder="What's this for?" name="note-field">` +
+		`<input id="reference" class="input" name="reference-field">` +
+		`<input id="unnamed" class="input">` +
+		`<input id="agree" class="checkbox" type="checkbox" placeholder="ignored">` +
+		`<button id="go" class="button" placeholder="ignored">go</button>` +
+		`</body>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(html))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+
+	type node struct {
+		Attributes map[string]string `json:"attributes"`
+		Editable   bool              `json:"editable"`
+		Children   []node            `json:"children"`
+	}
+	var root node
+	if err := json.Unmarshal([]byte(dump), &root); err != nil {
+		t.Fatalf("unmarshal hierarchy: %v", err)
+	}
+	fieldByID := map[string]node{}
+	var walk func(n node)
+	walk = func(n node) {
+		if id := n.Attributes["resource-id"]; id != "" {
+			fieldByID[id] = n
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+
+	for _, tc := range []struct {
+		id       string
+		want     string
+		editable bool
+	}{
+		{"search", "Search", true},
+		{"amount", "Amount", true},
+		{"note", "What's this for?", true},
+		{"reference", "reference-field", true},
+		{"unnamed", "", true},
+		{"agree", "", false},
+		{"go", "", false},
+	} {
+		field := fieldByID[tc.id]
+		if field.Attributes["hintText"] != tc.want {
+			t.Errorf("%q: hintText = %q, want %q", tc.id, field.Attributes["hintText"], tc.want)
+		}
+		// visibleLabel reaches the hint only for an element the dump calls
+		// editable, so a field named right and marked wrong is still named by
+		// its class downstream.
+		if field.Editable != tc.editable {
+			t.Errorf("%q: editable = %v, want %v", tc.id, field.Editable, tc.editable)
+		}
+		if tc.want != "" && field.Attributes["hintText"] == field.Attributes["class"] {
+			t.Errorf("%q: named by its CSS class %q", tc.id, field.Attributes["class"])
+		}
 	}
 }
 
@@ -1011,5 +1099,474 @@ func TestEvaluateExtractors_RejectsAnUnenvelopedReading(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "different bundles") {
 		t.Errorf("EvaluateExtractors failed with %q, want it to name the bundle mismatch", err)
+	}
+}
+
+// TestHierarchy_CarriesEveryMarkupAttribute covers the data the spec actually
+// reads. folio-web's extractors read data-cents, data-account-id and
+// data-balance off the elements they find; the dump used to emit a fixed
+// standard set, so those values were absent from the goja host and from every
+// stored trace, and a selector over them resolved nothing offline.
+func TestHierarchy_CarriesEveryMarkupAttribute(t *testing.T) {
+	const html = `<body>` +
+		`<div id="total-balance" data-cents="125000">$1,250.00</div>` +
+		`<div id="card" data-testid="account-card" data-account-id="acct-7" data-balance="4200">Tim</div>` +
+		`</body>`
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("parse hierarchy: %v", err)
+	}
+
+	total := tree.Find("id:total-balance")
+	if total == nil {
+		t.Fatal("total-balance not in the dump")
+	}
+	if got := total.Attributes["data-cents"]; got != "125000" {
+		t.Errorf(`attrs["data-cents"] = %q, want "125000"`, got)
+	}
+	card := tree.Find(`data-account-id:acct-7`)
+	if card == nil {
+		t.Fatal("no element resolves by a data attribute the markup carries")
+	}
+	if got := card.Attributes["data-balance"]; got != "4200" {
+		t.Errorf(`attrs["data-balance"] = %q, want "4200"`, got)
+	}
+	if got := card.Attributes["data-testid"]; got != "account-card" {
+		t.Errorf(`attrs["data-testid"] = %q, want "account-card"`, got)
+	}
+}
+
+// growingPage serves a page whose content starts shorter than one screen and
+// grows past it when its first button is tapped, which is what a chat, feed or
+// ledger does as a run drives it.
+const growingPage = `<body style="margin:0">
+<button id="grow" style="height:80px">grow</button>
+<div id="status">idle</div>
+<div id="rest"></div>
+<script>
+document.getElementById('grow').addEventListener('click', function() {
+  document.getElementById('rest').innerHTML =
+    '<div style="height:900px"></div>' +
+    '<button id="below" style="height:60px">below</button>';
+  document.getElementById('below').addEventListener('click', function() {
+    document.getElementById('status').textContent = 'below tapped';
+  });
+});
+</script></body>`
+
+// TestTap_ActuatesAnElementBelowTheLaunchViewport pins the invariant the whole
+// web path rests on: an element the driver reports as present and clickable can
+// be acted on. The emulated viewport is sized once at launch, so content the
+// app adds afterwards lies below it while getBoundingClientRect keeps reporting
+// where it is; a click dispatched there is hit-tested to the document root and
+// the element never sees it, with no error anywhere.
+func TestTap_ActuatesAnElementBelowTheLaunchViewport(t *testing.T) {
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(growingPage))
+		}),
+	)
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	tapByID := func(id string) {
+		t.Helper()
+		dump, err := d.Hierarchy(ctx)
+		if err != nil {
+			t.Fatalf("Hierarchy: %v", err)
+		}
+		tree, err := hierarchy.Parse(dump)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		element := tree.Find("id:" + id)
+		if element == nil {
+			t.Fatalf("%s is not in the dump", id)
+		}
+		if !element.Clickable {
+			t.Fatalf("%s is not reported clickable", id)
+		}
+		x, y := element.Bounds.Center()
+		if err := d.Tap(ctx, x, y); err != nil {
+			t.Fatalf("Tap %s at (%d,%d): %v", id, x, y, err)
+		}
+	}
+	tapByID("grow")
+	tapByID("below")
+
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	status := tree.Find("id:status")
+	if status == nil {
+		t.Fatal("status is not in the dump")
+	}
+	if status.Text != "below tapped" {
+		t.Errorf(
+			"status = %q, want %q: the tap reached no element",
+			status.Text,
+			"below tapped",
+		)
+	}
+}
+
+// TestTap_ReportsAGestureThatReachesNoElement covers the half of the same bug
+// that no scrolling can fix: a page that cannot scroll leaves the point out of
+// reach, and the caller has to hear about it rather than read a clean run.
+func TestTap_ReportsAGestureThatReachesNoElement(t *testing.T) {
+	const page = `<body style="margin:0;overflow:hidden">
+<div style="height:80px">top</div>
+<div id="rest" style="height:900px;overflow:hidden"></div>
+<style>html{overflow:hidden}</style></body>`
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(page))
+		}),
+	)
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	err := d.Tap(ctx, 100, 5000)
+	if !errors.Is(err, driver.ErrGestureUndelivered) {
+		t.Fatalf(
+			"Tap far below an unscrollable page: err = %v, want ErrGestureUndelivered",
+			err,
+		)
+	}
+}
+
+// TestTapSelector_ReportsASelectorThatMatchesNothing covers the by-selector
+// half of a step that reads as dispatched and did nothing: the node the
+// selector names is not on the page, so the click has no target at all.
+func TestTapSelector_ReportsASelectorThatMatchesNothing(t *testing.T) {
+	const page = `<body style="margin:0">
+<button id="present">here</button>
+<div id="status">none</div>
+<script>
+  document.getElementById('present').addEventListener('click', function () {
+    document.getElementById('status').textContent = 'present tapped';
+  });
+</script></body>`
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(page))
+		}),
+	)
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	missCtx, missCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer missCancel()
+	if err := d.TapSelector(missCtx, "id:absent"); !errors.Is(err, driver.ErrSelectorMatchedNothing) {
+		t.Fatalf("TapSelector on an absent element: err = %v, want ErrSelectorMatchedNothing", err)
+	}
+	if err := d.DoubleTapSelector(missCtx, "id:absent"); !errors.Is(err, driver.ErrSelectorMatchedNothing) {
+		t.Fatalf("DoubleTapSelector on an absent element: err = %v, want ErrSelectorMatchedNothing", err)
+	}
+	if err := d.TapSelector(ctx, "id:present"); err != nil {
+		t.Fatalf("TapSelector on the element that is there: %v", err)
+	}
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if status := tree.Find("id:status"); status == nil || status.Text != "present tapped" {
+		t.Fatalf("status = %+v, want the tap on the present element to have landed", status)
+	}
+}
+
+const doubleClickPage = `<body style="margin:0">
+<div id="target" style="width:200px;height:60px">edit me</div>
+<div id="status">none</div>
+<script>
+  var box = document.getElementById('target');
+  var report = document.getElementById('status');
+  var clicks = 0;
+  box.addEventListener('click', function () { clicks++; });
+  box.addEventListener('dblclick', function () {
+    report.textContent = 'edited after ' + clicks + ' clicks';
+  });
+</script></body>`
+
+func doubleClickStatus(t *testing.T, d *Driver, ctx context.Context) string {
+	t.Helper()
+	dump, err := d.Hierarchy(ctx)
+	if err != nil {
+		t.Fatalf("Hierarchy: %v", err)
+	}
+	tree, err := hierarchy.Parse(dump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	status := tree.Find("id:status")
+	if status == nil {
+		t.Fatal("status is not in the dump")
+	}
+	return status.Text
+}
+
+// TestDoubleTap_ReachesADoubleClickHandler pins a gesture the web driver had no
+// way to deliver. Blink raises dblclick off the click count the second event
+// carries, so a pair that both said "first click" arrived as two ordinary
+// clicks: every double-click affordance on the web (an editable list row, a
+// canvas, a table cell) was unreachable, with no error on any layer.
+func TestDoubleTap_ReachesADoubleClickHandler(t *testing.T) {
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(doubleClickPage))
+		}),
+	)
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.DoubleTap(ctx, 100, 30); err != nil {
+		t.Fatalf("DoubleTap: %v", err)
+	}
+	if status := doubleClickStatus(t, d, ctx); status != "edited after 2 clicks" {
+		t.Errorf(
+			"status = %q, want %q: the pair never read as one double click",
+			status,
+			"edited after 2 clicks",
+		)
+	}
+}
+
+// TestDoubleTapSelector_ReachesADoubleClickHandler covers the same gesture on
+// the path the runner takes when the action names its target rather than a
+// point.
+func TestDoubleTapSelector_ReachesADoubleClickHandler(t *testing.T) {
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(doubleClickPage))
+		}),
+	)
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.DoubleTapSelector(ctx, "id:target"); err != nil {
+		t.Fatalf("DoubleTapSelector: %v", err)
+	}
+	if status := doubleClickStatus(t, d, ctx); status != "edited after 2 clicks" {
+		t.Errorf(
+			"status = %q, want %q: the pair never read as one double click",
+			status,
+			"edited after 2 clicks",
+		)
+	}
+}
+
+// gesturesServer serves the fixture both gesture tests measure against: a
+// document taller than the emulated viewport, a scrollable container inside it,
+// and a row that dismisses on a horizontal drag.
+func gesturesServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	body, err := os.ReadFile("testdata/gestures.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write(body)
+		}),
+	)
+	t.Cleanup(server.Close)
+	return server
+}
+
+// TestScroll_MovesThePageAndAScrollableContainer covers the verb the runner
+// lowers every Scroll action onto. Script-dispatched pointer events are
+// untrusted and a browser never scrolls on them, so the web Scroll used to
+// leave scrollY and every scrollTop exactly where they were while reporting a
+// step that ran. The repeat also pins the distance: a run that scrolls a
+// different amount each time explores differently on the same seed.
+func TestScroll_MovesThePageAndAScrollableContainer(t *testing.T) {
+	server := gesturesServer(t)
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	read := func(expression string) int {
+		t.Helper()
+		var value int
+		if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(expression, &value)); err != nil {
+			t.Fatalf("evaluate %s: %v", expression, err)
+		}
+		return value
+	}
+	const pageScroll = `Math.round(window.scrollY)`
+	const containerScroll = `Math.round(document.getElementById("inner").scrollTop)`
+
+	if before := read(pageScroll); before != 0 {
+		t.Fatalf("scrollY before = %d, want 0", before)
+	}
+	var pageDistances []int
+	for range 3 {
+		if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(`window.scrollTo(0, 0)`, nil)); err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		if err := d.Scroll(ctx, 195, 500, 195, 260, 300*time.Millisecond); err != nil {
+			t.Fatalf("Scroll: %v", err)
+		}
+		pageDistances = append(pageDistances, read(pageScroll))
+	}
+	if pageDistances[0] <= 0 {
+		t.Errorf(
+			"scrollY after = %d, want > 0: the page never scrolled",
+			pageDistances[0],
+		)
+	}
+	if pageDistances[0] != pageDistances[1] ||
+		pageDistances[1] != pageDistances[2] {
+		t.Errorf(
+			"scrollY over three identical scrolls = %v, want one distance",
+			pageDistances,
+		)
+	}
+
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(`window.scrollTo(0, 0)`, nil)); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	containerY := read(
+		`Math.round(document.getElementById("inner").getBoundingClientRect().top + 100)`,
+	)
+	if before := read(containerScroll); before != 0 {
+		t.Fatalf("container scrollTop before = %d, want 0", before)
+	}
+	if err := d.Scroll(ctx, 195, containerY, 195, containerY-120, 300*time.Millisecond); err != nil {
+		t.Fatalf("Scroll in the container: %v", err)
+	}
+	if after := read(containerScroll); after <= 0 {
+		t.Errorf(
+			"container scrollTop after = %d, want > 0: the container never scrolled",
+			after,
+		)
+	}
+	if after := read(pageScroll); after != 0 {
+		t.Errorf(
+			"scrollY = %d, want 0: a scroll inside a container moved the page instead",
+			after,
+		)
+	}
+}
+
+// TestScroll_ReportsAGestureThatReachesNoElement keeps the scroll path on the
+// same footing as the tap path: a page that cannot bring the point into the
+// viewport has to say the gesture reached nothing rather than read as a step
+// that scrolled.
+func TestScroll_ReportsAGestureThatReachesNoElement(t *testing.T) {
+	const page = `<body style="margin:0;overflow:hidden">
+<div style="height:80px">top</div>
+<style>html{overflow:hidden}</style></body>`
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(page))
+		}),
+	)
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	err := d.Scroll(ctx, 100, 5000, 100, 4800, 300*time.Millisecond)
+	if !errors.Is(err, driver.ErrGestureUndelivered) {
+		t.Fatalf(
+			"Scroll far below an unscrollable page: err = %v, want ErrGestureUndelivered",
+			err,
+		)
+	}
+}
+
+// TestSwipe_DeliversATrustedDragToARowHandler covers what the manual says
+// sideways swipes are for. Script-dispatched pointer events carry isTrusted
+// false, which is the mark of a gesture the browser never routed: nothing in
+// the page's own input pipeline saw it, so scrolling, touch-action and any
+// handler that filters on trust behave as if the finger never moved.
+func TestSwipe_DeliversATrustedDragToARowHandler(t *testing.T) {
+	server := gesturesServer(t)
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.Swipe(ctx, 300, 40, 100, 40, 300*time.Millisecond); err != nil {
+		t.Fatalf("Swipe: %v", err)
+	}
+	var status string
+	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(
+		`document.getElementById("status").textContent`, &status)); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if status != "dismissed left trusted" {
+		t.Errorf("row status = %q, want %q", status, "dismissed left trusted")
 	}
 }

@@ -7,10 +7,15 @@
 // and the V8 web runtime. Outside an actions() walk samplerRng is null and each
 // generator returns a fixed deterministic default (mirroring from()'s index 0),
 // so module-load-time calls never throw and never use an unseeded source.
+//
+// The model policy is the one caller that must not take that default: it walks
+// the authored leaves on every step, outside the rng, so the default would be
+// the value it types forever while the seeded arm varies it. A generator that
+// spans more than one value refuses there instead.
 
 import type { Pcg } from "./pcg.ts";
 import type { Sampler } from "./types.ts";
-import { getSamplerRng } from "./sampler-rng.ts";
+import { getSamplerRng, refuseValueWhileEnumerating } from "./sampler-rng.ts";
 import { INPUT_CORPUS } from "./corpus.ts";
 
 const ALPHA = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -37,7 +42,17 @@ class StringBuilder implements Sampler<string> {
     return this;
   }
 
+  // A max below the min never reaches the draw, so the count is minLength, and
+  // a count below zero emits nothing: length(-2, 0) is the empty string either
+  // way, and both policies agree on it.
+  private spansMoreThanOneString(): boolean {
+    const shortest = Math.max(this.minLength, 0);
+    const longest = Math.max(this.maxLength, this.minLength, 0);
+    return longest > shortest || (longest > 0 && this.charset.length > 1);
+  }
+
   generate(): string {
+    if (this.spansMoreThanOneString()) refuseValueWhileEnumerating("strings()");
     const rng = getSamplerRng();
     const span = this.maxLength - this.minLength + 1;
     const count = this.minLength + draw(rng, span);
@@ -62,6 +77,7 @@ class IntegerBuilder implements Sampler<number> {
   generate(): number {
     const rng = getSamplerRng();
     const span = this.maxValue - this.minValue + 1;
+    if (span > 1) refuseValueWhileEnumerating("integers()");
     return this.minValue + draw(rng, span);
   }
 }
@@ -74,7 +90,10 @@ class EmailBuilder implements Sampler<string> {
     return this;
   }
 
+  // The local part always spans 3 to 8 alphabetic characters and only the host
+  // is author-set, so an address is never a single value.
   generate(): string {
+    refuseValueWhileEnumerating("emails()");
     const local = new StringBuilder().length(3, 8).alpha().generate();
     return `${local}@${this.host}`;
   }
@@ -82,6 +101,7 @@ class EmailBuilder implements Sampler<string> {
 
 class EdgeCaseTextBuilder implements Sampler<string> {
   generate(): string {
+    if (INPUT_CORPUS.length > 1) refuseValueWhileEnumerating("edgeCaseText()");
     const rng = getSamplerRng();
     return INPUT_CORPUS[draw(rng, INPUT_CORPUS.length)] ?? "";
   }

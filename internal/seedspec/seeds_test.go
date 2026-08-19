@@ -1,4 +1,4 @@
-package main
+package seedspec
 
 import (
 	"slices"
@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestParseSeeds_RangesAndLists(t *testing.T) {
+func TestParse_RangesAndLists(t *testing.T) {
 	cases := []struct {
 		specification string
 		want          []int64
@@ -18,7 +18,7 @@ func TestParseSeeds_RangesAndLists(t *testing.T) {
 		{"4-4", []int64{4}},
 	}
 	for _, testCase := range cases {
-		got, err := parseSeeds(testCase.specification)
+		got, err := Parse(testCase.specification)
 		if err != nil {
 			t.Fatalf("%q: %v", testCase.specification, err)
 		}
@@ -28,9 +28,9 @@ func TestParseSeeds_RangesAndLists(t *testing.T) {
 	}
 }
 
-func TestParseSeeds_RejectsSeedZero(t *testing.T) {
+func TestParse_RejectsSeedZero(t *testing.T) {
 	for _, specification := range []string{"0", "1,0,2", "0-3"} {
-		_, err := parseSeeds(specification)
+		_, err := Parse(specification)
 		if err == nil {
 			t.Fatalf("%q: expected rejection of seed 0", specification)
 		}
@@ -40,9 +40,9 @@ func TestParseSeeds_RejectsSeedZero(t *testing.T) {
 	}
 }
 
-func TestParseSeeds_RejectsMalformed(t *testing.T) {
+func TestParse_RejectsMalformed(t *testing.T) {
 	for _, specification := range []string{"", "   ", "abc", "1,,2", "5-1", "1-", "-5", "1-2-3", "1.5", "2,2"} {
-		if seeds, err := parseSeeds(specification); err == nil {
+		if seeds, err := Parse(specification); err == nil {
 			t.Errorf("%q: expected error, got %v", specification, seeds)
 		}
 	}

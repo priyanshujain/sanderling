@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,6 +37,36 @@ globalThis.properties = {
 globalThis.actions = actions(() => [Tap({ on: "id:next" })]);
 `
 
+// zeroWaitSpec's only action is a Wait the runner cannot perform, so every step
+// chooses an action that never reaches the device.
+const zeroWaitSpec = `
+import { actions, always, Wait } from "@sanderling/spec";
+globalThis.properties = {
+  alwaysHolds: always(() => true),
+};
+globalThis.actions = actions(() => [Wait({ durationMillis: 0 })]);
+`
+
+// absentSelectorSpec names an element the tree never holds, so every step
+// dispatches by selector and the driver is the layer that finds nothing.
+const absentSelectorSpec = `
+import { actions, always, Tap } from "@sanderling/spec";
+globalThis.properties = {
+  alwaysHolds: always(() => true),
+};
+globalThis.actions = actions(() => [Tap({ on: "id:absent" })]);
+`
+
+// noActionSpec's generator offers nothing on any screen, so every step asks the
+// source for an action and is handed none.
+const noActionSpec = `
+import { actions, always } from "@sanderling/spec";
+globalThis.properties = {
+  alwaysHolds: always(() => true),
+};
+globalThis.actions = actions(() => []);
+`
+
 const violationSpec = `
 import { actions, always } from "@sanderling/spec";
 globalThis.properties = {
@@ -45,9 +76,10 @@ globalThis.actions = actions(() => []);
 `
 
 type harness struct {
-	mock     *mockdriver.Driver
-	verifier *verifier.Verifier
-	writer   *trace.Writer
+	mock      *mockdriver.Driver
+	verifier  *verifier.Verifier
+	writer    *trace.Writer
+	directory string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -58,6 +90,29 @@ func fastFocusSettle(t *testing.T) {
 	prev := focusTapSettle
 	focusTapSettle = time.Millisecond
 	t.Cleanup(func() { focusTapSettle = prev })
+}
+
+// fastForegroundGate shrinks the startup gate's wall-clock budget so a test that
+// drives it to exhaustion takes milliseconds. The budget stays a duration, which
+// is the property under test.
+func fastForegroundGate(t *testing.T) {
+	budget, interval := foregroundReadyBudget, foregroundPollInterval
+	foregroundReadyBudget = 200 * time.Millisecond
+	foregroundPollInterval = time.Millisecond
+	t.Cleanup(func() {
+		foregroundReadyBudget, foregroundPollInterval = budget, interval
+	})
+}
+
+func mustDispatch(t *testing.T, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) {
+	t.Helper()
+	skipped, err := applyAction(context.Background(), drv, action, tree)
+	if err != nil {
+		t.Fatalf("applyAction: %v", err)
+	}
+	if skipped != "" {
+		t.Fatalf("applyAction reported %q: the action never reached the driver", skipped)
+	}
 }
 
 // bundleSpec compiles an authored TS spec with the goja runtime entry so the
@@ -103,9 +158,10 @@ func newHarnessWithSpec(t *testing.T, spec string) *harness {
 		t.Fatal(err)
 	}
 	state := &harness{
-		mock:     mockdriver.New(),
-		verifier: verifierInstance,
-		writer:   writer,
+		mock:      mockdriver.New(),
+		verifier:  verifierInstance,
+		writer:    writer,
+		directory: directory,
 	}
 	t.Cleanup(func() { _ = writer.Close() })
 	return state
@@ -141,6 +197,85 @@ func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
 	actions := state.mock.Actions()
 	if !containsAction(actions, mockdriver.ActionTapSelector, "id:next") {
 		t.Errorf("expected TapSelector with id:next, got %v", actions)
+	}
+}
+
+// TestRunner_SeededRunRecordsNoModelCalls keeps the arms distinguishable: the
+// seeded picker consults nothing, so its run directory must carry no model-call
+// output at all rather than a file of empty records.
+func TestRunner_SeededRunRecordsNoModelCalls(t *testing.T) {
+	state := newHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 10 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(state.directory, trace.LLMCallFileName)); !os.IsNotExist(err) {
+		t.Errorf("stat %s = %v, want no model-call file for a seeded run", trace.LLMCallFileName, err)
+	}
+}
+
+// seededLoginSetupSpec drives the first two steps from setup, the way a
+// login-fronted spec does, and leaves the rest to the seeded action root.
+const seededLoginSetupSpec = `
+import { always, actions, taps, typing, weighted, Tap } from "@sanderling/spec";
+globalThis.properties = { ok: always(() => true) };
+let setupTapsLeft = 2;
+globalThis.setup = actions(() => (setupTapsLeft-- > 0 ? [Tap({ on: "id:Submit" })] : []));
+globalThis.actions = weighted([1, taps], [1, typing]);
+`
+
+// TestRunner_SeededSetupActionsAreNotTheGeneratorDrivingTheApp: a seeded run's
+// login steps used to be indistinguishable from its exploration, so the arm
+// divided its defect rate by every action it dispatched while the model arm
+// divided by the ones its policy chose. The two rates were then compared.
+func TestRunner_SeededSetupActionsAreNotTheGeneratorDrivingTheApp(t *testing.T) {
+	state := newHarnessWithSpec(t, seededLoginSetupSpec)
+	state.mock.HierarchyJSON = llmTreeJSON
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    30 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    4,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.DispatchedActions != 4 {
+		t.Errorf("DispatchedActions = %d, want 4: every step drove the app",
+			summary.DispatchedActions)
+	}
+	if summary.GeneratorActions != 2 {
+		t.Errorf("GeneratorActions = %d, want 2: the picker drove the two steps setup left it",
+			summary.GeneratorActions)
+	}
+	lines := readTraceLines(t, state.writer.Directory())
+	if len(lines) != 4 {
+		t.Fatalf("wrote %d trace lines, want 4", len(lines))
+	}
+	for _, line := range lines[:2] {
+		if line.NextAction == nil || line.NextAction.Source != trace.ActionSourceSetup {
+			t.Errorf("step %d action = %+v, want one named setup", line.Step, line.NextAction)
+		}
+	}
+	for _, line := range lines[2:] {
+		if line.NextAction == nil || line.NextAction.Source != trace.ActionSourceSeeded {
+			t.Errorf("step %d action = %+v, want one named seeded", line.Step, line.NextAction)
+		}
 	}
 }
 
@@ -691,9 +826,7 @@ func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
-		t.Fatalf("applyAction: %v", err)
-	}
+	mustDispatch(t, driverMock, action, tree)
 	// The post-tap settle is now a brief internal sleep, not a WaitForIdle RPC,
 	// so the recorded driver actions are tap, erase, input.
 	actions := driverMock.Actions()
@@ -708,22 +841,6 @@ func TestApplyAction_InputTextErasesExistingTextBeforeTyping(t *testing.T) {
 	}
 	if actions[2].Kind != mockdriver.ActionInputText || actions[2].Text != "alice" {
 		t.Errorf("third action = %+v, want input_text alice", actions[2])
-	}
-}
-
-// TestApplyAction_InputTextWithoutTargetSkipsFocusTap pins that with no
-// resolvable target there is no focus tap (and so no settle), and InputText
-// still runs at the cursor.
-func TestApplyAction_InputTextWithoutTargetSkipsFocusTap(t *testing.T) {
-	driverMock := mockdriver.New()
-	action := verifier.Action{Kind: verifier.ActionKindInputText, X: -1, Y: -1, Text: "alice"}
-
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
-		t.Fatalf("applyAction: %v", err)
-	}
-	actions := driverMock.Actions()
-	if len(actions) != 1 || actions[0].Kind != mockdriver.ActionInputText {
-		t.Errorf("no target: want input_text only (no focus tap), got %v", actions)
 	}
 }
 
@@ -742,9 +859,7 @@ func TestApplyAction_InputTextSkipsEraseForReplacingDriver(t *testing.T) {
 	driverMock.ReplacesText = true
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
-		t.Fatalf("applyAction: %v", err)
-	}
+	mustDispatch(t, driverMock, action, tree)
 	if containsAction(driverMock.Actions(), mockdriver.ActionEraseText, "") {
 		t.Errorf("replacing driver must not be asked to erase: %v", driverMock.Actions())
 	}
@@ -764,9 +879,7 @@ func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
-		t.Fatalf("applyAction: %v", err)
-	}
+	mustDispatch(t, driverMock, action, tree)
 	if containsAction(driverMock.Actions(), mockdriver.ActionEraseText, "") {
 		t.Errorf("empty field must not be erased: %v", driverMock.Actions())
 	}
@@ -778,7 +891,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 		driverMock.Failures[mockdriver.ActionTapSelector] = errors.New("adb unreachable")
 		action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
-		err := applyAction(context.Background(), driverMock, action, nil)
+		_, err := applyAction(context.Background(), driverMock, action, nil)
 		if err == nil {
 			t.Fatalf("expected focus tap failure to surface, got nil")
 		}
@@ -791,7 +904,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 		driverMock.Failures[mockdriver.ActionTap] = errors.New("tap driver error")
 		action := verifier.Action{Kind: verifier.ActionKindInputText, X: 10, Y: 20, Text: "alice"}
 
-		err := applyAction(context.Background(), driverMock, action, nil)
+		_, err := applyAction(context.Background(), driverMock, action, nil)
 		if err == nil {
 			t.Fatalf("expected focus tap failure to surface, got nil")
 		}
@@ -801,14 +914,197 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 	})
 }
 
+// loginFocusOnEmail is the folio login screen as Android reports it once the
+// email field has been typed into: email holds focus, password does not.
+const loginFocusOnEmail = `{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+	{"attributes":{"resource-id":"LoginEmail","text":"demo@folio.app","bounds":"[94,240,986,372]"},"focused":true,"children":[]},
+	{"attributes":{"resource-id":"LoginPassword","bounds":"[94,461,986,593]"},"focused":false,"children":[]}
+]}`
+
+const loginFocusOnPassword = `{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+	{"attributes":{"resource-id":"LoginEmail","text":"demo@folio.app","bounds":"[94,240,986,372]"},"focused":false,"children":[]},
+	{"attributes":{"resource-id":"LoginPassword","bounds":"[94,461,986,593]"},"focused":true,"children":[]}
+]}`
+
+// A keyboard overlay window can sit over the field the focus tap aims at, so
+// the tap never reaches it and focus stays where it was. Typing then appends to
+// the previously focused field: on folio the password ran into the email field
+// and the login setup leaf retried forever.
+func TestApplyAction_InputTextStopsWhenAnotherFieldHoldsFocus(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(loginFocusOnEmail)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.HierarchyJSON = loginFocusOnEmail
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "id:LoginPassword",
+		Text: "ledger123",
+	}
+
+	_, err = applyAction(context.Background(), driverMock, action, tree)
+	if err == nil {
+		t.Fatal("a focus tap that never focused the target must be reported, not typed through")
+	}
+	if !strings.Contains(err.Error(), "LoginEmail") {
+		t.Errorf("error must name the field holding focus, got: %v", err)
+	}
+	if containsAction(driverMock.Actions(), mockdriver.ActionInputText, "") {
+		t.Errorf("password text must not be typed into the focused email field: %v", driverMock.Actions())
+	}
+}
+
+func TestApplyAction_InputTextTypesWhenTargetTakesFocus(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(loginFocusOnEmail)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.HierarchyJSON = loginFocusOnPassword
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "id:LoginPassword",
+		Text: "ledger123",
+	}
+
+	mustDispatch(t, driverMock, action, tree)
+	if !typedText(driverMock.Actions(), "ledger123") {
+		t.Errorf("expected InputText once the target holds focus, got %v", driverMock.Actions())
+	}
+}
+
+// Platforms whose hierarchy omits focus entirely (iOS) have nothing to compare,
+// so they must not pay a hierarchy read per InputText.
+func TestApplyAction_InputTextSkipsFocusCheckWhenHierarchyOmitsFocus(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"resource-id":"LoginPassword","bounds":"[94,461,986,593]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "id:LoginPassword",
+		Text: "ledger123",
+	}
+
+	mustDispatch(t, driverMock, action, tree)
+	if containsAction(driverMock.Actions(), mockdriver.ActionHierarchy, "") {
+		t.Errorf("no focus to compare: expected no hierarchy read, got %v", driverMock.Actions())
+	}
+	if !typedText(driverMock.Actions(), "ledger123") {
+		t.Errorf("expected InputText, got %v", driverMock.Actions())
+	}
+}
+
+const loginFocusOnNothing = `{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+	{"attributes":{"resource-id":"LoginEmail","bounds":"[94,240,986,372]"},"focused":false,"children":[]},
+	{"attributes":{"resource-id":"LoginPassword","bounds":"[94,461,986,593]"},"focused":false,"children":[]}
+]}`
+
+// Typed text can only be corrupted into a field that already holds focus, so
+// a pre-tap hierarchy showing focus elsewhere is the one class worth the
+// confirming read.
+func TestApplyAction_InputTextConfirmsFocusWhenAnotherFieldHeldItBeforeTheTap(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(loginFocusOnEmail)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.HierarchyJSON = loginFocusOnPassword
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "id:LoginPassword",
+		Text: "ledger123",
+	}
+
+	mustDispatch(t, driverMock, action, tree)
+	if !containsAction(driverMock.Actions(), mockdriver.ActionHierarchy, "") {
+		t.Errorf("another field held focus before the tap: expected the confirming read, got %v", driverMock.Actions())
+	}
+	if !typedText(driverMock.Actions(), "ledger123") {
+		t.Errorf("expected InputText once the target took focus, got %v", driverMock.Actions())
+	}
+}
+
+// The confirming read is a device round-trip on every InputText step. Where no
+// other element holds focus before the tap there is no field for the text to
+// be corrupted into, so the read buys nothing and must not be paid for.
+func TestApplyAction_InputTextSkipsFocusCheckWhenNoOtherFieldHoldsFocus(t *testing.T) {
+	fastFocusSettle(t)
+	for name, beforeTap := range map[string]string{
+		"target already holds focus": loginFocusOnPassword,
+		"nothing holds focus":        loginFocusOnNothing,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tree, err := hierarchy.Parse(beforeTap)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			driverMock := mockdriver.New()
+			driverMock.HierarchyJSON = loginFocusOnEmail
+			action := verifier.Action{
+				Kind: verifier.ActionKindInputText,
+				On:   "id:LoginPassword",
+				Text: "ledger123",
+			}
+
+			mustDispatch(t, driverMock, action, tree)
+			if containsAction(driverMock.Actions(), mockdriver.ActionHierarchy, "") {
+				t.Errorf("no other field held focus: expected no confirming read, got %v", driverMock.Actions())
+			}
+			if !typedText(driverMock.Actions(), "ledger123") {
+				t.Errorf("expected InputText, got %v", driverMock.Actions())
+			}
+		})
+	}
+}
+
+// A selector the hierarchy cannot resolve is the guard saying "I cannot tell",
+// not "another element holds focus". Answering the second manufactures an apply
+// error on every InputText the tree has no node for, and three in a row abort
+// the run.
+func TestApplyAction_InputTextTypesWhenTheTargetIsNotInTheHierarchy(t *testing.T) {
+	fastFocusSettle(t)
+	tree, err := hierarchy.Parse(loginFocusOnEmail)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	driverMock.HierarchyJSON = loginFocusOnEmail
+	action := verifier.Action{
+		Kind: verifier.ActionKindInputText,
+		On:   "data-testid:LoginPassword",
+		Text: "ledger123",
+	}
+
+	mustDispatch(t, driverMock, action, tree)
+	if !typedText(driverMock.Actions(), "ledger123") {
+		t.Errorf("an unresolvable target must not block typing, got %v", driverMock.Actions())
+	}
+}
+
+func typedText(actions []mockdriver.Action, text string) bool {
+	for _, action := range actions {
+		if action.Kind == mockdriver.ActionInputText && action.Text == text {
+			return true
+		}
+	}
+	return false
+}
+
 func TestApplyAction_V8InputTextTapsAtCoordinates(t *testing.T) {
 	fastFocusSettle(t)
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 50, Y: 100, Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
-		t.Fatalf("apply action: %v", err)
-	}
+	mustDispatch(t, driverMock, action, nil)
 	actions := driverMock.Actions()
 	if !containsAction(actions, mockdriver.ActionTap, "") {
 		t.Errorf("expected focus Tap before InputText, got %v", actions)
@@ -826,21 +1122,64 @@ func TestApplyAction_V8InputTextAtOriginStillTaps(t *testing.T) {
 	// InputText with (0,0) is a deliberate edge tap, not a sentinel).
 	action := verifier.Action{Kind: verifier.ActionKindInputText, X: 0, Y: 0, Text: "alice"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
-		t.Fatalf("apply action: %v", err)
-	}
+	mustDispatch(t, driverMock, action, nil)
 	if !containsAction(driverMock.Actions(), mockdriver.ActionTap, "") {
 		t.Errorf("expected focus Tap at (0,0), got %v", driverMock.Actions())
 	}
+}
+
+// Attribute values match by substring, so "data-testid:card" answers to
+// "card-1" and "card-10" alike. A candidate built where the selector named one
+// element can execute where it names several, and the tree lookup would send
+// every one of them to the first match.
+func TestApplyAction_AmbiguousSelectorTapsTheActionsOwnCoordinates(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"data-testid":"card-1","bounds":"[0,100,200,200]"},"children":[]},
+		{"attributes":{"data-testid":"card-10","bounds":"[0,300,200,400]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindTap, On: "data-testid:card-1", X: 100, Y: 350}
+
+	mustDispatch(t, driverMock, action, tree)
+	for _, dispatched := range driverMock.Actions() {
+		if dispatched.Kind == mockdriver.ActionTap && dispatched.X == 100 && dispatched.Y == 350 {
+			return
+		}
+	}
+	t.Errorf("tap reached the driver at %v, want the action's own (100,350)", driverMock.Actions())
+}
+
+// A bare-string target carries no coordinates of its own, so an ambiguous name
+// is all there is to act on and the first match stays the answer. Refusing it
+// would drop an authored action.
+func TestApplyAction_AmbiguousSelectorWithoutCoordinatesTapsTheFirstMatch(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,1080,2340]"},"children":[
+		{"attributes":{"data-testid":"card-1","bounds":"[0,100,200,200]"},"children":[]},
+		{"attributes":{"data-testid":"card-10","bounds":"[0,300,200,400]"},"children":[]}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	driverMock := mockdriver.New()
+	action := verifier.Action{Kind: verifier.ActionKindTap, On: "data-testid:card-1"}
+
+	mustDispatch(t, driverMock, action, tree)
+	for _, dispatched := range driverMock.Actions() {
+		if dispatched.Kind == mockdriver.ActionTap && dispatched.X == 100 && dispatched.Y == 150 {
+			return
+		}
+	}
+	t.Errorf("tap reached the driver at %v, want the first match's centre (100,150)", driverMock.Actions())
 }
 
 func TestApplyAction_DoubleTapDispatchesDoubleTapAtCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, X: 100, Y: 200}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
-		t.Fatalf("apply action: %v", err)
-	}
+	mustDispatch(t, driverMock, action, nil)
 	taps := 0
 	for _, a := range driverMock.Actions() {
 		if a.Kind == mockdriver.ActionDoubleTap && a.X == 100 && a.Y == 200 {
@@ -856,9 +1195,7 @@ func TestApplyAction_DoubleTapDispatchesDoubleTapSelector(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindDoubleTap, On: "id:save"}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
-		t.Fatalf("apply action: %v", err)
-	}
+	mustDispatch(t, driverMock, action, nil)
 	taps := 0
 	for _, a := range driverMock.Actions() {
 		if a.Kind == mockdriver.ActionDoubleTapSelector && a.Selector == "id:save" {
@@ -874,9 +1211,7 @@ func TestApplyAction_LongPressDispatchesAtResolvedCoordinates(t *testing.T) {
 	driverMock := mockdriver.New()
 	action := verifier.Action{Kind: verifier.ActionKindLongPress, X: 120, Y: 240}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
-		t.Fatalf("apply action: %v", err)
-	}
+	mustDispatch(t, driverMock, action, nil)
 	found := false
 	for _, a := range driverMock.Actions() {
 		if a.Kind == mockdriver.ActionLongPress && a.X == 120 && a.Y == 240 {
@@ -900,9 +1235,7 @@ func TestApplyAction_ScrollWithPrecomputedEndpointsSwipes(t *testing.T) {
 		DurationMillis: 300,
 	}
 
-	if err := applyAction(context.Background(), driverMock, action, nil); err != nil {
-		t.Fatalf("apply action: %v", err)
-	}
+	mustDispatch(t, driverMock, action, nil)
 	found := false
 	for _, a := range driverMock.Actions() {
 		if a.Kind == mockdriver.ActionSwipe && a.FromX == 100 && a.FromY == 500 && a.ToX == 100 && a.ToY == 300 {
@@ -911,6 +1244,47 @@ func TestApplyAction_ScrollWithPrecomputedEndpointsSwipes(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected Swipe with precomputed endpoints, got %v", driverMock.Actions())
+	}
+}
+
+// scrollingDriver is a driver that scrolls by something other than a drag,
+// which is what the web driver is: a browser scrolls on wheel input and only
+// ever treats a drag as a drag.
+type scrollingDriver struct {
+	*mockdriver.Driver
+	scrolls [][4]int
+}
+
+func (d *scrollingDriver) Scroll(
+	_ context.Context,
+	fromX, fromY, toX, toY int,
+	_ time.Duration,
+) error {
+	d.scrolls = append(d.scrolls, [4]int{fromX, fromY, toX, toY})
+	return nil
+}
+
+func TestApplyAction_ScrollPrefersTheScrollCapabilityOverASwipe(t *testing.T) {
+	drv := &scrollingDriver{Driver: mockdriver.New()}
+	action := verifier.Action{
+		Kind:           verifier.ActionKindScroll,
+		Direction:      "down",
+		FromX:          100,
+		FromY:          500,
+		ToX:            100,
+		ToY:            300,
+		DurationMillis: 300,
+	}
+
+	mustDispatch(t, drv, action, nil)
+	want := [4]int{100, 500, 100, 300}
+	if len(drv.scrolls) != 1 || drv.scrolls[0] != want {
+		t.Fatalf("scrolls = %v, want one %v", drv.scrolls, want)
+	}
+	for _, a := range drv.Actions() {
+		if a.Kind == mockdriver.ActionSwipe {
+			t.Errorf("the scroll was dispatched as a swipe: %v", drv.Actions())
+		}
 	}
 }
 
@@ -923,9 +1297,7 @@ func TestApplyAction_ScrollDirectionUsesInversion(t *testing.T) {
 	}
 	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "down", On: "id:list"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
-		t.Fatalf("apply action: %v", err)
-	}
+	mustDispatch(t, driverMock, action, tree)
 	var swipe *mockdriver.Action
 	for i := range driverMock.Actions() {
 		if driverMock.Actions()[i].Kind == mockdriver.ActionSwipe {
@@ -955,9 +1327,7 @@ func TestApplyAction_ScrollNearTopKeepsDirectionAfterClamp(t *testing.T) {
 	}
 	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "up", On: "id:toplist"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
-		t.Fatalf("apply action: %v", err)
-	}
+	mustDispatch(t, driverMock, action, tree)
 	var swipe *mockdriver.Action
 	for i := range driverMock.Actions() {
 		if driverMock.Actions()[i].Kind == mockdriver.ActionSwipe {
@@ -986,9 +1356,7 @@ func TestApplyAction_ScrollScreenFallback(t *testing.T) {
 	// On unset: container falls back to whole-screen (root) bounds.
 	action := verifier.Action{Kind: verifier.ActionKindScroll, Direction: "up"}
 
-	if err := applyAction(context.Background(), driverMock, action, tree); err != nil {
-		t.Fatalf("apply action: %v", err)
-	}
+	mustDispatch(t, driverMock, action, tree)
 	var swipe *mockdriver.Action
 	for i := range driverMock.Actions() {
 		if driverMock.Actions()[i].Kind == mockdriver.ActionSwipe {
@@ -1006,6 +1374,239 @@ func TestApplyAction_ScrollScreenFallback(t *testing.T) {
 	if swipe.ToY <= swipe.FromY {
 		t.Errorf("expected toY > fromY for scroll up, got from=%d to=%d", swipe.FromY, swipe.ToY)
 	}
+}
+
+// Every shape applyAction cannot dispatch has to name why. Returning a bare nil
+// leaves the step recording a next_action that reached no driver at all, which
+// an executed-action count then reads as work done.
+func TestApplyAction_NonDispatchPathsReportWhy(t *testing.T) {
+	tree, err := hierarchy.Parse(`{"attributes":{"resource-id":"root","bounds":"[0,0,400,800]"},"children":[]}`)
+	if err != nil {
+		t.Fatalf("parse tree: %v", err)
+	}
+	cases := []struct {
+		name   string
+		action verifier.Action
+		tree   *hierarchy.Tree
+		want   actionSkipReason
+	}{
+		{
+			name:   "long press whose selector is not on screen",
+			action: verifier.Action{Kind: verifier.ActionKindLongPress, On: "id:gone"},
+			tree:   tree,
+			want:   actionSkippedUnresolvedSelector,
+		},
+		{
+			name:   "press key without a key",
+			action: verifier.Action{Kind: verifier.ActionKindPressKey},
+			want:   actionSkippedMissingKey,
+		},
+		{
+			name:   "wait without a duration",
+			action: verifier.Action{Kind: verifier.ActionKindWait},
+			want:   actionSkippedZeroDurationWait,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			driverMock := mockdriver.New()
+			skipped, err := applyAction(context.Background(), driverMock, tc.action, tc.tree)
+			if err != nil {
+				t.Fatalf("applyAction: %v", err)
+			}
+			if skipped != tc.want {
+				t.Errorf("skip reason = %q, want %q", skipped, tc.want)
+			}
+			if len(driverMock.Actions()) != 0 {
+				t.Errorf("nothing must reach the driver, got %v", driverMock.Actions())
+			}
+		})
+	}
+}
+
+// TestRunner_RecordsWhyAChosenActionNeverRan drives a spec whose only action is
+// undispatchable and pins that each step says so on its trace line. The step is
+// left non-transitional: nothing was dispatched, so the verified screen still
+// describes the device.
+func TestRunner_RecordsWhyAChosenActionNeverRan(t *testing.T) {
+	state := newHarnessWithSpec(t, zeroWaitSpec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    2,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps != 2 {
+		t.Fatalf("Steps = %d, want 2", summary.Steps)
+	}
+	lines := readTraceLines(t, state.writer.Directory())
+	acted := 0
+	for _, line := range lines {
+		if line.NextAction == nil {
+			continue
+		}
+		acted++
+		if line.ActionSkipped != string(actionSkippedZeroDurationWait) {
+			t.Errorf("step %d action_skipped = %q, want %q",
+				line.Step, line.ActionSkipped, actionSkippedZeroDurationWait)
+		}
+		if line.Transitional {
+			t.Errorf("step %d marked transitional; nothing was dispatched, so the screen is unchanged", line.Step)
+		}
+	}
+	if acted != 2 {
+		t.Fatalf("want 2 steps carrying a next_action, got %d", acted)
+	}
+}
+
+// The other half of the contract: a step whose action really was dispatched
+// must carry no reason at all, or every step looks skipped.
+func TestRunner_DispatchedActionRecordsNoSkipReason(t *testing.T) {
+	state := newHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    2,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !containsAction(state.mock.Actions(), mockdriver.ActionTapSelector, "id:next") {
+		t.Fatalf("fixture tap never dispatched, got %v", state.mock.Actions())
+	}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
+		if line.NextAction != nil && line.ActionSkipped != "" {
+			t.Errorf("step %d recorded action_skipped=%q for a dispatched action",
+				line.Step, line.ActionSkipped)
+		}
+	}
+}
+
+// TestRunner_ASourceAskedAndHandedNothingSaysSo covers the run that touched the
+// app zero times: every step asked the source for an action and got none, which
+// is what a picker whose every model call fails does. Without a reason on the
+// step the trace, the summary and the exit status of that run are the ones a run
+// that exercised all three steps produces.
+func TestRunner_ASourceAskedAndHandedNothingSaysSo(t *testing.T) {
+	state := newHarnessWithSpec(t, noActionSpec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps != 3 {
+		t.Fatalf("Steps = %d, want 3", summary.Steps)
+	}
+	if summary.DispatchedActions != 0 {
+		t.Fatalf("DispatchedActions = %d, want 0: the fixture offers no action to dispatch",
+			summary.DispatchedActions)
+	}
+	if got := summary.SkippedActions[string(actionSkippedNoActionProduced)]; got != 3 {
+		t.Errorf("summary counted %d step(s) as %q, want 3: %v",
+			got, actionSkippedNoActionProduced, summary.SkippedActions)
+	}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
+		if line.NextAction != nil {
+			t.Errorf("step %d carries a next_action the source never produced", line.Step)
+		}
+		if line.ActionSkipped != string(actionSkippedNoActionProduced) {
+			t.Errorf("step %d action_skipped = %q, want %q",
+				line.Step, line.ActionSkipped, actionSkippedNoActionProduced)
+		}
+		if line.SkippedVerification {
+			t.Errorf("step %d reads as held; the source was asked on it", line.Step)
+		}
+	}
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "android")
+	if !strings.Contains(rendered.String(), "3 action(s) never reached the app") {
+		t.Errorf("the run reports as a clean one:\n%s", rendered.String())
+	}
+}
+
+// The other half: a held step never asked the source for anything, so it must
+// stay distinguishable from one that asked and was handed nothing. The fixture
+// here has an action to offer, and no step of this run gets to hear it.
+func TestRunner_AHeldStepIsNotRecordedAsASourceThatDeclined(t *testing.T) {
+	state := newHarness(t)
+	state.mock.Failures[mockdriver.ActionSnapshot] = errors.New("adb: device offline")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.SkippedVerification != 3 {
+		t.Fatalf("SkippedVerification = %d, want 3", summary.SkippedVerification)
+	}
+	if len(summary.SkippedActions) != 0 {
+		t.Errorf("held steps counted as skipped actions: %v", summary.SkippedActions)
+	}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
+		if !line.SkippedVerification {
+			t.Errorf("step %d was not recorded as held", line.Step)
+		}
+		if line.ActionSkipped != "" {
+			t.Errorf("step %d action_skipped = %q; the source was never asked",
+				line.Step, line.ActionSkipped)
+		}
+	}
+}
+
+type traceStepLine struct {
+	Step                int           `json:"step"`
+	NextAction          *trace.Action `json:"next_action"`
+	ActionSkipped       string        `json:"action_skipped"`
+	Transitional        bool          `json:"transitional"`
+	ObservationError    string        `json:"observation_error"`
+	SkippedVerification bool          `json:"skipped_verification"`
+}
+
+func readTraceLines(t *testing.T, directory string) []traceStepLine {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(directory, "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []traceStepLine
+	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var line traceStepLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
@@ -1461,6 +2062,17 @@ func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
 	if first.Step != 1 || !first.Transitional {
 		t.Errorf("step 1 must be transitional after transient apply error, got step=%d transitional=%v", first.Step, first.Transitional)
 	}
+	// The step still records a next_action it never dispatched, so the reason
+	// has to be on the line or an executed-action count includes it.
+	var firstSkip struct {
+		ActionSkipped string `json:"action_skipped"`
+	}
+	if err := json.Unmarshal(lines[0], &firstSkip); err != nil {
+		t.Fatalf("decode first trace line: %v", err)
+	}
+	if firstSkip.ActionSkipped != string(actionSkippedApplyError) {
+		t.Errorf("step 1 action_skipped = %q, want %q", firstSkip.ActionSkipped, actionSkippedApplyError)
+	}
 	if len(first.Violations) != 0 {
 		t.Errorf("transient apply step must have no violations, got %v", first.Violations)
 	}
@@ -1672,9 +2284,12 @@ func containsProperty(records []ViolationRecord, property string) bool {
 }
 
 func TestRunner_RelaunchesWhenAppLeavesForeground(t *testing.T) {
+	fastForegroundGate(t)
 	state := newHarness(t)
-	// Always report a foreign app, so every step's guard must relaunch.
-	state.mock.ForegroundResults = []string{"com.android.chrome"}
+	// The app is in front when the run starts and a foreign app every time a
+	// step looks, so the startup gate passes and every step's guard must
+	// relaunch.
+	state.mock.ForegroundResults = []string{"app.folio", "com.android.chrome"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1728,6 +2343,7 @@ func TestRunner_NoRelaunchWhenAppInForeground(t *testing.T) {
 // brings the app forward (back-press + relaunch) before any tap fires when the
 // device boots showing a system dialog.
 func TestRunner_WaitsForForegroundBeforeFirstAction(t *testing.T) {
+	fastForegroundGate(t)
 	state := newHarness(t)
 	// First the device shows a system setup screen, then the app is on top.
 	state.mock.ForegroundResults = []string{"com.google.android.setupwizard", "app.folio"}
@@ -1776,6 +2392,7 @@ func TestRunner_WaitsForForegroundBeforeFirstAction(t *testing.T) {
 // signal rather than relaunching, and only proceed once the window names the
 // app.
 func TestRunner_WaitsForWindowDrawnBeforeFirstAction(t *testing.T) {
+	fastForegroundGate(t)
 	state := newHarness(t)
 	// The app is resumed immediately, but its window lags: the outgoing
 	// settings screen stays focused for two checks before the app draws.
@@ -1818,6 +2435,7 @@ func TestRunner_WaitsForWindowDrawnBeforeFirstAction(t *testing.T) {
 // which returns before the window draws on a slow physical device, is the bug
 // this guards against.
 func TestAwaitForeground_RelaunchesThenWaitsForWindow(t *testing.T) {
+	fastForegroundGate(t)
 	m := mockdriver.New()
 	// Foreground: launcher on the first poll (still gone), then the app. Focus:
 	// the launcher window lingers one extra poll before the app's window draws.
@@ -1918,10 +2536,14 @@ func TestEnsureForeground_DismissesSystemOverlay(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	options := Options{BundleID: "app.folio", Driver: m, IdleTimeout: 10 * time.Millisecond}
 
-	got := ensureForeground(context.Background(), options, logger, 5)
+	got, inScope := ensureForeground(context.Background(), options, logger, 5)
 	if got != foregroundOverlayDismissed {
 		t.Fatalf("the guard reported %v, want foregroundOverlayDismissed; "+
 			"an obscured app is not a relaunched one", got)
+	}
+	if !inScope {
+		t.Fatal("the guard reported the app out of scope; a dismissed overlay leaves " +
+			"the app resumed, and marking the step unmet would hide the real ones")
 	}
 	backs, relaunches := 0, 0
 	for _, a := range m.Actions() {
@@ -2000,6 +2622,23 @@ func TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime(t *testing.T) {
 	}
 	if containsAction(state.mock.Actions(), mockdriver.ActionTapSelector, "id:next") {
 		t.Error("apply-time guard failed: a tap fired while a system overlay held focus")
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var skipped bool
+	for _, line := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var step struct {
+			ActionSkipped string `json:"action_skipped"`
+		}
+		if err := json.Unmarshal(line, &step); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		skipped = skipped || step.ActionSkipped == string(actionSkippedForeground)
+	}
+	if !skipped {
+		t.Errorf("no step recorded action_skipped=%q, so the undispatched action looks executed", actionSkippedForeground)
 	}
 }
 
@@ -2097,4 +2736,446 @@ func traceStepIndices(t *testing.T, directory string) []int {
 		t.Fatalf("scan trace: %v", err)
 	}
 	return steps
+}
+
+// siblingCardsSpec is the shape folio's Home screen authors: every account card
+// carries the same testTag, and each one is its own tap target.
+const siblingCardsSpec = `
+import { actions, always, extract, Tap } from "@sanderling/spec";
+const cards = extract(state => state.ax.findAll({ testTag: "AccountCard" }));
+globalThis.properties = {
+  alwaysHolds: always(() => true),
+};
+globalThis.actions = actions(() => cards.current.map(card => Tap({ on: card })));
+`
+
+const siblingCardsTree = `{
+  "attributes": {"resource-id": "root", "bounds": "[0,0,100,300]"},
+  "children": [
+    {"attributes": {"testTag": "AccountCard", "text": "Alpha", "bounds": "[0,0,100,100]"}, "clickable": true, "children": []},
+    {"attributes": {"testTag": "AccountCard", "text": "Beta", "bounds": "[0,100,100,200]"}, "clickable": true, "children": []},
+    {"attributes": {"testTag": "AccountCard", "text": "Gamma", "bounds": "[0,200,100,300]"}, "clickable": true, "children": []}
+  ]
+}`
+
+// TestRunner_SiblingTapsReachTheDriverAtTheirOwnCoordinates is the check the
+// whole selector-uniqueness rule exists for. Three cards sharing one testTag
+// each produce their own tap; if they reach the driver naming a selector all
+// three answer to, resolveCoordinates re-resolves every one of them onto the
+// first card and the fuzzer can never open the other two.
+func TestRunner_SiblingTapsReachTheDriverAtTheirOwnCoordinates(t *testing.T) {
+	state := newHarnessWithSpec(t, siblingCardsSpec)
+	tree, err := hierarchy.Parse(siblingCardsTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.verifier.PushSnapshot(verifier.SnapshotInput{Tree: tree}); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 40 {
+		action, err := state.verifier.NextAction()
+		if err != nil {
+			t.Fatalf("NextAction: %v", err)
+		}
+		if action.Kind != verifier.ActionKindTap {
+			t.Fatalf("spec offers taps only, got %q", action.Kind)
+		}
+		mustDispatch(t, state.mock, action, tree)
+	}
+
+	tapped := map[string]bool{}
+	for _, dispatched := range state.mock.Actions() {
+		if dispatched.Kind != mockdriver.ActionTap {
+			t.Fatalf("expected coordinate taps only, got %v", dispatched)
+		}
+		tapped[fmt.Sprintf("%d,%d", dispatched.X, dispatched.Y)] = true
+	}
+	want := []string{"50,50", "50,150", "50,250"}
+	for _, center := range want {
+		if !tapped[center] {
+			t.Errorf("no tap reached the driver at (%s); the driver saw %v", center, slices.Sorted(maps.Keys(tapped)))
+		}
+	}
+	if len(tapped) != len(want) {
+		t.Errorf("driver saw %d distinct tap points, want %d: %v", len(tapped), len(want), slices.Sorted(maps.Keys(tapped)))
+	}
+}
+
+// tapReachesNoElement wraps a mock driver so every tap reports what the chrome
+// driver reports when the action's point holds no element: nothing was
+// dispatched, so the app cannot have responded.
+type tapReachesNoElement struct {
+	*mockdriver.Driver
+}
+
+func (d *tapReachesNoElement) TapSelector(
+	_ context.Context,
+	selector string,
+) error {
+	return fmt.Errorf("%w: %s", driver.ErrGestureUndelivered, selector)
+}
+
+func (d *tapReachesNoElement) Tap(_ context.Context, x, y int) error {
+	return fmt.Errorf("%w: (%d,%d)", driver.ErrGestureUndelivered, x, y)
+}
+
+// TestRunner_UndeliveredGestureIsRecordedNotSilentlyClean is the runner half of
+// the silent-actuation bug: a run whose every tap reached nothing used to look
+// exactly like a run that exercised the app and found no violations. The step
+// now names the reason, and the run says how many actions did nothing.
+func TestRunner_UndeliveredGestureIsRecordedNotSilentlyClean(t *testing.T) {
+	state := newHarness(t)
+	wrapped := &tapReachesNoElement{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    10 * time.Second,
+		MaxSteps:    maxConsecutiveApplyFailures + 2,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf(
+			"a gesture that reached nothing is not a device fault: %v",
+			err,
+		)
+	}
+	if summary.Steps <= maxConsecutiveApplyFailures {
+		t.Fatalf(
+			"the run must outlive the apply-failure cap, got %d steps",
+			summary.Steps,
+		)
+	}
+	undelivered := summary.SkippedActions[string(actionSkippedGestureUndelivered)]
+	if undelivered != summary.Steps {
+		t.Errorf(
+			"gesture_undelivered count = %d, want %d (every tap reached nothing)",
+			undelivered,
+			summary.Steps,
+		)
+	}
+
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "web")
+	if !strings.Contains(rendered.String(), "gesture_undelivered") {
+		t.Errorf(
+			"the summary must not read clean while nothing was actuated, got:\n%s",
+			rendered.String(),
+		)
+	}
+
+	type traceLine struct {
+		Step          int    `json:"step"`
+		ActionSkipped string `json:"action_skipped"`
+		Transitional  bool   `json:"transitional"`
+	}
+	body, err := os.ReadFile(
+		filepath.Join(state.writer.Directory(), "trace.jsonl"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var line traceLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		if line.ActionSkipped != "gesture_undelivered" {
+			t.Errorf("step %d: action_skipped = %q, want %q",
+				line.Step, line.ActionSkipped, "gesture_undelivered")
+		}
+		if line.Transitional {
+			t.Errorf(
+				"step %d: an undelivered gesture leaves the verified screen intact, "+
+					"so the step must not be transitional",
+				line.Step,
+			)
+		}
+	}
+}
+
+// selectorMatchesNothing wraps a mock driver so every by-selector tap reports
+// what the drivers report when the selector names no element on the screen.
+type selectorMatchesNothing struct {
+	*mockdriver.Driver
+}
+
+func (d *selectorMatchesNothing) TapSelector(_ context.Context, selector string) error {
+	return fmt.Errorf("%w: %q", driver.ErrSelectorMatchedNothing, selector)
+}
+
+// TestRunner_SelectorThatMatchesNothingIsRecordedApartFromAnUndeliveredGesture
+// keeps the two silent paths distinguishable. A selector that named no element
+// is a resolution failure, so the step records unresolved_selector, keeps the
+// verified screen (not transitional), and does not spend the apply-failure
+// budget that a wedged device is meant to exhaust.
+func TestRunner_SelectorThatMatchesNothingIsRecordedApartFromAnUndeliveredGesture(t *testing.T) {
+	state := newHarnessWithSpec(t, absentSelectorSpec)
+	wrapped := &selectorMatchesNothing{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    10 * time.Second,
+		MaxSteps:    maxConsecutiveApplyFailures + 2,
+		IdleTimeout: 20 * time.Millisecond,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("a selector that matched nothing is not a device fault: %v", err)
+	}
+	if summary.Steps <= maxConsecutiveApplyFailures {
+		t.Fatalf("the run must outlive the apply-failure cap, got %d steps", summary.Steps)
+	}
+	if got := summary.SkippedActions[string(actionSkippedUnresolvedSelector)]; got != summary.Steps {
+		t.Errorf("unresolved_selector count = %d, want %d", got, summary.Steps)
+	}
+	if got := summary.SkippedActions[string(actionSkippedGestureUndelivered)]; got != 0 {
+		t.Errorf("gesture_undelivered count = %d, want 0: nothing was dispatched to a point", got)
+	}
+
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "android")
+	if !strings.Contains(rendered.String(), "unresolved_selector") {
+		t.Errorf("the summary must name the actions that found no target, got:\n%s", rendered.String())
+	}
+
+	type traceLine struct {
+		Step          int    `json:"step"`
+		ActionSkipped string `json:"action_skipped"`
+		Transitional  bool   `json:"transitional"`
+	}
+	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
+		var line traceLine
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatalf("decode trace line: %v", err)
+		}
+		if line.ActionSkipped != "unresolved_selector" {
+			t.Errorf("step %d: action_skipped = %q, want %q",
+				line.Step, line.ActionSkipped, "unresolved_selector")
+		}
+		if line.Transitional {
+			t.Errorf("step %d: nothing was dispatched, so the step must not be transitional", line.Step)
+		}
+	}
+}
+
+// TestApplyAction_TapAboveTheViewportReachesTheDriver is the other half of the
+// off-screen reach fix. The web host names an unnamed candidate by coordinates
+// alone, and a candidate the growing document pushed above the fold carries a
+// negative y; dropping it here denies the driver the scroll that would bring it
+// back, so reach below the fold works and reach above it does not.
+func TestApplyAction_TapAboveTheViewportReachesTheDriver(t *testing.T) {
+	mock := mockdriver.New()
+	mustDispatch(t, mock, verifier.Action{
+		Kind: verifier.ActionKindTap,
+		X:    622,
+		Y:    -208,
+	}, nil)
+
+	dispatched := mock.Actions()
+	if len(dispatched) != 1 {
+		t.Fatalf("driver saw %d actions, want 1: %v", len(dispatched), dispatched)
+	}
+	if dispatched[0].Kind != mockdriver.ActionTap ||
+		dispatched[0].X != 622 || dispatched[0].Y != -208 {
+		t.Errorf("driver saw %v, want a tap at (622,-208)", dispatched[0])
+	}
+}
+
+// TestApplyAction_TapAboveTheViewportKeepsTheUndeliveredReport holds the
+// distinction the fix must not collapse: a point the driver cannot put an
+// element under is still a failure, reported as ErrGestureUndelivered rather
+// than as an action the runner declined to try.
+func TestApplyAction_TapAboveTheViewportKeepsTheUndeliveredReport(t *testing.T) {
+	drv := &tapReachesNoElement{Driver: mockdriver.New()}
+	skipped, err := applyAction(context.Background(), drv, verifier.Action{
+		Kind: verifier.ActionKindTap,
+		X:    622,
+		Y:    -208,
+	}, nil)
+	if !errors.Is(err, driver.ErrGestureUndelivered) {
+		t.Errorf("err = %v, want ErrGestureUndelivered", err)
+	}
+	if skipped != "" {
+		t.Errorf("skip reason = %q, want none: the driver was called", skipped)
+	}
+}
+
+// TestRenderSummary_NamesTheActionsThatNeverReachedTheApp is the report half of
+// the silent-actuation class. A run that chose an action every step and dropped
+// every one of them printed the same "no violations" as a run that exercised
+// the app, because the reasons lived only in the trace and a warn line.
+func TestRenderSummary_NamesTheActionsThatNeverReachedTheApp(t *testing.T) {
+	state := newHarnessWithSpec(t, zeroWaitSpec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reason := string(actionSkippedZeroDurationWait)
+	if summary.SkippedActions[reason] != 3 {
+		t.Errorf("SkippedActions[%s] = %d, want 3", reason, summary.SkippedActions[reason])
+	}
+
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "web")
+	want := "3 action(s) never reached the app: " + reason + " 3"
+	if !strings.Contains(rendered.String(), want) {
+		t.Errorf("summary must carry %q, got:\n%s", want, rendered.String())
+	}
+
+	var clean bytes.Buffer
+	RenderSummary(&clean, Summary{Steps: 3}, "web")
+	if strings.Contains(clean.String(), "never reached the app") {
+		t.Errorf("a run that dropped nothing must not carry the line, got:\n%s", clean.String())
+	}
+}
+
+// wedgedTapSelector never answers the first by-selector tap, which is what a
+// driver call that has stopped returning looks like from the step loop.
+type wedgedTapSelector struct {
+	*mockdriver.Driver
+	calls int
+}
+
+func (d *wedgedTapSelector) TapSelector(ctx context.Context, selector string) error {
+	d.calls++
+	if d.calls == 1 {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return d.Driver.TapSelector(ctx, selector)
+}
+
+// Duration is a loop condition checked between steps, so an action that never
+// returns held the run for as long as the process lived and only a kill from
+// outside ended it. The step is what must fail, under a reason of its own: a
+// wedge is not the gesture that reached nothing and not the action the runner
+// declined to dispatch, and an analysis that cannot tell them apart cannot say
+// whether the device answered at all.
+func TestRunner_AnActionThatNeverReturnsFailsTheStepNotTheRun(t *testing.T) {
+	state := newHarness(t)
+	previousApplyTimeout := applyTimeout
+	applyTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { applyTimeout = previousApplyTimeout })
+	wrapped := &wedgedTapSelector{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run must outlive an action that never returns, got %v", err)
+	}
+	if summary.Steps != 3 {
+		t.Fatalf("Steps = %d, want 3: the wedge costs one step, not the run", summary.Steps)
+	}
+	lines := readTraceLines(t, state.writer.Directory())
+	if lines[0].ActionSkipped != string(actionSkippedApplyTimeout) {
+		t.Errorf("step 1 action_skipped = %q, want %q",
+			lines[0].ActionSkipped, actionSkippedApplyTimeout)
+	}
+	if !lines[0].Transitional {
+		t.Error("step 1 must be transitional: the action was dispatched and its effect is unknown")
+	}
+	for _, line := range lines[1:] {
+		if line.ActionSkipped != "" {
+			t.Errorf("step %d action_skipped = %q, want the wedge confined to the step that wedged",
+				line.Step, line.ActionSkipped)
+		}
+	}
+	if summary.SkippedActions[string(actionSkippedApplyTimeout)] != 1 {
+		t.Errorf("SkippedActions = %v, want one %s", summary.SkippedActions, actionSkippedApplyTimeout)
+	}
+}
+
+// snapshotFailThenEmpty fails the first observation outright and answers the
+// second with a dump holding no elements at all.
+type snapshotFailThenEmpty struct {
+	*mockdriver.Driver
+	calls int
+}
+
+func (d *snapshotFailThenEmpty) Snapshot(ctx context.Context) (string, driver.Image, error) {
+	d.calls++
+	switch d.calls {
+	case 1:
+		return "", driver.Image{}, errors.New("Timeout while fetching view hierarchy")
+	case 2:
+		return "", driver.Image{}, nil
+	}
+	return d.Driver.Snapshot(ctx)
+}
+
+// A step that read nothing because the read failed and a step that read a
+// screen with nothing on it are recorded identically as a nil tree, so a run
+// that observed nothing at all reports exactly like a run that observed an
+// empty app and found no violation in it.
+func TestRunner_AFailedObservationIsNotAnObservationOfAnEmptyScreen(t *testing.T) {
+	state := newHarness(t)
+	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"HomeScreen"},"children":[]}`
+	wrapped := &snapshotFailThenEmpty{Driver: state.mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    time.Hour,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		Driver:      wrapped,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps != 3 {
+		t.Fatalf("Steps = %d, want 3", summary.Steps)
+	}
+	lines := readTraceLines(t, state.writer.Directory())
+	if !strings.Contains(lines[0].ObservationError, "Timeout while fetching view hierarchy") {
+		t.Errorf("step 1 observation_error = %q, want the driver's own failure",
+			lines[0].ObservationError)
+	}
+	if lines[1].ObservationError != "" {
+		t.Errorf("step 2 observation_error = %q, want none: the screen was read and held no elements",
+			lines[1].ObservationError)
+	}
+	if lines[2].ObservationError != "" {
+		t.Errorf("step 3 observation_error = %q, want none", lines[2].ObservationError)
+	}
+	if summary.FailedObservations != 1 {
+		t.Errorf("FailedObservations = %d, want 1", summary.FailedObservations)
+	}
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "android")
+	if !strings.Contains(rendered.String(), "1 step(s) observed nothing") {
+		t.Errorf("summary hides the failed observation: %q", rendered.String())
+	}
 }

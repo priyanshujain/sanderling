@@ -1,0 +1,228 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"maps"
+	"math"
+	"slices"
+	"strconv"
+	"strings"
+	"text/tabwriter"
+)
+
+func writeReport(result analysis, out io.Writer) {
+	fmt.Fprintf(out, "primary outcome: %s\n\n", result.Outcome)
+
+	writeTable(out, []string{"arm", "runs", "violated", "censored", "excluded", "missing", "median steps", "iqr steps", "violation rate"},
+		func(add func(...string)) {
+			for _, summary := range result.Arms {
+				add(
+					summary.Arm,
+					strconv.Itoa(summary.Usable),
+					strconv.Itoa(summary.Violated),
+					strconv.Itoa(summary.Censored),
+					strconv.Itoa(summary.Excluded),
+					strconv.Itoa(len(summary.MissingSeeds)),
+					formatMedian(summary.MedianStepsToFirstViolation),
+					formatMedian(summary.FirstQuartileSteps)+" to "+formatMedian(summary.ThirdQuartileSteps),
+					formatRatio(summary.ViolationRate, 3),
+				)
+			}
+		})
+
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "a detection is one distinct property violated in one run; run hours sum the time the runs worked,")
+	fmt.Fprintln(out, "on the monotonic clock, so a host that slept mid-run is not charged for the sleep")
+	fmt.Fprintln(out, "actions count the steps the generator dispatched one on; the rest chose nothing, had the choice")
+	fmt.Fprintln(out, "thrown away, or were the spec's setup driving the app into position before the generator ran")
+	writeTable(out, []string{"arm", "steps", "actions", "run hours", "detections", "defects/1k actions", "defects/hour", "distinct defects", "found in one run"},
+		func(add func(...string)) {
+			for _, summary := range result.Arms {
+				add(
+					summary.Arm,
+					strconv.Itoa(summary.TotalSteps),
+					formatActions(summary),
+					fmt.Sprintf("%.2f", summary.TotalRunHours),
+					strconv.Itoa(summary.Detections),
+					formatRatio(summary.DefectsPerThousandActions, 2),
+					formatRatio(summary.DefectsPerHour, 2),
+					strconv.Itoa(summary.DistinctDefects),
+					formatSingletons(summary),
+				)
+			}
+		})
+
+	for _, summary := range result.Arms {
+		if len(summary.ExcludedByReason) == 0 {
+			continue
+		}
+		var parts []string
+		for _, reason := range sortedKeys(summary.ExcludedByReason) {
+			parts = append(parts, fmt.Sprintf("%s=%d", reason, summary.ExcludedByReason[reason]))
+		}
+		fmt.Fprintf(out, "\n%s excluded %d run(s) as missing data, not as censored observations: %s",
+			summary.Arm, summary.Excluded, strings.Join(parts, ", "))
+	}
+	for _, summary := range result.Arms {
+		if summary.UnattributedActions > 0 {
+			fmt.Fprintf(out, "\n%s counts %d action(s) of unknown provenance, recorded before an action named its producer: "+
+				"its per-action denominator may include the login the spec's setup drove",
+				summary.Arm, summary.UnattributedActions)
+		}
+	}
+	for _, summary := range result.Arms {
+		if summary.EventsHeldAtBudget > 0 {
+			fmt.Fprintf(out, "\n%s held %d violation(s) reported past the budget at %d steps",
+				summary.Arm, summary.EventsHeldAtBudget, summary.StepBudget)
+		}
+	}
+	for _, summary := range result.Arms {
+		if summary.EventsDetectedAfterOrigin > 0 {
+			fmt.Fprintf(out, "\n%s timed %d violation(s) at the step they were detected rather than the step that armed them, "+
+				"which is what an obligation reported only when the run ended looks like",
+				summary.Arm, summary.EventsDetectedAfterOrigin)
+		}
+	}
+	if len(result.Arms) > 0 {
+		fmt.Fprintln(out)
+	}
+
+	if result.LogRank != nil {
+		fmt.Fprintf(out, "\nlog-rank across %d arms: chi-square %.4f on %d df, p %s\n",
+			len(result.LogRank.Groups), result.LogRank.ChiSquare, result.LogRank.DegreesOfFreedom,
+			formatPValue(result.LogRank.PValue))
+		writeTable(out, []string{"arm", "n", "observed", "expected"}, func(add func(...string)) {
+			for index, name := range result.LogRank.Groups {
+				add(name,
+					strconv.Itoa(result.LogRank.Sizes[index]),
+					fmt.Sprintf("%.0f", result.LogRank.Observed[index]),
+					fmt.Sprintf("%.2f", result.LogRank.Expected[index]))
+			}
+		})
+	}
+
+	if result.Paired != nil {
+		writePaired(out, *result.Paired)
+	}
+
+	if len(result.Pairwise) > 0 {
+		fmt.Fprintln(out, "\npairwise gehan generalized wilcoxon, which reads a censored run as the bound it is")
+		fmt.Fprintln(out, "a12 above 0.5 means the first arm takes more steps to its first violation; u counts the run")
+		fmt.Fprintln(out, "pairs the first arm outlived, and the unordered pairs count as half in both u and a12")
+		writeTable(out, []string{"comparison", "n1", "n2", "u", "a12", "unordered", "p", "holm p"}, func(add func(...string)) {
+			for _, pair := range result.Pairwise {
+				add(
+					pair.First+" vs "+pair.Second,
+					strconv.Itoa(pair.FirstSize),
+					strconv.Itoa(pair.SecondSize),
+					fmt.Sprintf("%.1f", pair.Statistic),
+					fmt.Sprintf("%.3f", pair.A12),
+					fmt.Sprintf("%d of %d", pair.Unordered, pair.FirstSize*pair.SecondSize),
+					formatPValue(pair.PValue),
+					formatPValue(pair.HolmPValue),
+				)
+			}
+		})
+	}
+
+	if result.HolmFamilySize > 0 {
+		family := "this invocation"
+		if result.Question != "" {
+			family = result.Question
+		}
+		fmt.Fprintf(out, "\nholm correction applied within %s, over %d comparison(s)\n", family, result.HolmFamilySize)
+	}
+
+	for _, note := range result.Notes {
+		fmt.Fprintf(out, "\nnote: %s\n", note)
+	}
+}
+
+func writePaired(out io.Writer, comparison pairedComparison) {
+	fmt.Fprintf(out, "\npaired per-seed contrast, %s against %s, each pair scored by which run outlived the other\n",
+		comparison.First, comparison.Second)
+	fmt.Fprintf(out, "%d seed pair(s): %s sooner in %d, %s sooner in %d, left in no order by censoring in %d\n",
+		comparison.Pairs, comparison.First, comparison.FirstSooner,
+		comparison.Second, comparison.SecondSooner, comparison.Unordered)
+	fmt.Fprintf(out, "median difference %s over the %d pair(s) where both runs violated, sign %+d, a12 within pairs %.3f\n",
+		formatStepDifference(comparison.MedianDifference), comparison.BothViolated, comparison.Sign, comparison.A12)
+	fmt.Fprintf(out, "sign test over the %d ordered pair(s), p %s, holm p %s\n",
+		comparison.FirstSooner+comparison.SecondSooner,
+		formatOptionalPValue(comparison.PValue), formatOptionalPValue(comparison.HolmPValue))
+	if len(comparison.UnpairedSeeds) > 0 {
+		fmt.Fprintf(out, "%d seed(s) usable in one arm only and left out of the pairing: %v\n",
+			len(comparison.UnpairedSeeds), comparison.UnpairedSeeds)
+	}
+}
+
+func sortedKeys(counts map[string]int) []string {
+	return slices.Sorted(maps.Keys(counts))
+}
+
+func writeTable(out io.Writer, header []string, rows func(add func(...string))) {
+	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(writer, strings.Join(header, "\t"))
+	rows(func(cells ...string) {
+		fmt.Fprintln(writer, strings.Join(cells, "\t"))
+	})
+	writer.Flush()
+}
+
+// formatMedian says undefined rather than substituting a mean, because a curve
+// that never reaches one half has no median to report.
+func formatMedian(value *float64) string {
+	if value == nil {
+		return "undefined"
+	}
+	return strconv.FormatFloat(*value, 'f', -1, 64)
+}
+
+func formatStepDifference(value *float64) string {
+	if value == nil {
+		return "undefined"
+	}
+	return fmt.Sprintf("%+.1f steps", *value)
+}
+
+// formatActions marks a denominator with actions whose producer nothing names,
+// because the rate beside it then divides by a count that may include the
+// login the spec's setup drove.
+func formatActions(summary armSummary) string {
+	if summary.UnattributedActions == 0 {
+		return strconv.Itoa(summary.TotalActions)
+	}
+	return fmt.Sprintf("%d (%d unattributed)", summary.TotalActions, summary.UnattributedActions)
+}
+
+func formatRatio(value *float64, digits int) string {
+	if value == nil {
+		return "n/a"
+	}
+	return strconv.FormatFloat(*value, 'f', digits, 64)
+}
+
+func formatSingletons(summary armSummary) string {
+	if summary.SingletonFraction == nil {
+		return "n/a"
+	}
+	return fmt.Sprintf("%d/%d (%.3f)", summary.SingletonDefects, summary.DistinctDefects, *summary.SingletonFraction)
+}
+
+func formatOptionalPValue(value *float64) string {
+	if value == nil {
+		return "n/a"
+	}
+	return formatPValue(*value)
+}
+
+func formatPValue(value float64) string {
+	switch {
+	case math.IsNaN(value):
+		return "n/a"
+	case value < 1e-4:
+		return fmt.Sprintf("%.3e", value)
+	default:
+		return fmt.Sprintf("%.4f", value)
+	}
+}

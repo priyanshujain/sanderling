@@ -36,6 +36,7 @@ import type {
   ScrollAction,
 } from "../src/index.ts";
 import { setSamplerRng } from "../src/actions.ts";
+import { SAMPLER_REFUSAL_NAME, setEnumeratingCandidates } from "../src/sampler-rng.ts";
 import { Pcg } from "../src/pcg.ts";
 import type { GeneratorNode } from "../src/action-tree.ts";
 import type {
@@ -43,6 +44,7 @@ import type {
   EventuallyFormula,
   Extracted,
   Formula,
+  Key,
   State,
   SanderlingRuntime,
 } from "../src/types.ts";
@@ -208,6 +210,12 @@ test("eventually().within forwards unit and amount", () => {
   assert.deepEqual(runtime.withinCalls[0], { amount: 3, unit: "seconds" });
 });
 
+test("eventually().within forwards the step unit unchanged", () => {
+  const runtime = installFakeRuntime();
+  eventually(() => true).within(1915, "steps");
+  assert.deepEqual(runtime.withinCalls[0], { amount: 1915, unit: "steps" });
+});
+
 test("formula chaining exposes implies/or/and/not", () => {
   const runtime = installFakeRuntime();
   const a = now(() => true);
@@ -270,6 +278,26 @@ test("Swipe returns a SwipeAction descriptor", () => {
 
 test("PressKey returns a PressKeyAction descriptor", () => {
   assert.deepEqual(PressKey({ key: "back" }), { kind: "PressKey", key: "back" });
+});
+
+// Every key docs/manual/spec-language.md documents has to be authorable. A key
+// the type rejects cannot appear in a spec at all, so the requirement it stands
+// for ("escape discards the edit in progress") is never actuated anywhere.
+test("PressKey accepts every documented key", () => {
+  const keys: Key[] = [
+    "back",
+    "home",
+    "enter",
+    "tab",
+    "escape",
+    "up",
+    "down",
+    "left",
+    "right",
+  ];
+  for (const key of keys) {
+    assert.deepEqual(PressKey({ key }), { kind: "PressKey", key });
+  }
 });
 
 test("Wait returns a WaitAction descriptor", () => {
@@ -336,6 +364,27 @@ test("from draws intN(len) from the active picker rng", () => {
 test("from falls back to the first item outside a picker walk", () => {
   setSamplerRng(null);
   assert.equal(from(["a", "b", "c"]).generate(), "a");
+});
+
+test("from refuses a multi-item draw while the model policy enumerates", () => {
+  setEnumeratingCandidates(true);
+  try {
+    assert.throws(() => from(["a", "b", "c"]).generate(), {
+      name: SAMPLER_REFUSAL_NAME,
+      message: /draws 1 of 3 sampled items/,
+    });
+  } finally {
+    setEnumeratingCandidates(false);
+  }
+});
+
+test("from keeps serving a single item while the model policy enumerates", () => {
+  setEnumeratingCandidates(true);
+  try {
+    assert.equal(from(["only"]).generate(), "only");
+  } finally {
+    setEnumeratingCandidates(false);
+  }
 });
 
 function elementWithChildren(cells: Record<string, string>): AccessibilityElement {

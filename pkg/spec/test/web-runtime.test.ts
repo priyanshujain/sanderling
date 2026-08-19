@@ -462,27 +462,33 @@ test("xpathStringLiteral table: quote handling stays well-formed", () => {
 });
 
 // selectorFromString routes a "kind:value" prefix; text becomes an XPath
-// equality, everything else a CSS attribute selector. A value containing a
+// substring test, everything else a CSS attribute selector. A value containing a
 // colon must not be re-split, and a quote in a text value must reach the
 // well-formed XPath literal rather than corrupting the predicate.
 const { selectorFromString, selectorFromObject } = __testing__;
 
-test("selectorFromString routes text to a normalize-space XPath", () => {
+test("selectorFromString routes text to a substring XPath", () => {
   assert.deepEqual(selectorFromString("text:Hello"), {
-    xpath: `//*[normalize-space(text())="Hello"]`,
+    xpath:
+      `.//*[contains(normalize-space(.), "Hello") ` +
+      `and not(.//*[contains(normalize-space(.), "Hello")])]`,
   });
 });
 
 test("selectorFromString keeps colons in the value intact", () => {
   // Only the first colon splits kind from value; the rest is the value.
   assert.deepEqual(selectorFromString("text:a:b:c"), {
-    xpath: `//*[normalize-space(text())="a:b:c"]`,
+    xpath:
+      `.//*[contains(normalize-space(.), "a:b:c") ` +
+      `and not(.//*[contains(normalize-space(.), "a:b:c")])]`,
   });
 });
 
 test("selectorFromString text value with both quote kinds uses concat", () => {
   assert.deepEqual(selectorFromString(`text:say "hi" o'clock`), {
-    xpath: `//*[normalize-space(text())=concat("say ", '"', "hi", '"', " o'clock")]`,
+    xpath:
+      `.//*[contains(normalize-space(.), concat("say ", '"', "hi", '"', " o'clock")) ` +
+      `and not(.//*[contains(normalize-space(.), concat("say ", '"', "hi", '"', " o'clock"))])]`,
   });
 });
 
@@ -517,16 +523,685 @@ test("selectorFromObject composes testTag with a second key", () => {
   });
 });
 
-test("selectorFromObject falls back to a literal attribute for unknown keys", () => {
-  assert.deepEqual(selectorFromObject({ "data-foo": "bar" }), {
-    css: `[data-foo="bar"]`,
+// A type selector is valid only at the HEAD of a compound, so `tag` written
+// after any other key built `[id="amount"]input` and querySelectorAll threw a
+// SyntaxError: what the spec sees is an exception out of the extractor rather
+// than an element, and which of the two it gets depends on the order the author
+// happened to write the keys in.
+test("selectorFromObject composes tag with a second key", () => {
+  assert.deepEqual(selectorFromObject({ id: "amount", tag: "input" }), {
+    css: `[id="amount"]:is(input)`,
   });
 });
 
+// A list whose rows are named <role>_<record id> is only reachable by the role
+// half. internal/driver/chrome/translate.go builds the same CSS for the same
+// selector, and internal/hierarchy resolves it against the dump of this page.
+test("selectorFromString routes idPrefix to a starts-with id match", () => {
+  assert.deepEqual(selectorFromString("idPrefix:customer_row_"), {
+    css: `[id^="customer_row_"]`,
+  });
+});
+
+test("selectorFromObject routes idPrefix to a starts-with id match", () => {
+  assert.deepEqual(selectorFromObject({ idPrefix: "customer_row_" }), {
+    css: `[id^="customer_row_"]`,
+  });
+});
+
+// The native rule matches an iOS merged label ("account_card:7, Tim, $100") by
+// its leading name, and the web table has to mean the same thing by desc.
+test("selectorFromObject matches a merged label by its leading name", () => {
+  assert.deepEqual(selectorFromObject({ desc: "account_card" }), {
+    css: `:is([aria-label="account_card"], [aria-label^="account_card, "])`,
+  });
+});
+
+test("selectorFromString and selectorFromObject agree on descPrefix", () => {
+  assert.deepEqual(selectorFromString("descPrefix:account:"), {
+    css: `[aria-label^="account\\:"]`,
+  });
+  assert.deepEqual(selectorFromObject({ descPrefix: "account:" }), {
+    css: `[aria-label^="account\\:"]`,
+  });
+});
+
+test("selectorFromObject composes idPrefix with a second key", () => {
+  assert.deepEqual(selectorFromObject({ idPrefix: "customer_row_", "aria-label": "first" }), {
+    css: `[id^="customer_row_"][aria-label="first"]`,
+  });
+});
+
+// A key nothing can carry yields no match, which reads exactly like a screen
+// with no such element: the generator declines to act, the runner waits out the
+// step, and the run ends clean having explored nothing.
+test("selectorFromObject rejects a key no element can carry", () => {
+  assert.throws(
+    () => selectorFromObject({ descripton: "Supplier" }),
+    (error: Error) =>
+      error.message.includes('"descripton"') && error.message.includes("accepted keys"),
+  );
+});
+
+// Raw attributes the key list does not enumerate stay reachable when the page
+// actually carries them, matched on a substring the way internal/hierarchy
+// matches the same key.
+test("selectorFromObject accepts a raw attribute the page carries", () => {
+  withDocumentCarrying(["data-foo"], () => {
+    assert.deepEqual(selectorFromObject({ "data-foo": "bar" }), {
+      css: `[data-foo*="bar"]`,
+    });
+    assert.deepEqual(selectorFromObject({ "data-foo": "true" }), {
+      css: `[data-foo="true"]`,
+    });
+  });
+});
+
+// bounds is a raw driver attribute rather than a cross-platform key: every
+// native dump writes the rectangle out as a string and no DOM element carries an
+// attribute of that name, so the key resolved against the dump and matched
+// nothing here on every page there is. Being on the accepted list is what kept
+// that silent, and no mapping can be invented for it. Off the list it raises the
+// unknown-key error here, and it still resolves wherever a producer writes it,
+// through the escape hatch every other raw attribute uses.
+test("bounds is a raw attribute rather than an accepted key", () => {
+  assert.equal(__testing__.SELECTOR_KEYS.includes("bounds"), false);
+  withDocumentCarrying([], () => {
+    assert.throws(
+      () => selectorFromObject({ bounds: "[0,0,120,40]" }),
+      (error: Error) =>
+        error.message.includes('"bounds"') && error.message.includes("accepted keys"),
+    );
+  });
+  withDocumentCarrying(["bounds"], () => {
+    assert.doesNotThrow(() => selectorFromObject({ bounds: "[0,0,120,40]" }));
+  });
+});
+
+// The string form's kind space stays open on both sides: "<attr>:<value>" is
+// the documented way to reach a raw driver attribute, and internal/hierarchy
+// resolves an unknown kind to an empty result rather than an error.
+test("selectorFromString accepts a kind the object form would reject", () => {
+  assert.deepEqual(selectorFromString("descripton:Supplier"), {
+    css: `[descripton*="Supplier"]`,
+  });
+});
+
+function withDocumentCarrying(attributes: string[], run: () => void): void {
+  const global = globalThis as Record<string, unknown>;
+  const original = global.document;
+  global.document = {
+    querySelector: (selector: string) =>
+      attributes.some((name) => selector === `[${name}]`) ? {} : null,
+  };
+  try {
+    run();
+  } finally {
+    global.document = original;
+  }
+}
+
 test("selectorFromObject text-only selector becomes an XPath", () => {
   assert.deepEqual(selectorFromObject({ text: "Go" }), {
-    xpath: `//*[normalize-space(text())="Go"]`,
+    xpath:
+      `.//*[contains(normalize-space(.), "Go") ` +
+      `and not(.//*[contains(normalize-space(.), "Go")])]`,
   });
+});
+
+// domElement is one element as elementHandle reads it. dataset camelCases its
+// keys the way a real DOMStringMap does, which is what hid `data-cents` and
+// friends behind `attrs.cents` and made every assertion over them read
+// undefined.
+function domElement(spec: {
+  tag: string;
+  attributes?: Record<string, string>;
+  labels?: string[];
+  text?: string;
+  checked?: boolean;
+  contentEditable?: boolean;
+  type?: string;
+}): unknown {
+  const attributes = spec.attributes ?? {};
+  return {
+    tagName: spec.tag.toUpperCase(),
+    type: spec.type ?? (spec.tag === "input" ? "text" : ""),
+    isContentEditable: spec.contentEditable ?? false,
+    checked: spec.checked,
+    id: attributes.id ?? "",
+    className: attributes.class ?? "",
+    textContent: spec.text ?? "",
+    dataset: Object.fromEntries(
+      Object.entries(attributes)
+        .filter(([name]) => name.startsWith("data-"))
+        .map(([name, value]) => [
+          name.slice("data-".length).replace(/-(.)/g, (_, letter: string) => letter.toUpperCase()),
+          value,
+        ]),
+    ),
+    attributes: Object.entries(attributes).map(([name, value]) => ({ name, value })),
+    labels: (spec.labels ?? []).map((textContent) => ({ textContent })),
+    getAttribute: (name: string) => attributes[name] ?? null,
+    matches: (selector: string) => matchesAnyPart(selector, spec.tag, attributes),
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 40, bottom: 20, width: 40, height: 20 }),
+  };
+}
+
+// matchesAnyPart answers a comma-joined list of tag and attribute selectors over
+// the fake's own tag and attributes, so the production selector string is what
+// gets evaluated here and a role added to it is covered without teaching this
+// harness about it.
+function matchesAnyPart(
+  selector: string,
+  tag: string,
+  attributes: Record<string, string>,
+): boolean {
+  return selector.split(",").some((part) => {
+    const attribute = /^\[([^\]=]+)(?:="([^"]*)")?\]$/.exec(part.trim());
+    if (!attribute) return part.trim() === tag;
+    const value = attributes[attribute[1]!];
+    return value !== undefined && (attribute[2] === undefined || value === attribute[2]);
+  });
+}
+
+function handleOf(element: unknown): Record<string, unknown> {
+  const global = globalThis as Record<string, unknown>;
+  const original = global.document;
+  global.document = { querySelector: () => element, querySelectorAll: () => [element] };
+  try {
+    const ax = __testing__.buildAx() as { find(selector: unknown): Record<string, unknown> };
+    return ax.find({ id: "any" });
+  } finally {
+    global.document = original;
+  }
+}
+
+function attrsOf(element: unknown): Record<string, string> {
+  return handleOf(element).attrs as Record<string, string>;
+}
+
+// `attrs` means the same thing on every backend: the attributes the markup
+// writes, keyed by the names it writes them under. A spec reading
+// attrs["data-cents"] the way examples/folio-web does read undefined here, so
+// the properties over those values could never hold OR fail.
+test("attrs keys data attributes by the name the markup writes", () => {
+  const element = domElement({
+    tag: "div",
+    attributes: { id: "ledger", "data-txn-count": "3", "data-account-id": "a-1" },
+  });
+  assert.equal(attrsOf(element)["data-txn-count"], "3");
+  assert.equal(attrsOf(element)["data-account-id"], "a-1");
+  // `dataset` stays the DOMStringMap view, camelCase keys and all.
+  assert.deepEqual(handleOf(element).dataset, { txnCount: "3", accountId: "a-1" });
+});
+
+// docs/manual/spec-language.md lists `checked` on every element find returns,
+// and HTML keeps that state in the DOM property: the markup attribute only
+// records what the page started with. A handle reading the attribute reports a
+// checkbox's starting state forever, so a property over "the box is ticked"
+// holds on a page where nothing was ever ticked.
+test("checked reads the live property, not the markup attribute", () => {
+  const ticked = domElement({ tag: "input", attributes: { id: "toggle-all" }, checked: true });
+  assert.equal(handleOf(ticked).checked, true);
+
+  const cleared = domElement({
+    tag: "input",
+    attributes: { id: "toggle-all", checked: "" },
+    checked: false,
+  });
+  assert.equal(handleOf(cleared).checked, false);
+});
+
+// `secure` answers three ways. A consumer deciding what a typed value may be
+// written into a record has to tell "not a password field" apart from "no
+// platform said", and android says nothing: a field answering false only when
+// asked about a password would make every web field look like an android one.
+test("secure states the field type either way, and nothing off a field", () => {
+  const password = domElement({ tag: "input", attributes: { id: "pwd" }, type: "password" });
+  assert.equal(handleOf(password).secure, true);
+
+  const email = domElement({ tag: "input", attributes: { id: "email" }, type: "email" });
+  assert.equal(handleOf(email).secure, false);
+
+  const heading = domElement({ tag: "h1", attributes: { id: "title" } });
+  assert.equal(handleOf(heading).secure, null);
+});
+
+// The fact above and the selector below have to name the same field. `secure` is
+// derived from the field's type, not written by the markup, so matching it as a
+// raw attribute reaches nothing: `secure` is an accepted key, no unknown-key
+// error fires, and find answers undefined here for the field it answers with on
+// ios. A spec that names the password entry that way types the password into
+// nothing and every property over it passes vacuously.
+test("secure selects the field this host reports secure", () => {
+  const password = fakeElement({
+    tag: "input", x: 0, y: 0, width: 100, height: 20,
+    id: "login_password", editable: true, attrs: { type: "password" },
+  });
+  const email = fakeElement({
+    tag: "input", x: 0, y: 20, width: 100, height: 20,
+    id: "login_email", editable: true, attrs: { type: "email" },
+  });
+  const heading = fakeElement({ tag: "h1", x: 0, y: 40, width: 100, height: 20, id: "title" });
+  withFakeDocument([password, email, heading], () => {
+    const ax = __testing__.buildAx() as { findAll(selector: unknown): Record<string, unknown>[] };
+    assert.deepEqual(
+      ax.findAll({ secure: true }).map((field) => [field.id, field.secure]),
+      [["login_password", true]],
+    );
+    // Not the heading: an element that is no field at all reports null, the way
+    // android reports null for every element, and answers to neither value.
+    assert.deepEqual(
+      ax.findAll({ secure: false }).map((field) => [field.id, field.secure]),
+      [["login_email", false]],
+    );
+  });
+});
+
+// The other five boolean states have the same hole secure had, and the same
+// silence around it: the key is accepted, so no unknown-key error fires, and a
+// key naming no rule builds `[clickable="true"]`, which no page carries. Every
+// one of them selected NOTHING on web while resolving against the dump on the
+// goja host, docs/manual/spec-language.md's own worked example
+// (`find({ testTag: "AccountCard", clickable: true })`) included, and a property
+// over an element that was never found passes having checked nothing.
+//
+// Each state is asserted against the value the SAME handle reports for it, so a
+// selector can never name an element this host calls something else.
+function statesMatched(selector: unknown, fact: string): unknown[][] {
+  const ax = __testing__.buildAx() as { findAll(selector: unknown): Record<string, unknown>[] };
+  return ax.findAll(selector).map((element) => [element.id, element[fact]]);
+}
+
+test("clickable selects what this host reports clickable", () => {
+  const save = fakeElement({
+    tag: "button", x: 0, y: 0, width: 60, height: 20, id: "save", clickable: true,
+  });
+  const total = fakeElement({ tag: "div", x: 0, y: 20, width: 60, height: 20, id: "total" });
+  withFakeDocument([save, total], () => {
+    assert.deepEqual(statesMatched({ clickable: true }, "clickable"), [["save", true]]);
+    assert.deepEqual(statesMatched({ clickable: false }, "clickable"), [["total", false]]);
+  });
+});
+
+test("enabled selects what this host reports enabled", () => {
+  const save = fakeElement({
+    tag: "button", x: 0, y: 0, width: 60, height: 20, id: "save", clickable: true,
+  });
+  const cancel = fakeElement({
+    tag: "button", x: 0, y: 20, width: 60, height: 20, id: "cancel", clickable: true,
+    disabled: true,
+  });
+  // A role-based control carries no disabled property, so aria-disabled is the
+  // only thing that marks it, and both producers read it.
+  const submit = fakeElement({
+    tag: "div", x: 0, y: 40, width: 60, height: 20, id: "submit", clickable: true,
+    attrs: { role: "button", "aria-disabled": "true" },
+  });
+  withFakeDocument([save, cancel, submit], () => {
+    assert.deepEqual(statesMatched({ enabled: true }, "enabled"), [["save", true]]);
+    assert.deepEqual(statesMatched({ enabled: false }, "enabled"), [
+      ["cancel", false],
+      ["submit", false],
+    ]);
+  });
+});
+
+test("focused selects what this host reports focused", () => {
+  const amount = fakeElement({
+    tag: "input", x: 0, y: 0, width: 60, height: 20, id: "amount", editable: true, focused: true,
+  });
+  const note = fakeElement({
+    tag: "input", x: 0, y: 20, width: 60, height: 20, id: "note", editable: true,
+  });
+  withFakeDocument([amount, note], () => {
+    assert.deepEqual(statesMatched({ focused: true }, "focused"), [["amount", true]]);
+    assert.deepEqual(statesMatched({ focused: false }, "focused"), [["note", false]]);
+  });
+});
+
+// Both producers read the checked PROPERTY, so the selector has to read it too:
+// the markup attribute records only what the page started with, and a box the
+// user ticked answers to `[checked]` never and to `{checked: true}` always.
+test("checked selects the live property, not the markup attribute", () => {
+  const remember = fakeElement({
+    tag: "input", x: 0, y: 0, width: 20, height: 20, id: "remember",
+    attrs: { type: "checkbox" }, checked: true,
+  });
+  const agree = fakeElement({
+    tag: "input", x: 0, y: 20, width: 20, height: 20, id: "agree",
+    attrs: { type: "checkbox", checked: "" }, checked: false,
+  });
+  withFakeDocument([remember, agree], () => {
+    assert.deepEqual(statesMatched({ checked: true }, "checked"), [["remember", true]]);
+    assert.deepEqual(statesMatched({ checked: false }, "checked"), [["agree", false]]);
+  });
+});
+
+test("selected selects the live property, not the markup attribute", () => {
+  const january = fakeElement({
+    tag: "option", x: 0, y: 0, width: 60, height: 20, id: "january", selected: true,
+  });
+  const february = fakeElement({
+    tag: "option", x: 0, y: 20, width: 60, height: 20, id: "february",
+    attrs: { selected: "" },
+  });
+  withFakeDocument([january, february], () => {
+    assert.deepEqual(statesMatched({ selected: true }, "selected"), [["january", true]]);
+    assert.deepEqual(statesMatched({ selected: false }, "selected"), [["february", false]]);
+  });
+});
+
+// text written beside another key was DROPPED, so `{testID, text}` resolved to
+// the testID alone and selected every row carrying it. internal/hierarchy ANDs
+// the two, so the goja host answered with the one row the author named while
+// this host answered with all of them: a find landed on a row nobody wrote, and
+// a property over it passed having checked a different element.
+function matchedIDs(selector: unknown): string[] {
+  const ax = __testing__.buildAx() as { findAll(selector: unknown): { id: string }[] };
+  return ax.findAll(selector).map((element) => element.id);
+}
+
+test("text is ANDed with the key beside it, in either order", () => {
+  const alice = fakeElement({
+    tag: "div", x: 0, y: 0, width: 120, height: 20, id: "customer_row_a1",
+    testid: "customer-row", text: "Alice",
+  });
+  const bob = fakeElement({
+    tag: "div", x: 0, y: 20, width: 120, height: 20, id: "customer_row_b2",
+    testid: "customer-row", text: "Bob",
+  });
+  withFakeDocument([alice, bob], () => {
+    assert.deepEqual(matchedIDs({ testID: "customer-row", text: "Alice" }), ["customer_row_a1"]);
+    assert.deepEqual(matchedIDs({ text: "Alice", testID: "customer-row" }), ["customer_row_a1"]);
+    assert.deepEqual(matchedIDs({ id: "customer_row_a1", text: "Alice" }), ["customer_row_a1"]);
+    assert.deepEqual(matchedIDs({ id: "customer_row_a1", text: "Bob" }), []);
+    assert.deepEqual(matchedIDs({ text: "Bob", id: "customer_row_a1" }), []);
+  });
+});
+
+// The innermost rule holds over what the WHOLE selector matched, the way
+// internal/hierarchy holds it: an ancestor whose only matching descendant a
+// sibling key excludes was never a match to drop it by. Resolving text to its
+// own innermost match first and filtering afterwards loses plain_row.
+test("text keeps the innermost element the whole selector matched", () => {
+  const nested = fakeElement({
+    tag: "div", x: 0, y: 0, width: 120, height: 20, id: "nested_row",
+    attrs: { class: "row" }, text: "Sent Sent",
+    children: [{
+      tag: "span", x: 0, y: 0, width: 40, height: 20, id: "nested_badge",
+      attrs: { class: "row" }, text: "Sent",
+    }],
+  });
+  const plain = fakeElement({
+    tag: "div", x: 0, y: 20, width: 120, height: 20, id: "plain_row",
+    attrs: { class: "row" }, text: "Sent",
+    children: [{
+      tag: "span", x: 0, y: 20, width: 40, height: 20, id: "plain_badge", text: "Sent",
+    }],
+  });
+  withFakeDocument([nested, plain], () => {
+    assert.deepEqual(matchedIDs({ className: "row", text: "Sent" }), ["nested_badge", "plain_row"]);
+  });
+});
+
+// A state key is answered against the live element rather than compiled into
+// the query, and text has to be ANDed with it before the innermost rule runs:
+// the innermost element carrying "January" is the option, and the select is the
+// only element that is both.
+test("text is ANDed with a state key before the innermost rule", () => {
+  const month = fakeElement({
+    tag: "select", x: 0, y: 0, width: 120, height: 20, id: "month", clickable: true,
+    text: "January February",
+    children: [
+      { tag: "option", x: 0, y: 0, width: 120, height: 20, id: "january", text: "January" },
+      { tag: "option", x: 0, y: 20, width: 120, height: 20, id: "february", text: "February" },
+    ],
+  });
+  withFakeDocument([month], () => {
+    assert.deepEqual(matchedIDs({ text: "January", clickable: true }), ["month"]);
+  });
+});
+
+// class and className are two names for the one attribute every producer
+// writes as class, and internal/hierarchy aliases the second onto the first.
+// This host answers both, so the pair is pinned here: a name dropped from this
+// table matches nothing on web while the dump still answers it, and an empty
+// result reads exactly like a screen with no such element.
+test("className and class name the same elements", () => {
+  const badge = fakeElement({
+    tag: "span", x: 0, y: 0, width: 40, height: 20, id: "status_badge",
+    attrs: { class: "status" }, text: "Sent",
+  });
+  withFakeDocument([badge], () => {
+    assert.deepEqual(matchedIDs({ className: "status" }), ["status_badge"]);
+    assert.deepEqual(matchedIDs({ class: "status" }), ["status_badge"]);
+  });
+});
+
+// Four more names internal/hierarchy resolves through an alias and this host
+// resolved through nothing: they fell through to a raw attribute lookup, and no
+// DOM element carries an attribute called accessibilityIdentifier. Each one
+// matched on the goja host and NOTHING here, with no unknown-key error to say
+// so, so a property over the element that was never found passed having checked
+// nothing. Each is pinned beside the key it aliases onto, so a name dropped
+// from the table is a name that stops naming the same element.
+test("the identifier aliases name the element id names", () => {
+  const card = fakeElement({
+    tag: "div", x: 0, y: 0, width: 120, height: 40, id: "summary_card", text: "summary",
+  });
+  withFakeDocument([card], () => {
+    assert.deepEqual(matchedIDs({ identifier: "summary_card" }), ["summary_card"]);
+    assert.deepEqual(matchedIDs({ accessibilityIdentifier: "summary_card" }), ["summary_card"]);
+    assert.deepEqual(matchedIDs({ "resource-id": "summary_card" }), ["summary_card"]);
+  });
+});
+
+test("accessibilityText names the element the accessible label names", () => {
+  const email = fakeElement({
+    tag: "input", x: 0, y: 0, width: 120, height: 20, id: "login_email",
+    label: "login_email", editable: true,
+  });
+  withFakeDocument([email], () => {
+    assert.deepEqual(matchedIDs({ accessibilityText: "login_email" }), ["login_email"]);
+    assert.deepEqual(matchedIDs({ "aria-label": "login_email" }), ["login_email"]);
+  });
+});
+
+test("elementType names the elements class names", () => {
+  const badge = fakeElement({
+    tag: "span", x: 0, y: 0, width: 40, height: 20, id: "status_badge",
+    attrs: { class: "status" }, text: "Sent",
+  });
+  withFakeDocument([badge], () => {
+    assert.deepEqual(matchedIDs({ elementType: "status" }), ["status_badge"]);
+    assert.deepEqual(matchedIDs({ class: "status" }), ["status_badge"]);
+  });
+});
+
+// editable and scrollable are derived from the live element the way the other
+// boolean states are, and were reached the same wrong way: as markup
+// attributes, which build [editable="true"] and match nothing on any page. Both
+// resolve against the dump on the goja host, so a spec naming a field or a
+// scroll container that way found it there and no element at all here.
+test("editable selects what this host reports editable", () => {
+  const note = fakeElement({
+    tag: "input", x: 0, y: 0, width: 120, height: 20, id: "note", editable: true,
+  });
+  const remember = fakeElement({
+    tag: "input", x: 0, y: 20, width: 20, height: 20, id: "remember",
+    attrs: { type: "checkbox" }, editable: true,
+  });
+  const heading = fakeElement({ tag: "h1", x: 0, y: 40, width: 120, height: 20, id: "title" });
+  withFakeDocument([note, remember, heading], () => {
+    assert.deepEqual(statesMatched({ editable: true }, "editable"), [["note", true]]);
+    assert.deepEqual(statesMatched({ editable: false }, "editable"), [
+      ["remember", false],
+      ["title", false],
+    ]);
+  });
+});
+
+// The selector reads the same overflow test the picker's target list is built
+// with, so a container this host offers a scroll on is the container a spec can
+// name. `false` names nothing: the producers state the fact only where it
+// holds, so the elements that do not scroll answer to neither value, the way an
+// element that is no field at all answers to neither value of secure.
+test("scrollable selects the containers this host offers a scroll on", () => {
+  const feed = fakeElement({
+    tag: "div", x: 0, y: 0, width: 120, height: 40, id: "feed", overflows: true,
+  });
+  const row = fakeElement({ tag: "div", x: 0, y: 40, width: 120, height: 20, id: "row" });
+  withFakeDocument([feed, row], () => {
+    const scrolls = host
+      .queryTargets()
+      .filter((target) => target.scrollable)
+      .map((target) => target.selector);
+    assert.deepEqual(scrolls, ["id:feed"]);
+    assert.deepEqual(matchedIDs({ scrollable: true }), ["feed"]);
+    assert.deepEqual(matchedIDs({ scrollable: false }), []);
+  });
+});
+
+// hintText is the accessible-name ladder, not one attribute, and compiling it
+// to [placeholder="..."] reached the wrong field or none: the fields labelled
+// from a rung above the placeholder resolved against the dump on the goja host
+// and named nothing here, and the one carrying both answered to its placeholder
+// here where the dump answers to its aria-label. Matching MORE than the spec
+// said is the half that lands a find on an element nobody wrote.
+const hintFields = (): FakeElementSpec[] => [
+  { tag: "input", x: 0, y: 0, width: 120, height: 20, id: "email", label: "Email" },
+  {
+    tag: "input", x: 0, y: 20, width: 120, height: 20, id: "search",
+    attrs: { placeholder: "Search customers" },
+  },
+  {
+    tag: "input", x: 0, y: 40, width: 120, height: 20, id: "amount",
+    label: "Amount in rupees", attrs: { placeholder: "0.00" },
+  },
+  {
+    tag: "input", x: 0, y: 60, width: 120, height: 20, id: "code",
+    attrs: { name: "verification_code" },
+  },
+  { tag: "h1", x: 0, y: 80, width: 120, height: 20, id: "title", label: "Email" },
+];
+
+test("hintText selects the field by the name this host derives for it", () => {
+  withFakeDocument(hintFields().map(fakeElement), () => {
+    assert.deepEqual(matchedIDs({ hintText: "Email" }), ["email"]);
+    assert.deepEqual(matchedIDs("hintText:Email"), ["email"]);
+    assert.deepEqual(matchedIDs({ hintText: "Search customers" }), ["search"]);
+    assert.deepEqual(matchedIDs({ hintText: "Amount in rupees" }), ["amount"]);
+    assert.deepEqual(matchedIDs({ hintText: "verification_code" }), ["code"]);
+    // The rung the ladder passed over is not the field's hint, and a heading
+    // is no field at all, so neither answers.
+    assert.deepEqual(matchedIDs({ hintText: "0.00" }), []);
+    // Both producers write the fact only where the ladder answered, so an empty
+    // hint names nothing rather than everything that is no field.
+    assert.deepEqual(matchedIDs({ hintText: "" }), []);
+  });
+});
+
+test("placeholderValue names the ladder hintText names", () => {
+  withFakeDocument(hintFields().map(fakeElement), () => {
+    assert.deepEqual(matchedIDs({ placeholderValue: "Email" }), ["email"]);
+    assert.deepEqual(matchedIDs({ placeholderValue: "Amount in rupees" }), ["amount"]);
+    assert.deepEqual(matchedIDs({ placeholderValue: "0.00" }), []);
+  });
+});
+
+// placeholder stays the attribute the markup writes, which is what the dump
+// carries under that name too, so the two hosts read the same string for it.
+test("placeholder names the attribute the markup writes", () => {
+  withFakeDocument(hintFields().map(fakeElement), () => {
+    assert.deepEqual(matchedIDs({ placeholder: "0.00" }), ["amount"]);
+    assert.deepEqual(matchedIDs({ placeholder: "Search customers" }), ["search"]);
+    assert.deepEqual(matchedIDs({ placeholder: "Email" }), []);
+  });
+});
+
+test("attrs carries every other attribute alongside tag and aria-label", () => {
+  const attrs = attrsOf(
+    domElement({ tag: "input", attributes: { id: "txn-note", placeholder: "What's this for?" } }),
+  );
+  assert.equal(attrs.tag, "input");
+  assert.equal(attrs["aria-label"], "");
+  assert.equal(attrs.id, "txn-note");
+  assert.equal(attrs.placeholder, "What's this for?");
+});
+
+// An input has no text of its own, so a handle that names it by text names it
+// "". hintText is the rung visibleLabel reads first for an editable element,
+// and it is what lets a model tell the amount field from the note field.
+test("an editable field's hintText is the label bound to it", () => {
+  const element = domElement({
+    tag: "input",
+    attributes: { id: "txn-amount", placeholder: "0.00" },
+    labels: ["Amount"],
+  });
+  assert.equal(attrsOf(element).hintText, "Amount");
+  assert.equal(handleOf(element).editable, true);
+  assert.equal(handleOf(element).text, "");
+});
+
+test("an unlabelled field's hintText falls back to aria-label, placeholder, then name", () => {
+  assert.equal(
+    attrsOf(domElement({ tag: "input", attributes: { "aria-label": "Search", placeholder: "Type here" } }))
+      .hintText,
+    "Search",
+  );
+  assert.equal(
+    attrsOf(domElement({ tag: "input", attributes: { placeholder: "What's this for?" } })).hintText,
+    "What's this for?",
+  );
+  assert.equal(attrsOf(domElement({ tag: "input", attributes: { name: "note" } })).hintText, "note");
+});
+
+// clickable was hardcoded true here while the enumeration and the hierarchy dump
+// both resolved it through TAPPABLE_SELECTOR, so every text node and container a
+// spec reached through state.ax claimed to be a tap target on one host only.
+test("an element reached through ax reports the tappable selector's clickability", () => {
+  const clickabilityOf = (element: unknown) => handleOf(element).clickable;
+  assert.equal(clickabilityOf(domElement({ tag: "button", attributes: { id: "submit" } })), true);
+  assert.equal(clickabilityOf(domElement({ tag: "input", attributes: { id: "amount" } })), true);
+  assert.equal(
+    clickabilityOf(domElement({ tag: "div", attributes: { id: "row", role: "option" } })),
+    true,
+  );
+  assert.equal(
+    clickabilityOf(domElement({ tag: "div", attributes: { id: "click", onclick: "void 0" } })),
+    true,
+  );
+  assert.equal(clickabilityOf(domElement({ tag: "div", attributes: { id: "balance" } })), false);
+  assert.equal(
+    clickabilityOf(domElement({ tag: "span", attributes: { id: "note", role: "presentation" } })),
+    false,
+  );
+});
+
+// isContentEditable is inherited, so the handle called every span inside a
+// contenteditable container typeable while the enumeration and the hierarchy
+// dump, which both ask whether the element itself matches EDITABLE_SELECTOR,
+// called the same span inert.
+test("an element reached through ax reports the editable selector's editability", () => {
+  const editabilityOf = (element: unknown) => handleOf(element).editable;
+  assert.equal(
+    editabilityOf(
+      domElement({ tag: "div", attributes: { id: "note", contenteditable: "" }, contentEditable: true }),
+    ),
+    true,
+  );
+  assert.equal(
+    editabilityOf(domElement({ tag: "span", attributes: { id: "word" }, contentEditable: true })),
+    false,
+  );
+  assert.equal(editabilityOf(domElement({ tag: "textarea", attributes: { id: "memo" } })), true);
+});
+
+test("a non-editable element carries no hintText", () => {
+  const element = domElement({ tag: "button", attributes: { id: "txn-submit" }, text: "Add credit" });
+  assert.equal(attrsOf(element).hintText, undefined);
+  assert.equal(handleOf(element).editable, false);
 });
 
 // An ax element is labelled with the selector it was found by, in the same
@@ -576,18 +1251,41 @@ test("ax.findAll resolves a selector path segment by segment", () => {
         .findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }])
         .map((card) => card.text);
     });
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
+      return ax
+        .findAll([{ testTag: "HomeScreen" }, { testTag: "AccountCard" }])
+        .map((card) => card.__sanderlingSelector);
+    });
     const values = __testing__.evaluateExtractors();
     // Scoped to the head match: the cards come from the HomeScreen node, not
     // from a document-wide sweep for AccountCard.
     assert.deepEqual(readingOf(values, 0), ["first", "second"]);
+    // Both cards answer to the same path, so neither may carry it: the runner
+    // re-resolves a named target and would send both taps to the first card.
+    assert.deepEqual(readingOf(values, 1), ["", ""]);
   });
 });
 
-test("ax.find and ax.findAll label the element with its selector", () => {
-  const submit = fakeElement({
-    tag: "div", x: 0, y: 0, width: 10, height: 10, id: "TxnSubmit", text: "Submit",
+// A selector is a name only while ONE element answers to it. The runner prefers
+// the name over the coordinates the element reported (resolveCoordinates in
+// internal/runner) and takes the first match, so labelling siblings that share a
+// testTag sends every one of their taps to the first sibling: on folio's Home
+// screen no account but the first could ever be opened.
+test("ax.find and ax.findAll label the element with the selector only when it names that element alone", () => {
+  const sibling = (text: string, y: number): FakeElementSpec => ({
+    tag: "div", x: 0, y, width: 10, height: 10, testid: "AccountCard", text,
   });
-  withFakeDocument([submit], () => {
+  const page = fakeElement({
+    tag: "div", x: 0, y: 0, width: 100, height: 100,
+    children: [
+      { tag: "div", x: 0, y: 0, width: 10, height: 10, id: "TxnSubmit", text: "Submit" },
+      sibling("Alpha", 20),
+      sibling("Beta", 40),
+      sibling("Gamma", 60),
+    ],
+  });
+  withFakeDocument([page], () => {
     __testing__.extractors.length = 0;
     __testing__.runtime.extract((state) => {
       const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
@@ -597,6 +1295,10 @@ test("ax.find and ax.findAll label the element with its selector", () => {
       const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
       return ax.findAll({ testTag: "TxnSubmit" });
     });
+    __testing__.runtime.extract((state) => {
+      const ax = (state as { ax: { findAll(s: unknown): Record<string, unknown>[] } }).ax;
+      return ax.findAll({ testTag: "AccountCard" });
+    });
     const values = __testing__.evaluateExtractors();
     const found = readingOf(values, 0) as Record<string, unknown>;
     assert.equal(found.__sanderlingSelector, "testTag:TxnSubmit");
@@ -604,6 +1306,51 @@ test("ax.find and ax.findAll label the element with its selector", () => {
     // reference would hand the array INDEX to the runtime as the selector.
     const all = readingOf(values, 1) as Record<string, unknown>[];
     assert.equal(all[0]!.__sanderlingSelector, "testTag:TxnSubmit");
+    const siblings = readingOf(values, 2) as Record<string, unknown>[];
+    assert.deepEqual(
+      siblings.map((card) => card.__sanderlingSelector),
+      ["", "", ""],
+    );
+    assert.deepEqual(
+      siblings.map((card) => card.y),
+      [25, 45, 65],
+    );
+  });
+});
+
+// The same rule for a child lookup, which is the shape a spec reaches a row
+// through: screen.findAll({...}). The runner resolves the child selector against
+// the whole dump, not the parent's subtree, so scoping does not make a shared
+// name safe.
+test("element.find and element.findAll label a child only when the selector names it alone", () => {
+  const home = fakeElement({
+    tag: "div", x: 0, y: 0, width: 100, height: 100, testid: "HomeScreen",
+    children: [
+      { tag: "div", x: 0, y: 0, width: 10, height: 10, testid: "AccountCard", text: "first" },
+      { tag: "div", x: 0, y: 20, width: 10, height: 10, testid: "AccountCard", text: "second" },
+      { tag: "div", x: 0, y: 40, width: 10, height: 10, testid: "Total", text: "Total" },
+    ],
+  });
+  withFakeDocument([home], () => {
+    __testing__.extractors.length = 0;
+    __testing__.runtime.extract((state) => {
+      const ax = (state as {
+        ax: { find(s: unknown): { findAll(s: unknown): Record<string, unknown>[] } };
+      }).ax;
+      return ax
+        .find({ testTag: "HomeScreen" })
+        .findAll({ testTag: "AccountCard" })
+        .map((card) => card.__sanderlingSelector);
+    });
+    __testing__.runtime.extract((state) => {
+      const ax = (state as {
+        ax: { find(s: unknown): { find(s: unknown): Record<string, unknown> } };
+      }).ax;
+      return ax.find({ testTag: "HomeScreen" }).find({ testTag: "Total" }).__sanderlingSelector;
+    });
+    const values = __testing__.evaluateExtractors();
+    assert.deepEqual(readingOf(values, 0), ["", ""]);
+    assert.equal(readingOf(values, 1), "testTag:Total");
   });
 });
 
@@ -641,6 +1388,109 @@ test("ax.find resolves the shadow-hosted match the hierarchy dump reaches first"
   });
 });
 
+// document.activeElement stops at every shadow boundary it meets, so a Compose
+// for Web page, which mounts its whole tree in a shadow root, answered `focused`
+// on the mount element and never on the field the user was typing into.
+// internal/driver/chrome/driver.go descends the same chain for the dump the goja
+// host reads, so a handle that compares against the host alone puts the two
+// hosts on opposite answers for one page.
+test("ax.find reports focus on the field inside the shadow root, not on its hosts", () => {
+  const app = fakeElement({
+    tag: "div", x: 0, y: 0, width: 400, height: 800, id: "app",
+    shadow: [
+      {
+        tag: "div", x: 0, y: 0, width: 400, height: 100, id: "form",
+        shadow: [
+          {
+            tag: "input", x: 0, y: 0, width: 200, height: 40, id: "amount",
+            editable: true, focused: true,
+          },
+        ],
+      },
+    ],
+  });
+  withFakeDocument([app], () => {
+    __testing__.extractors.length = 0;
+    for (const id of ["amount", "form", "app"]) {
+      __testing__.runtime.extract((state) => {
+        const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
+        return ax.find(`id:${id}`)?.focused;
+      });
+    }
+    const values = __testing__.evaluateExtractors();
+    assert.equal(readingOf(values, 0), true);
+    assert.equal(readingOf(values, 1), false);
+    assert.equal(readingOf(values, 2), false);
+  });
+});
+
+// Descending the shadow roots is still not enough on Compose for Web: it takes
+// keystrokes on a 1px input pinned to the caret, a SIBLING of the accessibility
+// tree, so DOM focus never reaches the semantics element carrying the test tag
+// and every field read unfocused. internal/driver/chrome/driver.go re-attributes
+// focus to the field the caret sits in, and TestElementState_FocusFollowsTheCaretToItsField
+// pins it there over a real Compose-shaped page.
+//
+// Both fields are focused in turn, because answering with the first editable in
+// the tree would satisfy the email half and still name the wrong field. The
+// password caret overhangs its box, as it does whenever the text style is taller
+// than the field's layout box, so requiring the caret to be CONTAINED rather
+// than to have its centre inside would drop that field back to unfocused.
+test("focus follows the caret to the field it types into, not the input it is", () => {
+  const carets = [
+    { field: "EmailField", y: 78, height: 17.578125 },
+    { field: "PasswordField", y: 157, height: 20 },
+  ];
+  for (const caret of carets) {
+    const app = fakeElement({
+      tag: "div", x: 0, y: 0, width: 760, height: 800, id: "app",
+      shadow: [
+        {
+          tag: "div", x: 0, y: 0, width: 0, height: 0, id: "caret-holder",
+          customProperties: {
+            "--compose-internal-web-backing-input-left": "34",
+            "--compose-internal-web-backing-input-top": String(caret.y),
+            "--compose-internal-web-backing-input-width": "1",
+            "--compose-internal-web-backing-input-height": String(caret.height),
+          },
+          children: [
+            {
+              tag: "input", x: 34, y: caret.y, width: 1, height: caret.height,
+              id: "caret-input", editable: true, focused: true,
+            },
+          ],
+        },
+        {
+          tag: "div", x: 0, y: 0, width: 760, height: 800, id: "a11y-root",
+          children: [
+            {
+              tag: "div", x: 34, y: 78, width: 688, height: 18, id: "EmailField",
+              attrs: { role: "textbox", contenteditable: "true" }, editable: true,
+            },
+            {
+              tag: "div", x: 34, y: 158, width: 688, height: 18, id: "PasswordField",
+              attrs: { role: "textbox", contenteditable: "true" }, editable: true,
+            },
+          ],
+        },
+      ],
+    });
+    withFakeDocument([app], () => {
+      __testing__.extractors.length = 0;
+      const ids = ["EmailField", "PasswordField", "caret-input", "caret-holder", "a11y-root", "app"];
+      for (const id of ids) {
+        __testing__.runtime.extract((state) => {
+          const ax = (state as { ax: { find(s: unknown): Record<string, unknown> | undefined } }).ax;
+          return ax.find(`id:${id}`)?.focused;
+        });
+      }
+      const values = __testing__.evaluateExtractors();
+      const focused = ids.filter((_, index) => readingOf(values, index) === true);
+      assert.deepEqual(focused, [caret.field]);
+    });
+  }
+});
+
 // A nested undefined is the one reading shape the two hosts do NOT encode
 // alike, and this pins the split instead of hiding it. JSON has no undefined,
 // so the key goes with the value here; goja marshals the same member as null,
@@ -663,4 +1513,32 @@ test("a nested undefined leaves the page as a dropped key, a nested null does no
     wire = JSON.stringify(__testing__.evaluateExtractors());
   });
   assert.equal(wire, `{"0":{"value":{"empty":null,"present":1}}}`);
+});
+
+// The web half of the cross-host marker contract: for the same spec shape, the
+// entry must name setup's action and the action root's differently, and by the
+// same two names the goja engine uses (TestNextActionNamesTheGeneratorThatProducedIt
+// in internal/verifier/setup_action_test.go asserts them there). A per-action
+// rate divides by the root's steps only, so an action that names no producer
+// puts a login's taps in the denominator of the policy's exploration.
+const { Tap, actions, taps } = await import("../src/actions.ts");
+
+test("the next-action entry names the generator each action came from", () => {
+  const button = fakeElement({
+    tag: "button", x: 0, y: 0, width: 40, height: 20, id: "SignIn", clickable: true,
+  });
+  const g = globalThis as { actions?: unknown; setup?: unknown; __sanderlingNextAction__?: unknown };
+  const nextAction = g.__sanderlingNextAction__ as () => { source?: string } | null;
+  withFakeDocument([button], () => {
+    try {
+      g.actions = taps;
+      g.setup = actions(() => [Tap({ on: "id:SignIn" })]);
+      assert.equal(nextAction()?.source, "setup");
+      g.setup = undefined;
+      assert.equal(nextAction()?.source, "seeded");
+    } finally {
+      g.actions = undefined;
+      g.setup = undefined;
+    }
+  });
 });

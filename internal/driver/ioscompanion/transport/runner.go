@@ -336,7 +336,13 @@ func (c *runnerCompanion) PressKey(ctx context.Context, key string) error {
 	case "enter", "return", "Enter", "Return":
 		_, err := c.call(ctx, "pressKey", map[string]any{"key": "return"})
 		return err
+	case "escape", "Escape":
+		_, err := c.call(ctx, "pressKey", map[string]any{"key": "escape"})
+		return err
 	default:
-		return fmt.Errorf("runner companion cannot press key %q; only return is supported", key)
+		return fmt.Errorf(
+			"runner companion cannot press key %q; only return and escape are supported",
+			key,
+		)
 	}
 }

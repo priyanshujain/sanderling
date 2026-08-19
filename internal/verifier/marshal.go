@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -71,16 +72,17 @@ func accessibilityObject(runtime *goja.Runtime, tree *hierarchy.Tree) *goja.Obje
 		if node == nil {
 			return goja.Undefined()
 		}
-		return nodeObject(runtime, node, selectorStringFromJS(runtime, call.Argument(0)))
+		return nodeObject(runtime, tree, node, selectorStringFromJS(runtime, call.Argument(0)))
 	}
 	findAll := func(call goja.FunctionCall) goja.Value {
 		if tree == nil {
 			return goja.Undefined()
 		}
 		nodes := findAllNodesFromJS(runtime, tree, call.Argument(0))
+		selector := selectorStringFromJS(runtime, call.Argument(0))
 		array := runtime.NewArray()
 		for i, n := range nodes {
-			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(runtime, call.Argument(0))))
+			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, tree, n, selector))
 		}
 		return array
 	}
@@ -89,7 +91,26 @@ func accessibilityObject(runtime *goja.Runtime, tree *hierarchy.Tree) *goja.Obje
 	return accessibility
 }
 
-func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) goja.Value {
+// unambiguousSelector returns selector only when no node other than this one
+// answers to it. The runner prefers tree.Find(action.On) over the coordinates
+// the element reported (resolveCoordinates) and Find takes the first match, so
+// naming an element by a selector its siblings share sends every one of their
+// actions to the first sibling. An unnamed element keeps its own coordinates,
+// which are already right, matching what selectorsFor does for the builtin
+// target enumeration in pkg/spec/src/web-runtime.ts.
+func unambiguousSelector(tree *hierarchy.Tree, node *hierarchy.Node, selector string) string {
+	if tree == nil || selector == "" {
+		return ""
+	}
+	for _, match := range tree.FindAllNodes(selector) {
+		if match != node {
+			return ""
+		}
+	}
+	return selector
+}
+
+func nodeObject(runtime *goja.Runtime, tree *hierarchy.Tree, node *hierarchy.Node, selector string) goja.Value {
 	element := &node.Element
 	object := runtime.NewObject()
 	centerX, centerY := element.Bounds.Center()
@@ -103,9 +124,17 @@ func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) go
 	_ = object.Set("focused", element.Focused)
 	_ = object.Set("selected", element.Selected)
 	_ = object.Set("editable", element.Editable)
+	// Three-valued, unlike the other state flags: null where the platform
+	// reported nothing at all, which is what separates an ordinary field from a
+	// password field on a platform that cannot tell them apart.
+	var secure any
+	if element.SecureReported() {
+		secure = element.Secure
+	}
+	_ = object.Set("secure", secure)
 	_ = object.Set("x", centerX)
 	_ = object.Set("y", centerY)
-	_ = object.Set(tagSelector, selector)
+	_ = object.Set(tagSelector, unambiguousSelector(tree, node, selector))
 	bounds := runtime.NewObject()
 	_ = bounds.Set("left", element.Bounds.Left)
 	_ = bounds.Set("top", element.Bounds.Top)
@@ -123,14 +152,15 @@ func nodeObject(runtime *goja.Runtime, node *hierarchy.Node, selector string) go
 		if childNode == nil {
 			return goja.Undefined()
 		}
-		return nodeObject(runtime, childNode, selectorStringFromJS(runtime, arg))
+		return nodeObject(runtime, tree, childNode, selectorStringFromJS(runtime, arg))
 	}
 	childFindAll := func(call goja.FunctionCall) goja.Value {
 		arg := call.Argument(0)
 		childNodes := findAllNodesInSubtreeFromJS(runtime, node, arg)
+		childSelector := selectorStringFromJS(runtime, arg)
 		array := runtime.NewArray()
 		for i, n := range childNodes {
-			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, n, selectorStringFromJS(runtime, arg)))
+			_ = array.Set(fmt.Sprintf("%d", i), nodeObject(runtime, tree, n, childSelector))
 		}
 		return array
 	}
@@ -152,13 +182,15 @@ func findNodeFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Value)
 		return tree.FindNode(s)
 	}
 	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		requireKnownSelectorKeys(runtime, tree, path...)
 		return tree.FindBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
 	}
-	return tree.Root.FindBySelector(sel)
+	requireKnownSelectorKeys(runtime, tree, sel)
+	return tree.FindBySelector(sel)
 }
 
 // findAllNodesFromJS dispatches a JS value to Tree-level multi-node lookup.
@@ -170,13 +202,15 @@ func findAllNodesFromJS(runtime *goja.Runtime, tree *hierarchy.Tree, arg goja.Va
 		return tree.FindAllNodes(s)
 	}
 	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		requireKnownSelectorKeys(runtime, tree, path...)
 		return tree.FindAllBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
 	}
-	return tree.Root.FindAllBySelector(sel)
+	requireKnownSelectorKeys(runtime, tree, sel)
+	return tree.FindAllBySelector(sel)
 }
 
 // findNodeInSubtreeFromJS dispatches a JS value to Node-level scoped lookup.
@@ -188,12 +222,14 @@ func findNodeInSubtreeFromJS(runtime *goja.Runtime, node *hierarchy.Node, arg go
 		return node.Find(s)
 	}
 	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		requireKnownSelectorKeys(runtime, node.Tree(), path...)
 		return node.FindBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
 	}
+	requireKnownSelectorKeys(runtime, node.Tree(), sel)
 	return node.FindBySelector(sel)
 }
 
@@ -206,13 +242,39 @@ func findAllNodesInSubtreeFromJS(runtime *goja.Runtime, node *hierarchy.Node, ar
 		return node.FindAll(s)
 	}
 	if path, ok := selectorPathFromJS(runtime, arg); ok {
+		requireKnownSelectorKeys(runtime, node.Tree(), path...)
 		return node.FindAllBySelectorPath(path)
 	}
 	sel := selectorFromJSObject(runtime, arg)
 	if len(sel.Filters) == 0 {
 		return nil
 	}
+	requireKnownSelectorKeys(runtime, node.Tree(), sel)
 	return node.FindAllBySelector(sel)
+}
+
+// requireKnownSelectorKeys throws a JS error when a selector names a key that
+// can never match. Returning an empty result instead is indistinguishable from
+// a screen that simply has no such element, so a spec built on a mistyped key
+// generates no action, the runner waits out every step, and the campaign
+// finishes clean having explored nothing.
+func requireKnownSelectorKeys(
+	runtime *goja.Runtime,
+	tree *hierarchy.Tree,
+	selectors ...hierarchy.Selector,
+) {
+	var unknown []string
+	for _, sel := range selectors {
+		for _, key := range tree.UnknownSelectorKeys(sel) {
+			if !slices.Contains(unknown, key) {
+				unknown = append(unknown, key)
+			}
+		}
+	}
+	if len(unknown) == 0 {
+		return
+	}
+	panic(runtime.NewTypeError(hierarchy.UnknownSelectorKeyMessage(unknown)))
 }
 
 // selectorFromJSObject converts a JS object {attr: value, ...} into a Selector.
@@ -549,6 +611,10 @@ type wireAction struct {
 	ToX            int    `json:"toX"`
 	ToY            int    `json:"toY"`
 	DurationMillis int    `json:"durationMillis"`
+	// Source names the generator that produced the action: the spec's setup or
+	// the action root. Empty from the candidate enumeration, which serializes
+	// actions nothing has chosen yet.
+	Source string `json:"source"`
 }
 
 // DecodeAction turns one serialized action (the flat camelCase wire contract)
@@ -561,6 +627,15 @@ func DecodeAction(raw json.RawMessage) (Action, error) {
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return Action{}, fmt.Errorf("decode action: %w", err)
 	}
+	action, err := actionFromWire(wire)
+	if err != nil {
+		return Action{}, err
+	}
+	action.Source = wire.Source
+	return action, nil
+}
+
+func actionFromWire(wire wireAction) (Action, error) {
 	switch wire.Kind {
 	case "Tap":
 		return Action{Kind: ActionKindTap, On: wire.Selector, X: wire.X, Y: wire.Y}, nil
@@ -582,6 +657,7 @@ func DecodeAction(raw json.RawMessage) (Action, error) {
 	case "Scroll":
 		return Action{
 			Kind:           ActionKindScroll,
+			On:             wire.Selector,
 			Direction:      wire.Direction,
 			FromX:          wire.FromX,
 			FromY:          wire.FromY,

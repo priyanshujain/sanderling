@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -62,7 +63,7 @@ func TestModelCandidateDescriptionsAreUniqueAndNamed(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			verifier := loadVerbSpec(t, verb)
 			seen := map[string]bool{}
-			for _, candidate := range verifier.Candidates() {
+			for _, candidate := range mustCandidates(t, verifier, LabelSourceVisibleText) {
 				if candidate.Description == "" {
 					t.Fatalf("%s produced a candidate with no description: %+v", verb, candidate.Action)
 				}
@@ -81,15 +82,62 @@ func TestModelCandidateDescriptionsAreUniqueAndNamed(t *testing.T) {
 // dropped, so the model could never navigate back or let the app settle.
 func TestModelIsOfferedTheUntargetedVerbs(t *testing.T) {
 	verifier := loadVerbSpec(t, "pressKeys")
-	if !hasCandidate(verifier.Candidates(), "Press back") {
+	if !hasCandidate(mustCandidates(t, verifier, LabelSourceVisibleText), "Press back") {
 		t.Errorf("pressKeys missing from the model's candidates: %v",
-			descriptions(verifier.Candidates()))
+			descriptions(mustCandidates(t, verifier, LabelSourceVisibleText)))
 	}
 	verifier = loadVerbSpec(t, "waitOnce")
-	if !hasCandidate(verifier.Candidates(), "Wait") {
+	if !hasCandidate(mustCandidates(t, verifier, LabelSourceVisibleText), "Wait") {
 		t.Errorf("waitOnce missing from the model's candidates: %v",
-			descriptions(verifier.Candidates()))
+			descriptions(mustCandidates(t, verifier, LabelSourceVisibleText)))
 	}
+}
+
+// TestSeededDrawStreamIgnoresLabelSource is the manipulation check the
+// labelling factorial needs: the seeded picker selects by index and never asks
+// for a label, so its draw stream must be bit-identical whichever channel the
+// model policy would have been given, and identical again to a run where the
+// candidate list was never enumerated at all. Any difference between two seeded
+// cells is then the application and the harness, not the factor.
+func TestSeededDrawStreamIgnoresLabelSource(t *testing.T) {
+	for _, verb := range policyVerbs {
+		t.Run(verb, func(t *testing.T) {
+			never := seededDrawStream(t, verb, "")
+			text := seededDrawStream(t, verb, LabelSourceVisibleText)
+			identifier := seededDrawStream(t, verb, LabelSourceResourceID)
+			if !slices.Equal(never, text) {
+				t.Errorf("enumerating visible-text candidates moved the seeded stream for %s", verb)
+			}
+			if !slices.Equal(never, identifier) {
+				t.Errorf("enumerating identifier candidates moved the seeded stream for %s", verb)
+			}
+		})
+	}
+}
+
+// seededDrawStream drives the seeded picker for the draw budget and returns
+// every action in order. An empty labelSource enumerates nothing; otherwise the
+// model's candidate list is built under that channel before each draw, which is
+// the only way the two could ever touch.
+func seededDrawStream(t *testing.T, verb, labelSource string) []string {
+	t.Helper()
+	verifier := loadVerbSpec(t, verb)
+	stream := make([]string, 0, seededDrawBudget)
+	for range seededDrawBudget {
+		if labelSource != "" {
+			mustCandidates(t, verifier, labelSource)
+		}
+		action, err := verifier.NextAction()
+		if errors.Is(err, ErrNoAction) {
+			stream = append(stream, "no action")
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s next action: %v", verb, err)
+		}
+		stream = append(stream, fmt.Sprintf("%+v", action))
+	}
+	return stream
 }
 
 // loadVerbSpec builds a verifier whose whole action tree is one builtin verb,
@@ -128,7 +176,7 @@ func modelOfferedActions(t *testing.T, verb string) map[string]Action {
 	t.Helper()
 	verifier := loadVerbSpec(t, verb)
 	offered := map[string]Action{}
-	for _, candidate := range verifier.Candidates() {
+	for _, candidate := range mustCandidates(t, verifier, LabelSourceVisibleText) {
 		offered[actionIdentity(candidate.Action)] = candidate.Action
 	}
 	return offered
@@ -136,12 +184,15 @@ func modelOfferedActions(t *testing.T, verb string) map[string]Action {
 
 // actionIdentity keys an action by everything except the values the policy owns
 // rather than the candidate set: the typed text, which the seeded arm draws from
-// the edge-case corpus and the model writes itself, and a swipe's drag distance,
-// which the seeded arm draws and the enumeration lists at a nominal length.
+// the edge-case corpus and the model writes itself, a swipe's drag distance,
+// which the seeded arm draws and the enumeration lists at a nominal length, and
+// the source, which names who produced an action rather than what it does (the
+// enumeration names nobody, because the model has not chosen yet).
 // Comparing those would compare policies instead of action spaces. A swipe's
 // direction is NOT policy-owned, so it survives as the sign of the drag.
 func actionIdentity(action Action) string {
 	action.Text = ""
+	action.Source = ""
 	if action.Kind == ActionKindSwipe {
 		action.ToX = sign(action.ToX - action.FromX)
 		action.ToY = sign(action.ToY - action.FromY)
@@ -157,5 +208,127 @@ func sign(value int) int {
 		return -1
 	default:
 		return 0
+	}
+}
+
+// samplerParitySpec authors one leaf that taps a target drawn from three: the
+// pattern the model policy refuses and the seeded picker exists to draw.
+const samplerParitySpec = `
+import { actions, from, Tap } from "@sanderling/spec";
+const targets = from(["id:Save", "id:Cancel", "id:Amount"]);
+globalThis.actions = actions(() => [Tap({ on: targets.generate() })]);
+`
+
+// TestSeededSamplingSurvivesTheModelPolicysRefusal keeps the refusal on the one
+// policy it belongs to. Sampling inside the picker's rng scope is correct, so
+// the seeded stream must be identical whether or not the model policy tried and
+// failed to enumerate the same leaf first, and it must still reach every item.
+func TestSeededSamplingSurvivesTheModelPolicysRefusal(t *testing.T) {
+	alone := seededSamplerStream(t, samplerParitySpec, false)
+	afterRefusal := seededSamplerStream(t, samplerParitySpec, true)
+	if !slices.Equal(alone, afterRefusal) {
+		t.Error("a refused enumeration moved the seeded draw stream")
+	}
+	drawn := map[string]bool{}
+	for _, action := range alone {
+		drawn[action] = true
+	}
+	if len(drawn) != 3 {
+		t.Errorf("seeded picker reached %d of the 3 sampled targets: %v", len(drawn), slices.Sorted(maps.Keys(drawn)))
+	}
+}
+
+// seededSamplerStream drives the seeded picker over the draw budget, optionally
+// letting the model policy refuse the same spec before every draw.
+func seededSamplerStream(t *testing.T, specSource string, enumerateFirst bool) []string {
+	t.Helper()
+	verifier := newVerifier(t, WithSeed(0x5eed))
+	loadActionSpec(t, verifier, specSource)
+	pushTree(t, verifier, policyTreeJSON)
+	stream := make([]string, 0, seededDrawBudget)
+	for range seededDrawBudget {
+		if enumerateFirst {
+			if _, err := verifier.Candidates(LabelSourceVisibleText); err == nil {
+				t.Fatal("the model policy must refuse a spec that samples")
+			}
+		}
+		action, err := verifier.NextAction()
+		if err != nil {
+			t.Fatalf("seeded picker declined the sampled tap: %v", err)
+		}
+		stream = append(stream, fmt.Sprintf("%+v", action))
+	}
+	return stream
+}
+
+// valueGeneratorSpec authors one leaf that types a drawn value, which is the
+// same divergence from() has: the draw reaches the seeded picker's rng and never
+// this enumeration, so the model would be handed one fixed value forever.
+func valueGeneratorSpec(generator string) string {
+	return fmt.Sprintf(`
+import { actions, InputText, integers, strings, emails, edgeCaseText } from "@sanderling/spec";
+const authoredValues = %s;
+globalThis.actions = actions(() => [InputText({ into: "id:Amount", text: String(authoredValues.generate()) })]);
+`, generator)
+}
+
+// TestModelPolicyRefusesAnAuthoredValueGenerator covers every generator in
+// values.ts whose span is wider than one value.
+func TestModelPolicyRefusesAnAuthoredValueGenerator(t *testing.T) {
+	for _, generator := range []struct{ name, expression string }{
+		{"integers", "integers().between(1, 500)"},
+		{"strings", "strings().length(3, 6).alpha()"},
+		{"emails", `emails().domain("folio.app")`},
+		{"edgeCaseText", "edgeCaseText()"},
+	} {
+		t.Run(generator.name, func(t *testing.T) {
+			verifier := newVerifier(t, WithSeed(0x5eed))
+			loadActionSpec(t, verifier, valueGeneratorSpec(generator.expression))
+			pushTree(t, verifier, policyTreeJSON)
+
+			_, err := verifier.Candidates(LabelSourceVisibleText)
+			if err == nil {
+				t.Fatalf("%s was enumerated for the model policy, which cannot draw it", generator.name)
+			}
+			if !strings.Contains(err.Error(), "authoredValues.generate()") {
+				t.Errorf("error does not name the offending leaf: %v", err)
+			}
+			if !strings.Contains(err.Error(), generator.name+"()") {
+				t.Errorf("error does not name %s(): %v", generator.name, err)
+			}
+		})
+	}
+}
+
+// TestModelPolicyAcceptsASingleValuedGenerator is the boundary: a generator that
+// spans one value hands both policies the same value, so refusing it would stop
+// runs that have nothing wrong with them.
+func TestModelPolicyAcceptsASingleValuedGenerator(t *testing.T) {
+	verifier := newVerifier(t, WithSeed(0x5eed))
+	loadActionSpec(t, verifier, valueGeneratorSpec("integers().between(7, 7)"))
+	pushTree(t, verifier, policyTreeJSON)
+
+	candidates := mustCandidates(t, verifier, LabelSourceVisibleText)
+	if len(candidates) != 1 || candidates[0].Action.Text != "7" {
+		t.Fatalf("model was offered %+v, want the one authored InputText typing 7", candidates)
+	}
+}
+
+// TestSeededValueDrawsSurviveTheModelPolicysRefusal is the values.ts half of the
+// guard above: the seeded arm keeps its whole range, and its draw stream does not
+// move because the model policy refused the same spec first.
+func TestSeededValueDrawsSurviveTheModelPolicysRefusal(t *testing.T) {
+	spec := valueGeneratorSpec("integers().between(1, 500)")
+	alone := seededSamplerStream(t, spec, false)
+	afterRefusal := seededSamplerStream(t, spec, true)
+	if !slices.Equal(alone, afterRefusal) {
+		t.Error("a refused enumeration moved the seeded draw stream")
+	}
+	drawn := map[string]bool{}
+	for _, action := range alone {
+		drawn[action] = true
+	}
+	if len(drawn) < 100 {
+		t.Errorf("seeded picker typed %d distinct values over %d draws", len(drawn), seededDrawBudget)
 	}
 }

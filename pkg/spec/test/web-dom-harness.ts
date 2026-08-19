@@ -50,15 +50,28 @@ export interface FakeElementSpec {
   clickable?: boolean;
   editable?: boolean;
   disabled?: boolean;
+  // checked/selected are DOM properties rather than markup attributes on a real
+  // element, which is the whole point of them: the attribute records what the
+  // page started with and stops tracking the first time a user acts.
+  checked?: boolean;
+  selected?: boolean;
   // overflows makes the element's content taller than its box, which is how the
   // host decides an element is scrollable.
   overflows?: boolean;
+  focused?: boolean;
+  // customProperties are DECLARED on this element and INHERITED by everything
+  // under it, which is the whole reason the runtime reads a computed style and
+  // not the style attribute: Compose declares the caret's box on the container
+  // that positions its backing input, and only the input's COMPUTED style
+  // carries it.
+  customProperties?: Record<string, string>;
   children?: FakeElementSpec[];
   shadow?: FakeElementSpec[];
 }
 
 export interface FakeRoot {
   children: FakeElement[];
+  activeElement: FakeElement | null;
   querySelectorAll(selector: string): FakeElement[];
 }
 
@@ -74,6 +87,7 @@ export interface FakeElement extends Omit<FakeElementSpec, "children" | "shadow"
   children: FakeElement[];
   shadowRoot: FakeRoot | null;
   getAttribute(name: string): string | null;
+  matches(selector: string): boolean;
   querySelectorAll(selector: string): FakeElement[];
   scrollHeight: number;
   clientHeight: number;
@@ -100,7 +114,7 @@ export function fakeElement(spec: FakeElementSpec): FakeElement {
   const element: FakeElement = {
     ...spec,
     tagName: spec.tag.toUpperCase(),
-    type: spec.tag === "input" ? "text" : "",
+    type: spec.tag === "input" ? (attributes.type ?? "text") : "",
     isContentEditable: editable && spec.tag !== "input" && spec.tag !== "textarea",
     id: spec.id ?? "",
     className: attributes.class ?? "",
@@ -110,6 +124,10 @@ export function fakeElement(spec: FakeElementSpec): FakeElement {
     children: (spec.children ?? []).map(fakeElement),
     shadowRoot: null,
     getAttribute: (name: string) => attributes[name] ?? null,
+    // elementHandle asks an element about itself rather than sweeping the
+    // document for it, so a fake that only answers querySelectorAll reports
+    // every element as untappable.
+    matches: (selector: string) => matchesQuery(element, selector),
     querySelectorAll: (selector: string) => queryScope(element, selector),
     scrollHeight: spec.overflows ? spec.height * 2 : spec.height,
     clientHeight: spec.height,
@@ -134,9 +152,34 @@ export function fakeElement(spec: FakeElementSpec): FakeElement {
 function fakeRoot(children: FakeElement[]): FakeRoot {
   const root: FakeRoot = {
     children,
+    get activeElement(): FakeElement | null {
+      return activeElementIn(children);
+    },
     querySelectorAll: (selector: string) => queryScope(root, selector),
   };
   return root;
+}
+
+// A root answers activeElement with a node of its OWN tree, as the browser
+// does: focus inside a shadow root names the host, and only that root's own
+// activeElement names the field. Reporting the field from both roots would let
+// a runtime that never descends still pass.
+function activeElementIn(nodes: FakeElement[]): FakeElement | null {
+  for (const node of nodes) {
+    if (node.focused) return node;
+    if (node.shadowRoot?.activeElement) return node;
+    const inside = activeElementIn(node.children);
+    if (inside) return inside;
+  }
+  return null;
+}
+
+function inheritedProperty(element: FakeElement, name: string): string {
+  for (let node: FakeElement | null = element; node; node = node.parentElement) {
+    const declared = node.customProperties?.[name];
+    if (declared !== undefined) return declared;
+  }
+  return "";
 }
 
 function queryScope(scope: { children: FakeElement[] }, selector: string): FakeElement[] {
@@ -279,9 +322,13 @@ export function withFakeDocument(elements: FakeElement[], run: () => void): void
   const global = globalThis as Record<string, unknown>;
   const originalDocument = global.document;
   const originalWindow = global.window;
+  const originalComputedStyle = global.getComputedStyle;
   const document: FakeRoot = fakeRoot(elements);
   global.document = document;
   global.window = {};
+  global.getComputedStyle = (element: FakeElement) => ({
+    getPropertyValue: (name: string) => inheritedProperty(element, name),
+  });
   __testing__.resetTargetCache();
   try {
     run();
@@ -289,5 +336,6 @@ export function withFakeDocument(elements: FakeElement[], run: () => void): void
     __testing__.resetTargetCache();
     global.document = originalDocument;
     global.window = originalWindow;
+    global.getComputedStyle = originalComputedStyle;
   }
 }

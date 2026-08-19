@@ -23,7 +23,7 @@ import (
 //   - else if exactly one AVD exists locally, boot it;
 //   - else fail with a helpful message listing the available AVDs.
 func EnsureDevice(ctx context.Context, serial, avdName string, stdout io.Writer) error {
-	devices, err := listAdbDevices(ctx)
+	devices, err := ConnectedDevices(ctx)
 	if err != nil {
 		return fmt.Errorf("list adb devices: %w", err)
 	}
@@ -358,7 +358,11 @@ var standardSDKRoots = []string{
 	"/usr/local/share/android-commandlinetools",
 }
 
-func listAdbDevices(ctx context.Context) ([]string, error) {
+// ConnectedDevices lists the serials adb reports as online. It goes through
+// the adb CLI so the ADB_SERVER_SOCKET / ANDROID_ADB_SERVER_ADDRESS pair the
+// process was started with selects the same server every other adb call in the
+// run talks to, rather than assuming a server on this machine.
+func ConnectedDevices(ctx context.Context) ([]string, error) {
 	adb, err := AdbBinary()
 	if err != nil {
 		return nil, err

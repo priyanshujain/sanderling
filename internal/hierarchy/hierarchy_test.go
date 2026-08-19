@@ -1,6 +1,11 @@
 package hierarchy
 
-import "testing"
+import (
+	"encoding/json"
+	"slices"
+	"strings"
+	"testing"
+)
 
 // sampleDump is a sidecar TreeNode JSON equivalent of the old XML fixture.
 const sampleDump = `{
@@ -106,6 +111,95 @@ func TestDescPrefix(t *testing.T) {
 	}
 }
 
+// idPrefixDump is a list whose rows carry a durable role prefix followed by the
+// record's identifier, the convention that makes every row's full id unique and
+// unwritable in a spec.
+const idPrefixDump = `{
+  "attributes": {"resource-id": "com.example:id/customer_list", "bounds": "[0,0,100,400]"},
+  "children": [
+    {"attributes": {"resource-id": "com.example:id/customer_row_abc-123", "bounds": "[0,0,100,100]"}, "children": []},
+    {"attributes": {"resource-id": "com.example:id/customer_row_def-456", "bounds": "[0,100,100,200]"}, "children": []},
+    {"attributes": {"resource-id": "com.example:id/supplier_row_xyz", "bounds": "[0,200,100,300]"}, "children": []},
+    {"attributes": {"identifier": "customer_row_ghi-789", "bounds": "[0,300,100,400]"}, "children": []}
+  ]
+}`
+
+func TestIDPrefixMatchesEveryRowSharingTheRole(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	rows := tree.FindAll("idPrefix:customer_row_")
+	if len(rows) != 3 {
+		t.Fatalf("want 3 customer rows, got %d", len(rows))
+	}
+}
+
+func TestIDPrefixDoesNotRequireThePackagePrefix(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	el := tree.Find("idPrefix:customer_row_abc")
+	if el == nil {
+		t.Fatal("expected the local name after :id/ to match on its own")
+	}
+	if el.ResourceID != "com.example:id/customer_row_abc-123" {
+		t.Fatalf("got %q", el.ResourceID)
+	}
+}
+
+func TestIDPrefixAlsoMatchesTheWholeIdentifier(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	if tree.Find("idPrefix:com.example:id/customer_row_") == nil {
+		t.Fatal("expected a package-qualified prefix to match")
+	}
+}
+
+func TestIDPrefixMatchesIOSAccessibilityIdentifier(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	el := tree.Find("idPrefix:customer_row_ghi")
+	if el == nil {
+		t.Fatal("expected identifier to match on a node with no resource-id")
+	}
+	if el.Bounds.Top != 300 {
+		t.Fatalf("matched the wrong node: %+v", el.Bounds)
+	}
+}
+
+func TestIDPrefixMatchesNothingWhenNoIDStartsWithIt(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	if rows := tree.FindAll("idPrefix:invoice_row_"); len(rows) != 0 {
+		t.Fatalf("want no matches, got %d", len(rows))
+	}
+}
+
+func TestIDPrefixIsNotASubstringMatch(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	if tree.Find("idPrefix:row_") != nil {
+		t.Fatal("expected starts-with, not substring")
+	}
+}
+
+// The string and object forms are one rule, so a prefix filter combined with a
+// second attribute has to keep the same meaning it has on its own.
+func TestIDPrefixInObjectSelector(t *testing.T) {
+	tree, _ := Parse(idPrefixDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "idPrefix", Value: "customer_row_"}}}
+	if nodes := tree.Root.FindAllBySelector(sel); len(nodes) != 3 {
+		t.Fatalf("want 3 customer rows, got %d", len(nodes))
+	}
+}
+
+func TestDescPrefixInObjectSelector(t *testing.T) {
+	input := `{
+	  "attributes": {},
+	  "children": [
+	    {"attributes": {"content-desc": "customer_row_abc-123", "bounds": "[0,0,100,100]"}, "children": []},
+	    {"attributes": {"content-desc": "supplier_row_xyz", "bounds": "[0,100,100,200]"}, "children": []}
+	  ]
+	}`
+	tree, _ := Parse(input)
+	sel := Selector{Filters: []AttrFilter{{Attr: "descPrefix", Value: "customer_row_"}}}
+	if nodes := tree.Root.FindAllBySelector(sel); len(nodes) != 1 {
+		t.Fatalf("want 1 customer row, got %d", len(nodes))
+	}
+}
+
 func TestBoolFieldsFromNode(t *testing.T) {
 	input := `{
 	  "attributes": {"resource-id": "x", "bounds": "[0,0,100,100]"},
@@ -138,6 +232,53 @@ func TestBoolFieldsFromNode(t *testing.T) {
 	}
 	if el.Selected {
 		t.Error("expected selected=false")
+	}
+}
+
+// secure is the one state flag with three answers: a producer that reports
+// nothing leaves the element unknown rather than known-not-secure, and a
+// consumer deciding what a typed value may be written into a record reads the
+// difference.
+func TestSecureIsUnknownUntilAProducerReportsIt(t *testing.T) {
+	cases := []struct {
+		name         string
+		node         string
+		wantReported bool
+		wantSecure   bool
+	}{
+		{"reported secure", `{"attributes": {"bounds": "[0,0,10,10]"}, "secure": true}`, true, true},
+		{"reported not secure", `{"attributes": {"bounds": "[0,0,10,10]"}, "secure": false}`, true, false},
+		{"never reported", `{"attributes": {"bounds": "[0,0,10,10]"}}`, false, false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tree, err := Parse(testCase.node)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			element := tree.Elements[0]
+			if element.SecureReported() != testCase.wantReported {
+				t.Errorf("SecureReported = %v, want %v", element.SecureReported(), testCase.wantReported)
+			}
+			if element.Secure != testCase.wantSecure {
+				t.Errorf("Secure = %v, want %v", element.Secure, testCase.wantSecure)
+			}
+		})
+	}
+}
+
+// A selector reaches the fact by the same route every other boolean state does.
+func TestSecureIsSelectable(t *testing.T) {
+	tree, err := Parse(`{"attributes": {"resource-id": "root", "bounds": "[0,0,10,10]"}, "children": [
+		{"attributes": {"resource-id": "pwd", "bounds": "[0,0,10,5]"}, "secure": true, "children": []},
+		{"attributes": {"resource-id": "email", "bounds": "[0,5,10,10]"}, "secure": false, "children": []}
+	]}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	element := tree.Find("secure:true")
+	if element == nil || element.ResourceID != "pwd" {
+		t.Errorf("secure:true resolved to %+v, want the pwd element", element)
 	}
 }
 
@@ -390,6 +531,41 @@ const iosAttrDump = `{
       "attributes": {"accessibilityText": "Close", "title": "Settings", "bounds": "[0,0,100,50]"},
       "children": [],
       "enabled": true
+    },
+    {
+      "attributes": {"identifier": "Feed", "scrollable": "true", "bounds": "[0,120,390,700]"},
+      "children": [],
+      "enabled": true
+    }
+  ]
+}`
+
+const classAttrDump = `{
+  "attributes": {"resource-id": "com.app:id/list", "class": "android.widget.FrameLayout", "bounds": "[0,0,1080,2340]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "com.app:id/row1", "class": "android.widget.Button", "bounds": "[0,0,1080,200]"},
+      "children": [],
+      "clickable": true,
+      "enabled": true
+    }
+  ]
+}`
+
+const webAttrDump = `{
+  "attributes": {"resource-id": "page", "tag": "html", "bounds": "[0,0,1280,720]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "login_email", "content-desc": "login_email", "tag": "input", "bounds": "[0,0,300,40]"},
+      "children": [],
+      "editable": true,
+      "enabled": true
+    },
+    {
+      "attributes": {"resource-id": "customer_row_a1", "data-testid": "customer-row", "tag": "div", "bounds": "[0,40,300,80]"},
+      "children": [],
+      "clickable": true,
+      "enabled": true
     }
   ]
 }`
@@ -407,6 +583,135 @@ func TestLabelAliasMatchesAccessibilityText(t *testing.T) {
 	el := tree.Find("label:Close")
 	if el == nil {
 		t.Fatal("expected label: to match accessibilityText via alias")
+	}
+}
+
+// className is a spec key no producer writes: android reports the view class,
+// ios the element type and the chrome dump el.className, all under `class`. The
+// key matched nothing at all here while the web runtime resolved it against the
+// live DOM, and the key being accepted meant no unknown-key error said so.
+func TestClassNameAliasMatchesClass(t *testing.T) {
+	tree, _ := Parse(classAttrDump)
+	el := tree.Find("className:Button")
+	if el == nil {
+		t.Fatal("expected className: to match the class attribute via alias")
+	}
+	if el.ResourceID != "com.app:id/row1" {
+		t.Fatalf("got %q, want row1", el.ResourceID)
+	}
+	object := tree.FindBySelector(Selector{Filters: []AttrFilter{
+		{Attr: "className", Value: "Button"},
+	}})
+	if object == nil {
+		t.Fatal("expected the object form to match the class attribute via alias")
+	}
+	if object.ResourceID != el.ResourceID {
+		t.Fatalf("the object form matched %q, want %q", object.ResourceID, el.ResourceID)
+	}
+}
+
+// One fact, four names, and only two of them reached it. Android and the chrome
+// dump write the accessible name under content-desc; ios writes it under
+// accessibilityText. label and accessibilityLabel aliased onto accessibilityText
+// alone, and alias expansion is ONE level, so the hop from there to content-desc
+// was never taken: both keys matched nothing on the two platforms that write
+// content-desc. ariaLabel and contentDescription aliased onto nothing at all and
+// matched nothing anywhere. The web runtime resolves all four against the live
+// DOM, so a selector naming a field this way found it on one host and no element
+// at all on the other, with no unknown-key error to say so.
+func TestAccessibilityLabelAliasesReachContentDesc(t *testing.T) {
+	tree, _ := Parse(webAttrDump)
+	for _, key := range []string{"label", "accessibilityLabel", "ariaLabel", "contentDescription"} {
+		element := tree.Find(key + ":login_email")
+		if element == nil {
+			t.Fatalf("expected %s: to match the content-desc attribute via alias", key)
+		}
+		if element.ResourceID != "login_email" {
+			t.Fatalf("%s: matched %q, want login_email", key, element.ResourceID)
+		}
+		object := tree.FindBySelector(Selector{Filters: []AttrFilter{
+			{Attr: key, Value: "login_email"},
+		}})
+		if object == nil {
+			t.Fatalf("expected the object form of %s to match content-desc via alias", key)
+		}
+		if object.ResourceID != element.ResourceID {
+			t.Fatalf("the object form of %s matched %q, want %q",
+				key, object.ResourceID, element.ResourceID)
+		}
+	}
+}
+
+// The iOS sidecar writes the same fact under accessibilityText, which the two
+// names already reached and have to keep reaching.
+func TestAccessibilityLabelAliasesStillReachAccessibilityText(t *testing.T) {
+	tree, _ := Parse(iosAttrDump)
+	for _, key := range []string{"label", "accessibilityLabel", "ariaLabel", "contentDescription"} {
+		if tree.Find(key+":Close") == nil {
+			t.Fatalf("expected %s: to match the accessibilityText attribute via alias", key)
+		}
+	}
+}
+
+// Compose for Web writes a test tag as data-testid, the key the web runtime
+// resolves testTag and testID against. testTag reached the three identifier
+// keys and not that one, and testID aliased onto nothing at all, so a tag the
+// web runtime found on both rows named no element here.
+func TestTestTagAliasesReachDataTestID(t *testing.T) {
+	tree, _ := Parse(webAttrDump)
+	for _, key := range []string{"testTag", "testID"} {
+		element := tree.Find(key + ":customer-row")
+		if element == nil {
+			t.Fatalf("expected %s: to match the data-testid attribute via alias", key)
+		}
+		if element.ResourceID != "customer_row_a1" {
+			t.Fatalf("%s: matched %q, want customer_row_a1", key, element.ResourceID)
+		}
+		object := tree.FindBySelector(Selector{Filters: []AttrFilter{
+			{Attr: key, Value: "customer-row"},
+		}})
+		if object == nil {
+			t.Fatalf("expected the object form of %s to match data-testid via alias", key)
+		}
+		if object.ResourceID != element.ResourceID {
+			t.Fatalf("the object form of %s matched %q, want %q",
+				key, object.ResourceID, element.ResourceID)
+		}
+	}
+}
+
+// testTag keeps reaching the identifier keys android and ios write it under.
+func TestTestTagStillReachesTheIdentifierKeys(t *testing.T) {
+	if tree, _ := Parse(androidAttrDump); tree.Find("testTag:row1") == nil {
+		t.Fatal("expected testTag: to match the resource-id attribute via alias")
+	}
+	if tree, _ := Parse(iosAttrDump); tree.Find("testTag:Feed") == nil {
+		t.Fatal("expected testTag: to match the identifier attribute via alias")
+	}
+}
+
+// bounds is a raw driver attribute rather than a cross-platform key: every dump
+// writes the rectangle out as a string and no DOM element carries an attribute
+// of that name, so the key resolved here and matched nothing on web on every
+// page there is, with no unknown-key error to say so and no mapping to invent
+// for it. Off the accepted list the web runtime raises that error, and the
+// escape hatch for an attribute the tree carries is what keeps it resolving
+// where a producer writes it.
+func TestBoundsIsAReachableRawAttributeAndNotAnAcceptedKey(t *testing.T) {
+	if slices.Contains(SelectorKeys(), "bounds") {
+		t.Error("bounds names no fact a DOM carries, so it cannot be a cross-platform key")
+	}
+	tree, _ := Parse(androidAttrDump)
+	selector := Selector{Filters: []AttrFilter{{Attr: "bounds", Value: "[0,0,1080,200]"}}}
+	if unknown := tree.UnknownSelectorKeys(selector); len(unknown) != 0 {
+		t.Errorf("bounds is an attribute this dump carries, got unknown %v", unknown)
+	}
+	node := tree.FindBySelector(selector)
+	if node == nil {
+		t.Fatal("expected bounds to match the raw attribute the dump writes")
+	}
+	if node.ResourceID != "com.app:id/row1" {
+		t.Fatalf("bounds matched %q, want row1", node.ResourceID)
 	}
 }
 
@@ -456,11 +761,14 @@ func TestTitleReturnsNilForAndroid(t *testing.T) {
 	}
 }
 
-func TestScrollableGracefulIgnoreOnIOS(t *testing.T) {
+func TestScrollableMatchesOnIOS(t *testing.T) {
 	tree, _ := Parse(iosAttrDump)
 	el := tree.Find("scrollable:true")
-	if el != nil {
-		t.Fatal("expected scrollable:true to return nil on iOS hierarchy (graceful ignore)")
+	if el == nil {
+		t.Fatal("expected scrollable:true to match the iOS scroll container")
+	}
+	if el.Attributes["identifier"] != "Feed" {
+		t.Fatalf("got %q, want Feed", el.Attributes["identifier"])
 	}
 }
 
@@ -473,6 +781,113 @@ func TestTextIsNowSubstring(t *testing.T) {
 	if el.Text != "Hello" {
 		t.Fatalf("got %q, want Hello", el.Text)
 	}
+}
+
+// subtreeTextDump is the shape web and iOS report: an element's text is its
+// whole subtree's text, so a badge's ancestors carry the badge's words.
+// split_row is the ancestor whose own text carries the value where no
+// descendant of it does; nested_row is the one whose badge carries it too.
+const subtreeTextDump = `{
+  "attributes": {"resource-id": "page", "text": "Sent Sent here Sent Sent", "bounds": "[0,0,1080,2340]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "status_row", "text": "Sent", "bounds": "[0,0,1080,100]"},
+      "children": [
+        {"attributes": {"resource-id": "status_badge", "text": "Sent", "bounds": "[0,0,200,100]"}, "children": []}
+      ]
+    },
+    {
+      "attributes": {"resource-id": "split_row", "text": "Sent here", "bounds": "[0,100,1080,200]"},
+      "children": [
+        {"attributes": {"resource-id": "split_tail", "text": "t here", "bounds": "[0,100,200,200]"}, "children": []}
+      ]
+    },
+    {
+      "attributes": {"resource-id": "nested_row", "text": "Sent Sent", "bounds": "[0,200,1080,300]"},
+      "children": [
+        {"attributes": {"resource-id": "nested_badge", "text": "Sent", "bounds": "[0,200,200,300]"}, "children": []}
+      ]
+    }
+  ]
+}`
+
+func TestTextNamesTheInnermostMatch(t *testing.T) {
+	tree, _ := Parse(subtreeTextDump)
+	want := []string{"status_badge", "split_row", "nested_badge"}
+	if got := resourceIDsOf(tree.FindAllNodes("text:Sent")); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("text:Sent matched %v, want %v", got, want)
+	}
+	sel := Selector{Filters: []AttrFilter{{Attr: "text", Value: "Sent"}}}
+	if got := resourceIDsOf(tree.FindAllBySelector(sel)); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("{text: Sent} matched %v, want %v", got, want)
+	}
+	node := tree.FindNode("text:Sent")
+	if node == nil || node.ResourceID != "status_badge" {
+		t.Errorf("find named %v, want the deepest match status_badge", node)
+	}
+}
+
+func TestScopedTextNamesTheInnermostMatch(t *testing.T) {
+	tree, _ := Parse(subtreeTextDump)
+	want := []string{"status_badge", "split_row", "nested_badge"}
+	if got := resourceIDsOf(tree.Root.FindAll("text:Sent")); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("scoped text:Sent matched %v, want %v", got, want)
+	}
+	sel := Selector{Filters: []AttrFilter{{Attr: "text", Value: "Sent"}}}
+	if got := resourceIDsOf(tree.Root.FindAllBySelector(sel)); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("scoped {text: Sent} matched %v, want %v", got, want)
+	}
+}
+
+// The root answers a selector whichever form the selector is written in: the
+// string form scans the tree from the root down, and the object form used to
+// start at the root's children and lose it.
+func TestRootMatchesInBothSelectorForms(t *testing.T) {
+	tree, _ := Parse(subtreeTextDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "id", Value: "page"}}}
+	want := []string{"page"}
+	if got := resourceIDsOf(tree.FindAllNodes("id:page")); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("id:page matched %v, want %v", got, want)
+	}
+	if got := resourceIDsOf(tree.FindAllBySelector(sel)); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("{id: page} matched %v, want %v", got, want)
+	}
+	if got := resourceIDsOf(tree.FindAllBySelectorPath([]Selector{sel})); !slices.Equal(
+		got,
+		want,
+	) {
+		t.Errorf("[{id: page}] matched %v, want %v", got, want)
+	}
+	if node := tree.FindBySelector(sel); node == nil ||
+		node.ResourceID != "page" {
+		t.Errorf("find({id: page}) named %v, want page", node)
+	}
+}
+
+func resourceIDsOf(nodes []*Node) []string {
+	var ids []string
+	for _, node := range nodes {
+		ids = append(ids, node.ResourceID)
+	}
+	return ids
 }
 
 func TestMultiFilterSelectorAND(t *testing.T) {
@@ -1036,6 +1451,233 @@ func TestTreeTransitional(t *testing.T) {
 	}
 }
 
+// A key means the same thing whichever form the author writes it in. The object
+// form used to fall through to the raw attribute map, which carries neither
+// "id" nor "desc" on any platform.
+func TestObjectSelectorIDMatchesTheSameElementsAsTheStringForm(t *testing.T) {
+	tree, _ := Parse(sampleDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "id", Value: "row"}}}
+	object := tree.FindAllBySelector(sel)
+	if len(object) != len(tree.FindAll("id:row")) {
+		t.Fatalf("object form matched %d, string form %d", len(object), len(tree.FindAll("id:row")))
+	}
+	if len(object) != 2 {
+		t.Fatalf("want 2 rows, got %d", len(object))
+	}
+}
+
+func TestObjectSelectorDescMatchesTheSameElementsAsTheStringForm(t *testing.T) {
+	tree, _ := Parse(sampleDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "desc", Value: "row"}}}
+	if len(tree.FindAllBySelector(sel)) != len(tree.FindAll("desc:row")) {
+		t.Fatal("object and string form disagree on desc")
+	}
+}
+
+func TestUnknownSelectorKeyIsReported(t *testing.T) {
+	tree, _ := Parse(sampleDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "descripton", Value: "row"}}}
+	unknown := tree.UnknownSelectorKeys(sel)
+	if len(unknown) != 1 || unknown[0] != "descripton" {
+		t.Fatalf("got %v, want [descripton]", unknown)
+	}
+	message := UnknownSelectorKeyMessage(unknown)
+	if !strings.Contains(message, `"descripton"`) || !strings.Contains(message, "resource-id") {
+		t.Fatalf("message names neither the key nor the accepted list: %s", message)
+	}
+}
+
+func TestAcceptedSelectorKeyAbsentFromTheScreenIsNotUnknown(t *testing.T) {
+	tree, _ := Parse(sampleDump)
+	sel := Selector{Filters: []AttrFilter{{Attr: "title", Value: "Settings"}}}
+	if unknown := tree.UnknownSelectorKeys(sel); len(unknown) != 0 {
+		t.Fatalf("a platform-specific key must stay silent, got %v", unknown)
+	}
+}
+
+// Raw driver attributes stay reachable: a key some element carries can match,
+// whether or not this package enumerates it.
+func TestRawDriverAttributeIsNotUnknown(t *testing.T) {
+	input := `{
+	  "attributes": {"resource-id": "root", "important-for-accessibility": "true"},
+	  "children": []
+	}`
+	tree, _ := Parse(input)
+	sel := Selector{Filters: []AttrFilter{{Attr: "important-for-accessibility", Value: "true"}}}
+	if unknown := tree.UnknownSelectorKeys(sel); len(unknown) != 0 {
+		t.Fatalf("got %v, want none", unknown)
+	}
+}
+
+// TestStoredTreeRebuildsRootAndResolvesSelectors is the offline half of every
+// trace: a tree that only survives as a flat pre-order array resolves nothing,
+// because every lookup walks Root.
+func TestStoredTreeRebuildsRootAndResolvesSelectors(t *testing.T) {
+	tree, err := Parse(sampleDump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := json.Marshal(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Tree
+	if err := json.Unmarshal(stored, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Root == nil {
+		t.Fatal("Root not rebuilt from the stored tree")
+	}
+	if len(decoded.Elements) != len(tree.Elements) {
+		t.Fatalf(
+			"elements = %d, want %d",
+			len(decoded.Elements),
+			len(tree.Elements),
+		)
+	}
+	for index, element := range decoded.Elements {
+		if element.ResourceID != tree.Elements[index].ResourceID {
+			t.Fatalf(
+				"element %d = %q, want %q",
+				index,
+				element.ResourceID,
+				tree.Elements[index].ResourceID,
+			)
+		}
+	}
+	online := tree.Find("id:app:id/title")
+	offline := decoded.Find("id:app:id/title")
+	if online == nil {
+		t.Fatal("the selector does not resolve online; the fixture is wrong")
+	}
+	if offline == nil || offline.Text != online.Text {
+		t.Fatalf(
+			"selector resolves online to %+v, offline to %+v",
+			online,
+			offline,
+		)
+	}
+	if decoded.Find("id:app:id/title") != decoded.Elements[1] {
+		t.Error(
+			"the rebuilt nodes and the decoded element list are different pointers",
+		)
+	}
+	childCount := 0
+	var walk func(node *Node)
+	walk = func(node *Node) {
+		childCount++
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(decoded.Root)
+	if childCount != len(decoded.Elements) {
+		t.Errorf(
+			"the rebuilt tree holds %d nodes, the element list %d",
+			childCount,
+			len(decoded.Elements),
+		)
+	}
+}
+
+// TestStoredTreeWithoutDepthsKeepsTheOldShape: traces written before the
+// depths field must still load, and must say "no structure" rather than
+// inventing one.
+func TestStoredTreeWithoutDepthsKeepsTheOldShape(t *testing.T) {
+	var decoded Tree
+	if err := json.Unmarshal([]byte(`{"elements":[{"resourceId":"root"},{"resourceId":"child"}]}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Elements) != 2 {
+		t.Fatalf("elements = %d, want 2", len(decoded.Elements))
+	}
+	if decoded.Root != nil {
+		t.Errorf(
+			"Root = %+v, want nil for a stored tree that carries no depths",
+			decoded.Root,
+		)
+	}
+}
+
+func TestStoredTreeRejectsDepthsItCannotRebuild(t *testing.T) {
+	for name, stored := range map[string]string{
+		"count mismatch": `{"elements":[{"resourceId":"a"},{"resourceId":"b"}],"depths":[0]}`,
+		"rootless":       `{"elements":[{"resourceId":"a"}],"depths":[1]}`,
+		"second root":    `{"elements":[{"resourceId":"a"},{"resourceId":"b"}],"depths":[0,0]}`,
+		"skipped level":  `{"elements":[{"resourceId":"a"},{"resourceId":"b"}],"depths":[0,2]}`,
+	} {
+		var decoded Tree
+		if err := json.Unmarshal([]byte(stored), &decoded); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if decoded.Root != nil {
+			t.Errorf("%s: Root = %+v, want nil", name, decoded.Root)
+		}
+	}
+}
+
+// TestTreeStoresNoDepthsForAnUnwalkableRoot keeps the stored shape honest:
+// a hand-built Tree whose Root and Elements disagree must not claim a
+// structure that would rebuild into a different tree.
+func TestTreeStoresNoDepthsForAnUnwalkableRoot(t *testing.T) {
+	tree := &Tree{
+		Root:     &Node{Element: Element{ResourceID: "root"}},
+		Elements: []*Element{{ResourceID: "root"}, {ResourceID: "orphan"}},
+	}
+	stored, err := json.Marshal(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), "depths") {
+		t.Errorf("stored a shape that cannot be rebuilt: %s", stored)
+	}
+}
+
+// A producer that puts a string where a flag belongs must cost that flag and
+// nothing else. Failing the document instead blanks the whole tree, and every
+// extractor then reads a screen with no elements on it.
+func TestParseUnreadableFlagKeepsTheRestOfTheTree(t *testing.T) {
+	input := `{"attributes":{"resource-id":"app:id/root","bounds":"[0,0,400,800]"},"children":[
+		{"attributes":{"resource-id":"app:id/tabs","text":"keep"},"selected":"active","children":[]},
+		{"attributes":{"resource-id":"app:id/leaf"},"clickable":true,"children":[]}
+	]}`
+	tree, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(tree.Elements) != 3 {
+		t.Fatalf("elements = %d, want 3: one unreadable flag must not cost the tree", len(tree.Elements))
+	}
+	tabs := tree.Find("id:tabs")
+	if tabs == nil {
+		t.Fatal("the element carrying the unreadable flag was dropped")
+	}
+	if tabs.Text != "keep" {
+		t.Errorf("neighbouring field corrupted: text=%q", tabs.Text)
+	}
+	if tabs.Selected {
+		t.Error("selected must stay unset when the value the producer sent is not a boolean")
+	}
+	leaf := tree.Find("id:leaf")
+	if leaf == nil || !leaf.Clickable {
+		t.Errorf("a readable flag elsewhere in the tree must survive, got %+v", leaf)
+	}
+	if tree.UnreadableFlags != 1 {
+		t.Errorf("UnreadableFlags = %d, want 1: a dropped flag has to be countable", tree.UnreadableFlags)
+	}
+	stored, err := json.Marshal(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Tree
+	if err := json.Unmarshal(stored, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.UnreadableFlags != 1 {
+		t.Errorf("stored UnreadableFlags = %d, want 1: the trace has to carry it", decoded.UnreadableFlags)
+	}
+}
+
 // selectorFormsDump carries one node per id shape a real dump produces, plus
 // nodes carrying a description in the ", " form the desc rule knows about and a
 // text the text rule matches on a substring.
@@ -1111,6 +1753,70 @@ func TestSelectorFormsResolveTheSameElement(t *testing.T) {
 					"one selector, two answers: {%s: %q} resolved %q and %q resolved %q",
 					test.key, test.value, fromObject.ResourceID, stringForm, fromString.ResourceID,
 				)
+			}
+		})
+	}
+}
+
+// customElementDump is the shape a page built from custom elements reports: a
+// container's tag name contains the tag name of what it holds, so "todo-list"
+// carries "li" and "todo-app" carries "a".
+const customElementDump = `{
+  "attributes": {"tag": "todo-app", "resource-id": "app", "bounds": "[0,0,800,600]"},
+  "children": [
+    {
+      "attributes": {"tag": "todo-list", "resource-id": "list", "bounds": "[0,0,800,400]"},
+      "children": [
+        {"attributes": {"tag": "li", "resource-id": "todo_1", "bounds": "[0,0,800,50]"}, "children": []},
+        {"attributes": {"tag": "li", "resource-id": "todo_2", "bounds": "[0,50,800,100]"}, "children": []}
+      ]
+    },
+    {
+      "attributes": {"tag": "a", "resource-id": "filter_all", "bounds": "[0,400,800,450]"},
+      "children": []
+    }
+  ]
+}`
+
+func TestTagNamesTheWholeTagNotASubstringOfIt(t *testing.T) {
+	tree, _ := Parse(customElementDump)
+	for _, test := range []struct {
+		value string
+		want  []string
+	}{
+		{"li", []string{"todo_1", "todo_2"}},
+		{"a", []string{"filter_all"}},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			sel := Selector{Filters: []AttrFilter{{Attr: "tag", Value: test.value}}}
+			if got := resourceIDsOf(tree.FindAllBySelector(sel)); !slices.Equal(got, test.want) {
+				t.Errorf("{tag: %q} matched %v, want %v", test.value, got, test.want)
+			}
+			stringForm := "tag:" + test.value
+			if got := resourceIDsOf(tree.FindAllNodes(stringForm)); !slices.Equal(got, test.want) {
+				t.Errorf("%q matched %v, want %v", stringForm, got, test.want)
+			}
+		})
+	}
+}
+
+func TestTagMatchesTheElementItNames(t *testing.T) {
+	tree, _ := Parse(customElementDump)
+	for _, test := range []struct {
+		value string
+		want  []string
+	}{
+		{"todo-app", []string{"app"}},
+		{"todo-list", []string{"list"}},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			sel := Selector{Filters: []AttrFilter{{Attr: "tag", Value: test.value}}}
+			if got := resourceIDsOf(tree.FindAllBySelector(sel)); !slices.Equal(got, test.want) {
+				t.Errorf("{tag: %q} matched %v, want %v", test.value, got, test.want)
+			}
+			stringForm := "tag:" + test.value
+			if got := resourceIDsOf(tree.FindAllNodes(stringForm)); !slices.Equal(got, test.want) {
+				t.Errorf("%q matched %v, want %v", stringForm, got, test.want)
 			}
 		})
 	}

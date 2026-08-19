@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/priyanshujain/sanderling/internal/seedspec"
 )
 
 type config struct {
@@ -23,6 +25,7 @@ type config struct {
 	platform        string
 	arm             string
 	generator       string
+	labelSource     string
 	maxSteps        int
 	duration        time.Duration
 	seeds           []int64
@@ -58,6 +61,7 @@ func parseArguments(arguments []string, stderr io.Writer) (config, error) {
 	flagSet.StringVar(&configuration.platform, "platform", "android", "target platform: android, ios, web")
 	flagSet.StringVar(&configuration.arm, "arm", "", "experiment cell label recorded on every run (required)")
 	flagSet.StringVar(&configuration.generator, "generator", "seeded", "action generator: seeded or llm")
+	flagSet.StringVar(&configuration.labelSource, "label-source", "visible-text", "how candidates are named to the llm generator: visible-text (what a user reads) or resource-id (the identifier the app assigned). The seeded generator picks by index and ignores this")
 	flagSet.IntVar(&configuration.maxSteps, "max-steps", 0, "per-run step budget (required, must be positive)")
 	flagSet.DurationVar(&configuration.duration, "duration", 5*time.Minute, "per-run wall-clock ceiling")
 	flagSet.StringVar(&seedSpecification, "seeds", "", "seeds to run: ranges and lists, e.g. 1-10,20,30-32 (required)")
@@ -70,16 +74,25 @@ func parseArguments(arguments []string, stderr io.Writer) (config, error) {
 	}
 	configuration.extraArguments = flagSet.Args()
 
-	for name, value := range map[string]string{
-		"--spec":      configuration.specPath,
-		"--bundle-id": configuration.bundleID,
-		"--arm":       configuration.arm,
-		"--seeds":     seedSpecification,
-		"--output":    configuration.outputDirectory,
+	// Every missing flag is named together, in flag order: stopping at the
+	// first turns one rerun into one rerun per missing flag.
+	var missing []error
+	for _, required := range []struct {
+		name  string
+		value string
+	}{
+		{"--spec", configuration.specPath},
+		{"--bundle-id", configuration.bundleID},
+		{"--arm", configuration.arm},
+		{"--seeds", seedSpecification},
+		{"--output", configuration.outputDirectory},
 	} {
-		if value == "" {
-			return config{}, fmt.Errorf("%s is required", name)
+		if required.value == "" {
+			missing = append(missing, fmt.Errorf("%s is required", required.name))
 		}
+	}
+	if err := errors.Join(missing...); err != nil {
+		return config{}, err
 	}
 	switch configuration.platform {
 	case "android", "ios", "web":
@@ -90,6 +103,13 @@ func parseArguments(arguments []string, stderr io.Writer) (config, error) {
 	case "seeded", "llm":
 	default:
 		return config{}, fmt.Errorf("unsupported generator: %q (seeded, llm)", configuration.generator)
+	}
+	// Rejected before the first run, because a sweep that discovers the bad
+	// value on run 1 of 40 has already spent the device time of a whole cell.
+	switch configuration.labelSource {
+	case "visible-text", "resource-id":
+	default:
+		return config{}, fmt.Errorf("unsupported label source: %q (visible-text, resource-id)", configuration.labelSource)
 	}
 	if configuration.maxSteps <= 0 {
 		// Steps to first violation is right-censored at the budget, so a
@@ -109,7 +129,7 @@ func parseArguments(arguments []string, stderr io.Writer) (config, error) {
 		return config{}, fmt.Errorf("--run-timeout %s must exceed --duration %s, or every run is killed before it finishes",
 			configuration.runTimeout, configuration.duration)
 	}
-	seeds, err := parseSeeds(seedSpecification)
+	seeds, err := seedspec.Parse(seedSpecification)
 	if err != nil {
 		return config{}, fmt.Errorf("--seeds: %w", err)
 	}
@@ -170,6 +190,7 @@ func runArguments(configuration config, seed, device string) []string {
 		"--platform", configuration.platform,
 		"--arm", configuration.arm,
 		"--generator", configuration.generator,
+		"--label-source", configuration.labelSource,
 		"--max-steps", strconv.Itoa(configuration.maxSteps),
 		"--duration", configuration.duration.String(),
 		"--seed", seed,

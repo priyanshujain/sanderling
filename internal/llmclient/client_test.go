@@ -106,6 +106,61 @@ func TestChatCompletionRequestShapeAndParse(t *testing.T) {
 	}
 }
 
+// TestChatCompletionParsesUsageAndServedModel pins the accounting fields: cost
+// per defect and tokens per action are computed from them, and a router can
+// serve a request with a differently-priced model than the one asked for.
+func TestChatCompletionParsesUsageAndServedModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+		  "model": "vendor/model-2026-05",
+		  "choices": [{"message": {"content": "{}"}}],
+		  "usage": {"prompt_tokens": 1200, "completion_tokens": 34, "total_tokens": 1234}
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+	client, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	response, err := client.ChatCompletion(context.Background(), Request{Model: "vendor/model"})
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+	if response.Model != "vendor/model-2026-05" {
+		t.Errorf("served model = %q, want vendor/model-2026-05", response.Model)
+	}
+	want := Usage{PromptTokens: 1200, CompletionTokens: 34, TotalTokens: 1234}
+	if response.Usage != want {
+		t.Errorf("usage = %+v, want %+v", response.Usage, want)
+	}
+}
+
+// TestChatCompletionToleratesMissingUsage keeps a provider that omits the usage
+// object from failing the call; the record simply carries zero tokens.
+func TestChatCompletionToleratesMissingUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"}}]}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+	client, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	response, err := client.ChatCompletion(context.Background(), Request{Model: "m"})
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+	if (response.Usage != Usage{}) {
+		t.Errorf("usage = %+v, want the zero value when the provider omits it", response.Usage)
+	}
+}
+
 func TestNewRequiresAPIKey(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")

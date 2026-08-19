@@ -33,6 +33,19 @@ export class Pcg {
     this.lo = lo & MASK64;
   }
 
+  // state and restore carry the draw position out of and back into one engine.
+  // A web run's runtime is reinstalled by every page navigation, so the host
+  // holds this pair and puts it back, and the seed's stream is one stream
+  // whatever the page does.
+  state(): { hi: bigint; lo: bigint } {
+    return { hi: this.hi, lo: this.lo };
+  }
+
+  restore(hi: bigint, lo: bigint): void {
+    this.hi = hi & MASK64;
+    this.lo = lo & MASK64;
+  }
+
   // next advances the 128-bit LCG state and returns the new (hi, lo) pair.
   private next(): { hi: bigint; lo: bigint } {
     // 128-bit multiply of state by the 128-bit multiplier, keeping 128 bits.

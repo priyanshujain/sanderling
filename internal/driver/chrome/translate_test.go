@@ -12,18 +12,45 @@ func TestTranslateStringSelector_KnownKeys(t *testing.T) {
 		{"resource-id:account-name", `[id="account-name"]`, false},
 		{"class:btn-primary", `[class~="btn-primary"]`, false},
 		{"tag:button", `button`, false},
-		{"text:Sign in", `//*[normalize-space(text())="Sign in"]`, true},
-		{`text:Say "hi"`, `//*[normalize-space(text())='Say "hi"']`, true},
-		{`text:it's`, `//*[normalize-space(text())="it's"]`, true},
-		{`text:it's "fine"`, `//*[normalize-space(text())=concat("it's ", '"', "fine", '"', "")]`, true},
-		{"desc:logout", `[aria-label="logout"]`, false},
+		{
+			"text:Sign in",
+			`//*[contains(normalize-space(.), "Sign in") and not(.//*[contains(normalize-space(.), "Sign in")])]`,
+			true,
+		},
+		{
+			`text:Say "hi"`,
+			`//*[contains(normalize-space(.), 'Say "hi"') and not(.//*[contains(normalize-space(.), 'Say "hi"')])]`,
+			true,
+		},
+		{
+			`text:it's`,
+			`//*[contains(normalize-space(.), "it's") and not(.//*[contains(normalize-space(.), "it's")])]`,
+			true,
+		},
+		{
+			`text:it's "fine"`,
+			`//*[contains(normalize-space(.), concat("it's ", '"', "fine", '"', "")) and not(.//*[contains(normalize-space(.), concat("it's ", '"', "fine", '"', ""))])]`,
+			true,
+		},
+		// desc also accepts an iOS merged label, the way internal/hierarchy does.
+		{"desc:logout", `:is([aria-label="logout"], [aria-label^="logout, "])`, false},
 		{"label:logout", `[aria-label="logout"]`, false},
 		{"accessibilityLabel:logout", `[aria-label="logout"]`, false},
 		{"aria-label:Sign in", `[aria-label="Sign in"]`, false},
 		{"descPrefix:account:", `[aria-label^="account:"]`, false},
+		// Must stay the string pkg/spec/src/web-runtime.ts builds for the same
+		// selector; the two translators feed the same page.
+		{"idPrefix:customer_row_", `[id^="customer_row_"]`, false},
 		{"testTag:submit", `:is([data-testid="submit"], [id="submit"])`, false},
 		{"testID:submit", `[data-testid="submit"]`, false},
 		{"placeholder:Email", `[placeholder="Email"]`, false},
+		// hintText and placeholderValue name the accessible-name ladder, which
+		// no CSS says, so they reach nothing here rather than the field whose
+		// placeholder happens to carry the value and whose hint is its
+		// aria-label. Both matchers name that field by its aria-label alone, so
+		// a tap by placeholder acts on an element nobody selected.
+		{"hintText:Email", `[hintText*="Email"]`, false},
+		{"placeholderValue:Email", `[placeholderValue*="Email"]`, false},
 	}
 	for _, testCase := range cases {
 		got, isXPath, err := TranslateStringSelector(testCase.selector)
@@ -43,8 +70,21 @@ func TestTranslateStringSelector_UnknownPrefixPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != `[role="button"]` {
-		t.Errorf("unknown prefix should map to attribute selector, got %q", got)
+	if got != `[role*="button"]` {
+		t.Errorf(
+			"unknown prefix should map to a substring attribute selector, got %q",
+			got,
+		)
+	}
+	got, _, err = TranslateStringSelector("aria-expanded:true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `[aria-expanded="true"]` {
+		t.Errorf(
+			"a boolean value should map to an exact attribute selector, got %q",
+			got,
+		)
 	}
 }
 

@@ -1554,3 +1554,121 @@ func TestAcquireDeviceLockKeepsDistinctDevicesIndependent(t *testing.T) {
 	}
 	defer second.Close()
 }
+
+func TestSwipeReportsAGestureThatStartsOffScreen(t *testing.T) {
+	companion := &fakeCompanion{accessibilityJSON: "[]"}
+	d := newTestDriver(companion)
+
+	// The hierarchy extends past the screen whenever a scroll container holds
+	// content below the fold, so the runner's clamp to the tree's extent can
+	// place a gesture where the device has no surface to receive it.
+	err := d.Swipe(
+		context.Background(),
+		200,
+		1200,
+		200,
+		800,
+		300*time.Millisecond,
+	)
+	if !errors.Is(err, driver.ErrGestureUndelivered) {
+		t.Fatalf(
+			"Swipe starting below the screen: err = %v, want ErrGestureUndelivered",
+			err,
+		)
+	}
+	if slices.Contains(companion.recorded(), "hid") {
+		t.Fatal("an undeliverable swipe must not reach the companion")
+	}
+}
+
+func TestSwipeOnScreenReachesTheCompanion(t *testing.T) {
+	companion := &fakeCompanion{accessibilityJSON: "[]"}
+	d := newTestDriver(companion)
+
+	if err := d.Swipe(context.Background(), 200, 600, 200, 200, 300*time.Millisecond); err != nil {
+		t.Fatalf("Swipe: %v", err)
+	}
+	if !slices.Contains(companion.recorded(), "hid") {
+		t.Fatal("an on-screen swipe should reach the companion")
+	}
+}
+
+// TestTapSelectorReportsASelectorThatMatchesNothing keeps a by-selector tap
+// that resolved to no element out of the steps that read as dispatched.
+func TestTapSelectorReportsASelectorThatMatchesNothing(t *testing.T) {
+	companion := &fakeCompanion{accessibilityJSON: "[]"}
+	d := newTestDriver(companion)
+
+	err := d.TapSelector(context.Background(), "id:absent")
+	if !errors.Is(err, driver.ErrSelectorMatchedNothing) {
+		t.Fatalf("TapSelector on an absent element: err = %v, want ErrSelectorMatchedNothing", err)
+	}
+	if slices.Contains(companion.recorded(), "hid") {
+		t.Fatal("a selector that matched nothing must not reach the companion")
+	}
+}
+
+// TestGesturesRefuseTheFarEdgeOfTheScreen holds iOS to the extent the device
+// enforces. A tap at x == screenWidth is not delivered at that point on the
+// simulator, so admitting it dispatches a gesture the app receives somewhere
+// other than where the trace says it landed.
+func TestGesturesRefuseTheFarEdgeOfTheScreen(t *testing.T) {
+	gestures := map[string]func(*Driver, int, int) error{
+		"Tap":       func(d *Driver, x, y int) error { return d.Tap(context.Background(), x, y) },
+		"DoubleTap": func(d *Driver, x, y int) error { return d.DoubleTap(context.Background(), x, y) },
+		"LongPress": func(d *Driver, x, y int) error { return d.LongPress(context.Background(), x, y) },
+		"Swipe": func(d *Driver, x, y int) error {
+			return d.Swipe(context.Background(), x, y, 200, 400, 300*time.Millisecond)
+		},
+	}
+	for name, gesture := range gestures {
+		t.Run(name, func(t *testing.T) {
+			for _, point := range []struct{ x, y int }{{390, 400}, {200, 844}} {
+				companion := &fakeCompanion{accessibilityJSON: "[]"}
+				d := newTestDriver(companion)
+				err := gesture(d, point.x, point.y)
+				if !errors.Is(err, driver.ErrGestureUndelivered) {
+					t.Fatalf("%s at (%d,%d): err = %v, want ErrGestureUndelivered",
+						name, point.x, point.y, err)
+				}
+				if slices.Contains(companion.recorded(), "hid") {
+					t.Fatalf("%s at (%d,%d) reached the companion", name, point.x, point.y)
+				}
+			}
+			companion := &fakeCompanion{accessibilityJSON: "[]"}
+			d := newTestDriver(companion)
+			if err := gesture(d, 389, 843); err != nil {
+				t.Fatalf("%s at the last on-screen point: %v", name, err)
+			}
+		})
+	}
+}
+
+// TestTapReportsAPointOffScreen is the iOS half of letting the runner hand off
+// every point it resolved. The runner no longer refuses a point outside the
+// screen, because a driver that can scroll reaches it; this one cannot, and a
+// point with no surface under it has to be reported rather than synthesised
+// into nothing.
+func TestTapReportsAPointOffScreen(t *testing.T) {
+	for _, point := range []struct {
+		name string
+		x, y int
+	}{
+		{"above the screen", 200, -208},
+		{"below the screen", 200, 1200},
+	} {
+		t.Run(point.name, func(t *testing.T) {
+			companion := &fakeCompanion{accessibilityJSON: "[]"}
+			d := newTestDriver(companion)
+
+			err := d.Tap(context.Background(), point.x, point.y)
+			if !errors.Is(err, driver.ErrGestureUndelivered) {
+				t.Fatalf("Tap at (%d,%d): err = %v, want ErrGestureUndelivered",
+					point.x, point.y, err)
+			}
+			if slices.Contains(companion.recorded(), "hid") {
+				t.Fatal("an undeliverable tap must not reach the companion")
+			}
+		})
+	}
+}

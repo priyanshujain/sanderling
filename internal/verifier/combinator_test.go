@@ -168,3 +168,50 @@ globalThis.properties = {
 		t.Errorf("residual lost the bound: %s", residual)
 	}
 }
+
+// TestTopLevelEventuallyWithinSteps_KeepsAuthoredWindow drives the shape the
+// folio-web reachability properties now use, `eventually(p).within(n,
+// "steps")`, through the goja runtime and pins what the trace records: one
+// obligation, the window the spec authored, and the observation it closes at.
+// Bug class: the residual reporting the part of the window that is left, so a
+// reader cannot tell what the spec asked for or when the promise comes due.
+func TestTopLevelEventuallyWithinSteps_KeepsAuthoredWindow(t *testing.T) {
+	const source = `
+globalThis.seen = __sanderling__.extract(state => state.snapshots["seen"] ?? false, "seen");
+globalThis.properties = {
+  reachable: __sanderling__.eventually(() => seen.current).within(1915, 'steps'),
+};
+`
+	verifier := newVerifier(t)
+	mustLoad(t, verifier, source)
+
+	base := time.Unix(1780000000, 0)
+	const steps = 40
+	for index := range steps {
+		if err := verifier.PushSnapshot(SnapshotInput{
+			Snapshots: Snapshots{"seen": json.RawMessage(`false`)},
+			StepIndex: index + 1,
+			StepTime:  base.Add(time.Duration(index) * 1200 * time.Millisecond),
+			RunStart:  base,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got := verifier.EvaluateProperties()["reachable"]; got != ltl.VerdictPending {
+			t.Fatalf("step %d: got %v, want pending", index+1, got)
+		}
+	}
+
+	residual, err := json.Marshal(verifier.Residuals()["reachable"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(residual), `"op":"and"`) {
+		t.Errorf("residual accumulated obligations: %s", residual)
+	}
+	if !strings.Contains(string(residual), `"amount":1915`) || !strings.Contains(string(residual), `"unit":"steps"`) {
+		t.Errorf("residual lost the authored window: %s", residual)
+	}
+	if !strings.Contains(string(residual), `"expiresAtObservation":1915`) {
+		t.Errorf("residual lost the closing observation: %s", residual)
+	}
+}

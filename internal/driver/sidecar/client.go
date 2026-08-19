@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/driver"
@@ -129,19 +131,33 @@ func (c *Client) Terminate(ctx context.Context) error {
 	return err
 }
 
+// asGestureError translates the sidecar's OUT_OF_RANGE refusal of a point the
+// device has no surface under into driver.ErrGestureUndelivered. Only the
+// sidecar knows the screen extent, and the platform silently drops such a
+// gesture, so without this the step reads as an action that landed.
+func asGestureError(err error) error {
+	if status.Code(err) != codes.OutOfRange {
+		return err
+	}
+	return fmt.Errorf("%w: %s", driver.ErrGestureUndelivered, status.Convert(err).Message())
+}
+
 func (c *Client) Tap(ctx context.Context, x, y int) error {
 	_, err := c.stub.Tap(ctx, &driverpb.Point{X: int32(x), Y: int32(y)})
-	return err
+	return asGestureError(err)
 }
 
 func (c *Client) LongPress(ctx context.Context, x, y int) error {
 	_, err := c.stub.LongPress(ctx, &driverpb.Point{X: int32(x), Y: int32(y)})
-	return err
+	return asGestureError(err)
 }
 
 func (c *Client) TapSelector(ctx context.Context, selector string) error {
 	_, err := c.stub.TapSelector(ctx, &driverpb.Selector{Value: selector})
-	return err
+	if status.Code(err) == codes.NotFound {
+		return fmt.Errorf("%w: %s", driver.ErrSelectorMatchedNothing, status.Convert(err).Message())
+	}
+	return asGestureError(err)
 }
 
 // doubleTapGap is the inter-tap delay for the selector fallback: short enough
@@ -155,7 +171,7 @@ const doubleTapGap = 50 * time.Millisecond
 // navigation to interleave between the taps.
 func (c *Client) DoubleTap(ctx context.Context, x, y int) error {
 	_, err := c.stub.DoubleTap(ctx, &driverpb.Point{X: int32(x), Y: int32(y)})
-	return err
+	return asGestureError(err)
 }
 
 func (c *Client) DoubleTapSelector(ctx context.Context, selector string) error {
@@ -192,7 +208,7 @@ func (c *Client) Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration
 		To:             &driverpb.Point{X: int32(toX), Y: int32(toY)},
 		DurationMillis: duration.Milliseconds(),
 	})
-	return err
+	return asGestureError(err)
 }
 
 func (c *Client) PressKey(ctx context.Context, key string) error {

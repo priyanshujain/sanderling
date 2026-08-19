@@ -1,0 +1,28 @@
+<!doctype html>
+<html id="page">
+  <head id="page-head">
+    <meta id="page-charset" charset="utf-8" />
+    <title id="page-title">element state</title>
+  </head>
+  <body id="page-body">
+    <!-- toggle-all starts unchecked in the markup and toggle-done starts
+         checked, so a reader of the `checked` ATTRIBUTE reports each one's
+         starting value forever and disagrees with both after one click. -->
+    <input id="toggle-all" type="checkbox" />
+    <input id="toggle-done" type="checkbox" checked />
+    <input id="editing" type="text" value="buy milk" />
+    <input id="secret" type="password" />
+    <button id="save">save</button>
+    <button id="cancel" disabled>cancel</button>
+    <select id="filter">
+      <option id="filter-all">all</option>
+      <option id="filter-active" selected>active</option>
+    </select>
+    <script id="page-script">
+      window.__keys__ = [];
+      document.addEventListener('keydown', function (event) {
+        window.__keys__.push(event.key);
+      });
+    </script>
+  </body>
+</html>

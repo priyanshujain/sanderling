@@ -65,6 +65,13 @@ func (v *Verifier) Screenshot() []byte {
 	return v.lastScreenshot
 }
 
+// SnapshotStep returns the step index of the most recent PushSnapshot. It lags
+// the runner's current step whenever an observation was skipped (a transitional
+// tree), which is exactly when Screenshot returns an older step's image.
+func (v *Verifier) SnapshotStep() int {
+	return v.stepIndex
+}
+
 // CurrentScreen returns the screen id of the most recent snapshot's first
 // element, matching the runner's own screen labeling. Empty when no tree is
 // loaded.
@@ -73,6 +80,12 @@ func (v *Verifier) CurrentScreen() string {
 		return ""
 	}
 	return v.lastTree.Elements[0].Screen
+}
+
+// Tree returns the hierarchy of the most recent snapshot, nil when none was
+// pushed. It is what a caller resolves an action's target against.
+func (v *Verifier) Tree() *hierarchy.Tree {
+	return v.lastTree
 }
 
 // SampleInput draws one InputText value from the shared corpus via the bundled
@@ -106,9 +119,12 @@ type ActionCandidate struct {
 	// Kind is the resulting action kind.
 	Kind ActionKind
 	// Description is the rendered action shown to the model and echoed back as
-	// chosen_action, e.g. `Tap "Add credit"`. Dedup keys on it, so it is unique.
+	// chosen_action, e.g. `Tap "Add credit"`. Two entries may render the same
+	// when the screen holds two controls a user reads alike; Index is what tells
+	// them apart, and it is what the model picks by.
 	Description string
-	// Label is the visible-text target label (empty for gestures).
+	// Label is the target label the selected LabelSource named (empty for
+	// gestures).
 	Label string
 	// Weight is the effective selection weight as a percentage (1..100),
 	// meaningful only when Weighted is true (the tree used `weighted`).
@@ -129,11 +145,34 @@ type ActionCandidate struct {
 	// prob is the internal accumulated selection probability, summed across
 	// dedup, then rounded into Weight. Not exposed in the prompt directly.
 	prob float64
+	// secure is what the target reports about being a secure text entry, which
+	// is what Description is rendered under. It is not part of what the model
+	// sees.
+	secure secureFact
 }
 
 // maxLabelRunes caps a visible-text label so joined descendant text stays short
 // enough to render on one numbered line.
 const maxLabelRunes = 40
+
+// gestureDurationMillis is how long a drag takes when the descriptor did not say.
+// It mirrors DEFAULT_SWIPE_DURATION in runtime-entry.ts, which is what the
+// seeded policy's action carries by the time it reaches the runner: the two
+// policies must hand the driver the same gesture, not two speeds of it.
+const gestureDurationMillis = 250
+
+// The label sources a candidate's target can be named by. This is the
+// observation channel the model reads, and nothing else: the seeded picker
+// selects by index and never asks for a label, so the two seeded cells of a
+// labelling factorial draw the identical stream.
+const (
+	// LabelSourceVisibleText names a control by what a user would read. It is
+	// the default, and the channel every run so far was produced with.
+	LabelSourceVisibleText = "visible-text"
+	// LabelSourceResourceID names a control by the identifier the app assigned
+	// it, which no user ever sees.
+	LabelSourceResourceID = "resource-id"
+)
 
 // Candidates enumerates every action the spec's weighted actionsRoot yields at
 // the current step, each tagged with a plainly-worded description and its
@@ -141,60 +180,87 @@ const maxLabelRunes = 40
 // SAME tree the seeded picker draws: weighted branches recurse (accumulating the
 // selection probability), authored actions()/whenRoute leaves are called once
 // for their concrete actions, and builtin verbs come straight from the picker's
-// own enumeration. Identical descriptions dedup, summing weight.
-func (v *Verifier) Candidates() []ActionCandidate {
+// own enumeration. Candidates that would execute the same action dedup, summing
+// weight; two controls that merely read alike stay two entries.
+//
+// labelSource selects the channel each target is named by. An unrecognized
+// value (including the zero value) names targets by visible text; the CLI
+// rejects an unknown mode before a run starts, so only a test reaches that.
+//
+// The error is the spec refusing to be run by this policy at all: an authored
+// leaf that samples one of several items reaches the seeded picker's rng but
+// never this walk, so the model would be offered a fixed first item forever. It
+// names the leaf and it is fatal, because degrading to that fixed item silently
+// is what makes a policy comparison meaningless.
+func (v *Verifier) Candidates(labelSource string) ([]ActionCandidate, error) {
 	if v.lastTree == nil {
-		return nil
+		return nil, nil
 	}
 	root := v.runtime.GlobalObject().Get("actions")
 	if root == nil || goja.IsUndefined(root) || goja.IsNull(root) {
-		return nil
+		return nil, nil
 	}
-	nodeIndex := buildNodeIndex(v.lastTree)
+	labels := labelContext{nodeIndex: buildNodeIndex(v.lastTree), source: labelSource}
 	var raw []ActionCandidate
-	v.collectNode(root, 1.0, false, nodeIndex, &raw)
-	return finalizeCandidates(raw)
+	v.setEnumeratingCandidates(true)
+	defer v.setEnumeratingCandidates(false)
+	if err := v.collectNode(root, 1.0, false, labels, &raw); err != nil {
+		return nil, err
+	}
+	return finalizeCandidates(raw), nil
+}
+
+// setEnumeratingCandidates tells the spec bundle that the authored leaves are
+// being called by this policy rather than by the picker. A spec loaded without
+// the runtime entry (a raw-JS unit fixture) has no such callable, and no
+// sampler to refuse either.
+func (v *Verifier) setEnumeratingCandidates(enumerating bool) {
+	if v.setEnumeratingCandidatesFn == nil {
+		return
+	}
+	_, _ = v.setEnumeratingCandidatesFn(goja.Undefined(), v.runtime.ToValue(enumerating))
 }
 
 // collectNode dispatches one GeneratorNode of the action tree. prob is the
 // accumulated probability the seeded picker reaches this node; weighted records
 // whether any weighted node lies on the path (so weights are shown only when the
 // spec actually declared them).
-func (v *Verifier) collectNode(node goja.Value, prob float64, weighted bool, nodeIndex map[*hierarchy.Element]*hierarchy.Node, out *[]ActionCandidate) {
+func (v *Verifier) collectNode(node goja.Value, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) error {
 	object := node.ToObject(v.runtime)
 	if object == nil {
-		return
+		return nil
 	}
 	kind := object.Get("kind")
 	if kind == nil || goja.IsUndefined(kind) {
-		return
+		return nil
 	}
 	switch kind.String() {
 	case "weighted":
-		v.collectWeighted(object, prob, nodeIndex, out)
+		return v.collectWeighted(object, prob, labels, out)
 	case "actions":
-		v.collectActions(object, prob, weighted, nodeIndex, out)
+		return v.collectActions(object, prob, weighted, labels, out)
 	case "builtin":
 		verb := object.Get("verb")
 		if verb != nil && !goja.IsUndefined(verb) {
-			v.collectBuiltin(verb.String(), prob, weighted, nodeIndex, out)
+			v.collectBuiltin(verb.String(), prob, weighted, labels, out)
 		}
 	case "llm":
 		// The llm marker is the generator, not part of the candidate tree.
 	}
+	return nil
 }
 
 // collectWeighted recurses each branch, splitting the incoming probability by
 // the branch weight over the sibling total (matching the seeded picker's single
 // weighted draw).
-func (v *Verifier) collectWeighted(object *goja.Object, prob float64, nodeIndex map[*hierarchy.Element]*hierarchy.Node, out *[]ActionCandidate) {
+func (v *Verifier) collectWeighted(object *goja.Object, prob float64, labels labelContext, out *[]ActionCandidate) error {
 	branches := object.Get("branches")
 	if branches == nil {
-		return
+		return nil
 	}
 	array := branches.ToObject(v.runtime)
 	if array == nil {
-		return
+		return nil
 	}
 	length := int(array.Get("length").ToInteger())
 	weights := make([]float64, length)
@@ -215,36 +281,51 @@ func (v *Verifier) collectWeighted(object *goja.Object, prob float64, nodeIndex 
 		total += weight
 	}
 	if total <= 0 {
-		return
+		return nil
 	}
 	for i := range length {
 		if children[i] == nil {
 			continue
 		}
-		v.collectNode(children[i], prob*weights[i]/total, true, nodeIndex, out)
+		// The branch number is the author's own path to a refused leaf, which
+		// its closure source alone does not give when the leaf is a whenRoute
+		// (whose closure belongs to the library, not the spec).
+		if err := v.collectNode(children[i], prob*weights[i]/total, true, labels, out); err != nil {
+			return fmt.Errorf("branch %d: %w", i+1, err)
+		}
 	}
+	return nil
 }
 
 // collectActions calls an authored leaf's generator once (safe: it reads state
 // and, off-route, returns []), turning each concrete descriptor into a
 // candidate. It runs OUTSIDE the picker's rng scope, so from(...).generate()
 // draws nothing and no seed advances.
-func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bool, nodeIndex map[*hierarchy.Element]*hierarchy.Node, out *[]ActionCandidate) {
-	generate, ok := goja.AssertFunction(object.Get("generate"))
+//
+// A generator that throws for its own reasons still contributes nothing and
+// nothing more: this walk calls EVERY leaf every step, including leaves the
+// seeded picker would have walked once in a hundred steps, so promoting those
+// throws would kill runs the seeded arm survives.
+func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) error {
+	generatorValue := object.Get("generate")
+	generate, ok := goja.AssertFunction(generatorValue)
 	if !ok {
-		return
+		return nil
 	}
 	result, err := generate(goja.Undefined())
 	if err != nil {
-		return
+		if refusal, refused := v.samplerRefusal(err); refused {
+			return fmt.Errorf("authored action %s %s", authoredLeafIdentity(generatorValue), refusal)
+		}
+		return nil
 	}
 	array := result.ToObject(v.runtime)
 	if array == nil {
-		return
+		return nil
 	}
 	length := int(array.Get("length").ToInteger())
 	for i := range length {
-		candidate, ok := v.candidateFromDescriptor(array.Get(strconv.Itoa(i)), nodeIndex)
+		candidate, ok := v.candidateFromDescriptor(array.Get(strconv.Itoa(i)), labels)
 		if !ok {
 			continue
 		}
@@ -252,12 +333,55 @@ func (v *Verifier) collectActions(object *goja.Object, prob float64, weighted bo
 		candidate.Weighted = weighted
 		*out = append(*out, candidate)
 	}
+	return nil
+}
+
+// samplerRefusalName is the error name pkg/spec/src/sampler-rng.ts stamps on the
+// refusal it throws, which is what tells that refusal apart from a spec's own
+// runtime errors.
+const samplerRefusalName = "SanderlingSamplerRefusal"
+
+// samplerRefusal reports the refusal message when the authored leaf declined to
+// sample for this policy.
+func (v *Verifier) samplerRefusal(err error) (string, bool) {
+	var exception *goja.Exception
+	if !errors.As(err, &exception) {
+		return "", false
+	}
+	value := exception.Value()
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return "", false
+	}
+	thrown := value.ToObject(v.runtime)
+	if thrown == nil || stringField(thrown, "name") != samplerRefusalName {
+		return "", false
+	}
+	return stringField(thrown, "message"), true
+}
+
+// maxLeafSourceRunes caps the generator excerpt that names a leaf in an error.
+const maxLeafSourceRunes = 160
+
+// authoredLeafIdentity renders the leaf's generator source on one line. An
+// authored leaf is an anonymous closure among identical-looking tree nodes, so
+// its source is the handle an author can search the spec for.
+func authoredLeafIdentity(generator goja.Value) string {
+	source := []rune(strings.Join(strings.Fields(generator.String()), " "))
+	if len(source) > maxLeafSourceRunes {
+		return strconv.Quote(string(source[:maxLeafSourceRunes]) + "...")
+	}
+	return strconv.Quote(string(source))
 }
 
 // candidateFromDescriptor lowers one authored ActionDescriptor (as a goja
 // object) into a ready-to-run candidate, resolving the target's coordinates,
-// selector, and visible-text label. Actions on a disabled control are dropped.
-func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hierarchy.Element]*hierarchy.Node) (ActionCandidate, bool) {
+// selector, and label.
+//
+// A disabled target is offered like any other. The seeded picker executes
+// whatever the leaf authored, disabled or not, and attempting a disabled
+// control is where boundary defects live: a control the app forgot to re-enable
+// reads as disabled, and a policy that cannot attempt it cannot find that.
+func (v *Verifier) candidateFromDescriptor(value goja.Value, labels labelContext) (ActionCandidate, bool) {
 	object := value.ToObject(v.runtime)
 	if object == nil {
 		return ActionCandidate{}, false
@@ -269,8 +393,8 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hier
 	kind := ActionKind(kindValue.String())
 	switch kind {
 	case ActionKindTap, ActionKindDoubleTap, ActionKindLongPress:
-		target := v.resolveTarget(object.Get("on"), nodeIndex)
-		if target.disabled {
+		target, ok := v.resolveTarget(object.Get("on"), labels)
+		if !ok {
 			return ActionCandidate{}, false
 		}
 		return ActionCandidate{
@@ -279,8 +403,8 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hier
 			Action: Action{Kind: kind, On: target.selector, X: target.x, Y: target.y},
 		}, true
 	case ActionKindInputText:
-		target := v.resolveTarget(object.Get("into"), nodeIndex)
-		if target.disabled {
+		target, ok := v.resolveTarget(object.Get("into"), labels)
+		if !ok {
 			return ActionCandidate{}, false
 		}
 		text := stringField(object, "text")
@@ -288,29 +412,45 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hier
 			Kind:      kind,
 			Label:     target.label,
 			InputType: target.inputType,
+			secure:    target.secure,
 			Action:    Action{Kind: kind, On: target.selector, X: target.x, Y: target.y, Text: text},
 		}, true
 	case ActionKindScroll:
-		target := v.resolveTarget(object.Get("in"), nodeIndex)
+		container, _ := v.resolveTarget(object.Get("in"), labels)
 		direction := stringField(object, "direction")
 		if direction == "" {
 			direction = "down"
 		}
-		return ActionCandidate{
-			Kind:      kind,
-			Direction: direction,
-			Action:    Action{Kind: kind, On: target.selector, Direction: direction},
-		}, true
+		action := Action{
+			Kind:           kind,
+			On:             container.selector,
+			Direction:      direction,
+			DurationMillis: gestureDurationMillis,
+		}
+		// Endpoints only when the descriptor computed the whole gesture (the
+		// builtin generator does). Anchoring an authored scroll on the
+		// container's own point instead would hand the runner a drag from a
+		// point to itself, which it executes as written.
+		from, hasFrom := v.resolveTarget(object.Get("from"), labels)
+		to, hasTo := v.resolveTarget(object.Get("to"), labels)
+		if hasFrom && hasTo {
+			action.FromX, action.FromY = from.x, from.y
+			action.ToX, action.ToY = to.x, to.y
+		}
+		return ActionCandidate{Kind: kind, Direction: direction, Action: action}, true
 	case ActionKindSwipe:
-		from := v.resolveTarget(object.Get("from"), nodeIndex)
-		to := v.resolveTarget(object.Get("to"), nodeIndex)
+		from, hasFrom := v.resolveTarget(object.Get("from"), labels)
+		to, hasTo := v.resolveTarget(object.Get("to"), labels)
+		if !hasFrom || !hasTo {
+			return ActionCandidate{}, false
+		}
 		return ActionCandidate{
 			Kind: kind,
 			Action: Action{
 				Kind:  kind,
 				FromX: from.x, FromY: from.y,
 				ToX: to.x, ToY: to.y,
-				DurationMillis: intField(object, "durationMillis"),
+				DurationMillis: intFieldOr(object, "durationMillis", gestureDurationMillis),
 			},
 		}, true
 	case ActionKindPressKey:
@@ -319,7 +459,10 @@ func (v *Verifier) candidateFromDescriptor(value goja.Value, nodeIndex map[*hier
 			Action: Action{Kind: kind, Key: stringField(object, "key")},
 		}, true
 	case ActionKindWait:
-		return ActionCandidate{Kind: kind, Action: Action{Kind: kind}}, true
+		return ActionCandidate{
+			Kind:   kind,
+			Action: Action{Kind: kind, DurationMillis: intField(object, "durationMillis")},
+		}, true
 	default:
 		return ActionCandidate{}, false
 	}
@@ -332,54 +475,66 @@ type resolvedTarget struct {
 	selector  string
 	label     string
 	inputType string
-	disabled  bool
+	secure    secureFact
 }
 
 // resolveTarget reads an authored action's target. Ax element handles carry
-// x/y/__sanderlingSelector plus their own text; a bare selector string resolves
-// against the current tree; a point carries geometry only.
-func (v *Verifier) resolveTarget(value goja.Value, nodeIndex map[*hierarchy.Element]*hierarchy.Node) resolvedTarget {
+// x/y/__sanderlingSelector plus their own text and id; a bare selector string
+// resolves against the current tree; a point carries geometry only.
+//
+// The second return is false when the value names no target the seeded policy
+// could act on either: runtime-entry.ts pointOf accepts a non-empty selector
+// string or an object with numeric coordinates, and drops the whole action
+// otherwise. Lowering one of those to (0, 0) instead would offer the model an
+// action the seeded policy never takes, aimed at the screen corner.
+func (v *Verifier) resolveTarget(value goja.Value, labels labelContext) (resolvedTarget, bool) {
 	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
-		return resolvedTarget{}
+		return resolvedTarget{}, false
 	}
 	if selector, ok := value.Export().(string); ok {
-		return v.targetFromSelector(selector, nodeIndex)
+		if selector == "" {
+			return resolvedTarget{}, false
+		}
+		return v.targetFromSelector(selector, labels), true
 	}
 	object := value.ToObject(v.runtime)
 	if object == nil {
-		return resolvedTarget{}
+		return resolvedTarget{}, false
+	}
+	x, hasX := numberField(object, "x")
+	y, hasY := numberField(object, "y")
+	if !hasX || !hasY {
+		return resolvedTarget{}, false
 	}
 	selector := stringField(object, tagSelector)
 	if selector == "" {
 		selector = stringField(object, "selector")
 	}
-	target := resolvedTarget{
-		x:        int(object.Get("x").ToInteger()),
-		y:        int(object.Get("y").ToInteger()),
-		selector: selector,
-	}
+	target := resolvedTarget{x: x, y: y, selector: selector, secure: secureFactFromHandle(object)}
 	if element := v.findBySelector(selector); element != nil {
-		target.label = visibleLabel(element, nodeIndex)
+		target.label = labels.label(element)
 		target.inputType = inputTypeHint(element)
-		target.disabled = !element.Enabled && hasEnabled(element)
+		if !target.secure.reported {
+			target.secure = secureFactOf(element)
+		}
 	}
 	if target.label == "" {
-		target.label = truncateLabel(stringField(object, "text"))
+		target.label = truncateLabel(v.handleLabel(object, labels))
 	}
-	return target
+	return target, true
 }
 
 // targetFromSelector resolves a bare selector-string target against the tree.
-func (v *Verifier) targetFromSelector(selector string, nodeIndex map[*hierarchy.Element]*hierarchy.Node) resolvedTarget {
+func (v *Verifier) targetFromSelector(selector string, labels labelContext) resolvedTarget {
 	target := resolvedTarget{selector: selector}
 	element := v.findBySelector(selector)
 	if element == nil {
 		return target
 	}
 	target.x, target.y = element.Bounds.Center()
-	target.label = visibleLabel(element, nodeIndex)
+	target.label = labels.label(element)
 	target.inputType = inputTypeHint(element)
-	target.disabled = !element.Enabled && hasEnabled(element)
+	target.secure = secureFactOf(element)
 	return target
 }
 
@@ -396,7 +551,7 @@ func (v *Verifier) findBySelector(selector string) *hierarchy.Element {
 // the two policies select over one action space and cannot drift apart. Each
 // entry's action arrives on the wire contract DecodeAction already reads, so a
 // chosen candidate executes the action the seeded draw would have executed.
-func (v *Verifier) collectBuiltin(verb string, prob float64, weighted bool, nodeIndex map[*hierarchy.Element]*hierarchy.Node, out *[]ActionCandidate) {
+func (v *Verifier) collectBuiltin(verb string, prob float64, weighted bool, labels labelContext, out *[]ActionCandidate) {
 	entries, err := v.enumerateBuiltin(verb)
 	if err != nil {
 		return
@@ -415,8 +570,9 @@ func (v *Verifier) collectBuiltin(verb string, prob float64, weighted bool, node
 		}
 		if entry.targetIndex >= 0 && entry.targetIndex < len(targets) {
 			element := targets[entry.targetIndex].element
-			candidate.Label = visibleLabel(element, nodeIndex)
+			candidate.Label = labels.label(element)
 			candidate.InputType = inputTypeHint(element)
+			candidate.secure = secureFactOf(element)
 		}
 		*out = append(*out, candidate)
 	}
@@ -466,20 +622,33 @@ func (v *Verifier) enumerateBuiltin(verb string) ([]builtinCandidate, error) {
 	return entries, nil
 }
 
-// finalizeCandidates renders each candidate's description, dedups identical
-// descriptions (summing weight), numbers the survivors 1..N, and rounds the
-// accumulated probability into a percentage Weight.
+// candidateIdentity is what a candidate would DO. Two candidates sharing it are
+// the same action reached through two paths of the action tree, so folding them
+// into one numbered entry loses nothing; two that differ are different actions
+// however alike they read, so folding them would put one of them out of reach.
+// llmText is part of it because it decides where the typed text comes from: the
+// model writes it for a builtin typing candidate, while an authored one replays
+// the value already sitting in Action.Text.
+type candidateIdentity struct {
+	action  Action
+	llmText bool
+}
+
+// finalizeCandidates renders each candidate's description, dedups by what the
+// candidate executes (summing weight), numbers the survivors 1..N, and rounds
+// the accumulated probability into a percentage Weight.
 func finalizeCandidates(raw []ActionCandidate) []ActionCandidate {
-	seen := make(map[string]int, len(raw))
+	seen := make(map[candidateIdentity]int, len(raw))
 	result := make([]ActionCandidate, 0, len(raw))
 	for _, candidate := range raw {
 		candidate.Description = describeCandidate(candidate)
-		if index, ok := seen[candidate.Description]; ok {
+		identity := candidateIdentity{action: candidate.Action, llmText: candidate.LLMText}
+		if index, ok := seen[identity]; ok {
 			result[index].prob += candidate.prob
 			result[index].Weighted = result[index].Weighted || candidate.Weighted
 			continue
 		}
-		seen[candidate.Description] = len(result)
+		seen[identity] = len(result)
 		result = append(result, candidate)
 	}
 	for i := range result {
@@ -492,8 +661,11 @@ func finalizeCandidates(raw []ActionCandidate) []ActionCandidate {
 }
 
 // describeCandidate renders the plain, echo-friendly description shown in the
-// numbered list. It is the dedup key, so it must be stable and unique per
-// distinct action.
+// numbered list. It is display only: dedup keys on the action, so two entries
+// may read alike without merging and Index is what separates them. Do not add an
+// ordinal or a coordinate to pull those apart: this string IS the observation
+// channel a labelling experiment varies, so a disambiguator here would name a
+// target through a channel the label source deliberately withholds.
 func describeCandidate(candidate ActionCandidate) string {
 	switch candidate.Kind {
 	case ActionKindTap:
@@ -509,14 +681,16 @@ func describeCandidate(candidate ActionCandidate) string {
 			}
 			return fmt.Sprintf("Type into %q", candidate.Label)
 		}
-		return fmt.Sprintf("Type %q into %q", candidate.Action.Text, candidate.Label)
+		return fmt.Sprintf("Type %q into %q",
+			recordedInputText(candidate.Action.Text, candidate.secure), candidate.Label)
 	case ActionKindScroll:
 		return "Scroll " + candidate.Direction
 	case ActionKindSwipe:
-		// A swipe carries endpoints and no selector, so the coordinates are what
-		// keep two swipes distinct. The label is prepended when the origin
-		// element has one, because "swipe that row" is the interaction a model
-		// reaches for and a bare pair of points does not say which row.
+		// A swipe is a drag across the screen, so where it runs is the whole of
+		// what it does and a reader needs the endpoints to picture it. The label
+		// is prepended when the origin element has one, because "swipe that row"
+		// is the interaction a model reaches for and a bare pair of points does
+		// not say which row.
 		where := fmt.Sprintf("from (%d,%d) to (%d,%d)",
 			candidate.Action.FromX, candidate.Action.FromY,
 			candidate.Action.ToX, candidate.Action.ToY)
@@ -549,6 +723,66 @@ func buildNodeIndex(tree *hierarchy.Tree) map[*hierarchy.Element]*hierarchy.Node
 	}
 	walk(tree.Root)
 	return index
+}
+
+// labelContext carries what naming a candidate's target takes: the node index
+// descendant text is borrowed through, and the channel the name comes from.
+type labelContext struct {
+	nodeIndex map[*hierarchy.Element]*hierarchy.Node
+	source    string
+}
+
+func (l labelContext) label(element *hierarchy.Element) string {
+	if l.source == LabelSourceResourceID {
+		return resourceIdentifierLabel(element)
+	}
+	return visibleLabel(element, l.nodeIndex)
+}
+
+// handleLabel names a target from the ax handle alone, for the web tick path
+// where the handle was built in V8 and carries no selector to resolve against
+// the tree. It walks visibleLabel's rungs over the fields a handle has: an
+// editable field's hint names its purpose, its own text is the transient typed
+// value. The identifier arm reads the handle's id and nothing a user could
+// read, which is the one thing that arm must not see.
+func (v *Verifier) handleLabel(object *goja.Object, labels labelContext) string {
+	if labels.source == LabelSourceResourceID {
+		return stringField(object, "id")
+	}
+	hint := v.handleAttribute(object, "hintText")
+	if hint != "" && boolField(object, "editable") {
+		return hint
+	}
+	if text := stringField(object, "text"); text != "" {
+		return text
+	}
+	if desc := stringField(object, "desc"); desc != "" {
+		return desc
+	}
+	return hint
+}
+
+func (v *Verifier) handleAttribute(object *goja.Object, name string) string {
+	attrs := object.Get("attrs")
+	if attrs == nil || goja.IsUndefined(attrs) || goja.IsNull(attrs) {
+		return ""
+	}
+	return stringField(attrs.ToObject(v.runtime), name)
+}
+
+// resourceIdentifierLabel names a control by the identifier the app assigned it,
+// then by its class, then by a bare word. Every rung a user could read (text,
+// description, hint, descendant text) is deliberately absent: the point of this
+// channel is that the model sees no visible text at all, so a fallback that
+// reached for text would silently turn the arm back into the default one.
+func resourceIdentifierLabel(element *hierarchy.Element) string {
+	if element.ResourceID != "" {
+		return truncateLabel(element.ResourceID)
+	}
+	if element.Class != "" {
+		return element.Class
+	}
+	return "control"
 }
 
 // visibleLabel names a control by what a user would read: its own text, then
@@ -635,13 +869,6 @@ func inputTypeHint(element *hierarchy.Element) string {
 	}
 }
 
-// hasEnabled reports whether the source tree carried an explicit enabled flag
-// for the element, so a missing flag is not mistaken for "disabled".
-func hasEnabled(element *hierarchy.Element) bool {
-	_, ok := element.Attributes["enabled"]
-	return ok
-}
-
 // stringField reads a string property off a goja object, returning "" when
 // absent, null, or undefined.
 func stringField(object *goja.Object, key string) string {
@@ -652,6 +879,16 @@ func stringField(object *goja.Object, key string) string {
 	return value.String()
 }
 
+// boolField reads a boolean property off a goja object, returning false when
+// absent, null, or undefined.
+func boolField(object *goja.Object, key string) bool {
+	value := object.Get(key)
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return false
+	}
+	return value.ToBoolean()
+}
+
 // intField reads a numeric property off a goja object, returning 0 when absent,
 // null, or undefined.
 func intField(object *goja.Object, key string) int {
@@ -660,4 +897,34 @@ func intField(object *goja.Object, key string) int {
 		return 0
 	}
 	return int(value.ToInteger())
+}
+
+// intFieldOr reads a numeric property, falling back when the descriptor left it
+// out. It mirrors the serializer's `??`, so an explicit zero is kept.
+func intFieldOr(object *goja.Object, key string, fallback int) int {
+	value := object.Get(key)
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return fallback
+	}
+	return int(value.ToInteger())
+}
+
+// numberField reads a property that must actually BE a number, which is what
+// tells a target carrying no coordinates apart from one anchored at (0, 0).
+func numberField(object *goja.Object, key string) (int, bool) {
+	value := object.Get(key)
+	if value == nil {
+		return 0, false
+	}
+	switch number := value.Export().(type) {
+	case int64:
+		return int(number), true
+	case float64:
+		if math.IsNaN(number) {
+			return 0, false
+		}
+		return int(number), true
+	default:
+		return 0, false
+	}
 }

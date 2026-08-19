@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -24,6 +25,35 @@ const enumTreeJSON = `{
   ]
 }`
 
+// labelChannelTreeJSON pulls the two label channels apart: every identifier
+// differs from the text a user reads, one control has a class but no identifier,
+// one has neither, and one has an identifier but nothing readable at all.
+const labelChannelTreeJSON = `{
+  "attributes": {"bounds": "[0,0,1080,2400]"},
+  "children": [
+    {"attributes": {"resource-id": "add_credit_button", "class": "android.widget.Button", "bounds": "[0,100,1080,200]"}, "clickable": true, "enabled": true, "children": [
+      {"attributes": {"text": "Add credit", "bounds": "[0,100,540,200]"}, "children": []}
+    ]},
+    {"attributes": {"class": "android.widget.CheckBox", "text": "Remember me", "bounds": "[0,250,1080,300]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"class": "android.widget.CheckBox", "text": "Stay signed in", "bounds": "[0,300,1080,350]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"text": "Sign in", "bounds": "[0,400,1080,450]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "amount_field", "class": "EditText", "hintText": "Amount", "bounds": "[0,500,1080,600]"}, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "silent_row", "bounds": "[0,650,1080,700]"}, "clickable": true, "enabled": true, "children": []}
+  ]
+}`
+
+// sharedLabelTreeJSON is a list where two rows read exactly the same to a user
+// ("Delete") while the app tells them apart by identifier. It is the shape a
+// list of removable items has in any real app.
+const sharedLabelTreeJSON = `{
+  "attributes": {"bounds": "[0,0,1080,2400]"},
+  "children": [
+    {"attributes": {"resource-id": "delete_alpha", "text": "Delete", "bounds": "[0,100,1080,200]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "delete_beta", "text": "Delete", "bounds": "[0,200,1080,300]"}, "clickable": true, "enabled": true, "children": []},
+    {"attributes": {"resource-id": "checkout", "text": "Checkout", "bounds": "[0,400,1080,500]"}, "clickable": true, "enabled": true, "children": []}
+  ]
+}`
+
 // enumVerifier loads a spec whose actions root is the given plain-object graph
 // and stages the given tree, so Candidates walks a controlled action tree. The
 // spec is bundled with the goja runtime entry because the model arm reads the
@@ -38,6 +68,17 @@ func enumVerifier(t *testing.T, actionsJS, treeJSON string) *Verifier {
 	}
 	v.lastTree = tree
 	return v
+}
+
+// mustCandidates enumerates the model policy's list, failing the test on the
+// refusal an authored multi-item sampler raises.
+func mustCandidates(t *testing.T, v *Verifier, labelSource string) []ActionCandidate {
+	t.Helper()
+	candidates, err := v.Candidates(labelSource)
+	if err != nil {
+		t.Fatalf("Candidates: %v", err)
+	}
+	return candidates
 }
 
 func findCandidate(candidates []ActionCandidate, description string) (ActionCandidate, bool) {
@@ -56,7 +97,7 @@ func hasCandidate(candidates []ActionCandidate, description string) bool {
 
 func TestCandidatesLabelsControlsByVisibleText(t *testing.T) {
 	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := mustCandidates(t, v, LabelSourceVisibleText)
 
 	// The empty-text clickable wrapper is labeled by its child Text, NOT its
 	// resource-id.
@@ -79,9 +120,162 @@ func TestCandidatesLabelsControlsByVisibleText(t *testing.T) {
 	}
 }
 
-func TestCandidatesDropsDisabledControls(t *testing.T) {
+func TestCandidatesLabelsControlsByResourceIdentifier(t *testing.T) {
+	candidates := mustCandidates(t, enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON), LabelSourceResourceID)
+
+	if !hasCandidate(candidates, `Tap "add_credit_button"`) {
+		t.Errorf("want the control named by its identifier, got %v", descriptions(candidates))
+	}
+	// Nothing a user could read may reach this channel, including through a
+	// fallback rung: an arm that sees the text is the other arm.
+	for _, readable := range []string{`Tap "Add credit"`, `Tap "Remember me"`, `Tap "Sign in"`} {
+		if hasCandidate(candidates, readable) {
+			t.Errorf("visible text leaked in as %s: %v", readable, descriptions(candidates))
+		}
+	}
+}
+
+func TestCandidatesIdentifierChannelFallsBackToClassThenBareControl(t *testing.T) {
+	candidates := mustCandidates(t, enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON), LabelSourceResourceID)
+
+	if !hasCandidate(candidates, `Tap "android.widget.CheckBox"`) {
+		t.Errorf("a control with no identifier falls back to its class, got %v", descriptions(candidates))
+	}
+	if !hasCandidate(candidates, `Tap "control"`) {
+		t.Errorf("a control with neither identifier nor class falls back to a bare word, got %v",
+			descriptions(candidates))
+	}
+}
+
+// TestCandidatesIdentifierChannelKeepsControlsItCannotNameApartReachable is the
+// cost of the channel, bounded: two identifier-less controls of one class read
+// the same in the numbered list, but they stay TWO entries, each carrying its
+// own action, so the model can act on either by number. A channel that renames
+// controls must never shrink the action space.
+func TestCandidatesIdentifierChannelKeepsControlsItCannotNameApartReachable(t *testing.T) {
+	text := mustCandidates(t, enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON), LabelSourceVisibleText)
+	identifier := mustCandidates(t, enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON), LabelSourceResourceID)
+
+	if count(text, `Tap "Remember me"`) != 1 || count(text, `Tap "Stay signed in"`) != 1 {
+		t.Fatalf("the text channel should address both checkboxes, got %v", descriptions(text))
+	}
+	checkboxes := candidatesMatching(identifier, `Tap "android.widget.CheckBox"`)
+	if len(checkboxes) != 2 {
+		t.Fatalf("the two checkboxes should be two entries, got %d: %v",
+			len(checkboxes), descriptions(identifier))
+	}
+	if checkboxes[0].Action == checkboxes[1].Action {
+		t.Errorf("both entries execute the same action: %+v", checkboxes[0].Action)
+	}
+	if len(identifier) != len(text) {
+		t.Errorf("identifier list (%d) and text list (%d) must offer the same actions: %v vs %v",
+			len(identifier), len(text), descriptions(identifier), descriptions(text))
+	}
+}
+
+// TestCandidatesReachBothControlsSharingOneVisibleLabel is the reachability
+// floor: two rows a user reads as the same word are two different controls, so
+// both get a number and the second number taps the second row. Dedup that keyed
+// on the rendered line dropped the second one, putting it out of reach of any
+// prompt or policy.
+func TestCandidatesReachBothControlsSharingOneVisibleLabel(t *testing.T) {
+	candidates := mustCandidates(t, enumVerifier(t, "{kind:'builtin', verb:'taps'}", sharedLabelTreeJSON), LabelSourceVisibleText)
+
+	deletes := candidatesMatching(candidates, `Tap "Delete"`)
+	if len(deletes) != 2 {
+		t.Fatalf("want both Delete rows reachable, got %d: %v", len(deletes), descriptions(candidates))
+	}
+	if got := deletes[0].Action.On; got != "id:delete_alpha" {
+		t.Errorf("first entry targets %q, want id:delete_alpha", got)
+	}
+	if got := deletes[1].Action.On; got != "id:delete_beta" {
+		t.Errorf("second entry targets %q, want id:delete_beta", got)
+	}
+	if deletes[0].Index == deletes[1].Index {
+		t.Errorf("both entries share number %d, so the model cannot address them apart", deletes[0].Index)
+	}
+}
+
+// TestCandidatesVisibleTextFallsBackToTheIdentifier is where the two channels
+// agree: a control carrying nothing readable is named by its identifier in both,
+// so a screen built entirely from such controls is one cell, not two.
+func TestCandidatesVisibleTextFallsBackToTheIdentifier(t *testing.T) {
+	candidates := mustCandidates(t, enumVerifier(t, "{kind:'builtin', verb:'taps'}", labelChannelTreeJSON), LabelSourceVisibleText)
+
+	if !hasCandidate(candidates, `Tap "silent_row"`) {
+		t.Errorf("a control with no readable text falls back to its identifier, got %v",
+			descriptions(candidates))
+	}
+}
+
+func TestCandidatesTypingLabelFollowsTheLabelSource(t *testing.T) {
+	text := mustCandidates(t, enumVerifier(t, "{kind:'builtin', verb:'typing'}", labelChannelTreeJSON), LabelSourceVisibleText)
+	if !hasCandidate(text, `Type into "Amount" (number)`) {
+		t.Errorf("want the field named by its hint, got %v", descriptions(text))
+	}
+
+	identifier := mustCandidates(t, enumVerifier(t, "{kind:'builtin', verb:'typing'}", labelChannelTreeJSON), LabelSourceResourceID)
+	if !hasCandidate(identifier, `Type into "amount_field" (number)`) {
+		t.Errorf("want the field named by its identifier, got %v", descriptions(identifier))
+	}
+}
+
+// TestLabelSourceChangesOnlyTheDescription is the claim the labelling factorial
+// rests on: the channel renames every target and does nothing else. Both arms
+// enumerate the same candidates, in the same order, at the same weights,
+// carrying the same executable actions; the description and the label are the
+// only things that move. Anything else and the two cells would be picking from
+// different action spaces, so a difference in defect yield could not be
+// attributed to how the controls were named.
+func TestLabelSourceChangesOnlyTheDescription(t *testing.T) {
+	const everyLabelledVerb = `{kind:'weighted', branches:[
+      [1,{kind:'builtin',verb:'taps'}],
+      [1,{kind:'builtin',verb:'typing'}],
+      [1,{kind:'builtin',verb:'swipes'}]
+    ]}`
+	fixtures := []struct {
+		name string
+		tree string
+	}{
+		{"identifiers collide", labelChannelTreeJSON},
+		{"visible text collides", sharedLabelTreeJSON},
+	}
+	withoutNames := func(candidate ActionCandidate) ActionCandidate {
+		candidate.Description = ""
+		candidate.Label = ""
+		return candidate
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			text := mustCandidates(t, enumVerifier(t, everyLabelledVerb, fixture.tree), LabelSourceVisibleText)
+			identifier := mustCandidates(t, enumVerifier(t, everyLabelledVerb, fixture.tree), LabelSourceResourceID)
+			if len(text) == 0 {
+				t.Fatal("fixture yielded no candidates")
+			}
+			if len(text) != len(identifier) {
+				t.Fatalf("different action spaces: %d text candidates vs %d identifier ones:\n%v\n%v",
+					len(text), len(identifier), descriptions(text), descriptions(identifier))
+			}
+			renamed := false
+			for i := range text {
+				if withoutNames(text[i]) != withoutNames(identifier[i]) {
+					t.Errorf("candidate %d differs beyond its name:\n text=%+v\n   id=%+v",
+						i+1, text[i], identifier[i])
+				}
+				if text[i].Description != identifier[i].Description {
+					renamed = true
+				}
+			}
+			if !renamed {
+				t.Error("no candidate was renamed, so this fixture does not exercise the channel")
+			}
+		})
+	}
+}
+
+func TestCandidatesDropsDisabledControlsFromBuiltinVerbs(t *testing.T) {
 	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", enumTreeJSON)
-	for _, candidate := range v.Candidates() {
+	for _, candidate := range mustCandidates(t, v, LabelSourceVisibleText) {
 		if strings.Contains(candidate.Description, "Off") {
 			t.Errorf("disabled control surfaced as %q", candidate.Description)
 		}
@@ -90,7 +284,7 @@ func TestCandidatesDropsDisabledControls(t *testing.T) {
 
 func TestCandidatesTypingExposesInputType(t *testing.T) {
 	v := enumVerifier(t, "{kind:'builtin', verb:'typing'}", enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := mustCandidates(t, v, LabelSourceVisibleText)
 	candidate, ok := findCandidate(candidates, `Type into "Amount" (number)`)
 	if !ok {
 		t.Fatalf("want typing candidate with input type, got %v", descriptions(candidates))
@@ -113,7 +307,7 @@ func TestCandidatesLabelsEditableFieldByHintNotTypedValue(t *testing.T) {
       ]
     }`
 	v := enumVerifier(t, "{kind:'builtin', verb:'typing'}", tree)
-	candidates := v.Candidates()
+	candidates := mustCandidates(t, v, LabelSourceVisibleText)
 	if hasCandidate(candidates, `Type into "99" (number)`) || hasCandidate(candidates, `Type into "99"`) {
 		t.Errorf("editable field labeled by its typed value: %v", descriptions(candidates))
 	}
@@ -126,7 +320,7 @@ func TestCandidatesKeepsGestureVerbsDistinct(t *testing.T) {
 	v := enumVerifier(t,
 		"{kind:'weighted', branches:[[1,{kind:'builtin',verb:'scrolls'}],[1,{kind:'builtin',verb:'swipes'}]]}",
 		enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := mustCandidates(t, v, LabelSourceVisibleText)
 
 	// `scrolls` folds to one directional pair over the single scrollable
 	// container, which is what keeps the list short.
@@ -168,7 +362,7 @@ func TestCandidatesWeightsCombineAcrossPaths(t *testing.T) {
 	v := enumVerifier(t,
 		"{kind:'weighted', branches:[[1,{kind:'builtin',verb:'taps'}],[1,{kind:'builtin',verb:'taps'}]]}",
 		oneClickable)
-	candidates := v.Candidates()
+	candidates := mustCandidates(t, v, LabelSourceVisibleText)
 	if len(candidates) != 1 {
 		t.Fatalf("want one deduped candidate, got %v", descriptions(candidates))
 	}
@@ -185,7 +379,7 @@ func TestCandidatesWeightReflectsBranchShare(t *testing.T) {
 	v := enumVerifier(t,
 		"{kind:'weighted', branches:[[1,{kind:'builtin',verb:'taps'}],[3,{kind:'builtin',verb:'typing'}]]}",
 		enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := mustCandidates(t, v, LabelSourceVisibleText)
 	tap, ok := findCandidate(candidates, `Tap "Sign in"`)
 	if !ok {
 		t.Fatalf("missing tap candidate: %v", descriptions(candidates))
@@ -204,7 +398,7 @@ func TestCandidatesWeightReflectsBranchShare(t *testing.T) {
 
 func TestCandidatesUnweightedTreeShowsNoWeight(t *testing.T) {
 	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", enumTreeJSON)
-	for _, candidate := range v.Candidates() {
+	for _, candidate := range mustCandidates(t, v, LabelSourceVisibleText) {
 		if candidate.Weighted || candidate.Weight != 0 {
 			t.Errorf("%q carries a weight despite no weighted node", candidate.Description)
 		}
@@ -218,20 +412,22 @@ func TestCandidatesCallsAuthoredLeafOnce(t *testing.T) {
       {kind:'InputText', into:'id:Amount', text:'42'}
     ]}`
 	v := enumVerifier(t, actions, enumTreeJSON)
-	candidates := v.Candidates()
+	candidates := mustCandidates(t, v, LabelSourceVisibleText)
 
 	// Authored Tap resolves its selector to the visible-text label.
 	if !hasCandidate(candidates, `Tap "Sign in"`) {
 		t.Errorf("authored tap missing: %v", descriptions(candidates))
 	}
-	// A disabled authored target is dropped.
-	for _, candidate := range candidates {
-		if strings.Contains(candidate.Description, "Off") {
-			t.Errorf("authored action on disabled control surfaced: %q", candidate.Description)
-		}
+	// A disabled authored target is offered, not dropped: the seeded picker
+	// executes it, and attempting a disabled control is where boundary defects
+	// live, so a policy that cannot attempt it cannot find them.
+	if !hasCandidate(candidates, `Tap "Off"`) {
+		t.Errorf("authored action on a disabled control was dropped: %v", descriptions(candidates))
 	}
 	// Authored InputText replays its own sampled value (LLM does not supply it).
-	authored, ok := findCandidate(candidates, `Type "42" into "Amount"`)
+	// The fixture is an android tree, which reports no secure fact, so the
+	// rendered value is redacted while the action still carries it.
+	authored, ok := findCandidate(candidates, `Type "[redacted]" into "Amount"`)
 	if !ok {
 		t.Fatalf("authored typing missing: %v", descriptions(candidates))
 	}
@@ -252,7 +448,7 @@ func TestCandidatesSurfaceAuthoredUntargetedActions(t *testing.T) {
       {kind:'PressKey', key:'back'},
       {kind:'Wait'}
     ]}`
-	candidates := enumVerifier(t, actions, enumTreeJSON).Candidates()
+	candidates := mustCandidates(t, enumVerifier(t, actions, enumTreeJSON), LabelSourceVisibleText)
 	for _, want := range []string{"Swipe from (10,600) to (10,100)", "Press back", "Wait"} {
 		if !hasCandidate(candidates, want) {
 			t.Errorf("authored %q missing: %v", want, descriptions(candidates))
@@ -260,9 +456,114 @@ func TestCandidatesSurfaceAuthoredUntargetedActions(t *testing.T) {
 	}
 }
 
+// TestCandidatesAuthoredWaitKeepsItsDuration: a Wait that loses its duration is
+// a wait of zero, which the runner cannot dispatch at all, so the model would be
+// idling on paper while the seeded arm really waits.
+func TestCandidatesAuthoredWaitKeepsItsDuration(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [{kind:'Wait', durationMillis: 500}]}`
+	candidates := mustCandidates(t, enumVerifier(t, actions, enumTreeJSON), LabelSourceVisibleText)
+	candidate, ok := findCandidate(candidates, "Wait")
+	if !ok {
+		t.Fatalf("authored wait missing: %v", descriptions(candidates))
+	}
+	if candidate.Action.DurationMillis != 500 {
+		t.Errorf("wait duration = %d, want the authored 500", candidate.Action.DurationMillis)
+	}
+}
+
+// TestCandidatesAuthoredScrollNamesItsContainer: the container is the whole
+// point of an authored scroll. Dropped, the runner re-derives the gesture from
+// the screen and the scroll lands on whatever else is scrollable.
+func TestCandidatesAuthoredScrollNamesItsContainer(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [{kind:'Scroll', direction:'down', in:'id:List'}]}`
+	candidates := mustCandidates(t, enumVerifier(t, actions, enumTreeJSON), LabelSourceVisibleText)
+	candidate, ok := findCandidate(candidates, "Scroll down")
+	if !ok {
+		t.Fatalf("authored scroll missing: %v", descriptions(candidates))
+	}
+	if candidate.Action.On != "id:List" {
+		t.Errorf("scroll container = %q, want id:List", candidate.Action.On)
+	}
+	if candidate.Action.DurationMillis != gestureDurationMillis {
+		t.Errorf("scroll duration = %d, want %d", candidate.Action.DurationMillis, gestureDurationMillis)
+	}
+}
+
+// TestCandidatesAuthoredScrollKeepsPrecomputedEndpoints: a descriptor that
+// already carries the gesture is executed as written rather than re-derived.
+func TestCandidatesAuthoredScrollKeepsPrecomputedEndpoints(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [
+      {kind:'Scroll', direction:'down', in:'id:List', from:{x:540,y:1400}, to:{x:540,y:920}}
+    ]}`
+	candidates := mustCandidates(t, enumVerifier(t, actions, enumTreeJSON), LabelSourceVisibleText)
+	candidate, ok := findCandidate(candidates, "Scroll down")
+	if !ok {
+		t.Fatalf("authored scroll missing: %v", descriptions(candidates))
+	}
+	action := candidate.Action
+	got := [4]int{action.FromX, action.FromY, action.ToX, action.ToY}
+	if got != [4]int{540, 1400, 540, 920} {
+		t.Errorf("scroll endpoints = %v, want the descriptor's (540,1400)->(540,920)", got)
+	}
+}
+
+// TestCandidatesAuthoredSwipeDefaultsItsDuration keeps the gesture default in
+// one place: the serializer the seeded arm goes through fills an omitted
+// duration, and a candidate that left it at zero would depend on the runner
+// happening to pick the same fallback.
+func TestCandidatesAuthoredSwipeDefaultsItsDuration(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [
+      {kind:'Swipe', from:{x:10,y:600}, to:{x:10,y:100}},
+      {kind:'Swipe', from:{x:20,y:600}, to:{x:20,y:100}, durationMillis: 400}
+    ]}`
+	candidates := mustCandidates(t, enumVerifier(t, actions, enumTreeJSON), LabelSourceVisibleText)
+	omitted, ok := findCandidate(candidates, "Swipe from (10,600) to (10,100)")
+	if !ok {
+		t.Fatalf("authored swipe missing: %v", descriptions(candidates))
+	}
+	if omitted.Action.DurationMillis != gestureDurationMillis {
+		t.Errorf("omitted duration = %d, want %d", omitted.Action.DurationMillis, gestureDurationMillis)
+	}
+	authored, ok := findCandidate(candidates, "Swipe from (20,600) to (20,100)")
+	if !ok {
+		t.Fatalf("authored swipe missing: %v", descriptions(candidates))
+	}
+	if authored.Action.DurationMillis != 400 {
+		t.Errorf("authored duration = %d, want 400", authored.Action.DurationMillis)
+	}
+}
+
+// TestCandidatesDropTargetsThatResolveToNothing: the seeded picker drops an
+// action whose target resolves to neither coordinates nor a selector. Offering
+// it to the model instead would put a tap on the screen origin within reach,
+// which on Android is the corner that pulls the notification shade down.
+func TestCandidatesDropTargetsThatResolveToNothing(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [
+      {kind:'Tap', on: null},
+      {kind:'Tap', on: {}},
+      {kind:'InputText', into: {}, text:'x'},
+      {kind:'Swipe', from:{x:1,y:2}, to:{}}
+    ]}`
+	candidates := mustCandidates(t, enumVerifier(t, actions, enumTreeJSON), LabelSourceVisibleText)
+	if len(candidates) != 0 {
+		t.Errorf("targetless actions reached the model: %v", descriptions(candidates))
+	}
+}
+
+// TestCandidatesKeepATargetOnTheScreenOrigin is the other side of that rule: a
+// point at (0,0) IS a target the seeded picker executes, so the drop must key on
+// a target with no coordinates rather than on coordinates that are zero.
+func TestCandidatesKeepATargetOnTheScreenOrigin(t *testing.T) {
+	actions := `{kind:'actions', generate: () => [{kind:'Tap', on: {x: 0, y: 0}}]}`
+	candidates := mustCandidates(t, enumVerifier(t, actions, enumTreeJSON), LabelSourceVisibleText)
+	if len(candidates) != 1 {
+		t.Fatalf("want the origin tap kept, got %v", descriptions(candidates))
+	}
+}
+
 func TestCandidatesOffRouteLeafYieldsNothing(t *testing.T) {
 	v := enumVerifier(t, "{kind:'actions', generate: () => []}", enumTreeJSON)
-	if got := v.Candidates(); len(got) != 0 {
+	if got := mustCandidates(t, v, LabelSourceVisibleText); len(got) != 0 {
 		t.Errorf("off-route leaf should yield no candidates, got %v", descriptions(got))
 	}
 }
@@ -280,7 +581,7 @@ func TestCandidatesSkipsCrossFadeFrames(t *testing.T) {
       ]
     }`
 	v := enumVerifier(t, "{kind:'builtin', verb:'taps'}", crossFade)
-	if got := v.Candidates(); len(got) != 0 {
+	if got := mustCandidates(t, v, LabelSourceVisibleText); len(got) != 0 {
 		t.Errorf("cross-fade frame should yield no candidates, got %v", descriptions(got))
 	}
 	// The seeded policy is skipped by the SAME guard, in the shared producer,
@@ -292,13 +593,13 @@ func TestCandidatesSkipsCrossFadeFrames(t *testing.T) {
 
 func TestCandidatesNilWithoutTreeOrActions(t *testing.T) {
 	withActions := newLoadedVerifier(t, "globalThis.actions = {kind:'builtin', verb:'taps'};")
-	if got := withActions.Candidates(); got != nil {
+	if got := mustCandidates(t, withActions, LabelSourceVisibleText); got != nil {
 		t.Errorf("Candidates with no tree = %v, want nil", got)
 	}
 	noActions := newLoadedVerifier(t, "globalThis.properties = {};")
 	tree, _ := hierarchy.Parse(enumTreeJSON)
 	noActions.lastTree = tree
-	if got := noActions.Candidates(); got != nil {
+	if got := mustCandidates(t, noActions, LabelSourceVisibleText); got != nil {
 		t.Errorf("Candidates with no actions root = %v, want nil", got)
 	}
 }
@@ -309,6 +610,16 @@ func descriptions(candidates []ActionCandidate) []string {
 		out[i] = candidate.Description
 	}
 	return out
+}
+
+func candidatesMatching(candidates []ActionCandidate, description string) []ActionCandidate {
+	var matched []ActionCandidate
+	for _, candidate := range candidates {
+		if candidate.Description == description {
+			matched = append(matched, candidate)
+		}
+	}
+	return matched
 }
 
 func count(candidates []ActionCandidate, description string) int {
@@ -381,4 +692,146 @@ func newLoadedVerifier(t *testing.T, source string) *Verifier {
 		t.Fatalf("Load: %v", err)
 	}
 	return v
+}
+
+// samplerSpec authors one leaf that taps a target drawn from the given list.
+func samplerSpec(items string) string {
+	return `
+import { actions, from, Tap } from "@sanderling/spec";
+const targets = from(` + items + `);
+globalThis.actions = actions(() => [Tap({ on: targets.generate() })]);
+`
+}
+
+// TestCandidatesRefuseAMultiItemAuthoredSampler pins the refusal: a sampler
+// reads the picker's rng, which this policy has no way to enter, so the draw
+// would collapse to the first item on every step while the seeded picker keeps
+// reaching all three. Offering that silently is what would make a comparison of
+// the two policies meaningless, so the spec is refused instead.
+func TestCandidatesRefuseAMultiItemAuthoredSampler(t *testing.T) {
+	v := newVerifier(t)
+	loadActionSpec(t, v, samplerSpec(`["id:SignIn", "id:Amount", "id:List"]`))
+	pushTree(t, v, enumTreeJSON)
+
+	_, err := v.Candidates(LabelSourceVisibleText)
+	if err == nil {
+		t.Fatal("a multi-item authored sampler must refuse to run under the model policy")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "targets.generate()") {
+		t.Errorf("error does not name the offending leaf, so the author cannot find it: %s", message)
+	}
+	if !strings.Contains(message, "draws 1 of 3 sampled items") {
+		t.Errorf("error does not say what the leaf did: %s", message)
+	}
+}
+
+// TestCandidatesAcceptASingleItemAuthoredSampler: a one-item sampler short
+// circuits before the rng, so both policies get that one value and there is no
+// divergence to refuse.
+func TestCandidatesAcceptASingleItemAuthoredSampler(t *testing.T) {
+	v := newVerifier(t)
+	loadActionSpec(t, v, samplerSpec(`["id:SignIn"]`))
+	pushTree(t, v, enumTreeJSON)
+
+	candidates, err := v.Candidates(LabelSourceVisibleText)
+	if err != nil {
+		t.Fatalf("a single-item sampler is not a divergence: %v", err)
+	}
+	if !hasCandidate(candidates, `Tap "Sign in"`) {
+		t.Errorf("sampled tap missing: %v", descriptions(candidates))
+	}
+}
+
+// webFieldTreeJSON is the add-transaction screen as the chrome driver dumps it:
+// two inputs a user tells apart by the <label> bound to each, which the dump
+// does not carry. Named from the tree alone they collapse onto their CSS class.
+const webFieldTreeJSON = `{
+  "attributes": {"tag": "html", "bounds": "[0,0,400,800]"},
+  "children": [
+    {"attributes": {"resource-id": "txn-amount", "tag": "input", "class": "input amount-input", "bounds": "[0,100,400,160]"}, "editable": true, "enabled": true, "secure": false, "children": []},
+    {"attributes": {"resource-id": "txn-note", "tag": "input", "class": "input", "bounds": "[0,200,400,260]"}, "editable": true, "enabled": true, "secure": false, "children": []}
+  ]
+}`
+
+// The web tick evaluates extractors in V8 and injects the handles here, so an
+// authored action's target is a plain object with no selector to resolve
+// against the tree. Naming it by the handle's own text names every input "",
+// and the model then cannot tell the amount field from the note field.
+// pkg/spec/test/web-runtime.test.ts asserts the producing side builds these
+// handles with the hint each assertion here reads.
+func TestCandidatesNameWebAuthoredFieldsByTheirHint(t *testing.T) {
+	const amountHandle = `{
+      "id": "txn-amount", "text": "", "desc": "", "class": "input amount-input",
+      "clickable": true, "enabled": true, "editable": true, "focused": false, "secure": false,
+      "x": 200, "y": 130, "bounds": {"left": 0, "top": 100, "right": 400, "bottom": 160},
+      "attrs": {"tag": "input", "aria-label": "", "id": "txn-amount",
+                "class": "input amount-input", "placeholder": "0.00", "hintText": "Amount"}
+    }`
+	const noteHandle = `{
+      "id": "txn-note", "text": "", "desc": "", "class": "input",
+      "clickable": true, "enabled": true, "editable": true, "focused": false, "secure": false,
+      "x": 200, "y": 230, "bounds": {"left": 0, "top": 200, "right": 400, "bottom": 260},
+      "attrs": {"tag": "input", "aria-label": "", "id": "txn-note", "class": "input",
+                "placeholder": "What's this for?", "hintText": "Note (optional)"}
+    }`
+
+	v := newVerifier(t)
+	loadActionSpec(t, v, `
+		import { InputText, actions, extract } from "@sanderling/spec";
+		const amount = extract((s) => s.ax.find({ id: "txn-amount" })).named("amount");
+		const note = extract((s) => s.ax.find({ id: "txn-note" })).named("note");
+		globalThis.actions = actions(() => {
+			if (!amount.current || !note.current) return [];
+			return [
+				InputText({ into: amount.current, text: "12.34" }),
+				InputText({ into: note.current, text: "Coffee" }),
+			];
+		});
+	`)
+	pushTree(t, v, webFieldTreeJSON)
+	if _, err := v.OverrideExtractorValues(map[int]json.RawMessage{
+		0: json.RawMessage(amountHandle),
+		1: json.RawMessage(noteHandle),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := mustCandidates(t, v, LabelSourceVisibleText)
+	if !hasCandidate(candidates, `Type "12.34" into "Amount"`) {
+		t.Errorf("amount field unnamed: %v", descriptions(candidates))
+	}
+	if !hasCandidate(candidates, `Type "Coffee" into "Note (optional)"`) {
+		t.Errorf("note field unnamed: %v", descriptions(candidates))
+	}
+}
+
+// The identifier arm must stay blind to anything a user reads, hint included.
+func TestCandidatesNameWebAuthoredFieldsByIdentifierOnThatArm(t *testing.T) {
+	const amountHandle = `{
+      "id": "txn-amount", "text": "", "editable": true, "enabled": true, "secure": false,
+      "x": 200, "y": 130,
+      "attrs": {"tag": "input", "hintText": "Amount"}
+    }`
+	v := newVerifier(t)
+	loadActionSpec(t, v, `
+		import { InputText, actions, extract } from "@sanderling/spec";
+		const amount = extract((s) => s.ax.find({ id: "txn-amount" })).named("amount");
+		globalThis.actions = actions(() =>
+			amount.current ? [InputText({ into: amount.current, text: "12.34" })] : []);
+	`)
+	pushTree(t, v, webFieldTreeJSON)
+	if _, err := v.OverrideExtractorValues(map[int]json.RawMessage{
+		0: json.RawMessage(amountHandle),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := mustCandidates(t, v, LabelSourceResourceID)
+	if !hasCandidate(candidates, `Type "12.34" into "txn-amount"`) {
+		t.Errorf("identifier arm lost the field name: %v", descriptions(candidates))
+	}
+	if hasCandidate(candidates, `Type "12.34" into "Amount"`) {
+		t.Error("identifier arm leaked the hint a user reads")
+	}
 }

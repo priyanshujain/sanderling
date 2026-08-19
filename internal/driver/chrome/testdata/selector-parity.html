@@ -1,0 +1,79 @@
+<!doctype html>
+<html id="page" lang="en">
+  <head id="page-head">
+    <meta id="page-charset" charset="utf-8" />
+    <title id="page-title">selector parity</title>
+  </head>
+  <body id="page-body">
+    <div id="summary_card" data-testid="summary" aria-label="summary_card, 3 customers">summary</div>
+    <div id="customer_list" aria-label="customer_list">
+      <div id="customer_row_a1" data-testid="customer-row" aria-label="customer_row_a1, Alice">Alice</div>
+      <div id="customer_row_b2" data-testid="customer-row" aria-label="customer_row_b2, Bob">Bob</div>
+      <div id="supplier_row_c3" aria-label="supplier_row_c3, Carol">Carol</div>
+    </div>
+    <div id="status_row"><span id="status_badge" data-state="sent-badge">Sent ✓</span></div>
+    <div id="draft_row"><span id="draft_badge">Sent ✓</span></div>
+    <div id="unsent_row"><span id="unsent_badge">3<!-- --> unsent</span></div>
+    <div id="split_row">Sen<span id="split_tail">t here</span></div>
+    <div id="nested_row" class="status">Sent <span id="nested_badge" class="status">Sent</span></div>
+    <!-- secure is derived from the field type, so the fields here have to cover
+         every state it answers with: the password entry, the three shapes of
+         editable field that are not one, and a control that is no field at all
+         and answers to neither value. -->
+    <form id="login_form">
+      <input id="login_email" type="email" aria-label="login_email" />
+      <input id="login_password" type="password" aria-label="login_password" />
+      <textarea id="login_note" aria-label="login_note"></textarea>
+      <div id="login_terms" contenteditable="true">terms</div>
+      <input id="login_remember" type="checkbox" aria-label="login_remember" />
+    </form>
+    <!-- hintText is the accessible-name ladder rather than one attribute, so
+         these fields differ one rung at a time: a bound label, a placeholder,
+         a placeholder an aria-label outranks, and the name the form gives the
+         field. -->
+    <div id="hint_row">
+      <label id="hint_phone_label" for="hint_phone">Phone number</label>
+      <input id="hint_phone" />
+      <input id="hint_search" placeholder="Search customers" />
+      <input id="hint_amount" aria-label="Amount in rupees" placeholder="0.00" />
+      <input id="hint_code" name="verification_code" />
+    </div>
+    <!-- The boolean states are derived from the live element, never written by
+         the markup, so these controls differ one state at a time: a disabled
+         button and an aria-disabled role control, a box ticked by script with
+         no checked attribute beside one cleared by script that has the
+         attribute, and a select whose first option is selected without one. -->
+    <div id="state_row">
+      <button id="state_save">save</button>
+      <button id="state_cancel" disabled>cancel</button>
+      <div id="state_submit" role="button" aria-disabled="true">submit</div>
+      <input id="state_remember" type="checkbox" aria-label="state_remember" />
+      <input id="state_agree" type="checkbox" checked aria-label="state_agree" />
+      <select id="state_month" aria-label="state_month">
+        <option id="state_january">January</option>
+        <option id="state_february">February</option>
+      </select>
+    </div>
+    <!-- scrollable is derived from the box rather than written by the markup,
+         and both producers state it only where it holds, so one container here
+         overflows its box and its neighbour does not. -->
+    <div id="scroll_row">
+      <div id="scroll_box" style="height: 20px; overflow: auto">
+        <div id="scroll_content" style="height: 200px">scrolls</div>
+      </div>
+      <div id="scroll_still">still</div>
+    </div>
+    <script id="state_script">
+      document.getElementById("state_remember").checked = true;
+      document.getElementById("state_agree").checked = false;
+      document.getElementById("state_save").focus();
+    </script>
+    <todo-app id="todo_app">
+      <todo-list id="todo_list">
+        <li id="todo_1">Buy milk</li>
+        <li id="todo_2">Pay rent</li>
+      </todo-list>
+      <a id="todo_link" href="#/all">All</a>
+    </todo-app>
+  </body>
+</html>

@@ -13,6 +13,7 @@ import (
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/runner"
+	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
@@ -193,19 +194,23 @@ func TestResolveSpecAPIPath_ReturnsEmptyWhenMissing(t *testing.T) {
 
 func TestBuildRunMeta_RecordsArmMembership(t *testing.T) {
 	options := Options{
-		Spec:      "spec.ts",
-		BundleID:  "com.example",
-		Platform:  "android",
-		Duration:  3 * time.Minute,
-		MaxSteps:  300,
-		Arm:       "llm-visible-text",
-		Generator: "llm",
+		Spec:        "spec.ts",
+		BundleID:    "com.example",
+		Platform:    "android",
+		Duration:    3 * time.Minute,
+		MaxSteps:    300,
+		Arm:         "llm-visible-text",
+		Generator:   "llm",
+		LabelSource: verifier.LabelSourceVisibleText,
 	}
 	meta := buildRunMeta(options, "deadbeef", 7, "farm-01",
 		verifier.LLMConfig{Model: "claude-sonnet-5", Instructions: "exercise the outbox"}, true)
 
 	if meta.Arm != "llm-visible-text" || meta.Generator != "llm" {
 		t.Errorf("arm membership: got arm=%q generator=%q", meta.Arm, meta.Generator)
+	}
+	if meta.LabelSource != verifier.LabelSourceVisibleText {
+		t.Errorf("label source: got %q, want %q", meta.LabelSource, verifier.LabelSourceVisibleText)
 	}
 	if meta.Model != "claude-sonnet-5" || meta.Instructions != "exercise the outbox" {
 		t.Errorf("llm config: got model=%q instructions=%q", meta.Model, meta.Instructions)
@@ -218,6 +223,35 @@ func TestBuildRunMeta_RecordsArmMembership(t *testing.T) {
 	}
 }
 
+// The device a run drove has to survive in the run's own artifact. Held only in
+// the campaign's runs.jsonl, a trace read on its own cannot say which emulator,
+// or which API level, produced it.
+func TestBuildRunMeta_RecordsTheDeviceInMetaJSON(t *testing.T) {
+	directory := t.TempDir()
+	writer, err := trace.NewWriter(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	options := Options{Platform: "android", Generator: "seeded", Duration: time.Minute, Device: "emulator-5556"}
+	if err := writer.WriteMeta(buildRunMeta(options, "deadbeef", 3, "farm-01", verifier.LLMConfig{}, false)); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(filepath.Join(directory, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored trace.Meta
+	if err := json.Unmarshal(body, &stored); err != nil {
+		t.Fatalf("meta.json is not valid JSON: %v\n%s", err, body)
+	}
+	if stored.Device != "emulator-5556" {
+		t.Errorf("device in meta.json: got %q, want emulator-5556\n%s", stored.Device, body)
+	}
+}
+
 func TestBuildRunMeta_OmitsModelWhenSeededPickerRuns(t *testing.T) {
 	options := Options{Platform: "android", Generator: "seeded", Duration: time.Minute}
 	meta := buildRunMeta(options, "deadbeef", 1, "farm-01",
@@ -226,6 +260,55 @@ func TestBuildRunMeta_OmitsModelWhenSeededPickerRuns(t *testing.T) {
 	if meta.Model != "" || meta.Instructions != "" {
 		t.Errorf("a seeded run must not be labelled with a model it never called: model=%q instructions=%q",
 			meta.Model, meta.Instructions)
+	}
+}
+
+// TestBuildRunMeta_RecordsLabelSourceForASeededRun is the deliberate difference
+// from Model and Instructions above. The seeded picker never reads a label, but
+// the run still belongs to a labelling cell, and the pair of seeded runs across
+// the two cells is the manipulation check. Omitting it here would leave those
+// two runs indistinguishable in the artifact.
+func TestBuildRunMeta_RecordsLabelSourceForASeededRun(t *testing.T) {
+	options := Options{
+		Platform:    "android",
+		Generator:   "seeded",
+		Duration:    time.Minute,
+		LabelSource: verifier.LabelSourceResourceID,
+	}
+	meta := buildRunMeta(options, "deadbeef", 1, "farm-01", verifier.LLMConfig{}, false)
+
+	if meta.LabelSource != verifier.LabelSourceResourceID {
+		t.Errorf("label source: got %q, want %q", meta.LabelSource, verifier.LabelSourceResourceID)
+	}
+}
+
+// An ios run names its simulator with --ios-device, so reading the android
+// --device flag left every ios trace unable to say what it executed on.
+func TestBuildRunMeta_NamesTheIosSimulatorItRanOn(t *testing.T) {
+	options := Options{
+		Platform:  "ios",
+		Generator: "seeded",
+		Duration:  time.Minute,
+		IosDevice: "iPhone 17 Pro",
+	}
+	meta := buildRunMeta(options, "deadbeef", 1, "farm-01", verifier.LLMConfig{}, false)
+
+	if meta.Device != "iPhone 17 Pro" {
+		t.Errorf("device: got %q, want the ios simulator the run named", meta.Device)
+	}
+}
+
+func TestBuildRunMeta_NamesTheAndroidDeviceItRanOn(t *testing.T) {
+	options := Options{
+		Platform:  "android",
+		Generator: "seeded",
+		Duration:  time.Minute,
+		Device:    "emulator-5554",
+	}
+	meta := buildRunMeta(options, "deadbeef", 1, "farm-01", verifier.LLMConfig{}, false)
+
+	if meta.Device != "emulator-5554" {
+		t.Errorf("device: got %q, want the android device the run named", meta.Device)
 	}
 }
 
@@ -244,10 +327,12 @@ func TestBuildRunMeta_OmitsModelWhenSpecDeclaresNoLLMGenerator(t *testing.T) {
 // stays a successful run, which is what every existing invocation expects.
 func TestRunOutcome_ReportsViolationsOnlyUnderTheFlag(t *testing.T) {
 	violated := runner.Summary{
-		Steps:      7,
-		Violations: []runner.ViolationRecord{{StepIndex: 3, Properties: []string{"balanceMoves"}}},
+		Steps:             7,
+		DispatchedActions: 7,
+		GeneratorActions:  7,
+		Violations:        []runner.ViolationRecord{{StepIndex: 3, Properties: []string{"balanceMoves"}}},
 	}
-	clean := runner.Summary{Steps: 7}
+	clean := runner.Summary{Steps: 7, DispatchedActions: 7, GeneratorActions: 7}
 
 	if err := runOutcome(Options{}, violated); err != nil {
 		t.Errorf("without --exit-on-violation a violated run must succeed, got %v", err)
@@ -285,9 +370,146 @@ func TestRunOutcome_ARunThatJudgedNothingIsNotASuccess(t *testing.T) {
 
 	// A screen that composes now and then costs a run steps, not its verdict. A
 	// check that fired here would turn every healthy android run red.
-	mostlyJudged := runner.Summary{Steps: 6, SkippedVerification: 5}
+	mostlyJudged := runner.Summary{
+		Steps:               6,
+		SkippedVerification: 5,
+		DispatchedActions:   1,
+		GeneratorActions:    1,
+	}
 	if err := runOutcome(Options{}, mostlyJudged); err != nil {
 		t.Errorf("a run that judged one of its 6 steps must succeed, got %v", err)
+	}
+}
+
+// A run that dispatched no action at all observed one screen for its whole life
+// and never drove the app, so its empty violation list is what an unplugged
+// instrument reports. The provider rate-limiting a model picker is the way this
+// happens in practice: every step ends with the picker handing back nothing.
+func TestRunOutcome_ARunThatDroveNothingIsNotASuccess(t *testing.T) {
+	droveNothing := runner.Summary{
+		Steps:          200,
+		SkippedActions: map[string]int{"no_action_produced": 200},
+	}
+	err := runOutcome(Options{}, droveNothing)
+	var dead NoGeneratorActionsError
+	if !errors.As(err, &dead) {
+		t.Fatalf("a run that dispatched none of its 200 steps' actions came back %v, "+
+			"want a NoGeneratorActionsError", err)
+	}
+	if dead.Steps != 200 {
+		t.Errorf("steps: got %d, want 200", dead.Steps)
+	}
+	if !strings.Contains(dead.Error(), "no_action_produced") {
+		t.Errorf("the error never names why nothing was dispatched: %v", dead)
+	}
+
+	// One generator action is exploration, however little. A check that fired
+	// here would be red on any run whose screen offers the generator nothing for
+	// a while.
+	droveOnce := runner.Summary{Steps: 200, DispatchedActions: 1, GeneratorActions: 1}
+	if err := runOutcome(Options{}, droveOnce); err != nil {
+		t.Errorf("a run whose generator dispatched one action must succeed, got %v", err)
+	}
+
+	// The sweeps that measure where a generator reaches ask for a run that
+	// explores nothing by name, and "the generator reached nothing here" is
+	// their measurement rather than their failure.
+	if err := runOutcome(Options{AllowNoGeneratorActions: true}, droveNothing); err != nil {
+		t.Errorf("the dead-run opt-out no longer carries a run through, got %v", err)
+	}
+
+	// A run cut short before it took a step never got going, which the deadline
+	// and the step count already say.
+	if err := runOutcome(Options{}, runner.Summary{}); err != nil {
+		t.Errorf("a run with no steps at all must not report as dead-on-arrival, got %v", err)
+	}
+
+	// CI reads exit 2 as "the run found the bug". A run whose first screen
+	// already violated must keep reporting that, or the found bug is downgraded
+	// to a broken harness.
+	foundOnTheFirstScreen := droveNothing
+	foundOnTheFirstScreen.Violations = []runner.ViolationRecord{
+		{StepIndex: 1, Properties: []string{"balanceNonNegative"}},
+	}
+	err = runOutcome(Options{ExitOnViolation: true}, foundOnTheFirstScreen)
+	var violations ViolationsError
+	if !errors.As(err, &violations) {
+		t.Errorf("a run that found a violation came back %v, want a ViolationsError", err)
+	}
+}
+
+// A spec whose setup logs in drives the app before the generator is ever
+// consulted, so a run whose every model call failed still reached the driver a
+// few times. Those actions are the harness getting into position: counting them
+// as the run driving the app passed 86 steps of folio that explored nothing.
+func TestRunOutcome_SetupActionsDoNotCarryARunWhoseGeneratorDroveNothing(t *testing.T) {
+	loginThenNothing := runner.Summary{
+		Steps:             86,
+		DispatchedActions: 3,
+		GeneratorActions:  0,
+		SkippedActions:    map[string]int{"no_action_produced": 83},
+	}
+	err := runOutcome(Options{}, loginThenNothing)
+	var dead NoGeneratorActionsError
+	if !errors.As(err, &dead) {
+		t.Fatalf("a run whose 3 dispatched actions all came from setup came back %v, "+
+			"want a NoGeneratorActionsError", err)
+	}
+	if dead.Steps != 86 {
+		t.Errorf("steps: got %d, want 86", dead.Steps)
+	}
+	if !strings.Contains(dead.Error(), "no_action_produced") {
+		t.Errorf("the error never names why the generator dispatched nothing: %v", dead)
+	}
+
+	// The same run under --exit-on-violation still reports its evidence: CI
+	// reads exit 2 as "the run found the bug", and a setup-only run that found
+	// one must not be downgraded to a broken harness.
+	found := loginThenNothing
+	found.Violations = []runner.ViolationRecord{{StepIndex: 2, Properties: []string{"balanceMoves"}}}
+	var violations ViolationsError
+	if err := runOutcome(Options{ExitOnViolation: true}, found); !errors.As(err, &violations) {
+		t.Errorf("a setup-only run that found a violation came back %v, want a ViolationsError", err)
+	}
+}
+
+// Two refusals, two flags. A sweep that runs a property-free spec asked to
+// judge nothing, not to explore nothing, and a run with properties that needs
+// the dead-run exemption must be able to say so without claiming a waiver it
+// does not want.
+func TestRunOutcome_TheDeadRunRefusalHasItsOwnOptOut(t *testing.T) {
+	droveNothing := runner.Summary{
+		Steps:          200,
+		SkippedActions: map[string]int{"no_action_produced": 200},
+	}
+
+	var dead NoGeneratorActionsError
+	if err := runOutcome(Options{AllowNoProperties: true}, droveNothing); !errors.As(err, &dead) {
+		t.Errorf("--allow-no-properties waived the dead-run refusal, which it does not name: got %v", err)
+	}
+	if err := runOutcome(Options{AllowNoGeneratorActions: true}, droveNothing); err != nil {
+		t.Errorf("--allow-no-generator-actions did not carry a run that drove nothing through, got %v", err)
+	}
+}
+
+// A recorded violation is a verdict, and a run that reached one is not a dead
+// run whatever drove the app to it. Campaigns are where this bites: they never
+// pass --exit-on-violation, so refusing such a run writes exit_code 1 into the
+// record and the analysis drops a real detection as missing data.
+func TestRunOutcome_ARecordedViolationCarriesARunWhoseGeneratorDroveNothing(t *testing.T) {
+	setupReachedTheBug := runner.Summary{
+		Steps:             40,
+		DispatchedActions: 3,
+		GeneratorActions:  0,
+		SkippedActions:    map[string]int{"no_action_produced": 40},
+		Violations: []runner.ViolationRecord{
+			{StepIndex: 3, Properties: []string{"noUncaughtExceptions"}},
+		},
+	}
+
+	if err := runOutcome(Options{}, setupReachedTheBug); err != nil {
+		t.Fatalf("a run that recorded a violation came back %v, want the run to succeed "+
+			"so the campaign records exit_code 0 and the detection survives", err)
 	}
 }
 

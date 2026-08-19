@@ -18,14 +18,18 @@ complete and useful answer.
 
 - **0** means the run completed. It does **not** mean no violations. Without
   `--exit-on-violation` a run that recorded violations still exits 0: measured
-  on a ten step web run that recorded two, `run complete: 10 steps` and
-  `2 violation record(s)`, exit code 0.
+  on a ten step web run of the `throwing` fixture,
+  `run complete: 10 steps, 10 driven by the generator` and
+  `1 violation record(s)`, exit code 0.
 - **2** means the run recorded a violation under `--exit-on-violation` and
   stopped there. The same ten step run with the flag exits 2 after four steps.
 - **1** means the harness broke. A bad target gives
   `error: launch app: page load error net::ERR_UNSAFE_PORT` and exit 1, and
   writes no run directory at all, because the trace is created after the launch
-  succeeds.
+  succeeds. A run that finished also exits 1 when it holds no verdict to report:
+  a spec with no properties, a run no step of which reached the verifier, or one
+  whose action generator never drove the app and found nothing (section 5).
+  Those do leave a full run directory behind.
 
 Anything other than 0 and 2 means the run did not complete, and a missing
 `trace.jsonl` under a 0 or a 2 means there is nothing to judge rather than
@@ -147,8 +151,8 @@ result.
 
 ## 5. When a run is not evidence at all
 
-Some runs never got far enough for any of the above to matter, and every one of
-them exits 0 and reports no violations.
+Some runs never got far enough for any of the above to matter, and most of them
+exit 0 and report no violations.
 
 **It never reached the app.** A launch flake left a fuzzer on the device
 launcher for 200 steps in 65 seconds, two nodes per snapshot, exit 0, no
@@ -157,6 +161,13 @@ trace at all: the folio CI leg greps for `"AddTransactionScreen"` and fails the
 run when it is absent, which is more honest than any exit code it could read.
 The run's stdout also carries `app left foreground; relaunching` with the
 package it found instead.
+
+A run that could not get the app on screen at all no longer reaches that state:
+the startup gate ends it, the process exits 1, and the trace holds one record,
+`{"step":0,"precondition_failure":"app_not_in_foreground"}`. The same field
+lands on any later step the scope guard could not bring the app back for, and
+the campaign summary counts both as `precondition_failures`, so a directory of
+runs answers "how many of these were never in the app" without reading a log.
 
 **The hierarchy is a handful of nodes.** `nodes=` in each step line is the
 cheapest signal there is. Measured: 6 on a four-element page, 2 on an empty one.
@@ -175,7 +186,22 @@ seconds a step for a run that is driving something real.
 **It spent its budget on one action.** Count `next_action` by kind and selector.
 A run whose actions are one selector explored nothing, whatever its step count.
 
-None of these change the exit code. All of them change what the run proves,
+**The generator never drove the app.** A model run whose every call fails still
+dispatches the actions its spec's setup produced, so a login-fronted spec leaves
+a trace and a summary that read like a run that acted. This one the run refuses
+itself: exit 1 and `N step(s) ran and the action generator drove the app in none
+of them`, followed by the per reason tally of what never reached the app.
+`llm-calls.jsonl` carries the cause, one record per step, and the trace's
+`action_skipped` names it on each step that produced nothing.
+
+Two runs are not refused. One that recorded a violation exits 0 whatever drove
+it there, because it holds the verdict the refusal exists to demand, and a
+campaign passes no flags, so refusing it would write `exit_code: 1` and lose the
+detection to the analysis as missing data. And a sweep measuring where a
+generator reaches passes `--allow-no-generator-actions`, for which reaching
+nothing on this build is the measurement.
+
+None of the others change the exit code. All of them change what the run proves,
 which is nothing.
 
 ## 6. `skipped_verification`, `transitional`, and the judged count
@@ -193,7 +219,7 @@ The run says so itself:
 7 step(s) judged by nothing: the screen was still moving when it was read
 ```
 
-Subtract it. `run complete: 240 steps` with that line is a 233 step run for
+Subtract it. A 240 step run with that line is a 233 step run for
 every purpose that matters, and `replay-ui-summary.sh` reports the pair as
 "N steps recorded, M verified" for the same reason. A run with many of these is
 telling you the driver could not get a clean read of your app, which is a

@@ -15,6 +15,10 @@ describe("parseSelector", () => {
     { input: "id:login", out: { kind: "id", value: "login" } },
     { input: "text:Sign In", out: { kind: "text", value: "Sign In" } },
     { input: "textPrefix:Hello", out: { kind: "textPrefix", value: "Hello" } },
+    {
+      input: "idPrefix:customer_row_",
+      out: { kind: "idPrefix", value: "customer_row_" },
+    },
     { input: "id:com.app:id/btn", out: { kind: "id", value: "com.app:id/btn" } },
     { input: "bogus:x", out: null },
     { input: ":leading", out: null },
@@ -30,6 +34,7 @@ describe("parseSelector", () => {
 describe("tagFromSelector", () => {
   it("appends ellipsis only for prefix selectors", () => {
     expect(tagFromSelector("textPrefix:Hel")).toBe("Hel...");
+    expect(tagFromSelector("idPrefix:customer_row_")).toBe("customer_row_...");
     expect(tagFromSelector("text:Hello")).toBe("Hello");
     expect(tagFromSelector("plain")).toBe("plain");
   });

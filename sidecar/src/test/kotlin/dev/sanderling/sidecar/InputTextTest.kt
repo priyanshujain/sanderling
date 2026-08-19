@@ -285,6 +285,19 @@ class InputTextTest {
         assertFailsWith<IllegalArgumentException> { maestroKeyFor("zorp") }
     }
 
+    // escape is a documented key. Missing from the table it throws on the adb
+    // backend and, when a table entry has no device-driver equivalent, the
+    // device backend used to drop the press with no error at all.
+    @Test fun escapeReachesBothAndroidBackends() {
+        val commands = mutableListOf<List<String>>()
+        StubDriverBackend("android") { commands.add(it) }.pressKey("escape")
+        assertEquals(
+            listOf(listOf("shell", "input", "keyevent", "KEYCODE_ESCAPE")),
+            commands,
+        )
+        assertEquals(maestro.KeyCode.ESCAPE, maestroKeyFor("escape"))
+    }
+
     // An IME left open hides every app node beneath it from the hierarchy, so a
     // form whose submit button sits under the keyboard becomes unreachable for
     // as long as the fuzzer keeps typing into it. Typing must close the

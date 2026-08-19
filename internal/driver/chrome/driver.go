@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
@@ -31,6 +32,14 @@ type Driver struct {
 
 	logsMu sync.Mutex
 	logs   []driver.LogEntry
+
+	navigationsMu sync.Mutex
+	navigations   []driver.Navigation
+
+	// pickerState is the seeded picker's draw position, held here rather than
+	// in the page: a navigation replaces the page's runtime, and a runtime that
+	// starts over restarts the seed's stream at its first draw.
+	pickerState string
 }
 
 // New creates a new ChromeDriver. Call Terminate when done.
@@ -97,6 +106,19 @@ func New() *Driver {
 		d.logsMu.Unlock()
 	})
 
+	chromedp.ListenTarget(tabCtx, func(ev any) {
+		e, ok := ev.(*page.EventFrameNavigated)
+		if !ok || e.Frame == nil || e.Frame.ParentID != "" {
+			return
+		}
+		d.navigationsMu.Lock()
+		d.navigations = append(d.navigations, driver.Navigation{
+			URL:        e.Frame.URL,
+			UnixMillis: time.Now().UnixMilli(),
+		})
+		d.navigationsMu.Unlock()
+	})
+
 	return d
 }
 
@@ -136,7 +158,20 @@ func (d *Driver) Launch(ctx context.Context, bundleID string, clearState bool, _
 		})()`, &dims)); err == nil && dims[0] > 0 && dims[1] > 0 {
 		_ = chromedp.Run(runCtx, chromedp.EmulateViewport(dims[0], dims[1]))
 	}
+	// The opening navigation is the harness arriving, not the app navigating.
+	_, _ = d.Navigations(ctx)
 	return nil
+}
+
+// Navigations returns the document-replacing main-frame navigations seen since
+// the last call and forgets them. Each one replaced the page's runtime, which
+// is what separates "the app reloaded" from "the picker repeated itself".
+func (d *Driver) Navigations(context.Context) ([]driver.Navigation, error) {
+	d.navigationsMu.Lock()
+	defer d.navigationsMu.Unlock()
+	drained := d.navigations
+	d.navigations = nil
+	return drained, nil
 }
 
 // clearState wipes the target's stored data before the application loads.
@@ -205,12 +240,84 @@ func (d *Driver) Terminate(_ context.Context) error {
 	return nil
 }
 
+// pointInViewScript scrolls a point the caller took from the hierarchy back
+// inside the viewport and reports where to dispatch at, plus whether anything
+// is there to receive it.
+//
+// The emulated viewport is sized once at launch, but getBoundingClientRect goes
+// on reporting elements the growing document has pushed below it, so the two
+// disagree the moment an app adds content. Input coordinates are
+// viewport-relative: a click below the fold is hit-tested to the document root,
+// which delivers it to <html> and never to the element the caller named. No
+// error is raised on any layer, so the step reads as an action that landed and
+// changed nothing.
+//
+// Only a point outside the viewport is moved, so a gesture that already had a
+// reachable target dispatches exactly where it did before.
+const pointInViewScript = `
+(function(x, y) {
+  const root = document.scrollingElement || document.documentElement;
+  let shiftX = 0, shiftY = 0;
+  if (x < 0 || x >= window.innerWidth) shiftX = Math.round(x - window.innerWidth / 2);
+  if (y < 0 || y >= window.innerHeight) shiftY = Math.round(y - window.innerHeight / 2);
+  if (shiftX || shiftY) {
+    const fromX = root.scrollLeft, fromY = root.scrollTop;
+    root.scrollLeft = fromX + shiftX;
+    root.scrollTop = fromY + shiftY;
+    shiftX = root.scrollLeft - fromX;
+    shiftY = root.scrollTop - fromY;
+  }
+  const atX = x - shiftX, atY = y - shiftY;
+  return [atX, atY, document.elementFromPoint(atX, atY) ? 1 : 0];
+})(%d, %d)`
+
+// pointInView returns the point to dispatch a gesture at for the point the
+// caller named, having scrolled it into view. It fails with
+// driver.ErrGestureUndelivered when no scroll can put an element under it.
+func pointInView(runCtx context.Context, x, y int) (int, int, error) {
+	var point [3]int
+	script := fmt.Sprintf(pointInViewScript, x, y)
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &point)); err != nil {
+		return 0, 0, err
+	}
+	if point[2] == 0 {
+		return 0, 0, fmt.Errorf(
+			"%w: (%d,%d)",
+			driver.ErrGestureUndelivered,
+			x,
+			y,
+		)
+	}
+	return point[0], point[1], nil
+}
+
 func (d *Driver) Tap(ctx context.Context, x, y int) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
+	atX, atY, err := pointInView(runCtx, x, y)
+	if err != nil {
+		return err
+	}
 	return chromedp.Run(runCtx,
-		chromedp.MouseClickXY(float64(x), float64(y)),
+		chromedp.MouseClickXY(float64(atX), float64(atY)),
 	)
+}
+
+// requireSelectorMatch reports driver.ErrSelectorMatchedNothing when the
+// selector names no node on the page right now. chromedp.Click waits instead,
+// so without this the caller hears a deadline (or nothing at all) for an action
+// that had no target.
+func requireSelectorMatch(runCtx context.Context, target, selector string) error {
+	var nodes []*cdp.Node
+	if err := chromedp.Run(runCtx,
+		chromedp.Nodes(target, &nodes, chromedp.BySearch, chromedp.AtLeast(0)),
+	); err != nil {
+		return err
+	}
+	if len(nodes) == 0 {
+		return fmt.Errorf("%w: %q", driver.ErrSelectorMatchedNothing, selector)
+	}
+	return nil
 }
 
 func (d *Driver) TapSelector(ctx context.Context, selector string) error {
@@ -221,6 +328,9 @@ func (d *Driver) TapSelector(ctx context.Context, selector string) error {
 		// Fall back to passing the string straight through; chromedp will
 		// reject it loudly if it isn't a valid CSS selector.
 		target = selector
+	}
+	if err := requireSelectorMatch(runCtx, target, selector); err != nil {
+		return err
 	}
 	if isXPath {
 		return chromedp.Run(runCtx, chromedp.Click(target, chromedp.NodeVisible, chromedp.BySearch))
@@ -233,16 +343,55 @@ func (d *Driver) TapSelector(ctx context.Context, selector string) error {
 // primitive, so the gesture is two taps with this gap.
 const doubleTapGap = 50 * time.Millisecond
 
+// DoubleTap resolves the point once and dispatches both taps there: resolving
+// per tap would scroll the second one away from the element the first hit.
 func (d *Driver) DoubleTap(ctx context.Context, x, y int) error {
-	return webDoubleTap(ctx, func() error { return d.Tap(ctx, x, y) })
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	atX, atY, err := pointInView(runCtx, x, y)
+	if err != nil {
+		return err
+	}
+	return webDoubleTap(ctx, func(clickCount int) error {
+		return chromedp.Run(
+			runCtx,
+			chromedp.MouseClickXY(
+				float64(atX),
+				float64(atY),
+				chromedp.ClickCount(clickCount),
+			),
+		)
+	})
 }
 
 func (d *Driver) DoubleTapSelector(ctx context.Context, selector string) error {
-	return webDoubleTap(ctx, func() error { return d.TapSelector(ctx, selector) })
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	target, isXPath, err := TranslateStringSelector(selector)
+	if err != nil {
+		target = selector
+	}
+	if err := requireSelectorMatch(runCtx, target, selector); err != nil {
+		return err
+	}
+	options := []chromedp.QueryOption{chromedp.NodeVisible}
+	if isXPath {
+		options = append(options, chromedp.BySearch)
+	}
+	return webDoubleTap(ctx, func(clickCount int) error {
+		if clickCount < 2 {
+			return chromedp.Run(runCtx, chromedp.Click(target, options...))
+		}
+		return chromedp.Run(runCtx, chromedp.DoubleClick(target, options...))
+	})
 }
 
-func webDoubleTap(ctx context.Context, tap func() error) error {
-	if err := tap(); err != nil {
+// webDoubleTap dispatches the pair a browser reads as one double click. Blink
+// raises dblclick off the click count the second event carries, so two taps
+// that both say "first click" arrive at a dblclick handler as two ordinary
+// clicks and the gesture never happens at all.
+func webDoubleTap(ctx context.Context, tap func(clickCount int) error) error {
+	if err := tap(1); err != nil {
 		return err
 	}
 	timer := time.NewTimer(doubleTapGap)
@@ -252,7 +401,7 @@ func webDoubleTap(ctx context.Context, tap func() error) error {
 		return ctx.Err()
 	case <-timer.C:
 	}
-	return tap()
+	return tap(2)
 }
 
 func (d *Driver) InputText(callerCtx context.Context, text string) error {
@@ -311,31 +460,69 @@ func (d *Driver) EraseText(callerCtx context.Context, _ int) error {
 	)
 }
 
+// Swipe drags a finger across the page as a trusted touch stream. Events
+// synthesized in the page carry isTrusted false: they reach a handler that
+// happens to listen, but never enter the input pipeline that scrolls, honours
+// touch-action or resolves a gesture.
 func (d *Driver) Swipe(ctx context.Context, fromX, fromY, toX, toY int, duration time.Duration) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
-	millis := max(duration.Milliseconds(), 50)
-	script := fmt.Sprintf(`
-(function() {
-  const el = document.elementFromPoint(%d, %d);
-  if (!el) return;
-  const steps = Math.max(1, Math.floor(%d / 16));
-  const dx = (%d - %d) / steps;
-  const dy = (%d - %d) / steps;
-  el.dispatchEvent(new PointerEvent('pointerdown', {clientX: %d, clientY: %d, bubbles: true}));
-  for (let i = 1; i <= steps; i++) {
-    el.dispatchEvent(new PointerEvent('pointermove', {clientX: %d + dx*i, clientY: %d + dy*i, bubbles: true}));
-  }
-  el.dispatchEvent(new PointerEvent('pointerup', {clientX: %d, clientY: %d, bubbles: true}));
-})();`,
-		fromX, fromY,
-		millis,
-		toX, fromX, toY, fromY,
-		fromX, fromY,
-		fromX, fromY,
-		toX, toY,
+	atX, atY, err := pointInView(runCtx, fromX, fromY)
+	if err != nil {
+		return err
+	}
+	toX, toY = toX-(fromX-atX), toY-(fromY-atY)
+	steps := max(int(duration.Milliseconds())/16, 1)
+	actions := []chromedp.Action{touchAt(input.TouchStart, atX, atY)}
+	for i := 1; i <= steps; i++ {
+		actions = append(actions, touchAt(input.TouchMove,
+			atX+(toX-atX)*i/steps, atY+(toY-atY)*i/steps))
+	}
+	actions = append(
+		actions,
+		input.DispatchTouchEvent(input.TouchEnd, []*input.TouchPoint{}),
 	)
-	return chromedp.Run(runCtx, chromedp.Evaluate(script, nil))
+	return chromedp.Run(runCtx, actions...)
+}
+
+func touchAt(kind input.TouchType, x, y int) *input.DispatchTouchEventParams {
+	return input.DispatchTouchEvent(
+		kind,
+		[]*input.TouchPoint{{X: float64(x), Y: float64(y)}},
+	)
+}
+
+// Scroll moves the content under the point with a trusted wheel, which is how a
+// browser scrolls.
+//
+// A finger drag scrolls too, but it ends in a fling whose distance follows the
+// release velocity: five identical 240 px drags moved the page 354 to 616 px,
+// so two runs of one seed would explore different screens. A wheel delta lands
+// exactly, and chains from the element under the point out to its scrollable
+// ancestors, which is what scrolling a named container means. The drag stays as
+// Swipe, the verb for the gestures only a finger reaches.
+func (d *Driver) Scroll(
+	ctx context.Context,
+	fromX, fromY, toX, toY int,
+	_ time.Duration,
+) error {
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	atX, atY, err := pointInView(runCtx, fromX, fromY)
+	if err != nil {
+		return err
+	}
+	wheel := input.DispatchMouseEvent(input.MouseWheel, float64(atX), float64(atY)).
+		WithDeltaX(float64(fromX - toX)).
+		WithDeltaY(float64(fromY - toY))
+	// The wheel is applied off the CDP round trip, so without this the next
+	// read races it: a step could observe the page before its own scroll, and
+	// the pending scroll then lands during the following one.
+	return chromedp.Run(runCtx, wheel, chromedp.Evaluate(
+		`new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))`,
+		nil,
+		awaitPromise,
+	))
 }
 
 func (d *Driver) PressKey(ctx context.Context, key string) error {
@@ -351,6 +538,10 @@ func (d *Driver) PressKey(ctx context.Context, key string) error {
 func (d *Driver) LongPress(ctx context.Context, x, y int) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
+	x, y, err := pointInView(runCtx, x, y)
+	if err != nil {
+		return err
+	}
 	script := fmt.Sprintf(`
 (function() {
   const el = document.elementFromPoint(%d, %d);
@@ -412,6 +603,23 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     if (tag === 'input') return !NON_TEXT_INPUT_TYPES.includes((el.type || '').toLowerCase());
     return false;
   }
+  // An editable field's own text is the transient typed value; its hint names
+  // its purpose, which is the rung visibleLabel (internal/verifier/llm.go) reads
+  // first for such an element. Without it a web field reached the model named by
+  // its CSS class, an identifier no user can read. Same ladder as fieldHint in
+  // pkg/spec/src/web-runtime.ts, so one field is named one way on both hosts.
+  function fieldHint(el) {
+    if (!isEditableElement(el)) return '';
+    const ariaLabel = el.getAttribute('aria-label');
+    if (ariaLabel) return ariaLabel;
+    for (const label of el.labels || []) {
+      const text = (label.textContent || '').trim();
+      if (text) return text;
+    }
+    const placeholder = el.getAttribute('placeholder');
+    if (placeholder) return placeholder;
+    return el.getAttribute('name') || '';
+  }
   // Shadow roots are part of the page a user sees, so they are part of the page
   // we enumerate. Compose for Web mounts its canvas AND its accessibility tree
   // inside a shadow root on the mount element, so a light-DOM-only walk reports
@@ -434,15 +642,68 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     ', [onclick]'));
   const editableSet = new Set(deepQuery(
     'input, textarea, [contenteditable]').filter(isEditableElement));
+  // Descended once for the whole dump, for the reason selectAllScript above
+  // descends: document.activeElement names the shadow host, so a Compose for
+  // Web app reported focus on its mount element and never on the field.
+  let focusedElement = document.activeElement;
+  while (focusedElement && focusedElement.shadowRoot && focusedElement.shadowRoot.activeElement) {
+    focusedElement = focusedElement.shadowRoot.activeElement;
+  }
+  // Descending is still not enough on Compose for Web: it takes keystrokes on a
+  // 1px transparent input pinned to the caret, and that input is a SIBLING of
+  // the accessibility tree rather than a node in it. DOM focus therefore never
+  // reaches the semantics element carrying the test tag, so confirmFocus in
+  // internal/runner/runner.go saw an unnamed element hold focus after every
+  // focus tap and refused to type. Compose declares the caret's box in these
+  // custom properties, which the input inherits from the container that
+  // positions it, so the field being typed into is the innermost editable box
+  // that caret sits in.
+  const CARET_ORIGIN_PROPERTY = '--compose-internal-web-backing-input-left';
+  function fieldBehindTheCaret(caretInput) {
+    if (!caretInput || caretInput.tagName !== 'INPUT') return null;
+    if (!getComputedStyle(caretInput).getPropertyValue(CARET_ORIGIN_PROPERTY).trim()) return null;
+    const caret = caretInput.getBoundingClientRect();
+    const x = (caret.left + caret.right) / 2;
+    const y = (caret.top + caret.bottom) / 2;
+    let field = null;
+    let fieldArea = Infinity;
+    for (const candidate of editableSet) {
+      if (candidate === caretInput) continue;
+      const box = candidate.getBoundingClientRect();
+      const area = box.width * box.height;
+      if (area <= 0 || area >= fieldArea) continue;
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue;
+      field = candidate;
+      fieldArea = area;
+    }
+    return field;
+  }
+  focusedElement = fieldBehindTheCaret(focusedElement) || focusedElement;
   function buildTree(el, isRoot) {
     const rect = el.getBoundingClientRect();
+    // Every attribute the markup wrote, keyed as written, which is what attrs
+    // means on the native hosts and what rawAttributes in
+    // pkg/spec/src/web-runtime.ts already gives the page-side handle. Emitting
+    // only the standard set left a spec's data-* reads (folio-web's data-cents,
+    // data-account-id, data-balance) undefined on the goja host and absent from
+    // the trace, so an offline replay of the same step could not see them at
+    // all. The derived keys below overwrite anything of the same name.
     const attrs = {};
+    for (const attribute of el.attributes || []) {
+      attrs[attribute.name] = attribute.value;
+    }
     const bounds = '[' + Math.round(rect.left) + ',' + Math.round(rect.top) + ',' +
       Math.round(rect.right) + ',' + Math.round(rect.bottom) + ']';
     if (rect.width > 0 || rect.height > 0) attrs.bounds = bounds;
     const text = (el.textContent || '').trim().slice(0, 200);
     if (text) attrs.text = text;
     if (el.id) attrs['resource-id'] = el.id;
+    // The V8 host names a target by data-testid (IDENTITY_KEYS in
+    // pkg/spec/src/web-runtime.ts) and TapSelector translates the selector into
+    // a CSS attribute match, so a dump without this attribute leaves the goja
+    // host unable to resolve a target the other two resolve fine.
+    const testid = el.getAttribute('data-testid');
+    if (testid) attrs['data-testid'] = testid;
     const label = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || '';
     if (label) attrs['content-desc'] = label;
     const tag = (el.tagName || '').toLowerCase();
@@ -450,6 +711,8 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     if (el.className && typeof el.className === 'string' && el.className.trim()) {
       attrs['class'] = el.className.trim();
     }
+    const hint = fieldHint(el);
+    if (hint) attrs['hintText'] = hint;
     // The goja host reads scrollable off this attribute (internal/verifier
     // worker.go targets). Without it every web element looks unscrollable there,
     // so the goja-side enumeration offers no scroll while the V8 picker, which
@@ -476,11 +739,22 @@ func (d *Driver) Hierarchy(ctx context.Context) (string, error) {
     return {
       attributes: attrs,
       children: children,
-      clickable: isClickable || null,
-      enabled: isEnabled(el) || null,
-      focused: document.activeElement === el || null,
-      checked: el.checked || null,
-      selected: el.selected || null,
+      // Emitted as plain booleans, never null: internal/hierarchy writes the
+      // attribute a selector matches on only where the producer stated the
+      // flag, so a state that arrives as null is one no selector can ask about.
+      // {clickable: false} and {enabled: false} matched nothing at all here
+      // while matching on android, which states every flag both ways.
+      clickable: isClickable,
+      enabled: isEnabled(el),
+      focused: focusedElement === el,
+      // A component keeps what it likes in these two properties, so what is
+      // emitted is the flag the field declares and not the property's value.
+      checked: el.checked === true,
+      selected: el.selected === true,
+      // Emitted as a plain boolean, never null, on every editable field: a
+      // consumer deciding what a typed value may be recorded as has to tell
+      // "not a secure entry" apart from "nobody said", and android says nothing.
+      secure: isEditable ? el.type === 'password' : null,
       // Emitted as a plain boolean, never null: internal/hierarchy falls back to
       // the native heuristic when the field is absent, which reads any class
       // name containing "EditText" as an Android text widget. On web that is a
@@ -936,19 +1210,87 @@ new Promise((resolve, reject) => {
   read();
 })`
 
+// Exceptions returns the uncaught errors and unhandled rejections the page
+// runtime has buffered so far. The buffer is cumulative, which is what
+// state.exceptions means inside the page (buildState in
+// pkg/spec/src/web-runtime.ts), so the host and the page read one list.
+func (d *Driver) Exceptions(ctx context.Context) ([]driver.Exception, error) {
+	const script = `JSON.stringify(window.__sanderlingExceptions__ ? window.__sanderlingExceptions__() : [])`
+	var encoded string
+	runCtx, cancel := d.runCtx(ctx)
+	defer cancel()
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
+		return nil, fmt.Errorf("evaluate exceptions: %w", err)
+	}
+	if encoded == "" || encoded == "[]" {
+		return nil, nil
+	}
+	var captured []struct {
+		Class      string `json:"class"`
+		Message    string `json:"message"`
+		StackTrace string `json:"stackTrace"`
+		UnixMillis int64  `json:"unixMillis"`
+	}
+	if err := json.Unmarshal([]byte(encoded), &captured); err != nil {
+		return nil, fmt.Errorf("decode exceptions %s: %w", encoded, err)
+	}
+	result := make([]driver.Exception, 0, len(captured))
+	for _, entry := range captured {
+		result = append(result, driver.Exception{
+			Class:      entry.Class,
+			Message:    entry.Message,
+			StackTrace: entry.StackTrace,
+			UnixMillis: entry.UnixMillis,
+		})
+	}
+	return result, nil
+}
+
+// nextActionScript puts the carried draw position back before the picker
+// decides and reads the new one out afterwards, in the one evaluation, so no
+// navigation can land between the restore and the draw.
+const nextActionScript = `((carried) => {
+  if (!window.__sanderlingNextAction__) return "{}";
+  if (carried !== "" && window.__sanderlingRestorePickerState__) {
+    window.__sanderlingRestorePickerState__(carried);
+  }
+  const action = window.__sanderlingNextAction__();
+  const state = window.__sanderlingPickerState__ ? window.__sanderlingPickerState__() : "";
+  return JSON.stringify({action, state});
+})(%s)`
+
 // NextActionFromV8 invokes the bundle-installed action generator and returns
 // the resulting Action JSON. Returns an empty json.RawMessage when the
 // generator declines to act this tick.
+//
+// The picker's draw position rides along: it lives here rather than in the
+// page, because a page that navigates gets a fresh runtime whose picker would
+// otherwise start the seed's stream over at its first draw on every reload.
 func (d *Driver) NextActionFromV8(ctx context.Context) (json.RawMessage, error) {
-	const script = `JSON.stringify(window.__sanderlingNextAction__ ? window.__sanderlingNextAction__() : null)`
+	script := fmt.Sprintf(nextActionScript, strconv.Quote(d.pickerState))
 	var encoded string
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
 	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &encoded)); err != nil {
 		return nil, fmt.Errorf("evaluate next action: %w", err)
 	}
-	if encoded == "" || encoded == "null" {
+	if encoded == "" {
 		return nil, nil
 	}
-	return json.RawMessage(encoded), nil
+	var decoded struct {
+		Action json.RawMessage `json:"action"`
+		State  string          `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(encoded), &decoded); err != nil {
+		return nil, fmt.Errorf("decode next action %s: %w", encoded, err)
+	}
+	// An empty state means the page had no runtime to ask, so the position we
+	// already hold is still the run's position.
+	if decoded.State != "" {
+		d.pickerState = decoded.State
+	}
+	if len(decoded.Action) == 0 || string(decoded.Action) == "null" {
+		return nil, nil
+	}
+	return decoded.Action, nil
 }

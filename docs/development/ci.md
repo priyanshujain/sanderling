@@ -49,7 +49,13 @@ before it decides:
 | a violation of any other property (`newAccountBalanceIsZero` fires on one android seed) | red: a real finding, but not the one this leg gates on |
 | no violation and exit 0 | red: the fuzzer stopped finding a bug that is still there |
 | no trace at all, on exit 0 or 2 | red: the run recorded nothing, so there is no verdict to read |
-| exit 1, or any other code | red: the harness broke, and the code propagates |
+| exit 1, or any other code | red: the run produced no verdict, and the code propagates |
+
+Exit 1 is two things now, and both fail the leg. The harness broke, or the run
+finished cleanly holding no verdict to report: no properties, no step that
+reached the verifier, or an action generator that never drove the app and found
+nothing. The second kind leaves a full run directory and names itself on stderr,
+so the log says which happened.
 
 The first two rows are why the check is worth the code it takes. A `TypeError`
 in `predicates.ts` and a fuzzer that no longer reaches the bug both used to
@@ -345,3 +351,41 @@ npm trust list @sanderling/spec
 The job installs npm 11.5.1 or newer before publishing, because
 `actions/setup-node` writes an empty `_authToken` line into `.npmrc` and an older
 npm reads that as "auth is configured" and never asks for an OIDC token.
+
+## The ios companion is pinned, and its cache now saves the build
+
+`.github/actions/folio-app/action.yml` checks the `facebook/fb` tap out at commit
+`c0386793`, the 1.1.8 formula, before installing `idb-companion`. Floating on the
+tap broke the leg on 2026-08-18: the tap moved to 1.5.0, whose bundle has no
+top-level `Frameworks/`, and `companionassets/prepare.sh` stages `bin/` and
+`Frameworks/` as siblings because the binary resolves frameworks through
+`@rpath`. It also names its output `companion-1.1.8.tar.gz` from a hard-coded
+`VERSION`, so a floating tap made that version string a lie: CI built a tarball
+called 1.1.8 out of whatever the tap was serving that day. Moving to 1.5.0 is a
+change to the companion, not to CI.
+
+The `ios-assets` cache had to be taught to hold. It restored, and the build ran
+anyway: git stamps the checked-out `prepare.sh` with checkout time while the
+restored tarball keeps the mtime it was archived with, so make read the target as
+older than its prerequisite every time and rebuilt it. The 2026-08-18 failure
+logged `Cache hit` and `Cache restored successfully`, then ran `prepare.sh` and
+died copying the `Frameworks/` that 1.5.0 does not have.
+
+A step after the restore now touches both restored tarballs, which dates them
+after the sources the checkout stamped, and make leaves them alone. That fix sits
+with the cache rather than in the Makefile because the cache is what makes the
+timestamps lie: the key hashes both prepare scripts, `companion/project.yml` and
+`companion/Sources/**`, which is exactly the prerequisite set of the two make
+rules, and the step carries no `restore-keys`, so a hit is an exact match on all
+of them. Declaring those prerequisites order-only would have fixed CI and broken
+local work, where someone editing `prepare.sh` has no cache key to catch the
+edit and make would quietly keep the previous tarball.
+
+The key also carries the installed formula version, read from `brew list` right
+after the install. The companion tarball's largest input is the homebrew install
+itself, which no hash of the repository can see, so without it a bump of the tap
+pin on its own would hit a cache filled from the old formula and embed that under
+the new pin, which is the lie the pin exists to stop.
+
+Master looked green through the breakage only because its last run predated the
+tap moving, not because anything shielded it.

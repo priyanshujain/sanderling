@@ -594,6 +594,7 @@ class StubDriverBackend(
             "home" to "KEYCODE_HOME",
             "enter" to "KEYCODE_ENTER",
             "tab" to "KEYCODE_TAB",
+            "escape" to "KEYCODE_ESCAPE",
             "up" to "KEYCODE_DPAD_UP",
             "down" to "KEYCODE_DPAD_DOWN",
             "left" to "KEYCODE_DPAD_LEFT",
@@ -1155,20 +1156,43 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
 
     override fun terminate(bundleId: String) = driver.stopApp(bundleId)
 
-    override fun tap(x: Int, y: Int) = driver.tap(maestro.Point(x, y))
+    // requireOnScreen refuses a point the device has no window under. Android
+    // drops such a MotionEvent in InputDispatcher and the on-device server's
+    // TapResponse carries no delivery signal, so this is the last layer that
+    // can tell the runner the gesture reached nothing.
+    private fun requireOnScreen(x: Int, y: Int) {
+        val cached = extent
+        if (cached != null && !offScreen(x, y, cached.first, cached.second)) return
+        val info = driver.deviceInfo()
+        val fresh = Pair(info.widthPixels, info.heightPixels)
+        extent = fresh
+        if (!offScreen(x, y, fresh.first, fresh.second)) return
+        throw io.grpc.Status.OUT_OF_RANGE
+            .withDescription(
+                "gesture point ($x,$y) is outside the ${fresh.first}x${fresh.second} screen",
+            )
+            .asRuntimeException()
+    }
 
-    override fun longPress(x: Int, y: Int) =
+    // A cached extent is re-read before any refusal, so a screen that resized
+    // mid-run cannot make the sidecar invent gesture failures for valid points.
+    @Volatile
+    private var extent: Pair<Int, Int>? = null
+
+    override fun tap(x: Int, y: Int) {
+        requireOnScreen(x, y)
+        driver.tap(maestro.Point(x, y))
+    }
+
+    override fun longPress(x: Int, y: Int) {
+        requireOnScreen(x, y)
         driver.longPress(maestro.Point(x, y))
+    }
 
     override fun tapSelector(selector: String) {
         val root = driver.contentDescriptor(false)
-        val bounds = findBoundsBySelector(root, selector) ?: return
-        driver.tap(
-            maestro.Point(
-                (bounds[0] + bounds[2]) / 2,
-                (bounds[1] + bounds[3]) / 2,
-            ),
-        )
+        val bounds = requireBoundsBySelector(root, selector)
+        tap((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2)
     }
 
     override fun inputText(text: String) {
@@ -1237,14 +1261,17 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
         toX: Int,
         toY: Int,
         durationMillis: Long,
-    ) = driver.swipe(
-        maestro.Point(fromX, fromY),
-        maestro.Point(toX, toY),
-        maxOf(durationMillis, 250L),
-    )
+    ) {
+        requireOnScreen(fromX, fromY)
+        driver.swipe(
+            maestro.Point(fromX, fromY),
+            maestro.Point(toX, toY),
+            maxOf(durationMillis, 250L),
+        )
+    }
 
     override fun pressKey(key: String) {
-        maestroKeyFor(key)?.let { driver.pressKey(it) }
+        driver.pressKey(maestroKeyFor(key))
     }
 
     override fun screenshot(): Triple<ByteArray, Int, Int> {
@@ -1403,6 +1430,18 @@ private fun buildDadb(serial: String?): dadb.Dadb =
         }
     }
 
+// requireBoundsBySelector refuses a selector that names nothing on the current
+// screen. Returning quietly dispatched no tap at all and left the step reading
+// as an action that landed. NOT_FOUND keeps it apart from the OUT_OF_RANGE a
+// point outside the screen gets: this one never resolved a point to begin with.
+internal fun requireBoundsBySelector(
+    root: maestro.TreeNode,
+    selector: String,
+): IntArray = findBoundsBySelector(root, selector)
+    ?: throw io.grpc.Status.NOT_FOUND
+        .withDescription("selector $selector matched no element")
+        .asRuntimeException()
+
 internal fun findBoundsBySelector(
     root: maestro.TreeNode,
     selector: String,
@@ -1427,6 +1466,12 @@ internal fun findBoundsInTree(
         } ==
             true
 
+        "idPrefix" -> attrs["resource-id"]?.let { id ->
+            val local = id.indexOf(":id/")
+            id.startsWith(value) ||
+                (local >= 0 && id.substring(local + 4).startsWith(value))
+        } == true
+
         "text" -> attrs["text"] == value
 
         "desc" -> attrs["content-desc"] == value
@@ -1444,9 +1489,19 @@ internal fun findBoundsInTree(
     return null
 }
 
+// Device trees report bounds as uiautomator's [left,top][right,bottom]; the
+// flat four-number form comes from the trees the stub backend serves. Reading
+// only the flat form left every by-selector tap on a device resolving to
+// nothing, which the caller never heard about.
+private val boundsPairs =
+    Regex("^\\[(-?\\d+),(-?\\d+)\\]\\[(-?\\d+),(-?\\d+)\\]$")
+private val boundsFlat =
+    Regex("^\\[(-?\\d+),(-?\\d+),(-?\\d+),(-?\\d+)\\]$")
+
 internal fun parseBounds(s: String): IntArray? {
-    val pattern = Regex("^\\[(-?\\d+),(-?\\d+),(-?\\d+),(-?\\d+)\\]$")
-    val m = pattern.matchEntire(s) ?: return null
+    val m = boundsPairs.matchEntire(s)
+        ?: boundsFlat.matchEntire(s)
+        ?: return null
     return IntArray(4) { m.groupValues[it + 1].toInt() }
 }
 
@@ -1566,12 +1621,21 @@ internal class WdaRecovery(
     }
 }
 
+// offScreen reports a point outside the device's touch surface. The upper
+// bounds are exclusive: a tap at x == width is dropped by InputDispatcher just
+// as one past it is.
+internal fun offScreen(x: Int, y: Int, width: Int, height: Int): Boolean =
+    x < 0 || y < 0 || x >= width || y >= height
+
 // maestroKeyFor rejects an unknown key (matching StubDriverBackend) so an
-// unmapped or wrong-case key fails loudly instead of being silently dropped.
-internal fun maestroKeyFor(key: String): maestro.KeyCode? {
+// unmapped or wrong-case key fails loudly instead of being silently dropped. A
+// mapped key with no device-driver equivalent is rejected the same way: it
+// returned null, and the caller then dropped the press with no error at all.
+internal fun maestroKeyFor(key: String): maestro.KeyCode {
     val keyCode = StubDriverBackend.KEY_MAP[key.lowercase()]
         ?: throw IllegalArgumentException("unsupported pressKey value: $key")
     return keyCodeToMaestro(keyCode)
+        ?: throw IllegalArgumentException("no device key for $keyCode")
 }
 
 private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? =
@@ -1580,6 +1644,7 @@ private fun keyCodeToMaestro(adbKeyCode: String): maestro.KeyCode? =
         "KEYCODE_HOME" -> maestro.KeyCode.HOME
         "KEYCODE_ENTER" -> maestro.KeyCode.ENTER
         "KEYCODE_TAB" -> maestro.KeyCode.TAB
+        "KEYCODE_ESCAPE" -> maestro.KeyCode.ESCAPE
         "KEYCODE_DPAD_UP" -> maestro.KeyCode.REMOTE_UP
         "KEYCODE_DPAD_DOWN" -> maestro.KeyCode.REMOTE_DOWN
         "KEYCODE_DPAD_LEFT" -> maestro.KeyCode.REMOTE_LEFT

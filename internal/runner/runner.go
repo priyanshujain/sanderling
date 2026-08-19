@@ -45,6 +45,11 @@ type Options struct {
 	// spec's generator = llm({...}) config; anything else (the default) uses the
 	// seeded weighted picker. Both draw from the same actionsRoot candidate set.
 	Generator string
+	// LabelSource selects how candidates are named to the model picker
+	// (verifier.LabelSourceVisibleText or verifier.LabelSourceResourceID). The
+	// seeded picker selects by index and never reads a label, so this reaches
+	// the model picker only.
+	LabelSource string
 }
 
 type Summary struct {
@@ -61,6 +66,25 @@ type Summary struct {
 	// could not dispatch, deduped, so the report can flag a spec exercising
 	// gestures this target does not support.
 	UnsupportedVerbs []string
+	// SkippedActions counts, by reason, the actions a step chose that never
+	// reached the app. Without it a run that dropped most of what it generated
+	// reads exactly like one that exercised it: the reasons reach the trace and
+	// a warn line, and nothing else.
+	SkippedActions map[string]int
+	// FailedObservations counts the steps whose device read produced no tree at
+	// all. Such a step verifies nothing, so a run that failed every observation
+	// finishes with no violations and reads as a clean one.
+	FailedObservations int
+	// DispatchedActions counts the steps whose chosen action reached the driver.
+	// A run at zero never touched the app, whatever its step count says, so its
+	// empty violation list is the reading of an instrument that measured nothing.
+	DispatchedActions int
+	// GeneratorActions counts the dispatched actions the generator chose. The
+	// spec's setup drives the app into its starting position before the
+	// generator is consulted, so a run at zero here explored nothing however
+	// many actions its login fired. Both generators separate the two the same
+	// way, by the producer each action names on the trace.
+	GeneratorActions int
 }
 
 type ViolationRecord struct {
@@ -84,7 +108,19 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	// Gate on the app actually being on top before acting, so the first
 	// action never fires against a leftover screen or a system dialog. Done
 	// before the deadline is set so the settle time does not eat the run.
-	waitForForeground(ctx, options, logger)
+	//
+	// A run that cannot get its app on screen has no preconditions to explore
+	// from: every step after this would observe some other app and every
+	// property would judge it, so the run ends here and the trace records why.
+	if !waitForForeground(ctx, options, logger) {
+		if err := recordPreconditionFailure(options); err != nil {
+			return Summary{}, err
+		}
+		return Summary{}, ForegroundNotReachedError{
+			BundleID: options.BundleID,
+			Waited:   foregroundReadyBudget,
+		}
+	}
 
 	// Pick the action and extractor sources once from the driver's
 	// capabilities so the step loop runs one uniform path with no per-step
@@ -94,6 +130,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		return Summary{}, err
 	}
 	_, pageExtractors := extractorSource.(webSource)
+	exceptionReporter, _ := options.Driver.(driver.ExceptionReporter)
+	navigationReporter, _ := options.Driver.(driver.NavigationReporter)
 	rereadHierarchy := driverIsAndroid(ctx, options, logger)
 
 	summary := Summary{StartTime: time.Now()}
@@ -122,7 +160,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// readings" and the runner has no business saying that: the action ran,
 		// and a property told otherwise convicts the app of an effect with no
 		// cause. See foreground_guard_last_action_test.go.
-		guard := ensureForeground(ctx, options, logger, stepIndex)
+		guard, inScope := ensureForeground(ctx, options, logger, stepIndex)
 		if lastAction != nil {
 			switch guard {
 			case foregroundRelaunched:
@@ -146,8 +184,10 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 
 		// gctx is bound to the errgroup so a returned error (or outer
 		// cancellation) propagates to every sibling read rather than leaving
-		// one blocked on a hung device.
-		g, gctx := errgroup.WithContext(ctx)
+		// one blocked on a hung device, and to observationTimeout so a read
+		// that never answers ends the step instead of the run.
+		observeCtx, observeCancel := context.WithTimeout(ctx, observationTimeout)
+		g, gctx := errgroup.WithContext(observeCtx)
 		si := stepIndex
 		// fetchSyncedState issues a single Snapshot RPC so hierarchy and
 		// screenshot describe the same frame, then re-fetches the pair
@@ -169,12 +209,18 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		// All goroutines write to local variables and return nil, so the Wait
 		// error is always nil; ignored intentionally.
 		_ = g.Wait()
+		observeCancel()
 
+		navigations := collectNavigations(ctx, navigationReporter, logger, stepIndex)
+
+		observationError := ""
 		if hierarchyErr != nil {
 			if isWDADrop(hierarchyErr) {
 				return summary, fmt.Errorf("WDA connection permanently lost at step %d - re-run the test: %w", stepIndex, hierarchyErr)
 			}
 			logger.Warn("hierarchy fetch failed", "step", stepIndex, "err", hierarchyErr)
+			observationError = hierarchyErr.Error()
+			summary.FailedObservations++
 		}
 		treeSize := 0
 		if tree != nil {
@@ -208,6 +254,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var violations []string
 		var extractorChanges map[string]trace.ExtractorChange
 		var witnesses map[string]trace.Witness
+		var exceptions []verifier.Exception
 		skippedVerification := false
 		if !transitional {
 			// The page-side extractors evaluate only on steps the verifier will
@@ -225,7 +272,9 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			// lastAction and logs are the same values PushSnapshot hands the
 			// goja state below: the two engines evaluate this step against one
 			// action and one set of log entries.
-			v8Overrides, overridesErr := extractorSource.ExtractorOverrides(ctx, lastAction, logs)
+			overridesCtx, overridesCancel := context.WithTimeout(ctx, observationTimeout)
+			v8Overrides, overridesErr := extractorSource.ExtractorOverrides(overridesCtx, lastAction, logs)
+			overridesCancel()
 			if overridesErr != nil {
 				// Not a warning. Without the page's values this step's
 				// extractors keep goja's dump-derived readings while the
@@ -234,6 +283,12 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				// wrong.
 				return summary, fmt.Errorf("step %d extractor overrides: %w", stepIndex, overridesErr)
 			}
+			exceptions = collectExceptions(
+				ctx,
+				exceptionReporter,
+				logger,
+				stepIndex,
+			)
 			if err := options.Verifier.PushSnapshot(verifier.SnapshotInput{
 				Tree:          tree,
 				ScreenshotPNG: screenshotPNG,
@@ -242,6 +297,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				StepIndex:     stepIndex,
 				RunStart:      summary.StartTime,
 				Logs:          logs,
+				Exceptions:    exceptions,
 			}); err != nil {
 				return summary, fmt.Errorf("step %d push: %w", stepIndex, err)
 			}
@@ -303,7 +359,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		nextErr := verifier.ErrNoAction
 		var traceAction *trace.Action
 		if !held {
-			nextAction, nextErr = actionSource.NextAction(ctx)
+			nextAction, nextErr = actionSource.NextAction(ctx, stepIndex)
 			if nextErr == nil {
 				traceAction = traceActionFor(nextAction, tree)
 				stampActionSource(traceAction, actionSource)
@@ -318,7 +374,15 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		}
 
 		applySkipped := held
-		if nextErr == nil && !appIsForeground(ctx, options) {
+		var actionSkipped actionSkipReason
+		if nextErr != nil && !held {
+			// The source was asked and handed nothing back. Recorded like every
+			// other non-action, because unrecorded it is the one that survives a
+			// whole run: a picker declining on all 200 steps leaves a trace, a
+			// summary and an exit status a run that exercised all 200 produces.
+			actionSkipped = actionSkippedNoActionProduced
+			lastAction = nil
+		} else if nextErr == nil && !appIsForeground(ctx, options) {
 			// The app left the foreground between observe and apply (a prior
 			// action's gesture settling late, or an async navigation). The
 			// chosen action's coordinates reference a tree that no longer
@@ -327,9 +391,36 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			logger.Warn("app not in foreground at action time; skipping (relaunch next step)",
 				"step", stepIndex, "action", nextAction.Kind)
 			applySkipped = true
+			actionSkipped = actionSkippedForeground
 			lastAction = nil
 		} else if nextErr == nil {
-			if err := applyAction(ctx, options.Driver, nextAction, tree); err != nil {
+			applyCtx, applyCancel := context.WithTimeout(ctx, applyBound(nextAction))
+			notDispatched, err := applyAction(applyCtx, options.Driver, nextAction, tree)
+			applyCancel()
+			if errors.Is(err, driver.ErrGestureUndelivered) {
+				// The gesture reached no element, so the app cannot have
+				// responded to it and the screen is still the one already
+				// verified. The device is healthy, so the step is neither
+				// transitional nor part of the apply-failure streak; it records
+				// that the action landed on nothing, which is what separates it
+				// from an action the app received and ignored.
+				logger.Warn("gesture reached no element",
+					"step", stepIndex, "action", nextAction.Kind, "err", err)
+				applySkipped = true
+				actionSkipped = actionSkippedGestureUndelivered
+				lastAction = nil
+			} else if errors.Is(err, driver.ErrSelectorMatchedNothing) {
+				// The selector named no element, so no point was resolved and
+				// nothing was dispatched. The screen is the one already
+				// verified and the device is healthy, so this is the same
+				// non-action the runner records when it cannot resolve a
+				// selector itself, not a device fault worth a failure streak.
+				logger.Warn("selector matched no element",
+					"step", stepIndex, "action", nextAction.Kind, "err", err)
+				applySkipped = true
+				actionSkipped = actionSkippedUnresolvedSelector
+				lastAction = nil
+			} else if err != nil {
 				if isWDADrop(err) {
 					return summary, fmt.Errorf("step %d: the iOS XCTest runner could not be restarted - re-run the test: %w", stepIndex, err)
 				}
@@ -346,7 +437,12 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				if consecutiveApplyFailures >= maxConsecutiveApplyFailures {
 					return summary, fmt.Errorf("step %d apply: %d consecutive failures; the device is not recovering: %w", stepIndex, consecutiveApplyFailures, err)
 				}
-				logger.Warn("apply error; marking step transitional", "step", stepIndex, "err", err)
+				actionSkipped = actionSkippedApplyError
+				if errors.Is(applyCtx.Err(), context.DeadlineExceeded) {
+					actionSkipped = actionSkippedApplyTimeout
+				}
+				logger.Warn("apply error; marking step transitional",
+					"step", stepIndex, "reason", actionSkipped, "err", err)
 				transitional = true
 				applySkipped = true
 				// The error says the call failed, not that the gesture never
@@ -354,16 +450,25 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 				// the effect committed. Reporting no action here would let a
 				// property convict the app for an effect with no cause, so the
 				// action is reported with its fate unknown instead.
-				unconfirmed := nextAction
+				unconfirmed := verifier.RecordedAction(nextAction, tree)
 				lastAction = &unconfirmed
+			} else if notDispatched != "" {
+				// The action was chosen but nothing reached the driver, so the
+				// screen is exactly the one already verified: the step stays
+				// non-transitional and only records why it acted on nothing.
+				// The apply-failure streak is left alone; a step that never
+				// reached the device says nothing about the device's health.
+				logger.Warn("action not dispatched",
+					"step", stepIndex, "action", nextAction.Kind, "reason", notDispatched)
+				applySkipped = true
+				actionSkipped = notDispatched
+				lastAction = nil
 			} else {
 				consecutiveApplyFailures = 0
-				applied := nextAction
+				applied := verifier.RecordedAction(nextAction, tree)
 				applied.Applied = true
 				lastAction = &applied
 			}
-		} else if !held {
-			lastAction = nil
 		}
 		// A held step leaves lastAction alone on purpose: nothing ran here, and
 		// the action it points at is still the one the next verified step has to
@@ -374,17 +479,35 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			Timestamp:           stepStart,
 			Screen:              screen,
 			NextAction:          traceAction,
+			Logs:                traceLogs(logs),
+			Exceptions:          traceExceptions(exceptions),
+			Navigations:         navigations,
 			Violations:          violations,
 			Hierarchy:           tree,
 			Residuals:           residuals,
 			Metrics:             metrics,
 			ExtractorChanges:    extractorChanges,
 			Transitional:        transitional,
+			ObservationError:    observationError,
+			ActionSkipped:       string(actionSkipped),
 			SkippedVerification: skippedVerification,
 			Witnesses:           witnesses,
+			PreconditionFailure: preconditionFailure(inScope),
 		}
 		if err := options.TraceWriter.WriteStep(step); err != nil {
 			return summary, fmt.Errorf("step %d trace: %w", stepIndex, err)
+		}
+		if actionSkipped != "" {
+			if summary.SkippedActions == nil {
+				summary.SkippedActions = map[string]int{}
+			}
+			summary.SkippedActions[string(actionSkipped)]++
+		}
+		if nextErr == nil && !applySkipped {
+			summary.DispatchedActions++
+			if generatorChoseAction(traceAction) {
+				summary.GeneratorActions++
+			}
 		}
 		summary.Steps = stepIndex
 		if len(violations) > 0 {
@@ -450,7 +573,8 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 // record, and any unsupported verbs. The wall-clock duration is excluded so the
 // output is deterministic and snapshot-testable; the CLI prints it separately.
 func RenderSummary(w io.Writer, summary Summary, platform string) {
-	fmt.Fprintf(w, "\nrun complete: %d steps\n", summary.Steps)
+	fmt.Fprintf(w, "\nrun complete: %d steps, %d driven by the generator\n",
+		summary.Steps, summary.GeneratorActions)
 	if len(summary.Violations) == 0 {
 		fmt.Fprintln(w, "no violations.")
 	} else {
@@ -458,6 +582,21 @@ func RenderSummary(w io.Writer, summary Summary, platform string) {
 		for _, violation := range summary.Violations {
 			fmt.Fprintf(w, "  step %d: %v\n", violation.StepIndex, violation.Properties)
 		}
+	}
+	if len(summary.SkippedActions) > 0 {
+		total := 0
+		byReason := make([]string, 0, len(summary.SkippedActions))
+		for _, reason := range slices.Sorted(maps.Keys(summary.SkippedActions)) {
+			total += summary.SkippedActions[reason]
+			byReason = append(byReason,
+				fmt.Sprintf("%s %d", reason, summary.SkippedActions[reason]))
+		}
+		fmt.Fprintf(w, "%d action(s) never reached the app: %s\n",
+			total, strings.Join(byReason, ", "))
+	}
+	if summary.FailedObservations > 0 {
+		fmt.Fprintf(w, "%d step(s) observed nothing: the device state could not be read\n",
+			summary.FailedObservations)
 	}
 	if summary.SkippedVerification > 0 {
 		fmt.Fprintf(w, "%d step(s) judged by nothing: the screen was still moving when it was read\n",
@@ -528,22 +667,24 @@ const (
 // ensureForeground keeps the app under test in the foreground. When the driver
 // can report the foreground app and it no longer matches the bundle under test,
 // the app is relaunched. Reports what it did so the caller can pass that on to
-// the spec through the previous action. Drivers without ForegroundChecker (web,
-// iOS) are a no-op.
+// the spec through the previous action, and whether the app is in front at all:
+// a false there is a step whose observation is not of the app under test, which
+// the step records so a trace cannot pass it off as exploration. Drivers without
+// ForegroundChecker (web, iOS) are a no-op.
 func ensureForeground(
 	ctx context.Context,
 	options Options,
 	logger *slog.Logger,
 	stepIndex int,
-) foregroundGuard {
+) (foregroundGuard, bool) {
 	checker, ok := options.Driver.(driver.ForegroundChecker)
 	if !ok || options.BundleID == "" {
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	foreground, err := checker.ForegroundApp(ctx)
 	if err != nil {
 		logger.Warn("foreground check failed", "step", stepIndex, "err", err)
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	if foreground != "" && foreground != options.BundleID {
 		logger.Warn("app left foreground; relaunching",
@@ -555,8 +696,7 @@ func ensureForeground(
 		// InputText). awaitForeground re-checks the foreground and focused
 		// window, so it never acts outside the app no matter how slow the
 		// relaunch settles.
-		awaitForeground(ctx, options, logger, stepIndex)
-		return foregroundRelaunched
+		return foregroundRelaunched, awaitForeground(ctx, options, logger, stepIndex)
 	}
 	// The app is the resumed activity, but a system overlay can still own the
 	// focused window while the app stays resumed: a fuzzer swipe starting in the
@@ -566,15 +706,15 @@ func ensureForeground(
 	// the app again.
 	focusChecker, hasFocus := options.Driver.(driver.FocusedWindowChecker)
 	if !hasFocus {
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	focused, err := focusChecker.FocusedWindowApp(ctx)
 	if err != nil {
 		logger.Warn("focus check failed", "step", stepIndex, "err", err)
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	if focused == "" || focused == options.BundleID {
-		return foregroundIntact
+		return foregroundIntact, true
 	}
 	logger.Warn("system window obscuring app; dismissing",
 		"step", stepIndex, "focused", focused, "want", options.BundleID)
@@ -582,7 +722,7 @@ func ensureForeground(
 		logger.Warn("dismiss overlay failed", "step", stepIndex, "err", err)
 	}
 	settleForForeground(ctx, options)
-	return foregroundOverlayDismissed
+	return foregroundOverlayDismissed, true
 }
 
 // appIsForeground reports whether the app under test currently owns the
@@ -617,10 +757,44 @@ func appIsForeground(ctx context.Context, options Options) bool {
 	return focused == options.BundleID
 }
 
-// foregroundReadyAttempts bounds how many times waitForForeground tries to
-// bring the app forward before the first step, so a stuck system dialog can
-// never hang the run.
-const foregroundReadyAttempts = 8
+// foregroundReadyBudget bounds how long awaitForeground waits for the app to be
+// on screen, so a stuck system dialog can never hang the run. It is wall-clock
+// time and not a count of polls because a poll costs whatever the driver's idle
+// wait happens to take, and that is a property of the device: on an API 34
+// emulator settleForForeground returned in ~100ms, so eight polls gave up 1.2s
+// into a launch whose window drew at ~1.9s, while on API 36 the same eight polls
+// spanned 3s and cleared the same launch. Counted in polls, the gate's verdict
+// describes the device it ran on rather than the app it was watching.
+var foregroundReadyBudget = 15 * time.Second
+
+// foregroundPollInterval floors how often the gate re-reads the device.
+// settleForForeground returns the moment the device reports idle, which during a
+// launch animation is immediately, so without a floor the gate would spin on adb
+// for the whole budget.
+var foregroundPollInterval = 250 * time.Millisecond
+
+// preconditionAppNotForeground is the reason a trace step carries when the app
+// under test was not in front of it: the startup gate's verdict on step 0, and
+// the scope guard's on any later step it could not bring the app back for. It is
+// a fixed token so a campaign counts these by decoding the trace rather than by
+// grepping a log line.
+const preconditionAppNotForeground = "app_not_in_foreground"
+
+// ForegroundNotReachedError reports that the app under test never came to the
+// foreground within foregroundReadyBudget, so the run never started. A run that
+// ends this way has judged nothing, and reporting it as a clean run would count
+// a harness failure as evidence about the app.
+type ForegroundNotReachedError struct {
+	BundleID string
+	Waited   time.Duration
+}
+
+func (e ForegroundNotReachedError) Error() string {
+	return fmt.Sprintf(
+		"%s never reached the foreground within %s: nothing was observed and no property "+
+			"judged anything, so this run holds no verdict about the app",
+		e.BundleID, e.Waited)
+}
 
 // focusTapSettle is the pause after tapping a field to focus it, before typing.
 // Long enough for focus to land, short enough to avoid the ~500ms-1s full
@@ -638,13 +812,13 @@ var focusTapSettle = 250 * time.Millisecond
 // alone lets the first observe read the outgoing app. When the driver can also
 // report the focused window, the gate additionally waits for that window to
 // name the app, which only happens once it is genuinely drawn.
-func waitForForeground(ctx context.Context, options Options, logger *slog.Logger) {
-	awaitForeground(ctx, options, logger, 0)
+func waitForForeground(ctx context.Context, options Options, logger *slog.Logger) bool {
+	return awaitForeground(ctx, options, logger, 0)
 }
 
 // awaitForeground brings the app under test forward when it is not already
 // resumed and blocks until its window is actually drawn, bounded by
-// foregroundReadyAttempts so a stuck system dialog can never hang the run. It
+// foregroundReadyBudget so a stuck system dialog can never hang the run. It
 // re-checks the foreground each iteration and only presses back + relaunches
 // while the app is genuinely absent, so once the app is resumed it polls the
 // focused-window signal instead of mashing back (which would re-exit the app
@@ -652,61 +826,116 @@ func waitForForeground(ctx context.Context, options Options, logger *slog.Logger
 // the per-step scope guard so neither lets an observe or action land outside
 // the app. Drivers without ForegroundChecker (web) and an unknown foreground
 // both skip the gate.
-func awaitForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
+//
+// It reports whether the app is on screen. False means the budget ran out with
+// the app confirmed absent, which is a precondition the caller has to record:
+// every signal that cannot answer the question (no capability, a read error, an
+// unknown foreground, a cancelled run) reports true rather than manufacture a
+// failure out of a gate that never got to judge.
+func awaitForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) bool {
 	checker, ok := options.Driver.(driver.ForegroundChecker)
 	if !ok || options.BundleID == "" {
-		return
+		return true
 	}
 	focusChecker, hasFocus := options.Driver.(driver.FocusedWindowChecker)
-	for attempt := range foregroundReadyAttempts {
+	deadline := time.Now().Add(foregroundReadyBudget)
+	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return
+			return true // the run is ending on its own; the gate holds no verdict
 		}
 		foreground, err := checker.ForegroundApp(ctx)
 		if err != nil {
 			logger.Warn("foreground check failed", "step", stepIndex, "err", err)
-			return
+			return true
 		}
 		if foreground == "" {
-			return // foreground unknowable (e.g. iOS); don't block the run
+			return true // foreground unknowable (e.g. iOS); don't block the run
 		}
-		if foreground != options.BundleID {
-			logger.Warn("app not in foreground; bringing it forward",
-				"step", stepIndex, "foreground", foreground, "want", options.BundleID, "attempt", attempt)
-			bringToForeground(ctx, options, logger, stepIndex)
+		if foreground == options.BundleID {
+			if !hasFocus {
+				return true // resumed is the app and no finer signal exists
+			}
+			focused, err := focusChecker.FocusedWindowApp(ctx)
+			if err != nil {
+				logger.Warn("focus check failed", "step", stepIndex, "err", err)
+				return true
+			}
+			if focused == options.BundleID {
+				return true // window is drawn; safe to observe
+			}
+			if !time.Now().Before(deadline) {
+				break
+			}
+			logger.Warn("app resumed but window not yet drawn; waiting",
+				"step", stepIndex, "focused", focused, "want", options.BundleID, "attempt", attempt)
+			awaitNextForegroundPoll(ctx, options)
 			continue
 		}
-		if !hasFocus {
-			return // resumed is the app and no finer signal exists
+		if !time.Now().Before(deadline) {
+			break
 		}
-		focused, err := focusChecker.FocusedWindowApp(ctx)
-		if err != nil {
-			logger.Warn("focus check failed", "step", stepIndex, "err", err)
-			return
-		}
-		if focused == options.BundleID {
-			return // window is drawn; safe to observe
-		}
-		logger.Warn("app resumed but window not yet drawn; waiting",
-			"step", stepIndex, "focused", focused, "want", options.BundleID, "attempt", attempt)
-		settleForForeground(ctx, options)
+		logger.Warn("app not in foreground; bringing it forward",
+			"step", stepIndex, "foreground", foreground, "want", options.BundleID, "attempt", attempt)
+		bringToForeground(ctx, options, logger, stepIndex)
+		awaitNextForegroundPoll(ctx, options)
 	}
-	logger.Warn("app never reached foreground; proceeding anyway",
-		"step", stepIndex, "want", options.BundleID)
+	logger.Warn("app never reached foreground", "step", stepIndex,
+		"want", options.BundleID, "waited", foregroundReadyBudget)
+	return false
+}
+
+// awaitNextForegroundPoll waits out one poll interval before the gate re-reads
+// the device: one settle, then whatever is left of foregroundPollInterval, so a
+// driver whose idle wait returns immediately cannot turn the gate into a spin.
+func awaitNextForegroundPoll(ctx context.Context, options Options) {
+	start := time.Now()
+	settleForForeground(ctx, options)
+	remaining := foregroundPollInterval - time.Since(start)
+	if remaining <= 0 {
+		return
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 }
 
 // bringToForeground returns the app under test to the foreground. It first
 // presses BACK to dismiss any modal system dialog (a relaunch alone does not
-// close one), then relaunches and waits for the UI to settle.
+// close one), then relaunches. The caller waits out the poll interval before
+// looking again, so a relaunch that fails outright cannot spin the gate.
 func bringToForeground(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) {
 	if err := options.Driver.PressKey(ctx, "back"); err != nil {
 		logger.Warn("dismiss key before relaunch failed", "step", stepIndex, "err", err)
 	}
 	if err := options.Driver.Launch(ctx, options.BundleID, false, nil); err != nil {
 		logger.Warn("relaunch failed", "step", stepIndex, "err", err)
-		return
 	}
-	settleForForeground(ctx, options)
+}
+
+// preconditionFailure names what a step could not assume, empty when it could.
+func preconditionFailure(inScope bool) string {
+	if inScope {
+		return ""
+	}
+	return preconditionAppNotForeground
+}
+
+// recordPreconditionFailure writes the startup gate's verdict to the trace as
+// step 0, the step index no observation ever uses, so a run that never started
+// is countable off the trace instead of off a warn line in a log.
+func recordPreconditionFailure(options Options) error {
+	step := trace.Step{
+		Index:               0,
+		Timestamp:           time.Now(),
+		PreconditionFailure: preconditionAppNotForeground,
+	}
+	if err := options.TraceWriter.WriteStep(step); err != nil {
+		return fmt.Errorf("write precondition failure to trace: %w", err)
+	}
+	return nil
 }
 
 // settleForForeground waits one idle window for the UI to settle, bounding the
@@ -717,34 +946,32 @@ func settleForForeground(ctx context.Context, options Options) {
 	cancel()
 }
 
-func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) error {
+// applyAction dispatches one chosen action to the driver. The returned reason is
+// empty exactly when the driver was called; a non-empty reason means nothing was
+// dispatched and names why, so the step can record that it acted on nothing
+// instead of showing a next_action that looks executed.
+func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.Action, tree *hierarchy.Tree) (actionSkipReason, error) {
 	switch action.Kind {
 	case verifier.ActionKindTap:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
-			if action.On == "" {
-				return nil
-			}
-			return drv.TapSelector(ctx, action.On)
+			return "", drv.TapSelector(ctx, action.On)
 		}
-		return drv.Tap(ctx, x, y)
+		return "", drv.Tap(ctx, x, y)
 	case verifier.ActionKindDoubleTap:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
-			if action.On == "" {
-				return nil
-			}
-			return drv.DoubleTapSelector(ctx, action.On)
+			return "", drv.DoubleTapSelector(ctx, action.On)
 		}
-		return drv.DoubleTap(ctx, x, y)
+		return "", drv.DoubleTap(ctx, x, y)
 	case verifier.ActionKindLongPress:
 		x, y, ok := resolveCoordinates(action, tree)
 		if !ok {
-			// No long-press-by-selector RPC exists, so an unresolved target is
-			// nothing we can dispatch; skip rather than error.
-			return nil
+			// No long-press-by-selector RPC exists, so a selector that resolves
+			// to no coordinates is nothing we can dispatch.
+			return actionSkippedUnresolvedSelector, nil
 		}
-		return drv.LongPress(ctx, x, y)
+		return "", drv.LongPress(ctx, x, y)
 	case verifier.ActionKindScroll:
 		fromX, fromY, toX, toY := scrollEndpoints(action, tree)
 		fromX, fromY, toX, toY = clampGestureToSafeArea(fromX, fromY, toX, toY, screenBounds(tree))
@@ -752,17 +979,20 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		if duration <= 0 {
 			duration = 300 * time.Millisecond
 		}
-		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
+		if scroller, ok := drv.(driver.Scroller); ok {
+			return "", scroller.Scroll(ctx, fromX, fromY, toX, toY, duration)
+		}
+		return "", drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindInputText:
 		tapped := false
 		if x, y, ok := resolveCoordinates(action, tree); ok {
 			if err := drv.Tap(ctx, x, y); err != nil {
-				return err
+				return "", err
 			}
 			tapped = true
 		} else if action.On != "" {
 			if err := drv.TapSelector(ctx, action.On); err != nil {
-				return err
+				return "", err
 			}
 			tapped = true
 		}
@@ -776,8 +1006,11 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return ctx.Err()
+				return "", ctx.Err()
 			case <-timer.C:
+			}
+			if err := confirmFocus(ctx, drv, action.On, tree); err != nil {
+				return "", err
 			}
 		}
 		// InputText replaces the field's content: erase what the target
@@ -788,38 +1021,38 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 		if !inputReplacesText(drv) {
 			if count := existingTextLength(action, tree); count > 0 {
 				if err := drv.EraseText(ctx, count); err != nil {
-					return err
+					return "", err
 				}
 			}
 		}
-		return drv.InputText(ctx, action.Text)
+		return "", drv.InputText(ctx, action.Text)
 	case verifier.ActionKindSwipe:
 		duration := time.Duration(action.DurationMillis) * time.Millisecond
 		if duration <= 0 {
 			duration = 250 * time.Millisecond
 		}
 		fromX, fromY, toX, toY := clampGestureToSafeArea(action.FromX, action.FromY, action.ToX, action.ToY, screenBounds(tree))
-		return drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
+		return "", drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindPressKey:
 		if action.Key == "" {
-			return nil
+			return actionSkippedMissingKey, nil
 		}
-		return drv.PressKey(ctx, action.Key)
+		return "", drv.PressKey(ctx, action.Key)
 	case verifier.ActionKindWait:
 		duration := time.Duration(action.DurationMillis) * time.Millisecond
 		if duration <= 0 {
-			return nil
+			return actionSkippedZeroDurationWait, nil
 		}
 		timer := time.NewTimer(duration)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return "", ctx.Err()
 		case <-timer.C:
-			return nil
+			return "", nil
 		}
 	default:
-		return fmt.Errorf("unknown action kind %q", action.Kind)
+		return "", fmt.Errorf("unknown action kind %q", action.Kind)
 	}
 }
 
@@ -855,11 +1088,173 @@ func collectLogs(
 	return result
 }
 
+// collectExceptions reads the app's captured uncaught errors. Like log
+// capture it is best-effort: a failed read is warned on rather than ending
+// the run, and a driver that cannot report them yields none.
+func collectExceptions(
+	ctx context.Context,
+	reporter driver.ExceptionReporter,
+	logger *slog.Logger,
+	stepIndex int,
+) []verifier.Exception {
+	if reporter == nil {
+		return nil
+	}
+	captured, err := reporter.Exceptions(ctx)
+	if err != nil {
+		logger.Warn("exception fetch failed", "step", stepIndex, "err", err)
+		return nil
+	}
+	result := make([]verifier.Exception, 0, len(captured))
+	for _, entry := range captured {
+		result = append(result, verifier.Exception{
+			Class:      entry.Class,
+			Message:    entry.Message,
+			StackTrace: entry.StackTrace,
+			UnixMillis: entry.UnixMillis,
+		})
+	}
+	return result
+}
+
+func collectNavigations(
+	ctx context.Context,
+	reporter driver.NavigationReporter,
+	logger *slog.Logger,
+	stepIndex int,
+) []trace.Navigation {
+	if reporter == nil {
+		return nil
+	}
+	observed, err := reporter.Navigations(ctx)
+	if err != nil {
+		logger.Warn("navigation fetch failed", "step", stepIndex, "err", err)
+		return nil
+	}
+	records := make([]trace.Navigation, 0, len(observed))
+	for _, entry := range observed {
+		records = append(records, trace.Navigation{URL: entry.URL, UnixMillis: entry.UnixMillis})
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	return records
+}
+
+func traceLogs(entries []verifier.LogEntry) []trace.LogEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	result := make([]trace.LogEntry, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, trace.LogEntry(entry))
+	}
+	return result
+}
+
+func traceExceptions(entries []verifier.Exception) []trace.Exception {
+	if len(entries) == 0 {
+		return nil
+	}
+	result := make([]trace.Exception, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, trace.Exception(entry))
+	}
+	return result
+}
+
 // inputReplacesText reports whether the driver's InputText replaces existing
 // content, making the runner's pre-erase redundant.
 func inputReplacesText(drv driver.DeviceDriver) bool {
 	replacer, ok := drv.(driver.TextReplacer)
 	return ok && replacer.ReplacesTextOnInput()
+}
+
+// confirmFocus fails the action when the device reports focus on an element
+// other than the one the focus tap aimed at. Typing is a blind write to
+// whatever holds focus, so a tap the target never received (a keyboard overlay
+// window covering it, a target that cannot take focus) would stream the
+// characters into a different field, corrupting it and every property that
+// reads it. Only a field that already holds focus can receive that text, so
+// the confirming read is charged only when the pre-tap hierarchy shows focus
+// somewhere other than the target: a target that already holds focus, a screen
+// with nothing focused, and platforms that never report focus (iOS) all skip
+// it and keep the round-trip.
+func confirmFocus(
+	ctx context.Context,
+	drv driver.DeviceDriver,
+	selector string,
+	tree *hierarchy.Tree,
+) error {
+	if selector == "" || !otherElementHoldsFocus(tree, selector) {
+		return nil
+	}
+	dump, err := drv.Hierarchy(ctx)
+	if err != nil {
+		return fmt.Errorf("focus check for %s: %w", selector, err)
+	}
+	current, err := hierarchy.Parse(dump)
+	if err != nil {
+		return fmt.Errorf("focus check for %s: %w", selector, err)
+	}
+	if !otherElementHoldsFocus(current, selector) {
+		return nil
+	}
+	return fmt.Errorf(
+		"focus tap on %s did not focus it: %s holds focus, so the text would land there",
+		selector, elementName(focusedElement(current)),
+	)
+}
+
+// otherElementHoldsFocus reports whether the hierarchy shows focus on
+// something outside the selector's subtree, which is the state that sends
+// typed text to the wrong field. A selector the hierarchy cannot resolve
+// answers false: not knowing where the target is says nothing about where the
+// text would land, and failing on it turns every step the dump has no node for
+// into an apply error, which is an aborted run three steps later.
+func otherElementHoldsFocus(tree *hierarchy.Tree, selector string) bool {
+	if tree == nil || focusedElement(tree) == nil {
+		return false
+	}
+	target := tree.FindNode(selector)
+	return target != nil && !holdsFocus(target)
+}
+
+func focusedElement(tree *hierarchy.Tree) *hierarchy.Element {
+	for _, element := range tree.Elements {
+		if element.Focused {
+			return element
+		}
+	}
+	return nil
+}
+
+// holdsFocus accepts focus anywhere in the target's subtree: a selector often
+// names the field wrapper while the platform reports focus on the inner
+// editable node.
+func holdsFocus(node *hierarchy.Node) bool {
+	if node.Focused {
+		return true
+	}
+	for _, child := range node.Children {
+		if holdsFocus(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func elementName(element *hierarchy.Element) string {
+	switch {
+	case element.ResourceID != "":
+		return element.ResourceID
+	case element.Description != "":
+		return element.Description
+	case element.Class != "":
+		return element.Class
+	default:
+		return "an unnamed element"
+	}
 }
 
 // existingTextLength returns the character count of the InputText target's
@@ -880,17 +1275,23 @@ func resolveCoordinates(action verifier.Action, tree *hierarchy.Tree) (int, int,
 	// When On is empty, X/Y are authoritative (web V8 path emits coordinates
 	// directly from getBoundingClientRect; the runtime nullifies unresolved
 	// actions upstream so a non-null InputText here always has real coords,
-	// even at (0,0)). When On is set, prefer the tree lookup so stale coords
-	// don't leak from earlier ticks.
+	// even at (0,0)). A point outside the viewport is off screen, not absent:
+	// only the driver knows whether it can scroll that point back into reach,
+	// so the judgement belongs there and not here. When On is set, prefer the
+	// tree lookup so stale coords don't leak from earlier ticks.
 	if action.On == "" {
-		if action.X >= 0 && action.Y >= 0 {
-			return action.X, action.Y, true
-		}
-		return 0, 0, false
+		return action.X, action.Y, true
 	}
 	if tree != nil {
-		if element := tree.Find(action.On); element != nil {
-			x, y := element.Bounds.Center()
+		// An ambiguous selector names several elements while the action's own
+		// coordinates name one, so the coordinates win. Attribute values match
+		// by substring, so a selector unique where the candidate was built can
+		// be ambiguous in the tree it resolves against. A bare-string target
+		// carries no coordinates, and there the name is all there is.
+		matches := tree.FindAll(action.On)
+		hasCoordinates := action.X > 0 && action.Y > 0
+		if len(matches) > 0 && (len(matches) == 1 || !hasCoordinates) {
+			x, y := matches[0].Bounds.Center()
 			if x > 0 && y > 0 {
 				return x, y, true
 			}
@@ -1178,13 +1579,18 @@ func driverIsAndroid(ctx context.Context, options Options, logger *slog.Logger) 
 }
 
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {
-	traceAction := &trace.Action{Kind: string(action.Kind), X: action.X, Y: action.Y}
+	traceAction := &trace.Action{
+		Kind:   string(action.Kind),
+		X:      action.X,
+		Y:      action.Y,
+		Source: action.Source,
+	}
 	switch action.Kind {
 	case verifier.ActionKindTap, verifier.ActionKindDoubleTap, verifier.ActionKindLongPress:
 		traceAction.Selector = action.On
 		stampSelectorTarget(traceAction, action, tree)
 	case verifier.ActionKindInputText:
-		traceAction.Text = action.Text
+		traceAction.Text = verifier.RecordedActionText(action, tree)
 		traceAction.Selector = action.On
 		stampSelectorTarget(traceAction, action, tree)
 	case verifier.ActionKindSwipe:
@@ -1341,11 +1747,59 @@ func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessa
 	return encoded, firstErr
 }
 
+// actionSkipReason names why a chosen action was never dispatched. It is
+// recorded on the step so a count of executed actions is not inflated by the
+// next_action of a step that acted on nothing. Empty means the action ran.
+type actionSkipReason string
+
+const (
+	actionSkippedForeground actionSkipReason = "app_left_foreground"
+	actionSkippedApplyError actionSkipReason = "apply_error"
+	// The action was dispatched and the driver never came back inside the
+	// step's bound. Distinct from apply_error, which is a call that answered
+	// and said no, and from the reasons below, which are actions that never
+	// reached the device at all.
+	actionSkippedApplyTimeout actionSkipReason = "apply_timeout"
+	// The action named a selector that resolved to no on-screen coordinates,
+	// either because its verb has no by-selector dispatch to fall back to or
+	// because the driver's own lookup found nothing to tap.
+	actionSkippedUnresolvedSelector actionSkipReason = "unresolved_selector"
+	actionSkippedMissingKey         actionSkipReason = "missing_key"
+	actionSkippedZeroDurationWait   actionSkipReason = "zero_duration_wait"
+	// The driver resolved the action's point and found no element there, so
+	// the gesture was never dispatched. Recorded rather than counted as a
+	// device fault: a run that acts on nothing has to say so.
+	actionSkippedGestureUndelivered actionSkipReason = "gesture_undelivered"
+	// The step asked the action source for an action and was handed none: a
+	// generator with no candidate for this screen, or a model call that failed.
+	// The step then drives nothing, which is the one non-action a run can take
+	// on every one of its steps and still finish reporting a full step count.
+	actionSkippedNoActionProduced actionSkipReason = "no_action_produced"
+)
+
 // maxConsecutiveApplyFailures bounds how many transient apply failures in a
 // row the run tolerates before aborting. One or two absorb a runner restart;
 // an unbroken streak means the device is wedged and the rest of the budget
 // would be spent doing nothing.
 const maxConsecutiveApplyFailures = 3
+
+// applyTimeout bounds one dispatched action and observationTimeout the device
+// reads a step opens with. Options.Duration is a loop condition checked between
+// steps and the drivers add no deadline of their own, so without these a call
+// that never returns holds the run for as long as the process lives. Both are
+// far above any healthy call and far below the timeout a campaign runner puts
+// on a whole run. Variables so the timeout tests can shrink them.
+var (
+	applyTimeout       = 60 * time.Second
+	observationTimeout = 60 * time.Second
+)
+
+// applyBound is how long one dispatched action may take. An action that names
+// its own duration carries it on top: the bound exists to end a call that
+// stopped answering, not to cut a gesture the spec asked for.
+func applyBound(action verifier.Action) time.Duration {
+	return applyTimeout + time.Duration(action.DurationMillis)*time.Millisecond
+}
 
 // isWDADrop reports that the sidecar could not restart the iOS XCTest
 // runner: the channel is gone for good and the run must abort. Transient

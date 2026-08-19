@@ -1,4 +1,8 @@
-package main
+// Package seedspec expands the seed specification a campaign is given into the
+// explicit list of seeds it intends to run. The campaign tool and the tools
+// that drive it have to read a specification the same way, or a sweep records
+// an intent that differs from what ran.
+package seedspec
 
 import (
 	"fmt"
@@ -6,9 +10,9 @@ import (
 	"strings"
 )
 
-// parseSeeds expands a seed specification such as "1-10,20,30-32" into the
+// Parse expands a seed specification such as "1-10,20,30-32" into the
 // explicit seed list a campaign intends to run.
-func parseSeeds(specification string) ([]int64, error) {
+func Parse(specification string) ([]int64, error) {
 	trimmed := strings.TrimSpace(specification)
 	if trimmed == "" {
 		return nil, fmt.Errorf("empty seed spec")

@@ -15,9 +15,11 @@ import (
 // ActionSource resolves the next action for a step. Both runtimes (the goja
 // picker and the web/V8 picker) implement it so the runner loop has one path
 // and no per-step driver type assertion. NextAction returns verifier.ErrNoAction
-// when the picker declined to act this tick.
+// when the picker declined to act this tick. stepIndex is the trace line the
+// decision belongs to, so a source that keeps its own records can key them to it
+// rather than counting steps a second time.
 type ActionSource interface {
-	NextAction(ctx context.Context) (verifier.Action, error)
+	NextAction(ctx context.Context, stepIndex int) (verifier.Action, error)
 }
 
 // ExtractorSource yields per-step extractor overrides the runner applies after
@@ -57,7 +59,7 @@ type gojaSource struct {
 	verifier *verifier.Verifier
 }
 
-func (s gojaSource) NextAction(context.Context) (verifier.Action, error) {
+func (s gojaSource) NextAction(context.Context, int) (verifier.Action, error) {
 	return s.verifier.NextAction()
 }
 
@@ -76,7 +78,7 @@ type webSource struct {
 	web driver.WebDriver
 }
 
-func (s webSource) NextAction(ctx context.Context) (verifier.Action, error) {
+func (s webSource) NextAction(ctx context.Context, _ int) (verifier.Action, error) {
 	raw, err := s.web.NextActionFromV8(ctx)
 	if err != nil {
 		return verifier.Action{}, fmt.Errorf("v8 next action: %w", err)
@@ -160,8 +162,14 @@ func pickSources(options Options) (ActionSource, ExtractorSource, error) {
 		client:       client,
 		model:        config.Model,
 		instructions: config.Instructions,
+		labelSource:  options.LabelSource,
 		logger:       logger,
 		history:      newActionHistory(llmHistorySize),
+	}
+	// Assigned only when present so the interface field stays nil rather than
+	// holding a typed nil pointer that would panic on the first record.
+	if options.TraceWriter != nil {
+		action.recorder = options.TraceWriter
 	}
 	return action, extractor, nil
 }

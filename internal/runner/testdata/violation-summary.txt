@@ -1,4 +1,5 @@
 
-run complete: 4 steps
+run complete: 4 steps, 0 driven by the generator
 1 violation record(s):
   step 1: [balanceNonNegative]
+4 action(s) never reached the app: no_action_produced 4

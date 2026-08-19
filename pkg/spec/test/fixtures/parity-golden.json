@@ -3,125 +3,145 @@
     "kind": "Tap",
     "x": 250,
     "y": 260,
-    "selector": "id:gamma"
+    "selector": "id:gamma",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 150,
     "y": 160,
-    "selector": "id:beta"
+    "selector": "id:beta",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 50,
     "y": 60,
-    "selector": "id:alpha"
+    "selector": "id:alpha",
+    "source": "seeded"
   },
   {
     "kind": "InputText",
     "x": 150,
     "y": 160,
     "text": "a",
-    "selector": "id:beta"
+    "selector": "id:beta",
+    "source": "seeded"
   },
   {
     "kind": "InputText",
     "x": 50,
     "y": 60,
     "text": "\t\n",
-    "selector": "id:alpha"
+    "selector": "id:alpha",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 250,
     "y": 260,
-    "selector": "id:gamma"
+    "selector": "id:gamma",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 150,
     "y": 160,
-    "selector": "id:beta"
+    "selector": "id:beta",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 250,
     "y": 260,
-    "selector": "id:gamma"
+    "selector": "id:gamma",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 150,
     "y": 160,
-    "selector": "id:beta"
+    "selector": "id:beta",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 250,
     "y": 260,
-    "selector": "id:gamma"
+    "selector": "id:gamma",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 250,
     "y": 260,
-    "selector": "id:gamma"
+    "selector": "id:gamma",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 150,
     "y": 160,
-    "selector": "id:beta"
+    "selector": "id:beta",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 250,
     "y": 260,
-    "selector": "id:gamma"
+    "selector": "id:gamma",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 50,
     "y": 60,
-    "selector": "id:alpha"
+    "selector": "id:alpha",
+    "source": "seeded"
   },
   {
     "kind": "InputText",
     "x": 150,
     "y": 160,
     "text": "999999999999999999999",
-    "selector": "id:beta"
+    "selector": "id:beta",
+    "source": "seeded"
   },
   {
     "kind": "InputText",
     "x": 150,
     "y": 160,
     "text": "-1",
-    "selector": "id:beta"
+    "selector": "id:beta",
+    "source": "seeded"
   },
   {
     "kind": "InputText",
     "x": 250,
     "y": 260,
     "text": "-1",
-    "selector": "id:gamma"
+    "selector": "id:gamma",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 50,
     "y": 60,
-    "selector": "id:alpha"
+    "selector": "id:alpha",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 250,
     "y": 260,
-    "selector": "id:gamma"
+    "selector": "id:gamma",
+    "source": "seeded"
   },
   {
     "kind": "Tap",
     "x": 50,
     "y": 60,
-    "selector": "id:alpha"
+    "selector": "id:alpha",
+    "source": "seeded"
   }
 ]

@@ -153,5 +153,5 @@ func TestObserve_PanicsOnUnknownFormulaType(t *testing.T) {
 			t.Errorf("expected panic on unsupported formula type")
 		}
 	}()
-	reduce(unsupportedFormula{}, time.Now())
+	reduce(unsupportedFormula{}, time.Now(), 1)
 }

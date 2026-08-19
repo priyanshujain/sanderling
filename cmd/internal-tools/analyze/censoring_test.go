@@ -1,0 +1,148 @@
+package main
+
+import (
+	"bytes"
+	"io"
+	"math"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// A run stops at whichever comes first, the step budget or the campaign's wall
+// clock, so an arm that spends more wall clock per step leaves runs censored far
+// below the budget. Those runs are not observations of a violation at that step,
+// and the comparison between arms has to read them as the bounds they are.
+
+type wallClockRun struct {
+	steps    int
+	violated bool
+}
+
+func stoppedShort(count, steps int) []wallClockRun {
+	runs := make([]wallClockRun, 0, count)
+	for index := 0; index < count; index++ {
+		runs = append(runs, wallClockRun{steps: steps})
+	}
+	return runs
+}
+
+func violatedAt(count, steps int) []wallClockRun {
+	runs := make([]wallClockRun, 0, count)
+	for index := 0; index < count; index++ {
+		runs = append(runs, wallClockRun{steps: steps, violated: true})
+	}
+	return runs
+}
+
+func writeWallClockCampaign(t *testing.T, directory, name string, budget int, runs []wallClockRun) string {
+	t.Helper()
+	seeds := make([]int, 0, len(runs))
+	records := make([]map[string]any, 0, len(runs))
+	for index, run := range runs {
+		seed := index + 1
+		seeds = append(seeds, seed)
+		record := map[string]any{
+			"seed": seed, "exit_code": 0, "steps": run.steps, "actions": run.steps,
+			"monotonic_millis": 60_000,
+		}
+		if run.violated {
+			record["first_violation_origin_step"] = run.steps
+			record["violated_properties"] = []string{"plantedProperty"}
+		}
+		records = append(records, record)
+	}
+	writeCampaign(t, directory, map[string]any{
+		"arm": name, "generator": "seeded", "platform": "android",
+		"max_steps": budget, "seeds": seeds,
+	}, records)
+	return directory
+}
+
+func wallClockArms(t *testing.T, early, late []wallClockRun) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	return writeWallClockCampaign(t, filepath.Join(root, "early"), "early", 400, early),
+		writeWallClockCampaign(t, filepath.Join(root, "late"), "late", 400, late)
+}
+
+// Twenty runs stopped clean at step 12 against twenty violations at step 100.
+// Nothing in the first arm was observed past step 12, so no pair of runs across
+// the arms has a determined order and there is no difference to report.
+func TestRun_RunsStoppedBeforeEveryEventCarryNoComparison(t *testing.T) {
+	earlyDirectory, lateDirectory := wallClockArms(t, stoppedShort(20, 12), violatedAt(20, 100))
+	pair := analyseCampaigns(t, earlyDirectory, lateDirectory).Pairwise[0]
+
+	if pair.First != "early" || pair.Second != "late" {
+		t.Fatalf("comparison %s vs %s, want early vs late", pair.First, pair.Second)
+	}
+	if math.Abs(pair.A12-0.5) > 1e-12 {
+		t.Errorf("a12 %.4f between an arm censored at 12 and one violating at 100, want 0.5: "+
+			"a run that stopped at step 12 never reached step 100", pair.A12)
+	}
+	if pair.PValue < 0.05 {
+		t.Errorf("p %.3e, want no significant difference: the arms were never observed over the same steps",
+			pair.PValue)
+	}
+}
+
+// Where the two arms were observed together, over the first twelve steps, the
+// arm the wall clock stopped is the one that did not violate. The effect size
+// has to follow that and not the step counts the flattening reads.
+func TestRun_EffectSizeFollowsWhatCensoringDetermines(t *testing.T) {
+	late := append(violatedAt(6, 5), violatedAt(14, 100)...)
+	earlyDirectory, lateDirectory := wallClockArms(t, stoppedShort(20, 12), late)
+	pair := analyseCampaigns(t, earlyDirectory, lateDirectory).Pairwise[0]
+
+	if pair.A12 <= 0.5 {
+		t.Errorf("a12 %.4f, want above 0.5: six of the late arm's runs violated by step 5 "+
+			"and none of the early arm's twenty had violated by step 12", pair.A12)
+	}
+}
+
+// The seed-matched contrast reads the same censored runs and reaches the same
+// conclusion or it is not measuring the same thing.
+func TestRun_PairedContrastFollowsWhatCensoringDetermines(t *testing.T) {
+	late := append(violatedAt(6, 5), violatedAt(14, 100)...)
+	earlyDirectory, lateDirectory := wallClockArms(t, stoppedShort(20, 12), late)
+	result := analyseCampaigns(t, "--paired", earlyDirectory, lateDirectory)
+
+	paired := *result.Paired
+	if paired.First != "early" || paired.Second != "late" {
+		t.Fatalf("paired %s minus %s, want early minus late", paired.First, paired.Second)
+	}
+	if paired.Sign != 1 {
+		t.Errorf("sign %+d, want +1: the late arm is the one seen to violate first, in the six pairs "+
+			"where the order is determined at all", paired.Sign)
+	}
+	if paired.A12 <= 0.5 {
+		t.Errorf("a12 within pairs %.4f, want above 0.5", paired.A12)
+	}
+}
+
+// Nothing orders any pair here, so there is no test to report. The summary has
+// to say that rather than failing to write a number that does not exist: a
+// NaN p-value is not JSON and the whole summary went unwritten behind it.
+func TestRun_PairedContrastWithNoOrderedPairSaysSo(t *testing.T) {
+	earlyDirectory, lateDirectory := wallClockArms(t, stoppedShort(20, 12), violatedAt(20, 100))
+	result := analyseCampaigns(t, "--paired", earlyDirectory, lateDirectory)
+
+	paired := *result.Paired
+	if paired.Pairs != 20 || paired.Unordered != 20 {
+		t.Fatalf("paired %+v, want twenty pairs and all of them unordered", paired)
+	}
+	if paired.PValue != nil || paired.HolmPValue != nil {
+		t.Errorf("p %v and holm p %v, want both undefined", paired.PValue, paired.HolmPValue)
+	}
+	if result.HolmFamilySize != 0 {
+		t.Errorf("holm family of %d, want none where nothing was tested", result.HolmFamilySize)
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"--paired", earlyDirectory, lateDirectory}, &stdout, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "sign test over the 0 ordered pair(s), p n/a, holm p n/a") {
+		t.Errorf("report does not say the test was not run:\n%s", stdout.String())
+	}
+}

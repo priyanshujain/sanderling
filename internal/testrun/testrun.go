@@ -5,9 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/android"
@@ -62,8 +65,21 @@ type Options struct {
 	// recorded violations as a ViolationsError, so a caller (CI) can tell
 	// "the run found the bug" from "the run finished clean".
 	ExitOnViolation bool
+	// AllowNoProperties lets a run proceed against a spec that registers no
+	// properties. The extraction sweeps pass it: they measure what a spec can
+	// read and report no detection count. Every other run without it is a false
+	// green.
+	AllowNoProperties bool
+	// AllowNoGeneratorActions lets a run finish having never been driven by its
+	// action generator. The exploration-reach sweeps pass it, because "the
+	// generator reached nothing on this build" is their measurement rather than
+	// a broken run.
+	AllowNoGeneratorActions bool
 	// Generator selects the action picker: "llm" or the default seeded picker.
 	Generator string
+	// LabelSource selects how candidates are named to the model picker, and is
+	// recorded in meta.json as part of the run's cell.
+	LabelSource string
 
 	// iosUDID, iosIsSimulator, and iosCoreDeviceID are filled by Execute after
 	// resolving the iOS target, then read by buildDriver to choose the simulator
@@ -79,6 +95,15 @@ type Options struct {
 // recorded only when the LLM picker is the one that will actually run, so a
 // spec that declares generator = llm() but is run under the seeded picker does
 // not label its trace with a model it never called.
+// runDevice reads whichever flag named the hardware for this platform. An ios
+// run is selected with --ios-device and leaves --device empty.
+func runDevice(options Options) string {
+	if options.Platform == "ios" {
+		return options.IosDevice
+	}
+	return options.Device
+}
+
 func buildRunMeta(options Options, bundleSHA256 string, seed int64, host string, llmConfig verifier.LLMConfig, hasLLMConfig bool) trace.Meta {
 	meta := trace.Meta{
 		Seed:              seed,
@@ -90,9 +115,11 @@ func buildRunMeta(options Options, bundleSHA256 string, seed int64, host string,
 		SanderlingVersion: "0.0.1",
 		Arm:               options.Arm,
 		Generator:         options.Generator,
+		LabelSource:       options.LabelSource,
 		MaxSteps:          options.MaxSteps,
 		DurationMillis:    options.Duration.Milliseconds(),
 		Host:              host,
+		Device:            runDevice(options),
 	}
 	if options.Generator == "llm" && hasLLMConfig {
 		meta.Model = llmConfig.Model
@@ -186,6 +213,9 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 	if err := verifierInstance.Load(string(bundle.JavaScript)); err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
+	if !options.AllowNoProperties && len(verifierInstance.PropertyNames()) == 0 {
+		return NoPropertiesError{Spec: options.Spec}
+	}
 	fmt.Fprintln(stdout, "spec loaded into verifier")
 
 	runDirectory := filepath.Join(options.Output, time.Now().UTC().Format("20060102-150405"))
@@ -222,6 +252,7 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 		TraceWriter:     traceWriter,
 		Logger:          newProgressLogger(stdout),
 		Generator:       options.Generator,
+		LabelSource:     options.LabelSource,
 		StopOnViolation: options.ExitOnViolation,
 	})
 
@@ -247,12 +278,32 @@ func Execute(ctx context.Context, options Options, stdout io.Writer) error {
 // because it holds no verdict to report. The threshold is every step and not a
 // fraction of them: a screen that composes now and then costs a healthy android
 // run a step or two, and a check that fired on those would be red on every run.
+//
+// A run whose generator dispatched no action fails on the same grounds, and the
+// threshold is zero for the same reason: a generator with nothing to offer on
+// some screens is ordinary, one with nothing to offer on every screen of a whole
+// run drove nothing. The count is the generator's alone because a spec's setup
+// drives the app before the generator is consulted, so a login that ran leaves
+// dispatched actions behind whatever the generator then did.
+//
+// A recorded violation carries such a run through whether or not
+// --exit-on-violation was passed: the refusal exists because a run with no
+// verdict must not read as a clean one, and a run that recorded a violation
+// holds a verdict. Campaigns pass no flags, so refusing them there would write
+// exit_code 1 and lose a real detection to the analysis as missing data.
 func runOutcome(options Options, summary runner.Summary) error {
 	if summary.Steps > 0 && summary.SkippedVerification == summary.Steps {
 		return VacuousRunError{Steps: summary.Steps}
 	}
 	if options.ExitOnViolation && len(summary.Violations) > 0 {
 		return ViolationsError{Count: len(summary.Violations)}
+	}
+	if !options.AllowNoGeneratorActions && len(summary.Violations) == 0 &&
+		summary.Steps > 0 && summary.GeneratorActions == 0 {
+		return NoGeneratorActionsError{
+			Steps:          summary.Steps,
+			SkippedActions: summary.SkippedActions,
+		}
 	}
 	return nil
 }
@@ -269,6 +320,23 @@ func (e ViolationsError) Error() string {
 	return fmt.Sprintf("%d violation record(s)", e.Count)
 }
 
+// BundleSpec produces the goja bundle a run of this spec loaded, seeded as that
+// run was. An offline replay of the run's trace has to load the same JavaScript
+// the run did, and the seed is one of the bundle's defines, so it is part of
+// the bundle's identity.
+func BundleSpec(specPath string, seed int64) (bundler.Result, error) {
+	inputs, err := prepareBundleInputs(Options{Spec: specPath, Seed: seed})
+	if err != nil {
+		return bundler.Result{}, err
+	}
+	return bundler.Bundle(bundler.Options{
+		EntryFile:   specPath,
+		RuntimeFile: inputs.gojaRuntimePath,
+		Defines:     inputs.defines,
+		Aliases:     inputs.aliases,
+	})
+}
+
 // VacuousRunError reports a run in which no step reached the verifier, so no
 // property ever judged anything. It is not a clean run and it is not a found
 // bug: it is a run that produced no evidence either way, and the absence of
@@ -283,6 +351,63 @@ func (e VacuousRunError) Error() string {
 		"%d step(s) ran and none of them reached the verifier: the screen was "+
 			"still moving every time it was read, so no property judged this run",
 		e.Steps)
+}
+
+// NoPropertiesError reports a spec that bundled and loaded cleanly and holds no
+// properties. Nothing is broken: the run would drive the app, fill a trace and
+// report no violations having judged nothing, and that green says as much about
+// the app as an unplugged meter says about a wire. It stays untyped to the CLI's
+// violation path like VacuousRunError, so it exits 1 as a run that cannot
+// produce a verdict rather than 2.
+type NoPropertiesError struct {
+	Spec string
+}
+
+func (e NoPropertiesError) Error() string {
+	return fmt.Sprintf(
+		"%s bundled and loaded into the verifier cleanly and registers no properties: "+
+			"nothing is wrong with the spec and nothing is wrong with the run, but this run "+
+			"would check nothing and report no violations. Pass --allow-no-properties for a "+
+			"run that measures what the spec extracts instead of judging the app",
+		e.Spec)
+}
+
+// NoGeneratorActionsError reports a run not one of whose steps was driven by the
+// action generator. Setup can put the app in position, but only the generator
+// explores it, so every screen this run judged was one setup left it on and its
+// empty violation list says as much about the app as a spec with no properties
+// would: the run observed, judged the same state over and over, and exercised
+// nothing. It stays untyped to the CLI's violation path like VacuousRunError, so
+// it exits 1 as a run that holds no verdict rather than 2.
+type NoGeneratorActionsError struct {
+	Steps int
+	// SkippedActions is the runner's per-reason count of actions that never
+	// reached the app, which is where the cause is: a picker with no candidate
+	// reads differently from one whose every model call failed.
+	SkippedActions map[string]int
+}
+
+func (e NoGeneratorActionsError) Error() string {
+	return fmt.Sprintf(
+		"%d step(s) ran and the action generator drove the app in none of them: whatever "+
+			"the spec's setup did to get the app into position, nothing explored it from "+
+			"there, so the run judged one screen over and over and its violation count "+
+			"says nothing about the rest of the app%s. Pass --allow-no-generator-actions "+
+			"for a run that measures where a generator reaches instead of judging the app",
+		e.Steps, skipReasonSuffix(e.SkippedActions))
+}
+
+// skipReasonSuffix renders the skip-reason tally as a trailing clause, empty
+// when the run recorded none.
+func skipReasonSuffix(skipped map[string]int) string {
+	if len(skipped) == 0 {
+		return ""
+	}
+	reasons := make([]string, 0, len(skipped))
+	for _, reason := range slices.Sorted(maps.Keys(skipped)) {
+		reasons = append(reasons, fmt.Sprintf("%s %d", reason, skipped[reason]))
+	}
+	return ". Actions that never reached the app: " + strings.Join(reasons, ", ")
 }
 
 // bundleInputs holds the pre-driver assembly: alias map, seed, esbuild defines,

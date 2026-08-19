@@ -9,6 +9,8 @@ import { parseCents } from '../format'
 import { back, navigate } from '../router'
 import { BackButton, Header, Screen } from '../components/Screen'
 
+const SAVED_NOTICE_MILLIS = 400
+
 export function AddTransactionPage(props: {
   accountId: string
   onCreated: () => void
@@ -19,6 +21,7 @@ export function AddTransactionPage(props: {
   const [note, setNote] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -29,6 +32,15 @@ export function AddTransactionPage(props: {
       alive = false
     }
   }, [props.accountId])
+
+  useEffect(() => {
+    if (!saved) return
+    const timer = window.setTimeout(
+      () => back(`/accounts/${props.accountId}`),
+      SAVED_NOTICE_MILLIS,
+    )
+    return () => window.clearTimeout(timer)
+  }, [saved, props.accountId])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -51,7 +63,7 @@ export function AddTransactionPage(props: {
         note,
       })
       props.onCreated()
-      back(`/accounts/${props.accountId}`)
+      setSaved(true)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not save transaction')
     } finally {
@@ -85,6 +97,13 @@ export function AddTransactionPage(props: {
   }
 
   const submitDisabled = busy || amount.trim() === ''
+  const submitLabel = busy
+    ? 'Saving…'
+    : saved
+      ? 'Saved'
+      : type === 'credit'
+        ? 'Add credit'
+        : 'Add debit'
 
   return (
     <Screen
@@ -107,7 +126,7 @@ export function AddTransactionPage(props: {
           form="add-txn-form"
           disabled={submitDisabled}
         >
-          {busy ? 'Saving…' : type === 'credit' ? 'Add credit' : 'Add debit'}
+          {submitLabel}
         </button>
       }
     >

@@ -4,8 +4,6 @@ import {
   actions,
   always,
   extract,
-  from,
-  integers,
   llm,
   next,
   weighted,
@@ -340,7 +338,13 @@ const login = actions(() => {
   return submit ? [Tap({ on: submit })] : [];
 });
 
-const accountNames = from(["Checking", "Savings", "Travel", "Emergency Fund", "Investments"]);
+// One action per value, never a draw: a draw reads the seeded picker's stream,
+// which the model policy never enters, so the two would explore different
+// action spaces. Both lists stay short because the leaf offers its values
+// alongside the submit that ends the form, so each extra value is one less
+// chance per step of submitting. defaultActions types the corpus into the same
+// fields, so these are the realistic values, not the exhaustive ones.
+const accountNames = ["Checking", "Savings", "Emergency Fund"];
 
 const addAccount = whenRoute(route, ["home", "add-account"], () => {
   if (route.current === "home") {
@@ -350,18 +354,19 @@ const addAccount = whenRoute(route, ["home", "add-account"], () => {
   const field = accountNameField.current;
   const submit = addAccountSubmit.current;
   const opts = [];
-  if (field) opts.push(InputText({ into: field, text: accountNames.generate() }));
+  if (field) opts.push(...accountNames.map(name => InputText({ into: field, text: name })));
   if (submit) opts.push(Tap({ on: submit }));
   return opts;
 });
 
-const amounts = integers().between(1, 500);
+// Amounts stay parseable: submitMovesBalanceByTypedAmount only fires on a
+// transaction the app actually accepted, so a value the amount field rejects
+// tests nothing. One with cents keeps the sub-dollar arithmetic covered.
+const amounts = ["1", "12.34", "500"];
 
 const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
   if (route.current === "home") {
-    const cards = accountCards.current;
-    if (cards.length === 0) return [];
-    return [Tap({ on: from(cards).generate() })];
+    return accountCards.current.map(card => Tap({ on: card }));
   }
   if (route.current === "ledger") {
     const btn = addTxnButton.current;
@@ -370,7 +375,7 @@ const addTxn = whenRoute(route, ["home", "ledger", "add-transaction"], () => {
   const field = txnAmountField.current;
   const submit = txnSubmit.current;
   const opts = [];
-  if (field) opts.push(InputText({ into: field, text: String(amounts.generate()) }));
+  if (field) opts.push(...amounts.map(amount => InputText({ into: field, text: amount })));
   if (submit) opts.push(Tap({ on: submit }));
   return opts;
 });

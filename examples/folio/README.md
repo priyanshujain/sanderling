@@ -23,10 +23,19 @@ example sanderling runs its property-based specs against.
 ## Android
 
 ```sh
-just install      # build + install on a booted emulator / device
-just uninstall
+ANDROID_DEVICE=emulator-5554 just install   # build + install on that device
+ANDROID_DEVICE=emulator-5554 just uninstall
 just clean
 ```
+
+`ANDROID_DEVICE` is the serial `adb devices` reports. Every recipe that
+installs, uninstalls or fuzzes refuses to run without it, unless the only
+device adb can see is a single emulator on the local adb server. The refusal
+prints what adb currently sees.
+
+A run installs the app, clears its state and drives it, which is not something
+to do to a handset that happens to be the one thing plugged in. An emulator is
+cheap to rebuild, so a lone local one is the single case worth guessing at.
 
 ## iOS
 
@@ -61,11 +70,12 @@ password: ledger123
 ## Run a sanderling test (Android)
 
 ```sh
-just test
+ANDROID_DEVICE=emulator-5554 just test
 ```
 
-If no device is connected, sanderling boots the single AVD it finds. With multiple
-AVDs, pick one:
+The same naming rule as `just install` applies. If nothing is attached at all,
+`just test` boots a bootable AVD and runs against that. With multiple AVDs,
+pick one:
 
 ```sh
 AVD=Pixel_7 just test
@@ -74,9 +84,23 @@ AVD=Pixel_7 just test
 Persistent settings can live in `.env` alongside the justfile:
 
 ```
-AVD=Pixel_7
+ANDROID_DEVICE=emulator-5554
 DURATION=5m
 ```
+
+The device does not have to be attached to this machine. `ADB_SERVER_SOCKET`
+aims adb at another host's adb server, and `ANDROID_DEVICE` names the serial
+that server reports. A remote server is shared, so `ANDROID_DEVICE` is required
+there even when it holds only one device:
+
+```
+ADB_SERVER_SOCKET=tcp:10.0.0.5:5037
+ANDROID_DEVICE=emulator-5556
+```
+
+Gradle only assembles the APK. The install goes through adb, which reads those
+variables, so a remote server needs nothing else. Gradle's own `installDebug`
+cannot be used here: its adb client only ever dials loopback.
 
 Traces land in `./sanderling/runs/<timestamp>/`.
 

@@ -65,21 +65,25 @@ func pushNot(formula Formula) Formula {
 		return NextFormula{Inner: pushNot(concrete.Inner)}
 	case AlwaysFormula:
 		return EventuallyFormula{
-			Inner:        pushNot(concrete.Inner),
-			StepBound:    concrete.StepBound,
-			HasStepBound: concrete.HasStepBound,
-			Duration:     concrete.Duration,
-			Deadline:     concrete.Deadline,
-			HasDeadline:  concrete.HasDeadline,
+			Inner:                pushNot(concrete.Inner),
+			StepBound:            concrete.StepBound,
+			HasStepBound:         concrete.HasStepBound,
+			ExpiryObservation:    concrete.ExpiryObservation,
+			HasExpiryObservation: concrete.HasExpiryObservation,
+			Duration:             concrete.Duration,
+			Deadline:             concrete.Deadline,
+			HasDeadline:          concrete.HasDeadline,
 		}
 	case EventuallyFormula:
 		return AlwaysFormula{
-			Inner:        pushNot(concrete.Inner),
-			StepBound:    concrete.StepBound,
-			HasStepBound: concrete.HasStepBound,
-			Duration:     concrete.Duration,
-			Deadline:     concrete.Deadline,
-			HasDeadline:  concrete.HasDeadline,
+			Inner:                pushNot(concrete.Inner),
+			StepBound:            concrete.StepBound,
+			HasStepBound:         concrete.HasStepBound,
+			ExpiryObservation:    concrete.ExpiryObservation,
+			HasExpiryObservation: concrete.HasExpiryObservation,
+			Duration:             concrete.Duration,
+			Deadline:             concrete.Deadline,
+			HasDeadline:          concrete.HasDeadline,
 		}
 	default:
 		return NotFormula{Inner: formula}

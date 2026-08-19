@@ -32,13 +32,27 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 	switch kind {
 	case "id", "resource-id":
 		return `[id="` + cssEscape(value) + `"]`, false, nil
+	case "idPrefix":
+		return `[id^="` + cssEscape(value) + `"]`, false, nil
 	case "class":
 		return `[class~="` + cssEscape(value) + `"]`, false, nil
 	case "tag":
 		return cssEscape(value), false, nil
 	case "text":
-		return `//*[normalize-space(text())=` + xpathStringLiteral(value) + `]`, true, nil
-	case "desc", "label", "content-desc", "accessibilityLabel", "accessibilityText", "ariaLabel", "aria-label":
+		// Substring of the element's whole text, the way internal/hierarchy
+		// reads the same selector: an element reading "Sent ✓" answers to
+		// text:Sent on every platform, and one React wrote as `{count} unsent`
+		// answers to text:unsent though its text arrives as two text nodes.
+		// normalize-space(text()) would read only the first of them. The
+		// not() clause is what keeps the badge's ancestors, up to <html>, from
+		// answering for it.
+		return `//*[` + innermostTextPredicate(value) + `]`, true, nil
+	case "desc":
+		// Mirrors the native rule: the label itself, or the label at the head of
+		// an iOS merged label ("account_card:7, Tim, $100").
+		escaped := cssEscape(value)
+		return `:is([aria-label="` + escaped + `"], [aria-label^="` + escaped + `, "])`, false, nil
+	case "label", "content-desc", "accessibilityLabel", "accessibilityText", "ariaLabel", "aria-label":
 		return `[aria-label="` + cssEscape(value) + `"]`, false, nil
 	case "descPrefix":
 		return `[aria-label^="` + cssEscape(value) + `"]`, false, nil
@@ -50,13 +64,25 @@ func TranslateStringSelector(selector string) (string, bool, error) {
 		return `:is([data-testid="` + escaped + `"], [id="` + escaped + `"])`, false, nil
 	case "testID", "testid", "data-testid":
 		return `[data-testid="` + cssEscape(value) + `"]`, false, nil
-	case "placeholder", "placeholderValue", "hintText":
+	case "placeholder":
+		// The attribute the markup writes. hintText and placeholderValue name
+		// the accessible-name ladder above it instead (fieldHint in driver.go),
+		// which no CSS says, so they fall through to a match that reaches
+		// nothing and the step fails by name. Building this selector for them
+		// tapped a field whose hint is its aria-label and whose placeholder
+		// happens to carry the value, which is an element neither matcher
+		// names: a selector reaches here only where the dump resolved it to no
+		// coordinates at all.
 		return `[placeholder="` + cssEscape(value) + `"]`, false, nil
 	default:
 		if !attrNamePattern.MatchString(kind) {
 			return "", false, fmt.Errorf("unsafe selector prefix %q", kind)
 		}
-		return `[` + kind + `="` + cssEscape(value) + `"]`, false, nil
+		operator := `*=`
+		if value == "true" || value == "false" {
+			operator = `=`
+		}
+		return `[` + kind + operator + `"` + cssEscape(value) + `"]`, false, nil
 	}
 }
 
@@ -86,6 +112,17 @@ func cssEscape(value string) string {
 		}
 	}
 	return builder.String()
+}
+
+// innermostTextPredicate matches an element whose text contains value and whose
+// descendants do not, which is the innermost match internal/hierarchy resolves
+// the same selector to. The same predicate appears in
+// pkg/spec/src/web-runtime.ts.
+func innermostTextPredicate(value string) string {
+	contains := `contains(normalize-space(.), ` + xpathStringLiteral(
+		value,
+	) + `)`
+	return contains + ` and not(.//*[` + contains + `])`
 }
 
 // xpathStringLiteral wraps the value in a valid XPath 1.0 string literal.

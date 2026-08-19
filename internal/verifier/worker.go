@@ -47,6 +47,13 @@ type Verifier struct {
 	// over the picker's action space rather than one of its own.
 	enumerateBuiltinFn goja.Callable
 
+	// setEnumeratingCandidatesFn is the bundle-installed
+	// __sanderlingSetEnumeratingCandidates__, which brackets the model policy's
+	// authored-leaf calls. Those run outside the picker's rng scope, where a
+	// sampler would quietly hand back its first item, so the bundle refuses to
+	// sample while it is set.
+	setEnumeratingCandidatesFn goja.Callable
+
 	evaluators map[string]*ltl.Evaluator
 
 	priorVerdicts map[string]ltl.Verdict
@@ -191,6 +198,12 @@ func (v *Verifier) Load(source string) error {
 	if fn := v.runtime.GlobalObject().Get("__sanderlingEnumerateBuiltin__"); fn != nil {
 		if callable, ok := goja.AssertFunction(fn); ok {
 			v.enumerateBuiltinFn = callable
+		}
+	}
+
+	if fn := v.runtime.GlobalObject().Get("__sanderlingSetEnumeratingCandidates__"); fn != nil {
+		if callable, ok := goja.AssertFunction(fn); ok {
+			v.setEnumeratingCandidatesFn = callable
 		}
 	}
 
@@ -342,8 +355,14 @@ func (v *Verifier) PushSnapshot(input SnapshotInput) error {
 			return fmt.Errorf("extractor %d: %w", index, err)
 		}
 		extractor.currentValue = newValue
+		encoded, err := encodeExtractorValue(newValue)
+		if err != nil {
+			return fmt.Errorf(
+				"extractor %q: the value cannot be recorded in the trace: %w; return plain data instead",
+				extractor.name, err)
+		}
 		extractor.prev = extractor.curr
-		extractor.curr = encodeExtractorValue(newValue)
+		extractor.curr = encoded
 	}
 	return nil
 }
@@ -358,17 +377,19 @@ func (v *Verifier) runExtractor(extractor *extractorState, state goja.Value) (go
 }
 
 // encodeExtractorValue produces a stable JSON encoding of an extractor's
-// current value for diff comparison. Values that still don't survive encoding
-// yield nil; callers treat nil as "unknown" and emit no diff entry.
-func encodeExtractorValue(value goja.Value) []byte {
+// current value for diff comparison. Host functions, cycles and non-finite
+// numbers are projected away by recordableValue; anything still beyond JSON is
+// an error, never a silently dropped value, because an extractor missing from
+// the trace reads exactly like an extractor that never changed.
+func encodeExtractorValue(value goja.Value) ([]byte, error) {
 	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
-		return []byte("null")
+		return []byte("null"), nil
 	}
 	body, err := json.Marshal(recordableValue(value.Export(), 0, map[uintptr]bool{}))
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return body
+	return body, nil
 }
 
 // recordableMaxDepth mirrors SANITIZE_MAX_DEPTH in pkg/spec/src/web-runtime.ts.
@@ -437,6 +458,8 @@ func recordableValue(value any, depth int, seen map[uintptr]bool) any {
 func (v *Verifier) ChangedExtractors() map[string]ExtractorChange {
 	changes := map[string]ExtractorChange{}
 	for _, extractor := range v.extractors {
+		// nil curr now means only that no snapshot has been pushed yet: an
+		// encoding that cannot be recorded fails PushSnapshot instead.
 		if extractor.curr == nil {
 			continue
 		}
@@ -462,6 +485,45 @@ func (v *Verifier) ChangedExtractors() map[string]ExtractorChange {
 // fires on a healthy app.
 func (v *Verifier) ExtractorCount() int {
 	return len(v.extractors)
+}
+
+// ExtractorNames returns every extractor's name in registration order, which is
+// the order OverrideExtractorValues is keyed by. A trace records extractor
+// values by name, so replaying one offline needs the name-to-index mapping the
+// spec fixed at load.
+func (v *Verifier) ExtractorNames() []string {
+	names := make([]string, 0, len(v.extractors))
+	for _, extractor := range v.extractors {
+		names = append(names, extractor.name)
+	}
+	return names
+}
+
+// PropertyNames returns the names of the properties the loaded spec registered,
+// sorted.
+func (v *Verifier) PropertyNames() []string {
+	names := make([]string, 0, len(v.properties))
+	for name := range v.properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// PropertyFormulas rebuilds each registered property's formula. The thunks are
+// this verifier's own predicates, reading this verifier's extractor state, so
+// an evaluator built over a rewritten formula observes exactly what the
+// engine's evaluator does.
+func (v *Verifier) PropertyFormulas() (map[string]ltl.Formula, error) {
+	formulas := make(map[string]ltl.Formula, len(v.properties))
+	for name, specIndex := range v.properties {
+		formula, err := v.buildFormula(specIndex)
+		if err != nil {
+			return nil, fmt.Errorf("property %q: %w", name, err)
+		}
+		formulas[name] = formula
+	}
+	return formulas, nil
 }
 
 // OverrideExtractorValues replaces each extractor's `current` slot with a
@@ -497,7 +559,13 @@ func (v *Verifier) OverrideExtractorValues(overrides map[int]json.RawMessage) (s
 			return skipped, fmt.Errorf("extractor override %d: %w", index, conversionErr)
 		}
 		v.extractors[index].currentValue = value
-		v.extractors[index].curr = encodeExtractorValue(value)
+		encoded, encodeErr := encodeExtractorValue(value)
+		if encodeErr != nil {
+			return skipped, fmt.Errorf(
+				"extractor override %d (%q): the value cannot be recorded in the trace: %w",
+				index, v.extractors[index].name, encodeErr)
+		}
+		v.extractors[index].curr = encoded
 	}
 	return skipped, nil
 }
@@ -603,9 +671,8 @@ func (v *Verifier) captureWitness(name string) {
 	}
 }
 
-// extractorSnapshot encodes every named extractor's current value as JSON. A
-// nil value (extractor never advanced or its value did not survive Export)
-// is recorded as JSON null.
+// extractorSnapshot encodes every named extractor's current value as JSON. An
+// extractor that never advanced is recorded as JSON null.
 func (v *Verifier) extractorSnapshot() map[string]json.RawMessage {
 	if len(v.extractors) == 0 {
 		return nil

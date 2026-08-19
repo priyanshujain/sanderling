@@ -52,9 +52,22 @@
       <option id="choice-first">first</option>
     </select>
     <input id="amount" type="text" value="10" />
-    <input id="agree" type="checkbox" />
+    <!-- One field per rung of the hint ladder both producers name an editable
+         field by. A rung read on one side only sends the model a different name
+         for the same field on the two hosts, which is the observation channel
+         the label-source arms vary. -->
+    <label id="hint-label-text" for="hint-label">Amount</label>
+    <input id="hint-label" type="text" placeholder="0.00" name="amount-field" />
+    <input id="hint-aria" type="text" aria-label="Search" placeholder="Type here" name="q" />
+    <input id="hint-placeholder" type="text" placeholder="What's this for?" name="note-field" />
+    <input id="hint-name" type="text" name="reference-field" />
+    <input id="password" type="password" placeholder="Password" />
+    <input id="agree" type="checkbox" placeholder="not a hint" />
     <textarea id="notes"></textarea>
-    <div id="bio" contenteditable="true">bio</div>
+    <!-- contenteditable is INHERITED, so #bio-word answers isContentEditable
+         true while matching neither producer's editable selector itself. It is
+         the element the ax handle and the enumeration disagreed on. -->
+    <div id="bio" contenteditable="true">bio <span id="bio-word">word</span></div>
     <div id="menu" role="button">menu</div>
     <!-- One element per ARIA role both producers resolve as clickable. A role
          covered on one side only makes that control reachable for one host,
@@ -84,6 +97,14 @@
     <div id="filler"></div>
     <script id="page-script">
       document.getElementById("delegating-root").onclick = function () {};
+      // checked and focused are live state: the markup attribute records only
+      // what the page loaded with, and nothing writes focus down at all. Both
+      // producers read them off the element, so the fixture has to hold one of
+      // each or the comparison is false against false over the whole page.
+      // #choice-first is the third: an option a select made current with no
+      // attribute anywhere saying so.
+      document.getElementById("agree").checked = true;
+      document.getElementById("save").focus();
     </script>
   </body>
 </html>
