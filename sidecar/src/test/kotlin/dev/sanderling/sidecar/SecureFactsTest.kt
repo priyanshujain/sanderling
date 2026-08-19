@@ -130,6 +130,22 @@ class SecureFactsTest {
         assertEquals(listTree, annotated)
     }
 
+    // The fact is read through a call maestro keeps private, so a maestro
+    // upgrade that renames it would leave every typed value redacted again with
+    // nothing failing. This fails the build instead.
+    @Test fun maestroStillExposesTheCallTheDeviceXmlComesFrom() {
+        val call = maestro.drivers.AndroidDriver::class.java
+            .getDeclaredMethod(
+                "callViewHierarchy",
+                Int::class.javaPrimitiveType,
+            )
+
+        assertEquals(
+            String::class.java,
+            call.returnType.getMethod("getHierarchy").returnType,
+        )
+    }
+
     // The rest of the tree has to survive the annotation: it is the same tree
     // every selector, bounds read and screen classification runs against.
     @Test fun theTreeIsOtherwiseUnchanged() {
