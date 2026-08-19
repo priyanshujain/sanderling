@@ -275,6 +275,8 @@ var attributeAliases = map[string][]string{
 	"placeholderValue": {"hintText"},
 	// iOS AXElement raw name for class
 	"elementType": {"class"},
+	// DOM property name for class; every producer writes the attribute as class
+	"className": {"class"},
 }
 
 // selectorKeys is every key an object selector may use. It is the union of the

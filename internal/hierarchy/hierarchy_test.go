@@ -540,6 +540,18 @@ const iosAttrDump = `{
   ]
 }`
 
+const classAttrDump = `{
+  "attributes": {"resource-id": "com.app:id/list", "class": "android.widget.FrameLayout", "bounds": "[0,0,1080,2340]"},
+  "children": [
+    {
+      "attributes": {"resource-id": "com.app:id/row1", "class": "android.widget.Button", "bounds": "[0,0,1080,200]"},
+      "children": [],
+      "clickable": true,
+      "enabled": true
+    }
+  ]
+}`
+
 func TestRawResourceIDSubstringMatch(t *testing.T) {
 	tree, _ := Parse(androidAttrDump)
 	el := tree.Find("resource-id:row1")
@@ -553,6 +565,30 @@ func TestLabelAliasMatchesAccessibilityText(t *testing.T) {
 	el := tree.Find("label:Close")
 	if el == nil {
 		t.Fatal("expected label: to match accessibilityText via alias")
+	}
+}
+
+// className is a spec key no producer writes: android reports the view class,
+// ios the element type and the chrome dump el.className, all under `class`. The
+// key matched nothing at all here while the web runtime resolved it against the
+// live DOM, and the key being accepted meant no unknown-key error said so.
+func TestClassNameAliasMatchesClass(t *testing.T) {
+	tree, _ := Parse(classAttrDump)
+	el := tree.Find("className:Button")
+	if el == nil {
+		t.Fatal("expected className: to match the class attribute via alias")
+	}
+	if el.ResourceID != "com.app:id/row1" {
+		t.Fatalf("got %q, want row1", el.ResourceID)
+	}
+	object := tree.FindBySelector(Selector{Filters: []AttrFilter{
+		{Attr: "className", Value: "Button"},
+	}})
+	if object == nil {
+		t.Fatal("expected the object form to match the class attribute via alias")
+	}
+	if object.ResourceID != el.ResourceID {
+		t.Fatalf("the object form matched %q, want %q", object.ResourceID, el.ResourceID)
 	}
 }
 
