@@ -998,6 +998,50 @@ test("elementType names the elements class names", () => {
   });
 });
 
+// editable and scrollable are derived from the live element the way the other
+// boolean states are, and were reached the same wrong way: as markup
+// attributes, which build [editable="true"] and match nothing on any page. Both
+// resolve against the dump on the goja host, so a spec naming a field or a
+// scroll container that way found it there and no element at all here.
+test("editable selects what this host reports editable", () => {
+  const note = fakeElement({
+    tag: "input", x: 0, y: 0, width: 120, height: 20, id: "note", editable: true,
+  });
+  const remember = fakeElement({
+    tag: "input", x: 0, y: 20, width: 20, height: 20, id: "remember",
+    attrs: { type: "checkbox" }, editable: true,
+  });
+  const heading = fakeElement({ tag: "h1", x: 0, y: 40, width: 120, height: 20, id: "title" });
+  withFakeDocument([note, remember, heading], () => {
+    assert.deepEqual(statesMatched({ editable: true }, "editable"), [["note", true]]);
+    assert.deepEqual(statesMatched({ editable: false }, "editable"), [
+      ["remember", false],
+      ["title", false],
+    ]);
+  });
+});
+
+// The selector reads the same overflow test the picker's target list is built
+// with, so a container this host offers a scroll on is the container a spec can
+// name. `false` names nothing: the producers state the fact only where it
+// holds, so the elements that do not scroll answer to neither value, the way an
+// element that is no field at all answers to neither value of secure.
+test("scrollable selects the containers this host offers a scroll on", () => {
+  const feed = fakeElement({
+    tag: "div", x: 0, y: 0, width: 120, height: 40, id: "feed", overflows: true,
+  });
+  const row = fakeElement({ tag: "div", x: 0, y: 40, width: 120, height: 20, id: "row" });
+  withFakeDocument([feed, row], () => {
+    const scrolls = host
+      .queryTargets()
+      .filter((target) => target.scrollable)
+      .map((target) => target.selector);
+    assert.deepEqual(scrolls, ["id:feed"]);
+    assert.deepEqual(matchedIDs({ scrollable: true }), ["feed"]);
+    assert.deepEqual(matchedIDs({ scrollable: false }), []);
+  });
+});
+
 test("attrs carries every other attribute alongside tag and aria-label", () => {
   const attrs = attrsOf(
     domElement({ tag: "input", attributes: { id: "txn-note", placeholder: "What's this for?" } }),

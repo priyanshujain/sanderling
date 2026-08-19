@@ -177,6 +177,8 @@ const KNOWN_KEY_TO_STATE: Record<
   focused: focusedMatcher,
   checked: stateMatcher(isChecked),
   selected: stateMatcher(isSelected),
+  editable: stateMatcher(isEditable),
+  scrollable: scrollableMatcher,
 };
 
 // A value that is neither true nor false can match nothing, the way a CSS part
@@ -189,6 +191,16 @@ function stateMatcher(
     const wanted = value === "true";
     return (element) => fact(element) === wanted;
   };
+}
+
+// scrollable is stated only where it holds: buildTree in
+// internal/driver/chrome/driver.go writes the attribute on the containers whose
+// content overflows and on nothing else, as the ios map does, so `false` names
+// no element rather than every element that does not scroll, the way an element
+// that is no field at all answers to neither value of secure.
+function scrollableMatcher(value: string): (element: Element) => boolean {
+  if (value !== "true") return () => false;
+  return isScrollable;
 }
 
 // The focused element is resolved once per selector rather than once per
@@ -711,8 +723,7 @@ function elementHandle(
   const y = Math.round(rect.top + rect.height / 2);
   const ariaLabel = element.getAttribute("aria-label") ?? "";
   const text = (element.textContent ?? "").trim().slice(0, 200);
-  const editable =
-    element.matches(EDITABLE_SELECTOR) && isEditableElement(element as HTMLElement);
+  const editable = isEditable(element);
   const datasetCopy: Record<string, string> = {};
   const dataset = (element as HTMLElement).dataset ?? {};
   for (const key of Object.keys(dataset)) {
@@ -736,10 +747,6 @@ function elementHandle(
     // container a spec reached through state.ax claimed to be a tap target.
     clickable: isClickable(element),
     enabled: isEnabled(element),
-    // isContentEditable is inherited, so reading it alone made every span inside
-    // a contenteditable container typeable here while collectTargets and the
-    // hierarchy dump, which both require the element ITSELF to match
-    // EDITABLE_SELECTOR, called the same span inert.
     editable,
     focused: focusedElement === element,
     checked: isChecked(element),
@@ -1021,17 +1028,25 @@ function isEditableElement(element: HTMLElement): boolean {
   return false;
 }
 
+// isContentEditable is inherited, so reading it alone makes every span inside a
+// contenteditable container typeable, where the hierarchy dump in
+// internal/driver/chrome/driver.go requires the element ITSELF to match
+// EDITABLE_SELECTOR. The handle, the picker's target list and the `editable`
+// selector all derive the fact here, so none of the three can call an element
+// something the other two do not.
+function isEditable(element: Element): boolean {
+  return element.matches(EDITABLE_SELECTOR) && isEditableElement(element as HTMLElement);
+}
+
 function editableElements(): Set<Element> {
-  return new Set<Element>(
-    (deepQueryAll(EDITABLE_SELECTOR, document) as HTMLElement[]).filter(isEditableElement),
-  );
+  return new Set<Element>(deepQueryAll(EDITABLE_SELECTOR, document).filter(isEditable));
 }
 
 // isScrollable mirrors the native `scrollable` accessibility attribute: the
 // container can actually scroll, i.e. its content overflows its box. The
 // document scrolling root is not special-cased in: when the page does not
 // overflow there is no scroll to perform, and native would offer none either.
-function isScrollable(element: HTMLElement): boolean {
+function isScrollable(element: Element): boolean {
   return element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth;
 }
 
