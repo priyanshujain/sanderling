@@ -371,6 +371,55 @@ func TestAssets_FallbackToIndexHTML(t *testing.T) {
 	}
 }
 
+type truncatedIndexFS struct {
+	prefix []byte
+}
+
+func (assets truncatedIndexFS) Open(name string) (fs.File, error) {
+	if name != "index.html" {
+		return nil, fs.ErrNotExist
+	}
+	return &truncatedIndexFile{prefix: assets.prefix}, nil
+}
+
+type truncatedIndexFile struct {
+	prefix   []byte
+	consumed bool
+}
+
+func (file *truncatedIndexFile) Stat() (fs.FileInfo, error) { return nil, fs.ErrInvalid }
+
+func (file *truncatedIndexFile) Read(destination []byte) (int, error) {
+	if file.consumed {
+		return 0, io.ErrUnexpectedEOF
+	}
+	file.consumed = true
+	return copy(destination, file.prefix), nil
+}
+
+func (file *truncatedIndexFile) Close() error { return nil }
+
+func TestAssets_TruncatedIndexIsNotServedAsOK(t *testing.T) {
+	prefix := []byte(`<!doctype html><html><body><div id="root">`)
+	server, err := NewServer(ServerOptions{
+		RunsDirectory: t.TempDir(),
+		AssetsFS:      truncatedIndexFS{prefix: prefix},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", recorder.Code)
+	}
+	if strings.Contains(recorder.Body.String(), string(prefix)) {
+		t.Errorf("served the partial index body: %q", recorder.Body.String())
+	}
+}
+
 func TestAssets_API404DoesNotFallThrough(t *testing.T) {
 	server, _ := newFixtureServer(t)
 	recorder := httptest.NewRecorder()
