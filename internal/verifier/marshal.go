@@ -93,12 +93,14 @@ func accessibilityObject(runtime *goja.Runtime, tree *hierarchy.Tree) *goja.Obje
 }
 
 // unambiguousSelector returns selector only when no node other than this one
-// answers to it. The runner prefers tree.Find(action.On) over the coordinates
-// the element reported (resolveCoordinates) and Find takes the first match, so
-// naming an element by a selector its siblings share sends every one of their
-// actions to the first sibling. An unnamed element keeps its own coordinates,
-// which are already right, matching what selectorsFor does for the builtin
-// target enumeration in pkg/spec/src/web-runtime.ts.
+// answers to it. A shared selector names all the siblings and every consumer
+// resolves it to the first match. The runner recovers where the action carries
+// usable coordinates, since resolveCoordinates prefers them over an ambiguous
+// name, but the recorded selector is also the element's identity in the trace
+// and the replay UI, and the driver's TapSelector path resolves it on the
+// device where nothing can tell the siblings apart. An unnamed element keeps
+// its own coordinates, which are already right, matching what selectorsFor does
+// for the builtin target enumeration in pkg/spec/src/web-runtime.ts.
 func unambiguousSelector(tree *hierarchy.Tree, node *hierarchy.Node, selector string) string {
 	if tree == nil || selector == "" {
 		return ""
