@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
@@ -29,15 +28,9 @@ globalThis.properties = {};
 // tappingWebDriver is a web target whose V8 picker always taps one named
 // control, so the runner has a real applied action to report on the next step.
 type tappingWebDriver struct {
-	*mockdriver.Driver
+	webDriverBase
 	installed     []string
 	installedLogs []string
-}
-
-func (d *tappingWebDriver) InstallBundle(context.Context, []byte) error { return nil }
-
-func (d *tappingWebDriver) EvaluateExtractors(context.Context) (map[int]json.RawMessage, error) {
-	return nil, nil
 }
 
 func (d *tappingWebDriver) NextActionFromV8(context.Context) (json.RawMessage, error) {
@@ -56,20 +49,9 @@ func (d *tappingWebDriver) SetLogs(_ context.Context, encoded json.RawMessage) e
 
 func TestRunner_WebInstallsLastActionInThePage(t *testing.T) {
 	state := newHarnessWithSpec(t, lastActionSpec)
-	web := &tappingWebDriver{Driver: state.mock}
+	web := &tappingWebDriver{webDriverBase: webDriverBase{Driver: state.mock}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      web,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{MaxSteps: 3, Driver: web})
 
 	if len(web.installed) < 2 {
 		t.Fatalf("the page was handed lastAction %d time(s); the web path never installed it",
@@ -97,20 +79,9 @@ func TestRunner_WebInstallsTheStepsLogsInThePage(t *testing.T) {
 	state.mock.LogEntries = []driver.LogEntry{
 		{UnixMillis: 1700000000123, Level: "E", Tag: "console", Message: "boom from the page"},
 	}
-	web := &tappingWebDriver{Driver: state.mock}
+	web := &tappingWebDriver{webDriverBase: webDriverBase{Driver: state.mock}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    2,
-		Driver:      web,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{MaxSteps: 2, Driver: web})
 
 	if len(web.installedLogs) == 0 {
 		t.Fatal("the page was never handed the step's logs; every property reading " +
@@ -130,24 +101,12 @@ func TestRunner_WebInstallsTheStepsLogsInThePage(t *testing.T) {
 // be dropped in silence, under a comment claiming it was warned about.
 func TestRunner_ReportsALogFetchItCouldNotMake(t *testing.T) {
 	state := newHarnessWithSpec(t, lastActionSpec)
-	state.mock.Failures[mockdriver.ActionRecentLogs] = errors.New("adb: device offline")
+	state.mock.Failures[mockdriver.ActionRecentLogs] = mockdriver.FailurePlan{Err: errors.New("adb: device offline")}
 
 	var buffer bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    2,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-		Logger:      logger,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{MaxSteps: 2, Logger: logger})
 
 	if !strings.Contains(buffer.String(), "adb: device offline") {
 		t.Errorf("the run never reported the failed log fetch, so noLogcatErrors "+
@@ -170,20 +129,11 @@ func (d *failingTapWebDriver) Tap(context.Context, int, int) error {
 // decides for itself, which it cannot do if the page is handed a bare null.
 func TestRunner_WebInstallsAnUnconfirmedActionWithItsFateUnknown(t *testing.T) {
 	state := newHarnessWithSpec(t, lastActionSpec)
-	web := &failingTapWebDriver{tappingWebDriver: &tappingWebDriver{Driver: state.mock}}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    2,
-		Driver:      web,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
+	web := &failingTapWebDriver{
+		tappingWebDriver: &tappingWebDriver{webDriverBase: webDriverBase{Driver: state.mock}},
 	}
+
+	state.run(t, Options{MaxSteps: 2, Driver: web})
 
 	if len(web.installed) < 2 {
 		t.Fatalf("the page was handed lastAction %d time(s); the web path never installed it",

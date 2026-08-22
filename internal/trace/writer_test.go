@@ -26,7 +26,7 @@ func TestWriteMeta_RoundTrip(t *testing.T) {
 		SpecPath:          "spec.ts",
 		BundleSHA256:      "deadbeef",
 		Platform:          "android",
-		BundleID:          "in.okcredit.merchant",
+		BundleID:          "com.fixture.merchant",
 		StartedAt:         time.Date(2026, 4, 17, 22, 30, 0, 0, time.UTC),
 		SanderlingVersion: "0.0.1",
 	}
@@ -228,6 +228,7 @@ func TestWriteStep_DiagnosticsRoundTrip(t *testing.T) {
 	directory := t.TempDir()
 	writer, _ := NewWriter(directory)
 	defer writer.Close()
+	cpuPercent := 12.5
 
 	step := Step{
 		Index: 4,
@@ -244,7 +245,7 @@ func TestWriteStep_DiagnosticsRoundTrip(t *testing.T) {
 		ExtractorChanges: map[string]ExtractorChange{
 			"balance": {Prev: json.RawMessage(`10`), Curr: json.RawMessage(`-5`)},
 		},
-		Metrics:    &Metrics{CPUPercent: 12.5, HeapBytes: 4096},
+		Metrics:    &Metrics{CPUPercent: &cpuPercent, HeapBytes: 4096},
 		Exceptions: []Exception{{Class: "NullPointerException", Message: "boom"}},
 	}
 	if err := writer.WriteStep(step); err != nil {
@@ -271,7 +272,8 @@ func TestWriteStep_DiagnosticsRoundTrip(t *testing.T) {
 	if c := got.ExtractorChanges["balance"]; string(c.Prev) != `10` || string(c.Curr) != `-5` {
 		t.Errorf("extractor change round-trip wrong: %+v", c)
 	}
-	if got.Metrics == nil || got.Metrics.CPUPercent != 12.5 || got.Metrics.HeapBytes != 4096 {
+	if got.Metrics == nil || got.Metrics.CPUPercent == nil ||
+		*got.Metrics.CPUPercent != 12.5 || got.Metrics.HeapBytes != 4096 {
 		t.Errorf("metrics round-trip wrong: %+v", got.Metrics)
 	}
 	if len(got.Exceptions) != 1 || got.Exceptions[0].Class != "NullPointerException" {

@@ -4,12 +4,9 @@ package chrome
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/chromedp/chromedp"
 
@@ -28,9 +25,7 @@ const streamSeed = 1
 // on 200 of 200 steps and created no todo at all. The run reported clean, so
 // nothing but this distinguishes it from a seed that chose badly.
 func TestNextActionFromV8_ReloadDoesNotRestartTheSeedStream(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-	url := server.URL + "/picker-stream.html"
+	url := testdataServer(t).URL + "/picker-stream.html"
 
 	const calls = 8
 	uninterrupted := pickerStream(t, url, calls, calls)
@@ -50,17 +45,9 @@ func TestNextActionFromV8_ReloadDoesNotRestartTheSeedStream(t *testing.T) {
 // A navigation the trace cannot see is a run nobody can read: an analysis has
 // no way to tell an app that reloaded from a generator that repeated itself.
 func TestNavigations_ReportTheDocumentThatReplacedThePage(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-	url := server.URL + "/picker-stream.html"
+	url := testdataServer(t).URL + "/picker-stream.html"
 
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, url, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, url)
 
 	opening, err := d.Navigations(ctx)
 	if err != nil {
@@ -101,13 +88,7 @@ func TestNavigations_ReportTheDocumentThatReplacedThePage(t *testing.T) {
 // calls. Reloading past the call count leaves the stream uninterrupted.
 func pickerStream(t *testing.T, url string, calls, reloadAfter int) []string {
 	t.Helper()
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, url, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, url)
 	installPickerStreamProbe(ctx, t, d)
 
 	chosen := make([]string, 0, calls)

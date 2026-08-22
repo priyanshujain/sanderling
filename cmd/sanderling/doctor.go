@@ -24,8 +24,9 @@ type doctorCheck struct {
 }
 
 // doctorChecksFor returns the host-readiness checks for a target platform.
-// "all" returns the union (deduped by name) so the legacy zero-arg `doctor`
-// behaviour keeps surfacing every platform's prerequisites.
+// "all" returns the union (deduped by name), which is what `doctor` with no
+// platform does: it is the default, so it has to surface every platform's
+// prerequisites.
 func doctorChecksFor(platform string) []doctorCheck {
 	switch platform {
 	case "web":

@@ -104,9 +104,11 @@ type ExtractorChange struct {
 }
 
 type Metrics struct {
-	CPUPercent       float64 `json:"cpu_percent"`
-	HeapBytes        int64   `json:"heap_bytes,omitempty"`
-	TotalMemoryBytes int64   `json:"total_memory_bytes,omitempty"`
+	// CPUPercent is omitted when the driver samples no CPU, so a web run's
+	// steps do not each record a zero the sampler never took.
+	CPUPercent       *float64 `json:"cpu_percent,omitempty"`
+	HeapBytes        int64    `json:"heap_bytes,omitempty"`
+	TotalMemoryBytes int64    `json:"total_memory_bytes,omitempty"`
 }
 
 // The three producers an action can come from. The spec's setup drives the app

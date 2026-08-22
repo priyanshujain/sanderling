@@ -20,6 +20,8 @@ func TestClassify_FailedAndTimedOutRunsAreMissingDataNotCensored(t *testing.T) {
 		{"timed out", runRecord{TimedOut: true, ExitCode: -1}, reasonTimedOut},
 		{"nonzero exit", runRecord{ExitCode: 3}, reasonNonzeroExit},
 		{"unreadable trace", runRecord{TraceError: "no run directory with meta.json"}, reasonTraceError},
+		{"never started", runRecord{PreconditionFailures: 1}, reasonPreconditionFailures},
+		{"most steps never saw the app", runRecord{Steps: 40, PreconditionFailures: 21}, reasonPreconditionFailures},
 		{"violation at step zero", runRecord{FirstViolationOriginStep: stepPointer(0)}, reasonMalformedStep},
 		{"violation without a step", runRecord{ViolatedProperties: []string{"cartTotal"}}, reasonMalformedStep},
 	}
@@ -145,6 +147,50 @@ func TestGroupArms_PoolsDirectoriesSharingAnArmAndReportsMissingSeeds(t *testing
 	}
 	if len(arms[0].Directories) != 2 {
 		t.Errorf("directories %v, want both", arms[0].Directories)
+	}
+}
+
+// The scope guard records a precondition failure on every step it could not
+// bring the app back for and still lets the run exit cleanly, so a run that
+// spent its budget outside the app under test arrives at the analysis looking
+// like one that explored the whole budget and found nothing.
+func TestGroupArms_ExcludesRunsThatSpentTheBudgetFailingPreconditions(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "escaped")
+	writeCampaign(t, directory, map[string]any{"arm": "seeded", "max_steps": 40, "seeds": []int{1, 2, 3}},
+		[]map[string]any{
+			{"seed": 1, "exit_code": 0, "steps": 40, "actions": 40, "precondition_failures": 36},
+			{"seed": 2, "exit_code": 0, "steps": 40, "actions": 40, "precondition_failures": 20},
+			{"seed": 3, "exit_code": 0, "steps": 40, "actions": 40},
+		})
+
+	arms, err := groupArms([]string{directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arms) != 1 {
+		t.Fatalf("%d arms, want 1", len(arms))
+	}
+	excludedBySeed := map[int64]string{}
+	for _, item := range arms[0].Runs {
+		excludedBySeed[item.Seed] = item.ExcludedBecause
+	}
+	if excludedBySeed[1] != reasonPreconditionFailures {
+		t.Errorf("the run that spent its budget failing preconditions is excluded as %q, want %q",
+			excludedBySeed[1], reasonPreconditionFailures)
+	}
+	if excludedBySeed[2] != "" || excludedBySeed[3] != "" {
+		t.Errorf("runs that explored are excluded as %q and %q, want both kept",
+			excludedBySeed[2], excludedBySeed[3])
+	}
+	observations := arms[0].observations()
+	if len(observations) != 2 {
+		t.Fatalf("%d observations, want only the 2 runs that explored", len(observations))
+	}
+	for _, item := range observations {
+		if item.Event || item.Steps != 40 {
+			t.Errorf("observation %+v, want a censored observation at 40", item)
+		}
 	}
 }
 

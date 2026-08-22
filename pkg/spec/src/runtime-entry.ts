@@ -43,6 +43,19 @@ type SerializedActionShape =
 // its login steps measures a policy's exposure as larger than it was.
 export type ActionSource = "setup" | "seeded";
 
+// ACTION_WIRE_CONTRACT names the encoding serializeAction emits, and is
+// declared to the host so it can refuse a package this binary cannot decode.
+// It is versioned apart from the package because the encoding and the package
+// move independently: the host has to know which reading of these fields it is
+// being handed, not which release shipped it. Bump it whenever the meaning of
+// a field changes, not only its name.
+//
+// Revision 2 is the first to declare itself. Revision 1 (@sanderling/spec
+// 0.0.3 and earlier) sent an authored Scroll's container point as BOTH
+// endpoints, which a host that reads pre-computed endpoints as authoritative
+// executes as a drag from a point to itself.
+export const ACTION_WIRE_CONTRACT = "action-wire/2";
+
 const DEFAULT_SWIPE_DURATION = 250;
 
 // pointOf resolves a target to {x, y, selector?}. Builtins and resolved ax
@@ -157,6 +170,7 @@ export function installRuntime(
   evaluateExtractors: () => Record<number, unknown>,
 ): void {
   const rng = new Pcg(host.seedHi(), host.seedLo());
+  defineLockedGlobal("__sanderlingActionEncoding__", ACTION_WIRE_CONTRACT);
   const resolveRoot = typeof root === "function" ? root : () => root;
   const resolveSetup = () =>
     (globalThis as { setup?: GeneratorNode }).setup ?? null;

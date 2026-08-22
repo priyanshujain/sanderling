@@ -265,7 +265,7 @@ func TestAccumulateDropsSystemUIByDefault(t *testing.T) {
 		`{"step":0,"screen":"ledger","hierarchy":{"elements":[
 {"resourceId":"com.android.systemui:id/clock","package":"com.android.systemui","clickable":true},
 {"resourceId":"com.android.systemui:id/battery","package":"com.android.systemui","clickable":true},
-{"class":"android.view.View","package":"in.okcredit.merchant.debug","clickable":true}]}}
+{"class":"android.view.View","package":"com.fixture.merchant.debug","clickable":true}]}}
 `,
 	)
 	byScreen := map[string]*Counts{}
@@ -295,11 +295,11 @@ func TestAccumulatePackageFlagPinsExactly(t *testing.T) {
 		t,
 		`{"step":0,"screen":"ledger","hierarchy":{"elements":[
 {"resourceId":"other:id/x","package":"com.other.app","clickable":true},
-{"class":"android.view.View","package":"in.okcredit.merchant.debug","clickable":true}]}}
+{"class":"android.view.View","package":"com.fixture.merchant.debug","clickable":true}]}}
 `,
 	)
 	byScreen := map[string]*Counts{}
-	if err := accumulate(trace, byScreen, "in.okcredit.merchant.debug"); err != nil {
+	if err := accumulate(trace, byScreen, "com.fixture.merchant.debug"); err != nil {
 		t.Fatal(err)
 	}
 	if got := byScreen["ledger"].Interactive; got != 1 {
@@ -316,13 +316,13 @@ func TestScopedKeepsUnstampedNodes(t *testing.T) {
 			ResourceID: "sysui:id/clock",
 			Clickable:  true,
 		},
-		{Package: "in.okcredit.merchant.debug", ResourceID: "app:id/root"},
+		{Package: "com.fixture.merchant.debug", ResourceID: "app:id/root"},
 		{Class: "android.view.View", Clickable: true},
 	}
 	if got := len(scoped(elements, "")); got != 2 {
 		t.Fatalf("denylist mode: want 2 kept, got %d", got)
 	}
-	if got := len(scoped(elements, "in.okcredit.merchant.debug")); got != 2 {
+	if got := len(scoped(elements, "com.fixture.merchant.debug")); got != 2 {
 		t.Fatalf("pinned mode: want 2 kept, got %d", got)
 	}
 	if got := len(scoped(elements, "com.other.app")); got != 1 {
@@ -360,7 +360,7 @@ func TestSingleCharacterDescriptionsAreAvatarInitials(t *testing.T) {
 func TestDataCarryingIdentifiers(t *testing.T) {
 	for _, identifier := range []string{
 		"customer_row_5f338c10-feef-411c-a070-8999b4890a62",
-		"in.okcredit.merchant.debug:id/customer_row_5f338c10-feef-411c-a070-8999b4890a62",
+		"com.fixture.merchant.debug:id/customer_row_5f338c10-feef-411c-a070-8999b4890a62",
 		"txn_20260812",
 	} {
 		if !dataCarryingID(identifier) {
@@ -370,7 +370,7 @@ func TestDataCarryingIdentifiers(t *testing.T) {
 	for _, identifier := range []string{
 		"customer_supplier_list",
 		"summary_card",
-		"in.okcredit.merchant.debug:id/buttonLogin",
+		"com.fixture.merchant.debug:id/buttonLogin",
 		"button2",
 		"add_relationship",
 	} {

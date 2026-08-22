@@ -29,7 +29,7 @@ WEB_DIST := replay-ui/dist
 
 GOLINES := $(shell $(GO) env GOPATH)/bin/golines
 
-.PHONY: bootstrap proto sidecar sidecar-embed sanderling build sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-kotlin test-folio test-spec-api test-ci-scripts spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
+.PHONY: bootstrap proto sidecar sidecar-embed sanderling build sanderling-web sanderling-android sanderling-ios install test test-go test-browser test-companion test-sidecar test-kotlin test-folio test-spec-api test-ci-scripts spec-typecheck web-test web-typecheck web-build web-dev replay-dev docs clean release-cli release-npm-dry fmt fmt-go fmt-kotlin fmt-ts fmt-swift
 
 bootstrap:
 	$(GO) mod download
@@ -147,6 +147,13 @@ test-browser:
 # because preparing the companion bundle needs the darwin toolchain.
 test-companion: $(COMPANION_EMBED) $(RUNNER_EMBED)
 	$(GO) test -tags withcompanion ./internal/driver/ioscompanion/...
+
+# Runs the withsidecar-tagged tests (embedded size, extraction, checksum reuse
+# and the concurrent-extraction race) against the real JAR. Kept out of `test`
+# because staging the JAR needs the android toolchain. Untagged, the package
+# builds against the stub and these never compile.
+test-sidecar: $(SIDECAR_EMBED)
+	$(GO) test -tags withsidecar ./internal/sidecarassets/...
 
 test-kotlin:
 	ANDROID_HOME=$(ANDROID_HOME) $(GRADLE) :sidecar:test

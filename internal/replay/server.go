@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"path"
@@ -233,32 +234,13 @@ func serveIndex(responseWriter http.ResponseWriter, assets fs.FS) {
 		return
 	}
 	defer file.Close()
-	body, err := readAll(file)
+	body, err := io.ReadAll(file)
 	if err != nil {
 		http.Error(responseWriter, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	responseWriter.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = responseWriter.Write(body)
-}
-
-func readAll(file fs.File) ([]byte, error) {
-	const initialCapacity = 4 * 1024
-	buffer := make([]byte, 0, initialCapacity)
-	chunk := make([]byte, 4*1024)
-	for {
-		read, err := file.Read(chunk)
-		if read > 0 {
-			buffer = append(buffer, chunk[:read]...)
-		}
-		if err != nil {
-			if errors.Is(err, fs.ErrInvalid) {
-				return nil, err
-			}
-			break
-		}
-	}
-	return buffer, nil
 }
 
 func writeJSON(responseWriter http.ResponseWriter, status int, payload any) {

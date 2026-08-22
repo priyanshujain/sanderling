@@ -96,16 +96,11 @@ func TestRun_AppNeverReachesForegroundEndsTheRun(t *testing.T) {
 	state := newHarness(t)
 	device := &neverDrawsDriver{Driver: state.mock}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
+	summary, err := state.tryRun(t, Options{
 		IdleTimeout: time.Millisecond,
 		MaxSteps:    3,
 		BundleID:    guardedBundleID,
 		Driver:      device,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 	})
 
 	var notReached ForegroundNotReachedError
@@ -165,19 +160,12 @@ func TestRun_StepsOutsideTheAppAreRecordedInTheTrace(t *testing.T) {
 	state := newHarness(t)
 	device := &leavesForegroundForeverDriver{Driver: state.mock}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:    time.Hour,
+	state.run(t, Options{
 		IdleTimeout: time.Millisecond,
 		MaxSteps:    2,
 		BundleID:    guardedBundleID,
 		Driver:      device,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	})
 
 	records := preconditionRecords(t, state.writer.Directory())
 	if len(records) == 0 {

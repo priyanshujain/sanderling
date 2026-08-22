@@ -2,48 +2,15 @@ package verifier
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
-	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
 	"github.com/priyanshujain/sanderling/internal/ltl"
 )
 
-// bundleIntegrationSpec bundles testdata/integration_spec.ts via the real
-// @sanderling/spec API so the integration test exercises the same path the CLI
-// uses, with no reference to any specific example app.
-func bundleIntegrationSpec(t *testing.T) string {
-	t.Helper()
-	specPath, err := filepath.Abs("testdata/integration_spec.ts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	apiPath, err := filepath.Abs("../../pkg/spec/src/index.ts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtimePath, err := filepath.Abs("../../pkg/spec/src/goja-runtime.ts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defaultsPath, err := filepath.Abs("../../pkg/spec/src/defaults/properties.ts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bundle, err := bundler.Bundle(bundler.Options{
-		EntryFile:   specPath,
-		RuntimeFile: runtimePath,
-		Aliases: map[string]string{
-			"@sanderling/spec":                     apiPath,
-			"@sanderling/spec/defaults/properties": defaultsPath,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(bundle.JavaScript)
-}
+// The integration spec carries no reference to any specific example app, so
+// bundling it exercises the CLI's path over a neutral subject.
+var integrationSpec = bundleOptions{SpecFile: "testdata/integration_spec.ts"}
 
 func listSnapshots() Snapshots {
 	return Snapshots{
@@ -66,7 +33,7 @@ func formSnapshots() Snapshots {
 // primary button when both are present in the hierarchy.
 func TestIntegrationSpecFiresInputActions(t *testing.T) {
 	v := newVerifier(t)
-	if err := v.Load(bundleIntegrationSpec(t)); err != nil {
+	if err := v.Load(bundleSpec(t, integrationSpec)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -106,7 +73,7 @@ func TestIntegrationSpecFiresInputActions(t *testing.T) {
 // for liveness properties that haven't had time to resolve yet.
 func TestIntegrationSpecPropertiesEvaluate(t *testing.T) {
 	v := newVerifier(t)
-	if err := v.Load(bundleIntegrationSpec(t)); err != nil {
+	if err := v.Load(bundleSpec(t, integrationSpec)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,7 +130,7 @@ func TestIntegrationSpecActionsFireOnEachRoute(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			v := newVerifier(t)
-			if err := v.Load(bundleIntegrationSpec(t)); err != nil {
+			if err := v.Load(bundleSpec(t, integrationSpec)); err != nil {
 				t.Fatal(err)
 			}
 			tree, err := hierarchy.Parse(tc.hierarchy)

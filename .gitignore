@@ -85,3 +85,7 @@ examples/folio-web/.vite/
 
 /talk/
 keys/*
+
+# Local experiments against a subject application, its own Go module so the
+# product module never compiles it.
+/playground/

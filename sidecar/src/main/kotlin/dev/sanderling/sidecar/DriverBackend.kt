@@ -159,15 +159,15 @@ internal fun pollUntilStable(
     var streakStart = 0L
     while (System.currentTimeMillis() < deadline) {
         Thread.sleep(intervalMillis)
+        val readStart = System.currentTimeMillis()
         val current = try {
             snapshot()
         } catch (_: Exception) {
             null
         }
-        val now = System.currentTimeMillis()
         if (prior != null && current != null && prior == current) {
-            if (streakStart == 0L) streakStart = now
-            if (now - streakStart >= streakMillis) return
+            if (streakStart == 0L) streakStart = System.currentTimeMillis()
+            if (readStart - streakStart >= streakMillis) return
         } else {
             streakStart = 0L
         }

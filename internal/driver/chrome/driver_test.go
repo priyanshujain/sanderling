@@ -10,14 +10,59 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
+
+// launchChrome starts a browser on target and returns it with the context every
+// later driver call must use. The browser, and the deadline that bounds a call
+// against a wedged one, are torn down when the test ends.
+//
+// A test whose subject is the launch itself (a clearState wipe, a caller
+// deadline, a browser outliving its caller's context) builds this by hand: the
+// flag, the timeout and the cancel are what it is measuring.
+func launchChrome(t *testing.T, target string) (*Driver, context.Context) {
+	t.Helper()
+	d := New()
+	t.Cleanup(func() { _ = d.Terminate(context.Background()) })
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	t.Cleanup(cancel)
+	if err := d.Launch(ctx, target, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	return d, ctx
+}
+
+// servePage serves html at a real http origin for the duration of the test. A
+// data: URL carries the same markup but has an opaque origin, where storage,
+// routing and everything else keyed by origin behaves as it never would in an
+// app.
+func servePage(t *testing.T, html string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(html))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// testdataServer serves the fixture pages in testdata, each at its own path.
+func testdataServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
+	t.Cleanup(server.Close)
+	return server
+}
 
 // TestLaunch_ClearStateWipesStorageForTheTargetOrigin covers the CLI's default
 // path (--clear-data). The tab sits on about:blank when Launch runs, an opaque
@@ -29,11 +74,7 @@ func TestLaunch_ClearStateWipesStorageForTheTargetOrigin(t *testing.T) {
 	  localStorage.setItem("visits", String(visits));
 	  sessionStorage.setItem("tab", "dirty");
 	</script></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
+	server := servePage(t, page)
 
 	d := New()
 	defer d.Terminate(context.Background())
@@ -72,13 +113,7 @@ func TestLaunch_ClearStateWipesStorageForTheTargetOrigin(t *testing.T) {
 // refuses the software WebGL backend: getContext returns null, so a
 // canvas-rendered app paints nothing and every screenshot is identical black.
 func TestLaunch_WebGLContextIsAvailable(t *testing.T) {
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, "data:text/html,<body></body>", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, _ := launchChrome(t, "data:text/html,<body></body>")
 	var hasContext bool
 	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(
 		`!!document.createElement("canvas").getContext("webgl2")`, &hasContext)); err != nil {
@@ -94,13 +129,7 @@ func TestLaunch_WebGLContextIsAvailable(t *testing.T) {
 // round-trip instead of blocking on d.tabCtx. Without this a hung browser would
 // ignore step deadlines and Ctrl-C.
 func TestActionMethods_HonorCallerCancellation(t *testing.T) {
-	d := New()
-	defer d.Terminate(context.Background())
-	launchCtx, launchCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer launchCancel()
-	if err := d.Launch(launchCtx, "data:text/html,<body><button id=go>go</button></body>", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, _ := launchChrome(t, "data:text/html,<body><button id=go>go</button></body>")
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -130,185 +159,6 @@ func TestActionMethods_HonorCallerCancellation(t *testing.T) {
 	}
 }
 
-// TestHierarchy_EditableFlag confirms the injected hierarchy script marks text
-// inputs, textareas, and contenteditable elements editable while leaving
-// buttons and non-text inputs alone.
-func TestHierarchy_EditableFlag(t *testing.T) {
-	const html = `<body>` +
-		`<input id="name">` +
-		`<textarea id="bio"></textarea>` +
-		`<button id="go">go</button>` +
-		`<div id="rich" contenteditable="true">x</div>` +
-		`<input id="chk" type="checkbox">` +
-		`</body>`
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-	dump, err := d.Hierarchy(ctx)
-	if err != nil {
-		t.Fatalf("Hierarchy: %v", err)
-	}
-
-	type node struct {
-		Attributes map[string]string `json:"attributes"`
-		Children   []node            `json:"children"`
-		Editable   *bool             `json:"editable"`
-	}
-	var root node
-	if err := json.Unmarshal([]byte(dump), &root); err != nil {
-		t.Fatalf("unmarshal hierarchy: %v", err)
-	}
-	editableByID := map[string]*bool{}
-	var walk func(n node)
-	walk = func(n node) {
-		if id := n.Attributes["resource-id"]; id != "" {
-			editableByID[id] = n.Editable
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(root)
-
-	isEditable := func(id string) bool {
-		return editableByID[id] != nil && *editableByID[id]
-	}
-	for _, id := range []string{"name", "bio", "rich"} {
-		if !isEditable(id) {
-			t.Errorf("%q: editable = %v, want true", id, editableByID[id])
-		}
-	}
-	for _, id := range []string{"go", "chk"} {
-		if isEditable(id) {
-			t.Errorf("%q: editable = true, want false/absent", id)
-		}
-	}
-}
-
-// TestHierarchy_ClickableMatchesTheWebRuntimeSelector pins clickable to the
-// same membership test pkg/spec/src/web-runtime.ts applies. The dump used to
-// test el.onclick, which React sets on its root container for event delegation,
-// so the whole viewport became a tap target in this dump and in no other
-// enumeration of the same page.
-func TestHierarchy_ClickableMatchesTheWebRuntimeSelector(t *testing.T) {
-	const html = `<body>` +
-		`<div id="root"><button id="go">go</button></div>` +
-		`<textarea id="bio"></textarea>` +
-		`<div id="plain">text</div>` +
-		`<div id="rolebutton" role="button">act</div>` +
-		`<script>document.getElementById("root").onclick = function () {};</script>` +
-		`</body>`
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-	dump, err := d.Hierarchy(ctx)
-	if err != nil {
-		t.Fatalf("Hierarchy: %v", err)
-	}
-
-	type node struct {
-		Attributes map[string]string `json:"attributes"`
-		Children   []node            `json:"children"`
-		Clickable  *bool             `json:"clickable"`
-	}
-	var root node
-	if err := json.Unmarshal([]byte(dump), &root); err != nil {
-		t.Fatalf("unmarshal hierarchy: %v", err)
-	}
-	clickableByID := map[string]*bool{}
-	var walk func(n node)
-	walk = func(n node) {
-		if id := n.Attributes["resource-id"]; id != "" {
-			clickableByID[id] = n.Clickable
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(root)
-
-	isClickable := func(id string) bool {
-		return clickableByID[id] != nil && *clickableByID[id]
-	}
-	for _, id := range []string{"go", "bio", "rolebutton"} {
-		if !isClickable(id) {
-			t.Errorf("%q: clickable = %v, want true", id, clickableByID[id])
-		}
-	}
-	for _, id := range []string{"root", "plain"} {
-		if isClickable(id) {
-			t.Errorf("%q: clickable = true, want false/absent (an onclick property is not a target)", id)
-		}
-	}
-}
-
-// TestHierarchy_ScrollableAttribute covers the fact the goja host reads off the
-// attributes map. The V8 picker computes the same overflow test in
-// web-runtime.ts, so leaving it out of the dump made the two enumerations
-// disagree on web: the model policy could never be offered a scroll the seeded
-// policy could draw.
-func TestHierarchy_ScrollableAttribute(t *testing.T) {
-	const html = `<body style="margin:0">` +
-		`<div id="overflowing" style="width:100px;height:100px;overflow:auto">` +
-		`<div style="width:100px;height:900px"></div></div>` +
-		`<div id="sideways" style="width:100px;height:50px;overflow:auto">` +
-		`<div style="width:900px;height:20px"></div></div>` +
-		`<div id="fits" style="width:100px;height:100px;overflow:auto">` +
-		`<div style="width:50px;height:50px"></div></div>` +
-		`</body>`
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-	dump, err := d.Hierarchy(ctx)
-	if err != nil {
-		t.Fatalf("Hierarchy: %v", err)
-	}
-
-	type node struct {
-		Attributes map[string]string `json:"attributes"`
-		Children   []node            `json:"children"`
-	}
-	var root node
-	if err := json.Unmarshal([]byte(dump), &root); err != nil {
-		t.Fatalf("unmarshal hierarchy: %v", err)
-	}
-	scrollableByID := map[string]string{}
-	var walk func(n node)
-	walk = func(n node) {
-		if id := n.Attributes["resource-id"]; id != "" {
-			scrollableByID[id] = n.Attributes["scrollable"]
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(root)
-
-	for _, id := range []string{"overflowing", "sideways"} {
-		if scrollableByID[id] != "true" {
-			t.Errorf("%q: scrollable = %q, want \"true\"", id, scrollableByID[id])
-		}
-	}
-	if scrollableByID["fits"] != "" {
-		t.Errorf("%q: scrollable = %q, want absent", "fits", scrollableByID["fits"])
-	}
-}
-
 // TestHierarchy_HintTextNamesAnEditableField covers the attribute visibleLabel
 // (internal/verifier/llm.go) reads FIRST for an editable element. Without it a
 // web field reached the model named by its CSS class, an identifier no user can
@@ -326,19 +176,7 @@ func TestHierarchy_HintTextNamesAnEditableField(t *testing.T) {
 		`<input id="agree" class="checkbox" type="checkbox" placeholder="ignored">` +
 		`<button id="go" class="button" placeholder="ignored">go</button>` +
 		`</body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(html))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, html).URL)
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)
@@ -443,13 +281,7 @@ func TestHierarchy_RootsAtDocumentElementWithoutHead(t *testing.T) {
 		`<script>window.marker = 1;</script></head>` +
 		`<body><div id="content">hello</div></body></html>`
 
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, "data:text/html,"+html)
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)
@@ -591,19 +423,7 @@ func TestInputText_ReplacesTextInsideAShadowRoot(t *testing.T) {
 	  root.getElementById("surface").addEventListener("click", function () { proxy.focus(); });
 	  proxy.addEventListener("input", function () { field.textContent = proxy.value; });
 	</script></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 	if err := d.Tap(ctx, 40, 40); err != nil {
 		t.Fatalf("Tap: %v", err)
 	}
@@ -640,11 +460,7 @@ func TestInputText_ReplacesTextInsideAShadowRoot(t *testing.T) {
 // uses), so every screen looked like the same screen and no route-scoped
 // property or action could tell them apart.
 func TestHierarchy_ScreenFallsBackToThePathname(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`<body><div id="app">app</div></body>`))
-	}))
-	defer server.Close()
+	server := servePage(t, `<body><div id="app">app</div></body>`)
 
 	for _, testCase := range []struct {
 		name string
@@ -656,13 +472,7 @@ func TestHierarchy_ScreenFallsBackToThePathname(t *testing.T) {
 		{"root", "/", "/"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			d := New()
-			defer d.Terminate(context.Background())
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := d.Launch(ctx, server.URL+testCase.path, false, nil); err != nil {
-				t.Fatalf("Launch: %v", err)
-			}
+			d, ctx := launchChrome(t, server.URL+testCase.path)
 			dump, err := d.Hierarchy(ctx)
 			if err != nil {
 				t.Fatalf("Hierarchy: %v", err)
@@ -694,19 +504,7 @@ func TestWaitForIdle_WaitsForWorkTheActionKickedOff(t *testing.T) {
 	    setTimeout(function () { root.getElementById("out").textContent = "settled"; }, 100);
 	  });
 	</script></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 	if err := d.Tap(ctx, 40, 40); err != nil {
 		t.Fatalf("Tap: %v", err)
 	}
@@ -731,19 +529,7 @@ func TestWaitForIdle_ReturnsOnABusyPage(t *testing.T) {
 	  let n = 0;
 	  setInterval(function () { document.getElementById("tick").textContent = String(++n); }, 15);
 	</script></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 	start := time.Now()
 	if err := d.WaitForIdle(ctx, time.Second); err != nil {
 		t.Fatalf("WaitForIdle: %v", err)
@@ -788,19 +574,7 @@ func TestWaitForIdle_WaitsOutARouteTransition(t *testing.T) {
 	    setTimeout(function () { root.getElementById("LedgerScreen").remove(); }, 1000);
 	  });
 	</script></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 	if err := d.Tap(ctx, 40, 40); err != nil {
 		t.Fatalf("Tap: %v", err)
 	}
@@ -826,19 +600,7 @@ func TestWaitForIdle_WaitsOutARouteTransition(t *testing.T) {
 // whole step budget on every step.
 func TestWaitForIdle_BoundsTheTransitionWait(t *testing.T) {
 	const page = `<body><div id="HomeScreen">home</div><div id="LedgerScreen">ledger</div></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 	start := time.Now()
 	if err := d.WaitForIdle(ctx, 10*time.Second); err != nil {
 		t.Fatalf("WaitForIdle: %v", err)
@@ -870,19 +632,7 @@ func TestEvaluateExtractors_WaitsOutARouteTransition(t *testing.T) {
 	    setTimeout(function () { root.getElementById("LedgerScreen").remove(); }, 400);
 	  };
 	</script></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 	if err := chromedp.Run(d.tabCtx, chromedp.Evaluate(`window.startTransition()`, nil)); err != nil {
 		t.Fatalf("start transition: %v", err)
 	}
@@ -911,21 +661,9 @@ func TestSetLastAction_ReportsAPageThatCannotTakeIt(t *testing.T) {
 	  window.__sanderlingSetLastAction__ = function (value) { window.__lastActionSeen = value; };
 	</script></body>`
 	const withoutSetter = `<body><div id="app">no sanderling runtime here</div></body>`
-	pages := map[string]string{"/with": withSetter, "/without": withoutSetter}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(pages[r.URL.Path]))
-	}))
-	defer server.Close()
+	without := servePage(t, withoutSetter)
 
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := d.Launch(ctx, server.URL+"/with", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, withSetter).URL)
 	action := json.RawMessage(`{"kind":"Tap","on":"id:TxnSubmit"}`)
 	if err := d.SetLastAction(ctx, action); err != nil {
 		t.Fatalf("SetLastAction on a page that defines the setter: %v", err)
@@ -939,7 +677,7 @@ func TestSetLastAction_ReportsAPageThatCannotTakeIt(t *testing.T) {
 		t.Errorf("the page received %v, want the action the runner applied", seen)
 	}
 
-	if err := d.Launch(ctx, server.URL+"/without", false, nil); err != nil {
+	if err := d.Launch(ctx, without.URL, false, nil); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 	if err := d.SetLastAction(ctx, action); err == nil {
@@ -959,21 +697,9 @@ func TestSetLogs_ReportsAPageThatCannotTakeThem(t *testing.T) {
 	  window.__sanderlingSetLogs__ = function (value) { window.__logsSeen = value; };
 	</script></body>`
 	const withoutSetter = `<body><div id="app">no sanderling runtime here</div></body>`
-	pages := map[string]string{"/with": withSetter, "/without": withoutSetter}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(pages[r.URL.Path]))
-	}))
-	defer server.Close()
+	without := servePage(t, withoutSetter)
 
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := d.Launch(ctx, server.URL+"/with", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, withSetter).URL)
 	logs := json.RawMessage(`[{"unixMillis":1,"level":"E","tag":"console","message":"boom"}]`)
 	if err := d.SetLogs(ctx, logs); err != nil {
 		t.Fatalf("SetLogs on a page that defines the setter: %v", err)
@@ -987,7 +713,7 @@ func TestSetLogs_ReportsAPageThatCannotTakeThem(t *testing.T) {
 		t.Errorf("the page received %v, want the error-level entry the driver captured", seen)
 	}
 
-	if err := d.Launch(ctx, server.URL+"/without", false, nil); err != nil {
+	if err := d.Launch(ctx, without.URL, false, nil); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 	if err := d.SetLogs(ctx, logs); err == nil {
@@ -1003,19 +729,7 @@ func TestSetLogs_ReportsAPageThatCannotTakeThem(t *testing.T) {
 // dump-derived values while believing they came from the page.
 func TestEvaluateExtractors_ReportsAMissingTable(t *testing.T) {
 	const page = `<body><div id="app">no sanderling runtime here</div></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 	values, err := d.EvaluateExtractors(ctx)
 	if err == nil {
 		t.Errorf("EvaluateExtractors returned %v and no error on a page with no "+
@@ -1037,19 +751,7 @@ func TestEvaluateExtractors_KeepsUndefinedApartFromNull(t *testing.T) {
 	    return {0: {}, 1: {value: null}, 2: {value: {balance: 7}}};
 	  };
 	</script></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 
 	values, err := d.EvaluateExtractors(ctx)
 	if err != nil {
@@ -1078,19 +780,7 @@ func TestEvaluateExtractors_RejectsAnUnenvelopedReading(t *testing.T) {
 	const page = `<body><script>
 	  window.__sanderlingExtractors__ = function () { return {0: "home"}; };
 	</script></body>`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(page))
-	}))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 
 	values, err := d.EvaluateExtractors(ctx)
 	if err == nil {
@@ -1113,13 +803,7 @@ func TestHierarchy_CarriesEveryMarkupAttribute(t *testing.T) {
 		`<div id="card" data-testid="account-card" data-account-id="acct-7" data-balance="4200">Tim</div>` +
 		`</body>`
 
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, "data:text/html,"+html, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, "data:text/html,"+html)
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)
@@ -1173,21 +857,7 @@ document.getElementById('grow').addEventListener('click', function() {
 // where it is; a click dispatched there is hit-tested to the document root and
 // the element never sees it, with no error anywhere.
 func TestTap_ActuatesAnElementBelowTheLaunchViewport(t *testing.T) {
-	server := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write([]byte(growingPage))
-		}),
-	)
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, growingPage).URL)
 
 	tapByID := func(id string) {
 		t.Helper()
@@ -1243,21 +913,7 @@ func TestTap_ReportsAGestureThatReachesNoElement(t *testing.T) {
 <div style="height:80px">top</div>
 <div id="rest" style="height:900px;overflow:hidden"></div>
 <style>html{overflow:hidden}</style></body>`
-	server := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write([]byte(page))
-		}),
-	)
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 	err := d.Tap(ctx, 100, 5000)
 	if !errors.Is(err, driver.ErrGestureUndelivered) {
 		t.Fatalf(
@@ -1279,21 +935,7 @@ func TestTapSelector_ReportsASelectorThatMatchesNothing(t *testing.T) {
     document.getElementById('status').textContent = 'present tapped';
   });
 </script></body>`
-	server := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write([]byte(page))
-		}),
-	)
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 
 	missCtx, missCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer missCancel()
@@ -1355,21 +997,7 @@ func doubleClickStatus(t *testing.T, d *Driver, ctx context.Context) string {
 // clicks: every double-click affordance on the web (an editable list row, a
 // canvas, a table cell) was unreachable, with no error on any layer.
 func TestDoubleTap_ReachesADoubleClickHandler(t *testing.T) {
-	server := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write([]byte(doubleClickPage))
-		}),
-	)
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, doubleClickPage).URL)
 	if err := d.DoubleTap(ctx, 100, 30); err != nil {
 		t.Fatalf("DoubleTap: %v", err)
 	}
@@ -1386,21 +1014,7 @@ func TestDoubleTap_ReachesADoubleClickHandler(t *testing.T) {
 // the path the runner takes when the action names its target rather than a
 // point.
 func TestDoubleTapSelector_ReachesADoubleClickHandler(t *testing.T) {
-	server := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write([]byte(doubleClickPage))
-		}),
-	)
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, doubleClickPage).URL)
 	if err := d.DoubleTapSelector(ctx, "id:target"); err != nil {
 		t.Fatalf("DoubleTapSelector: %v", err)
 	}
@@ -1413,25 +1027,6 @@ func TestDoubleTapSelector_ReachesADoubleClickHandler(t *testing.T) {
 	}
 }
 
-// gesturesServer serves the fixture both gesture tests measure against: a
-// document taller than the emulated viewport, a scrollable container inside it,
-// and a row that dismisses on a horizontal drag.
-func gesturesServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	body, err := os.ReadFile("testdata/gestures.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write(body)
-		}),
-	)
-	t.Cleanup(server.Close)
-	return server
-}
-
 // TestScroll_MovesThePageAndAScrollableContainer covers the verb the runner
 // lowers every Scroll action onto. Script-dispatched pointer events are
 // untrusted and a browser never scrolls on them, so the web Scroll used to
@@ -1439,14 +1034,7 @@ func gesturesServer(t *testing.T) *httptest.Server {
 // step that ran. The repeat also pins the distance: a run that scrolls a
 // different amount each time explores differently on the same seed.
 func TestScroll_MovesThePageAndAScrollableContainer(t *testing.T) {
-	server := gesturesServer(t)
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/gestures.html")
 
 	read := func(expression string) int {
 		t.Helper()
@@ -1520,21 +1108,7 @@ func TestScroll_ReportsAGestureThatReachesNoElement(t *testing.T) {
 	const page = `<body style="margin:0;overflow:hidden">
 <div style="height:80px">top</div>
 <style>html{overflow:hidden}</style></body>`
-	server := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write([]byte(page))
-		}),
-	)
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, servePage(t, page).URL)
 	err := d.Scroll(ctx, 100, 5000, 100, 4800, 300*time.Millisecond)
 	if !errors.Is(err, driver.ErrGestureUndelivered) {
 		t.Fatalf(
@@ -1550,14 +1124,7 @@ func TestScroll_ReportsAGestureThatReachesNoElement(t *testing.T) {
 // the page's own input pipeline saw it, so scrolling, touch-action and any
 // handler that filters on trust behave as if the finger never moved.
 func TestSwipe_DeliversATrustedDragToARowHandler(t *testing.T) {
-	server := gesturesServer(t)
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/gestures.html")
 	if err := d.Swipe(ctx, 300, 40, 100, 40, 300*time.Millisecond); err != nil {
 		t.Fatalf("Swipe: %v", err)
 	}
@@ -1568,5 +1135,117 @@ func TestSwipe_DeliversATrustedDragToARowHandler(t *testing.T) {
 	}
 	if status != "dismissed left trusted" {
 		t.Errorf("row status = %q, want %q", status, "dismissed left trusted")
+	}
+}
+
+// TestInstallBundle_RefusesARuntimeThatDeclaresADifferentActionEncoding covers
+// the pairing that voided a whole campaign: a spec bundled by an older
+// @sanderling/spec, run by this binary. internal/testrun resolves the web
+// runtime from whatever the spec's project has installed, so the page's picker
+// and the runner that dispatches its actions can encode a gesture differently.
+// Neither half fails: every action dispatches successfully and executes the
+// wrong gesture, and the run reports a full step count of results that mean
+// nothing.
+func TestInstallBundle_RefusesARuntimeThatDeclaresADifferentActionEncoding(t *testing.T) {
+	d, ctx := launchChrome(t, servePage(t, `<body><div id="app">app</div></body>`).URL)
+
+	const legacyRuntime = `window.__sanderlingNextAction__ = function () { return null; };`
+	if err := d.InstallBundle(ctx, []byte(legacyRuntime)); err == nil {
+		t.Error("InstallBundle accepted a runtime that declares no action encoding; " +
+			"the run would dispatch every action successfully and execute the wrong gesture")
+	} else if !strings.Contains(err.Error(), verifier.ActionWireContract) {
+		t.Errorf("InstallBundle error %q does not name the encoding this binary implements", err)
+	}
+
+	currentRuntime := legacyRuntime +
+		`window.__sanderlingActionEncoding__ = ` + strconv.Quote(verifier.ActionWireContract) + `;`
+	if err := d.InstallBundle(ctx, []byte(currentRuntime)); err != nil {
+		t.Fatalf("InstallBundle rejected a runtime on this binary's encoding: %v", err)
+	}
+}
+
+// TestInstallBundle_AcceptsTheWebRuntimeThisCheckoutShips is the other half of
+// the gate: the encoding pkg/spec/src/web-runtime.ts declares has to be the one
+// this binary decodes, or every web run refuses to start.
+func TestInstallBundle_AcceptsTheWebRuntimeThisCheckoutShips(t *testing.T) {
+	directory := t.TempDir()
+	specPath := filepath.Join(directory, "spec.ts")
+	const spec = `
+import { actions, Wait } from "@sanderling/spec";
+export const actionsRoot = actions(Wait({ durationMillis: 1 }));
+export const properties = {};
+`
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	apiPath, err := filepath.Abs("../../../pkg/spec/src/index.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimePath, err := filepath.Abs("../../../pkg/spec/src/web-runtime.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := bundler.BundleWeb(bundler.WebOptions{
+		EntryFile:      specPath,
+		WebRuntimeFile: runtimePath,
+		Aliases:        map[string]string{"@sanderling/spec": apiPath},
+	})
+	if err != nil {
+		t.Fatalf("BundleWeb: %v", err)
+	}
+
+	d, ctx := launchChrome(t, servePage(t, `<body><div id="app">app</div></body>`).URL)
+	if err := d.InstallBundle(ctx, bundle.JavaScript); err != nil {
+		t.Fatalf("InstallBundle rejected this checkout's own web runtime: %v", err)
+	}
+}
+
+// TestInstallBundle_AcceptsAPageThatInstallsNoPicker pins the other half of the
+// rule Verifier.checkActionEncoding states: a bundle that installs no picker
+// generates no actions, so it has no encoding to disagree about and demanding a
+// declaration from it would refuse a spec that was never going to dispatch.
+func TestInstallBundle_AcceptsAPageThatInstallsNoPicker(t *testing.T) {
+	d, ctx := launchChrome(t, servePage(t, `<body><div id="app">app</div></body>`).URL)
+
+	const pickerFree = `window.__sanderlingBundleCheck__ = true;`
+	if err := d.InstallBundle(ctx, []byte(pickerFree)); err != nil {
+		t.Fatalf("InstallBundle refused a bundle that generates no actions: %v", err)
+	}
+}
+
+// TestMetrics_AFailedRoundTripIsNotAPageWithoutTheAPI pins the distinction the
+// zero-and-nil return erased. performance.memory is absent on plenty of pages
+// and zero is the honest answer there, so a round trip that never happened has
+// to be an error or a run records a memory reading it never took.
+func TestMetrics_AFailedRoundTripIsNotAPageWithoutTheAPI(t *testing.T) {
+	d, ctx := launchChrome(t, servePage(t, `<body><div id="app">app</div></body>`).URL)
+	if _, err := d.Metrics(ctx, ""); err != nil {
+		t.Fatalf("Metrics on a live page: %v", err)
+	}
+
+	if err := d.Terminate(context.Background()); err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+	metrics, err := d.Metrics(ctx, "")
+	if err == nil {
+		t.Errorf("Metrics returned %+v and a nil error after the tab was gone; "+
+			"the run cannot tell that from a page with no performance.memory", metrics)
+	}
+}
+
+// CDP exposes no per-page CPU, so every web step used to record a zero the
+// sampler never took, which is the same answer an idle app gives.
+func TestMetrics_ReportsNoCPUSampleRatherThanZero(t *testing.T) {
+	server := servePage(t, `<body><div id="app">app</div></body>`)
+	d, ctx := launchChrome(t, server.URL)
+
+	metrics, err := d.Metrics(ctx, "")
+	if err != nil {
+		t.Fatalf("Metrics: %v", err)
+	}
+	if metrics.CPUPercent != nil {
+		t.Errorf("Metrics reported CPUPercent %v; chrome samples no CPU, and a "+
+			"run cannot tell that reading from an app using none", *metrics.CPUPercent)
 	}
 }

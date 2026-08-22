@@ -3,6 +3,7 @@ package mock
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -49,19 +50,31 @@ type Action struct {
 	Idle           time.Duration
 }
 
+// FailurePlan makes one method fail. OnCalls names the 1-based calls that fail
+// and every other call succeeds; an empty OnCalls fails every call. It exists
+// because "the first read times out and the next one works" is the shape of
+// nearly every device fault the runner has to survive, and expressing it by
+// embedding the mock in a one-off wrapper puts a different seven-line method in
+// every test that needs one.
+type FailurePlan struct {
+	Err     error
+	OnCalls []int
+}
+
 // Driver is an in-memory Driver implementation for unit tests.
 // Tests can program HierarchyJSON, ImageData, HealthInfo, and per-method
 // Failures, and read back Actions to assert what the runner asked for.
 type Driver struct {
-	mutex   sync.Mutex
-	actions []Action
+	mutex      sync.Mutex
+	actions    []Action
+	callCounts map[ActionKind]int
 
 	HierarchyJSON string
 	ImageData     driver.Image
 	HealthInfo    driver.Health
 	LogEntries    []driver.LogEntry
 	MetricsData   driver.Metrics
-	Failures      map[ActionKind]error
+	Failures      map[ActionKind]FailurePlan
 
 	// ReplacesText makes the mock assert the TextReplacer capability, so
 	// tests cover both the erase-before-type and replace-on-input paths.
@@ -90,7 +103,8 @@ type Driver struct {
 
 func New() *Driver {
 	return &Driver{
-		Failures: map[ActionKind]error{},
+		Failures:   map[ActionKind]FailurePlan{},
+		callCounts: map[ActionKind]int{},
 		HealthInfo: driver.Health{
 			Ready:    true,
 			Version:  "mock",
@@ -116,7 +130,15 @@ func (d *Driver) record(action Action) {
 func (d *Driver) failure(kind ActionKind) error {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	return d.Failures[kind]
+	d.callCounts[kind]++
+	plan, planned := d.Failures[kind]
+	if !planned {
+		return nil
+	}
+	if len(plan.OnCalls) == 0 || slices.Contains(plan.OnCalls, d.callCounts[kind]) {
+		return plan.Err
+	}
+	return nil
 }
 
 func (d *Driver) Launch(_ context.Context, bundleID string, clearState bool, _ map[string]string) error {

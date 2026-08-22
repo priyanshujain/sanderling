@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,12 +93,14 @@ func accessibilityObject(runtime *goja.Runtime, tree *hierarchy.Tree) *goja.Obje
 }
 
 // unambiguousSelector returns selector only when no node other than this one
-// answers to it. The runner prefers tree.Find(action.On) over the coordinates
-// the element reported (resolveCoordinates) and Find takes the first match, so
-// naming an element by a selector its siblings share sends every one of their
-// actions to the first sibling. An unnamed element keeps its own coordinates,
-// which are already right, matching what selectorsFor does for the builtin
-// target enumeration in pkg/spec/src/web-runtime.ts.
+// answers to it. A shared selector names all the siblings and every consumer
+// resolves it to the first match. The runner recovers where the action carries
+// usable coordinates, since resolveCoordinates prefers them over an ambiguous
+// name, but the recorded selector is also the element's identity in the trace
+// and the replay UI, and the driver's TapSelector path resolves it on the
+// device where nothing can tell the siblings apart. An unnamed element keeps
+// its own coordinates, which are already right, matching what selectorsFor does
+// for the builtin target enumeration in pkg/spec/src/web-runtime.ts.
 func unambiguousSelector(tree *hierarchy.Tree, node *hierarchy.Node, selector string) string {
 	if tree == nil || selector == "" {
 		return ""
@@ -592,6 +595,44 @@ func jsonToJSValue(runtime *goja.Runtime, raw json.RawMessage) (goja.Value, erro
 		return nil, fmt.Errorf("decode JSON: %w", err)
 	}
 	return runtime.ToValue(generic), nil
+}
+
+// ActionWireContract names the encoding wireAction below reads, and must equal
+// the ACTION_WIRE_CONTRACT the bundled runtime entry declares. It is versioned
+// apart from @sanderling/spec because the encoding and the package move
+// independently: what this binary needs to know is which reading of the fields
+// it is being handed, not which release shipped it.
+//
+// The two halves can disagree without either failing. Revision 1
+// (@sanderling/spec 0.0.3 and earlier, which declares nothing) sent an authored
+// Scroll's container point as both endpoints; this binary reads pre-computed
+// endpoints as authoritative, so every such scroll dispatched successfully as a
+// 250ms press and hold and travelled zero distance, and no run said so.
+const ActionWireContract = "action-wire/2"
+
+// actionEncodingGlobal is where the bundled runtime entry declares its
+// contract (defineLockedGlobal in pkg/spec/src/runtime-entry.ts).
+const actionEncodingGlobal = "__sanderlingActionEncoding__"
+
+// ActionEncodingError reports a bundle whose declared contract is not the one
+// this binary decodes. declared is empty for a package published before the
+// declaration existed, which is the pairing that has to fail loudest: it is the
+// one that already produced a campaign of zero-distance scrolls.
+func ActionEncodingError(declared string) error {
+	built := strconv.Quote(declared)
+	if declared == "" {
+		built = "an @sanderling/spec that declares none at all (every release before " +
+			strconv.Quote(ActionWireContract) + ")"
+	}
+	return fmt.Errorf(
+		"action encoding mismatch: this specification was bundled against %s and this "+
+			"binary implements %q. Every action would still dispatch successfully while "+
+			"executing a different gesture, so the run stops here instead of producing "+
+			"wrong data. The @sanderling/spec the spec is bundled against and this binary "+
+			"must come from the same commit or a compatible release: re-install "+
+			"@sanderling/spec, or point the spec at the pkg/spec checkout this binary was "+
+			"built from",
+		built, ActionWireContract)
 }
 
 // wireAction is the unified flat wire contract both runtime entries emit

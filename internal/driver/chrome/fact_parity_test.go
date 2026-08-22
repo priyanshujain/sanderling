@@ -5,14 +5,11 @@ package chrome
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/chromedp/chromedp"
 
@@ -89,19 +86,114 @@ type factRow struct {
 // producers have to descend into or they enumerate one node for an entire app.
 var parityPages = []string{"fact-parity.html", "fact-parity-shadow.html"}
 
+// booleanFacts is every boolean fact both producers derive, with the reader
+// that takes it off an element. It is ordered so a page reports its facts in
+// the same sequence every run.
+var booleanFacts = []struct {
+	name string
+	read func(elementFacts) bool
+}{
+	{"clickable", func(f elementFacts) bool { return f.clickable }},
+	{"enabled", func(f elementFacts) bool { return f.enabled }},
+	{"editable", func(f elementFacts) bool { return f.editable }},
+	{"scrollable", func(f elementFacts) bool { return f.scrollable }},
+	{"hintText", func(f elementFacts) bool { return f.hintText != "" }},
+	{"checked", func(f elementFacts) bool { return f.checked }},
+	{"selected", func(f elementFacts) bool { return f.selected }},
+	{"focused", func(f elementFacts) bool { return f.focused }},
+	{"positiveBounds", func(f elementFacts) bool { return f.positiveBounds }},
+}
+
+// statedBoolean is one reading a fixture page was built to produce, named by
+// the element that holds it.
+type statedBoolean struct {
+	id   string
+	fact string
+	want bool
+}
+
+// statedFacts is what a page states, as opposed to what the two producers
+// happen to agree on.
+type statedFacts struct {
+	booleans []statedBoolean
+	// secure is three-valued, so it is stated apart from the booleans. A field
+	// the producer says nothing about is not a field it says is not a password:
+	// internal/verifier redacts a typed value unless the target positively
+	// reports "not a secure entry", so a producer that leaves the key off an
+	// ordinary text field redacts the whole recent-action memory on web.
+	secure map[string]string
+}
+
+// What each fixture page derives, pinned as values. compareDerivedFacts passes
+// whenever the two producers read a fact the same wrong way, which is the shape
+// of every producer bug in the header, so the readings themselves are held
+// here: an onclick PROPERTY (which React assigns to its root container) is not
+// a tap target where an onclick attribute is, a role the ARIA contract says a
+// user activates is, contenteditable makes the container typeable and not the
+// span that merely inherits it, a checkbox is not a text field, a container is
+// scrollable only where its content overflows its box on either axis, and a
+// field that is not a password entry states so rather than staying silent.
+var factsEachPageStates = map[string]statedFacts{
+	"fact-parity.html": {
+		booleans: []statedBoolean{
+			{"amount", "editable", true},
+			{"notes", "editable", true},
+			{"bio", "editable", true},
+			{"bio-word", "editable", false},
+			{"agree", "editable", false},
+			{"save", "editable", false},
+
+			{"save", "clickable", true},
+			{"notes", "clickable", true},
+			{"menu", "clickable", true},
+			{"attribute-click", "clickable", true},
+			{"delegating-root", "clickable", false},
+			{"plain", "clickable", false},
+
+			{"scroller", "scrollable", true},
+			{"sideways", "scrollable", true},
+			{"fits", "scrollable", false},
+		},
+		secure: map[string]string{
+			"password": "true",
+			"amount":   "false",
+			"notes":    "false",
+			"save":     "",
+		},
+	},
+	"fact-parity-shadow.html": {
+		booleans: []statedBoolean{
+			{"shadow-amount", "editable", true},
+			{"shadow-agree", "editable", false},
+			{"shadow-save", "editable", false},
+
+			{"shadow-save", "clickable", true},
+			{"shadow-plain", "clickable", false},
+
+			{"shadow-scroller", "scrollable", true},
+		},
+		secure: map[string]string{
+			"shadow-password": "true",
+			"shadow-amount":   "false",
+			"shadow-save":     "",
+		},
+	},
+}
+
 func TestHierarchy_DerivesTheSameFactsAsTheWebRuntime(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
+	server := testdataServer(t)
 
 	for _, page := range parityPages {
 		t.Run(page, func(t *testing.T) {
-			d := New()
-			defer d.Terminate(context.Background())
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			if err := d.Launch(ctx, server.URL+"/"+page, false, nil); err != nil {
-				t.Fatalf("Launch: %v", err)
+			stated, ok := factsEachPageStates[page]
+			if !ok {
+				t.Fatalf(
+					"testdata/%s states no facts of its own, so its run compares the "+
+						"two producers to each other and to nothing else",
+					page,
+				)
 			}
+			d, ctx := launchChrome(t, server.URL+"/"+page)
 
 			dump, err := d.Hierarchy(ctx)
 			if err != nil {
@@ -115,10 +207,85 @@ func TestHierarchy_DerivesTheSameFactsAsTheWebRuntime(t *testing.T) {
 			requireBothPolarities(t, fromWebRuntime)
 			requireEverySecureState(t, fromWebRuntime)
 			requireTheHandleAgreesWithTheEnumeration(t, fromWebRuntime)
+			requireTheFactsThePageStates(t, "the hierarchy dump", stated, fromDump)
+			requireTheFactsThePageStates(t, "the web runtime", stated, fromWebRuntime)
 			compareEnumeratedElements(t, fromDump, fromWebRuntime)
 			compareDerivedFacts(t, fromDump, fromWebRuntime)
 		})
 	}
+}
+
+// requireTheFactsThePageStates holds one producer to the page rather than to
+// the other producer, which is what keeps the comparison anchored to something
+// outside the pair.
+func requireTheFactsThePageStates(
+	t *testing.T,
+	producer string,
+	stated statedFacts,
+	rows []factRow,
+) {
+	t.Helper()
+	byID := map[string]elementFacts{}
+	for _, row := range rows {
+		byID[row.id] = row.facts
+	}
+	for _, boolean := range stated.booleans {
+		facts, enumerated := byID[boolean.id]
+		if !enumerated {
+			t.Errorf(
+				"%s never enumerated %q, which the fixture states %s=%v for",
+				producer,
+				boolean.id,
+				boolean.fact,
+				boolean.want,
+			)
+			continue
+		}
+		if got := readBooleanFact(t, boolean.fact)(facts); got != boolean.want {
+			t.Errorf(
+				"%s derives %s=%v for %q (<%s>), want %v",
+				producer,
+				boolean.fact,
+				got,
+				boolean.id,
+				facts.tag,
+				boolean.want,
+			)
+		}
+	}
+	for id, want := range stated.secure {
+		facts, enumerated := byID[id]
+		if !enumerated {
+			t.Errorf(
+				"%s never enumerated %q, which the fixture states secure=%q for",
+				producer,
+				id,
+				want,
+			)
+			continue
+		}
+		if facts.secure != want {
+			t.Errorf(
+				"%s derives secure=%q for %q (<%s>), want %q",
+				producer,
+				facts.secure,
+				id,
+				facts.tag,
+				want,
+			)
+		}
+	}
+}
+
+func readBooleanFact(t *testing.T, name string) func(elementFacts) bool {
+	t.Helper()
+	for _, fact := range booleanFacts {
+		if fact.name == name {
+			return fact.read
+		}
+	}
+	t.Fatalf("%q is not a fact either producer derives", name)
+	return nil
 }
 
 // factsFromHierarchyDump reads the dump the way the goja host does: parse it,
@@ -275,20 +442,7 @@ func requireEveryElementNamed(t *testing.T, producer string, rows []factRow) {
 // false on every element and pass while proving nothing about that fact.
 func requireBothPolarities(t *testing.T, rows []factRow) {
 	t.Helper()
-	for _, fact := range []struct {
-		name string
-		read func(elementFacts) bool
-	}{
-		{"clickable", func(f elementFacts) bool { return f.clickable }},
-		{"enabled", func(f elementFacts) bool { return f.enabled }},
-		{"editable", func(f elementFacts) bool { return f.editable }},
-		{"scrollable", func(f elementFacts) bool { return f.scrollable }},
-		{"hintText", func(f elementFacts) bool { return f.hintText != "" }},
-		{"checked", func(f elementFacts) bool { return f.checked }},
-		{"selected", func(f elementFacts) bool { return f.selected }},
-		{"focused", func(f elementFacts) bool { return f.focused }},
-		{"positiveBounds", func(f elementFacts) bool { return f.positiveBounds }},
-	} {
+	for _, fact := range booleanFacts {
 		var sawTrue, sawFalse bool
 		for _, row := range rows {
 			if fact.read(row.facts) {

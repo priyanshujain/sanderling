@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
@@ -146,20 +145,7 @@ func runTwoSubmitSteps(
 	commitsPerTap int64,
 ) []ViolationRecord {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    2,
-		BundleID:    guardedBundleID,
-		Driver:      device,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{MaxSteps: 2, BundleID: guardedBundleID, Driver: device})
 	if summary.Steps != 2 {
 		t.Fatalf("steps = %d, want 2; the run never reached the step that judges the pair",
 			summary.Steps)
@@ -320,7 +306,7 @@ func runReportingTheGuard(t *testing.T, device committingDevice, state *harness)
 	if violations := runTwoSubmitSteps(t, state, device, 1); len(violations) != 0 {
 		t.Errorf("the spec was told the action ran untouched by any guard: %v", violations)
 	}
-	steps := traceSteps(t, state.writer.Directory())
+	steps := readTraceLines(t, state.writer.Directory())
 	if len(steps) != 2 {
 		t.Fatalf("trace holds %d step(s), want 2", len(steps))
 	}

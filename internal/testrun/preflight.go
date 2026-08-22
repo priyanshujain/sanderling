@@ -51,8 +51,8 @@ func runPreflight(ctx context.Context, platform string, check preflightFunc) err
 		}
 		return nil
 	case "ios":
-		// Simulator runs drive the native companion and need no JVM. The java
-		// requirement is deferred to the physical-device path in buildDriver.
+		// Neither iOS path needs a JVM: the simulator is driven by the native
+		// companion and a physical device runner-only over usbmux.
 		if err := check("xcrun"); err != nil {
 			return preflightFailure("ios", err)
 		}
@@ -60,25 +60,6 @@ func runPreflight(ctx context.Context, platform string, check preflightFunc) err
 	default:
 		return fmt.Errorf("preflight: unknown platform %q", platform)
 	}
-}
-
-// preflightDevice runs the extra host checks the JVM sidecar path needs once we
-// know a run targets a physical iOS device. Android already requires java in
-// the top-level Preflight, so this only matters for ios.
-func preflightDevice(platform string) error {
-	return runPreflightDevice(platform, preflightCheck)
-}
-
-func runPreflightDevice(platform string, check preflightFunc) error {
-	if platform != "ios" {
-		return nil
-	}
-	if err := check("java"); err != nil {
-		// The doctor splits simulator and device checks: java lives under the
-		// ios-device platform, so the hint must point there.
-		return preflightFailure("ios-device", err)
-	}
-	return nil
 }
 
 func preflightFailure(platform string, cause error) error {

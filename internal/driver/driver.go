@@ -21,6 +21,14 @@ var ErrGestureUndelivered = errors.New("gesture reached no element")
 // ErrGestureUndelivered and the runner records it as an unresolved selector.
 var ErrSelectorMatchedNothing = errors.New("selector matched no element")
 
+// ErrNotSupported reports a contract method the driver has no way to answer on
+// its platform. It is neither a device fault nor an observation: a caller that
+// reads the zero value as one records a reading it never took, which is what
+// lets a property over a channel the driver never opened hold vacuously with
+// nothing in the run's output saying so. Callers check it with errors.Is and
+// record that the read did not happen.
+var ErrNotSupported = errors.New("driver: capability not supported")
+
 // DeviceDriver abstracts the platform-specific UI automation backend. v0.1
 // surface matches proto/driverpb/driver.proto. The sidecar implementation
 // lives under driver/sidecar; the web implementation under driver/chrome;
@@ -44,21 +52,30 @@ type DeviceDriver interface {
 
 	Hierarchy(ctx context.Context) (string, error)
 	Screenshot(ctx context.Context) (Image, error)
-	// Snapshot returns the hierarchy and screenshot captured back-to-back
-	// under a backend-side mutex, so the pair describes the same on-device
-	// frame. Prefer this over calling Hierarchy and Screenshot separately:
-	// independent reads can land on different frames during transitions.
+	// Snapshot returns the hierarchy and screenshot as one paired capture,
+	// the closest a driver can put them and the reason to prefer it over
+	// separate Hierarchy and Screenshot reads. It is not atomic: no driver
+	// freezes the frame while the two reads run.
 	Snapshot(ctx context.Context) (string, Image, error)
 	// RecentLogs returns log entries at or after `since`, filtered to
-	// `minLevel` or above. An empty minLevel defaults to "E".
+	// `minLevel` or above. Drivers disagree on an empty minLevel (sidecar
+	// defaults to "E", Chrome returns every level), so the runner always
+	// passes one. A driver with no log source returns ErrNotSupported, not
+	// an empty slice: only one of the two means the app logged nothing.
 	RecentLogs(ctx context.Context, since time.Time, minLevel string) ([]LogEntry, error)
 
 	WaitForIdle(ctx context.Context, duration time.Duration) error
+	// Health reports whether the backend is attached and serving. A driver
+	// that runs no readiness check returns ErrNotSupported; Ready is a
+	// verdict, so reporting it true without one tells the caller a check
+	// passed that never ran.
 	Health(ctx context.Context) (Health, error)
-	// Metrics samples the app's CPU and memory at the time of the call.
-	// CPUPercent is percent of a single core (multi-core apps can exceed
-	// 100). HeapBytes is resident set size; TotalMemoryBytes includes
-	// native allocations.
+	// Metrics samples the app's memory, plus CPU where the platform exposes
+	// it (Chrome does not). CPUPercent is percent of a single core, so
+	// multi-core apps can exceed 100. HeapBytes and TotalMemoryBytes are the
+	// platform's nearest pair: RSS and virtual size on Android, used and
+	// total JS heap on Chrome. A driver that cannot sample returns
+	// ErrNotSupported rather than a zeroed sample.
 	Metrics(ctx context.Context, bundleID string) (Metrics, error)
 }
 
@@ -99,11 +116,10 @@ type TextReplacer interface {
 }
 
 // FocusedWindowChecker is the optional capability for reporting which app owns
-// the focused (on-screen) window. The startup gate prefers it over
-// ForegroundChecker: the resumed-activity signal flips to a freshly launched
-// app before its first frame draws, so observing on it alone can capture the
-// previous app's screen. The focused window only names the app once its window
-// is actually up.
+// the focused (on-screen) window. The startup gate uses it on top of
+// ForegroundChecker, never instead: the resumed-activity signal flips to a
+// freshly launched app before its first frame draws, so a gate on that alone
+// can let the first observe read the previous app's screen.
 type FocusedWindowChecker interface {
 	// FocusedWindowApp returns the package owning the focused window, or ""
 	// when no window is focused yet (e.g. mid-launch transition).
@@ -167,7 +183,10 @@ type Health struct {
 }
 
 type Metrics struct {
-	CPUPercent       float64
+	// CPUPercent is nil on a driver that samples memory but not CPU, which
+	// Chrome does: zero is a reading an idle app can produce, so a driver that
+	// never looked has to answer with nothing rather than with that.
+	CPUPercent       *float64
 	HeapBytes        int64
 	TotalMemoryBytes int64
 }
@@ -177,7 +196,7 @@ type Metrics struct {
 // mobile drivers stay binary-compatible by simply not implementing it.
 //
 // Element references never cross V8/host. V8 serializes targets as {x, y}
-// (or bounds) into the returned WebAction JSON; the host dispatches via the
+// (or bounds) into the returned action JSON; the host dispatches via the
 // normal DeviceDriver methods (Tap, InputText, etc.).
 type WebDriver interface {
 	// InstallBundle injects the given JS source so it runs once per

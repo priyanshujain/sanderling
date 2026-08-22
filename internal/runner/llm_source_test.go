@@ -493,7 +493,7 @@ func newSeededVerifier(t *testing.T) *verifier.Verifier {
 func TestPickSourcesRejectsLLMWithoutSpecConfig(t *testing.T) {
 	for name, activeDriver := range map[string]driver.DeviceDriver{
 		"native": nil,
-		"web":    &webMockDriver{Driver: mockdriver.New()},
+		"web":    &webMockDriver{webDriverBase: webDriverBase{Driver: mockdriver.New()}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			action, extractor, err := pickSources(Options{
@@ -523,7 +523,7 @@ func TestPickSourcesOnWebComposesLLMWithWebExtractors(t *testing.T) {
 	fake := newFakeOpenRouter(t)
 	_, verifierInstance := newLLMSource(t, fake)
 	action, extractor, err := pickSources(Options{
-		Driver:    &webMockDriver{Driver: mockdriver.New()},
+		Driver:    &webMockDriver{webDriverBase: webDriverBase{Driver: mockdriver.New()}},
 		Verifier:  verifierInstance,
 		Generator: "llm",
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -541,7 +541,7 @@ func TestPickSourcesOnWebComposesLLMWithWebExtractors(t *testing.T) {
 
 func TestPickSourcesOnWebSeededKeepsBothOnV8(t *testing.T) {
 	action, extractor, err := pickSources(Options{
-		Driver:    &webMockDriver{Driver: mockdriver.New()},
+		Driver:    &webMockDriver{webDriverBase: webDriverBase{Driver: mockdriver.New()}},
 		Verifier:  newSeededVerifier(t),
 		Generator: "seeded",
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -768,22 +768,13 @@ func TestRunner_EveryModelCallFailingIsNotACleanRun(t *testing.T) {
 	state := newHarnessWithSpec(t, llmFixtureSpec)
 	state.mock.HierarchyJSON = llmTreeJSON
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
+	summary := state.run(t, Options{
 		Duration:    30 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
 		MaxSteps:    3,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 		Generator:   "llm",
 		LabelSource: verifier.LabelSourceVisibleText,
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 
 	calls := readLLMCalls(t, state.writer.Directory())
 	if len(calls) != 3 {
@@ -845,22 +836,13 @@ func TestRunner_SetupActionsAreNotTheGeneratorDrivingTheApp(t *testing.T) {
 	state := newHarnessWithSpec(t, llmLoginSetupSpec)
 	state.mock.HierarchyJSON = llmTreeJSON
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
+	summary := state.run(t, Options{
 		Duration:    30 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
 		MaxSteps:    4,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 		Generator:   "llm",
 		LabelSource: verifier.LabelSourceVisibleText,
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 
 	wantOutcomes := []string{
 		trace.LLMOutcomeSetupAction, trace.LLMOutcomeSetupAction,
@@ -933,22 +915,13 @@ func TestRunner_SetupAndGeneratorBothDrivingIsAHealthyRun(t *testing.T) {
 	fake.choice = tap.Index
 	fake.chosenAction = tap.Description
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
+	summary := state.run(t, Options{
 		Duration:    30 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
 		MaxSteps:    4,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 		Generator:   "llm",
 		LabelSource: verifier.LabelSourceVisibleText,
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 
 	if summary.DispatchedActions != 4 {
 		t.Errorf("DispatchedActions = %d, want 4: every step drove the app",

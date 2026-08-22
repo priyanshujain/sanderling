@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
@@ -106,19 +105,7 @@ func TestRunner_ApplyErrorAfterDispatchDoesNotConvictTheSubmitCountingProperty(t
 		state := newHarnessWithSpec(t, spec)
 		device := &dispatchThenFailDriver{Driver: state.mock, commitsPerTap: commitsPerTap}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		summary, err := Run(ctx, Options{
-			Duration:    time.Hour,
-			IdleTimeout: 20 * time.Millisecond,
-			MaxSteps:    2,
-			Driver:      device,
-			Verifier:    state.verifier,
-			TraceWriter: state.writer,
-		})
-		if err != nil {
-			t.Fatalf("Run: %v", err)
-		}
+		summary := state.run(t, Options{MaxSteps: 2, Driver: device})
 		if summary.Steps != 2 {
 			t.Fatalf("steps = %d, want 2; the run never reached the step that judges the pair", summary.Steps)
 		}

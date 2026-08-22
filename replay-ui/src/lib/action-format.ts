@@ -1,3 +1,4 @@
+import selectorKeysContract from "../../../pkg/spec/test/fixtures/selector-keys.json";
 import type { StepSummary } from "../types";
 
 export interface FormattedRow {
@@ -6,17 +7,10 @@ export interface FormattedRow {
   targetIsTag: boolean;
 }
 
-const SELECTOR_PREFIXES = [
-  "id",
-  "idPrefix",
-  "text",
-  "textPrefix",
-  "desc",
-  "descPrefix",
-  "class",
-  "classPrefix",
-  "package",
-];
+// Imported from the cross-runtime contract rather than restated, because a
+// copy here goes stale silently: an unlisted key renders a real action as raw
+// text instead of a formatted row, and nothing fails to tell anyone.
+export const SELECTOR_KEYS: readonly string[] = selectorKeysContract.keys;
 
 export function parseSelector(
   selector: string,
@@ -27,7 +21,7 @@ export function parseSelector(
   }
   const kind = selector.slice(0, colonIndex);
   const value = selector.slice(colonIndex + 1);
-  if (!SELECTOR_PREFIXES.includes(kind)) {
+  if (!SELECTOR_KEYS.includes(kind)) {
     return null;
   }
   return { kind, value };

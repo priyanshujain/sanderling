@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -63,6 +62,17 @@ const noActionSpec = `
 import { actions, always } from "@sanderling/spec";
 globalThis.properties = {
   alwaysHolds: always(() => true),
+};
+globalThis.actions = actions(() => []);
+`
+
+// logErrorSpec's only property reads state.logs, the channel a driver without a
+// log source never opens.
+const logErrorSpec = `
+import { actions, always, extract } from "@sanderling/spec";
+const errorLines = extract(state => state.logs.filter(entry => entry.level === "E").length);
+globalThis.properties = {
+  noLoggedErrors: always(() => errorLines.current === 0),
 };
 globalThis.actions = actions(() => []);
 `
@@ -167,21 +177,72 @@ func newHarnessWithSpec(t *testing.T, spec string) *harness {
 	return state
 }
 
-func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
-	state := newHarness(t)
+// harnessRunTimeout bounds every harness run. It is the backstop for a runner
+// that stopped making progress, never the budget a test asserts on: what ends a
+// run is its own Duration or MaxSteps.
+const harnessRunTimeout = 60 * time.Second
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// tryRun fills in the wiring every run shares and hands back whatever Run
+// decided, so a test that expects a failure keeps its own words for it.
+func (h *harness) tryRun(t *testing.T, options Options) (Summary, error) {
+	t.Helper()
+	if options.Duration == 0 {
+		options.Duration = time.Hour
+	}
+	if options.IdleTimeout == 0 {
+		options.IdleTimeout = 20 * time.Millisecond
+	}
+	if options.Driver == nil {
+		options.Driver = h.mock
+	}
+	if options.Verifier == nil {
+		options.Verifier = h.verifier
+	}
+	if options.TraceWriter == nil {
+		options.TraceWriter = h.writer
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), harnessRunTimeout)
 	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 50 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
+	return Run(ctx, options)
+}
+
+func (h *harness) run(t *testing.T, options Options) Summary {
+	t.Helper()
+	summary, err := h.tryRun(t, options)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	return summary
+}
+
+// webDriverBase presents the mock device driver as a web target: the five calls
+// the runner's V8 path makes, each answering the way a page carrying the current
+// runtime does. A fake embeds it and overrides only the one it exists to change.
+type webDriverBase struct {
+	*mockdriver.Driver
+}
+
+func (d *webDriverBase) InstallBundle(context.Context, []byte) error { return nil }
+
+func (d *webDriverBase) EvaluateExtractors(context.Context) (map[int]json.RawMessage, error) {
+	return nil, nil
+}
+
+func (d *webDriverBase) NextActionFromV8(context.Context) (json.RawMessage, error) {
+	return nil, nil
+}
+
+func (d *webDriverBase) SetLastAction(context.Context, json.RawMessage) error { return nil }
+
+func (d *webDriverBase) SetLogs(context.Context, json.RawMessage) error { return nil }
+
+func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
+	state := newHarness(t)
+
+	summary := state.run(t, Options{
+		Duration:    100 * time.Millisecond,
+		IdleTimeout: 50 * time.Millisecond,
+	})
 	if summary.Steps == 0 {
 		t.Errorf("expected at least one step, got 0")
 	}
@@ -206,18 +267,7 @@ func TestRunner_HappyPathStepsAndTraces(t *testing.T) {
 func TestRunner_SeededRunRecordsNoModelCalls(t *testing.T) {
 	state := newHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 10 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{IdleTimeout: 10 * time.Millisecond, MaxSteps: 3})
 	if _, err := os.Stat(filepath.Join(state.directory, trace.LLMCallFileName)); !os.IsNotExist(err) {
 		t.Errorf("stat %s = %v, want no model-call file for a seeded run", trace.LLMCallFileName, err)
 	}
@@ -241,20 +291,11 @@ func TestRunner_SeededSetupActionsAreNotTheGeneratorDrivingTheApp(t *testing.T) 
 	state := newHarnessWithSpec(t, seededLoginSetupSpec)
 	state.mock.HierarchyJSON = llmTreeJSON
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    30 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    4,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	summary := state.run(t, Options{
+		Duration: 30 * time.Second,
+		MaxSteps: 4,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	if summary.DispatchedActions != 4 {
 		t.Errorf("DispatchedActions = %d, want 4: every step drove the app",
 			summary.DispatchedActions)
@@ -283,20 +324,12 @@ func TestRunner_MaxStepsStopsAfterExactlyNSteps(t *testing.T) {
 	state := newHarness(t)
 
 	const maxSteps = 3
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	// A long duration ensures MaxSteps, not the deadline, ends the run.
-	summary, err := Run(ctx, Options{
+	summary := state.run(t, Options{
 		Duration:    time.Hour,
 		IdleTimeout: 10 * time.Millisecond,
 		MaxSteps:    maxSteps,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	if summary.Steps != maxSteps {
 		t.Errorf("expected exactly %d steps, got %d", maxSteps, summary.Steps)
 	}
@@ -348,21 +381,72 @@ func TestRenderSummary_CountsTheStepsNothingJudged(t *testing.T) {
 	}
 }
 
+// A driver that cannot read a channel is not a device that had nothing to
+// report on it. The property over state.logs holds here because nobody ever
+// looked, so the run has to say which reads it never made: without the line a
+// green iOS summary is indistinguishable from one over a silent app.
+func TestRunner_ReadsTheDriverCannotMakeAreNotPassedChecks(t *testing.T) {
+	state := newHarnessWithSpec(t, logErrorSpec)
+	state.mock.Failures[mockdriver.ActionRecentLogs] = mockdriver.FailurePlan{Err: driver.ErrNotSupported}
+	state.mock.Failures[mockdriver.ActionMetrics] = mockdriver.FailurePlan{Err: driver.ErrNotSupported}
+	state.mock.Failures[mockdriver.ActionHealth] = mockdriver.FailurePlan{Err: driver.ErrNotSupported}
+
+	summary := state.run(t, Options{
+		Duration: 5 * time.Second,
+		MaxSteps: 3,
+		BundleID: "com.fixture",
+	})
+	if summary.Steps != 3 {
+		t.Fatalf("Steps = %d, want 3", summary.Steps)
+	}
+	if len(summary.Violations) != 0 {
+		t.Fatalf("the log property fired; this test needs it holding on the empty channel: %v",
+			summary.Violations)
+	}
+	if summary.FailedObservations != 0 {
+		t.Errorf("FailedObservations = %d: a read the driver does not have is not a device fault",
+			summary.FailedObservations)
+	}
+	want := []string{unsupportedReadMetrics, unsupportedReadHealth, unsupportedReadLogs}
+	slices.Sort(want)
+	if !slices.Equal(summary.UnsupportedReads, want) {
+		t.Errorf("UnsupportedReads = %v, want %v", summary.UnsupportedReads, want)
+	}
+
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "ios")
+	if !strings.Contains(rendered.String(), "never read on ios: "+strings.Join(want, ", ")) {
+		t.Errorf("the run reports as a clean one:\n%s", rendered.String())
+	}
+}
+
+// The inverse, so the line cannot start appearing on every run: a driver that
+// answers all three reports none missing and prints nothing.
+func TestRunner_ADriverThatAnswersEveryReadReportsNoneMissing(t *testing.T) {
+	state := newHarness(t)
+
+	summary := state.run(t, Options{
+		Duration: 5 * time.Second,
+		MaxSteps: 2,
+		BundleID: "com.fixture",
+	})
+	if len(summary.UnsupportedReads) != 0 {
+		t.Errorf("UnsupportedReads = %v, want none", summary.UnsupportedReads)
+	}
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "android")
+	if strings.Contains(rendered.String(), "never read on") {
+		t.Errorf("a run that made every read must not print the line:\n%s", rendered.String())
+	}
+}
+
 func TestRunner_ViolationSurfacesInSummary(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
+	summary := state.run(t, Options{
 		Duration:    100 * time.Millisecond,
 		IdleTimeout: 50 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	if len(summary.Violations) == 0 {
 		t.Errorf("expected at least one violation, got %v", summary.Violations)
 	}
@@ -378,18 +462,7 @@ func TestRunner_ViolationSurfacesOnlyOnOnsetStep(t *testing.T) {
 	// lines, not on every subsequent step.
 	state := newHarnessWithSpec(t, violationSpec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    200 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 200 * time.Millisecond})
 	if summary.Steps < 2 {
 		t.Fatalf("need at least 2 steps to prove onset-only behavior, got %d", summary.Steps)
 	}
@@ -406,24 +479,8 @@ func TestRunner_ViolationSurfacesOnlyOnOnsetStep(t *testing.T) {
 			summary.Violations[0].Properties)
 	}
 
-	file, err := os.Open(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-
-	type traceLine struct {
-		Step       int      `json:"step"`
-		Violations []string `json:"violations"`
-	}
 	linesWithViolations := 0
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var line traceLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			t.Fatalf("trace line decode: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if len(line.Violations) == 0 {
 			continue
 		}
@@ -432,9 +489,6 @@ func TestRunner_ViolationSurfacesOnlyOnOnsetStep(t *testing.T) {
 			t.Errorf("step %d unexpectedly emitted violations %v (should be onset-only at step 1)",
 				line.Step, line.Violations)
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan trace: %v", err)
 	}
 	if linesWithViolations != 1 {
 		t.Errorf("expected exactly 1 trace line with violations, got %d", linesWithViolations)
@@ -457,19 +511,7 @@ globalThis.actions = actions(() => []);
 `
 	state := newHarnessWithSpec(t, nextViolationSpec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    5,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{MaxSteps: 5})
 	if len(summary.Violations) != 1 {
 		t.Fatalf("expected exactly one ViolationRecord, got %d: %v",
 			len(summary.Violations), summary.Violations)
@@ -482,25 +524,8 @@ globalThis.actions = actions(() => []);
 		t.Errorf("properties: got %v, want [nextHolds]", summary.Violations[0].Properties)
 	}
 
-	file, err := os.Open(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-
-	type traceLine struct {
-		Step       int                      `json:"step"`
-		Violations []string                 `json:"violations"`
-		Witnesses  map[string]trace.Witness `json:"witnesses"`
-	}
 	found := false
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var line traceLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			t.Fatalf("trace line decode: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if len(line.Violations) == 0 {
 			continue
 		}
@@ -521,9 +546,6 @@ globalThis.actions = actions(() => []);
 			t.Errorf("witness detected step: got %d, want 3", witness.DetectedStep)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan trace: %v", err)
-	}
 	if !found {
 		t.Error("no trace line carried the violation")
 	}
@@ -542,19 +564,7 @@ globalThis.actions = actions(() => []);
 `
 	state := newHarnessWithSpec(t, spec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{MaxSteps: 3})
 	if len(summary.Violations) != 0 {
 		t.Errorf("expected no violations, got %v", summary.Violations)
 	}
@@ -574,42 +584,14 @@ globalThis.actions = actions(() => []);
 `
 	state := newHarnessWithSpec(t, spec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{MaxSteps: 3})
 	if !containsProperty(summary.Violations, "neverFires") {
 		t.Fatalf("expected neverFires in violations: %v", summary.Violations)
 	}
 
-	file, err := os.Open(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-
-	type traceLine struct {
-		Step       int      `json:"step"`
-		Violations []string `json:"violations"`
-	}
 	seen := map[int]bool{}
 	finalizeStep := 0
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var line traceLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			t.Fatalf("trace line decode: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if seen[line.Step] {
 			t.Errorf("duplicate step index %d in trace", line.Step)
 		}
@@ -617,9 +599,6 @@ globalThis.actions = actions(() => []);
 		if slices.Contains(line.Violations, "neverFires") {
 			finalizeStep = line.Step
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan trace: %v", err)
 	}
 	if finalizeStep != summary.Steps+1 {
 		t.Errorf("finalize record step = %d, want %d (steps+1)", finalizeStep, summary.Steps+1)
@@ -639,19 +618,11 @@ globalThis.actions = actions(() => [Tap({ on: "id:next" })]);
 	var buffer bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
+	summary := state.run(t, Options{
 		Duration:    100 * time.Millisecond,
 		IdleTimeout: 50 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 		Logger:      logger,
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	if !containsProperty(summary.Violations, "broken") {
 		t.Errorf("expected broken in violations: %v", summary.Violations)
 	}
@@ -682,17 +653,7 @@ func TestRunner_StampsHierarchyResolvedBoundsAndResiduals(t *testing.T) {
 	state := newHarness(t)
 	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"com.fixture:id/next","bounds":"[40,80,240,160]"},"children":[],"clickable":true,"enabled":true}`
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 50 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{Duration: 100 * time.Millisecond, IdleTimeout: 50 * time.Millisecond})
 	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -789,23 +750,16 @@ func TestTraceActionFor_RecordsKindSpecificFields(t *testing.T) {
 
 func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 	state := newHarness(t)
-	state.mock.Failures[mockdriver.ActionWaitForIdle] = errors.New("sidecar lost gRPC stream")
+	state.mock.Failures[mockdriver.ActionWaitForIdle] = mockdriver.FailurePlan{Err: errors.New("sidecar lost gRPC stream")}
 
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
+	state.run(t, Options{
 		Duration:    100 * time.Millisecond,
 		IdleTimeout: 50 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 		Logger:      logger,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	})
 	output := logBuf.String()
 	if !strings.Contains(output, "wait_for_idle failed") {
 		t.Errorf("expected wait_for_idle warning, got: %q", output)
@@ -888,7 +842,7 @@ func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
 func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 	t.Run("selector focus tap fails", func(t *testing.T) {
 		driverMock := mockdriver.New()
-		driverMock.Failures[mockdriver.ActionTapSelector] = errors.New("adb unreachable")
+		driverMock.Failures[mockdriver.ActionTapSelector] = mockdriver.FailurePlan{Err: errors.New("adb unreachable")}
 		action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
 		_, err := applyAction(context.Background(), driverMock, action, nil)
@@ -901,7 +855,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 	})
 	t.Run("coordinate focus tap fails", func(t *testing.T) {
 		driverMock := mockdriver.New()
-		driverMock.Failures[mockdriver.ActionTap] = errors.New("tap driver error")
+		driverMock.Failures[mockdriver.ActionTap] = mockdriver.FailurePlan{Err: errors.New("tap driver error")}
 		action := verifier.Action{Kind: verifier.ActionKindInputText, X: 10, Y: 20, Text: "alice"}
 
 		_, err := applyAction(context.Background(), driverMock, action, nil)
@@ -1431,19 +1385,7 @@ func TestApplyAction_NonDispatchPathsReportWhy(t *testing.T) {
 func TestRunner_RecordsWhyAChosenActionNeverRan(t *testing.T) {
 	state := newHarnessWithSpec(t, zeroWaitSpec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    5 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    2,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 5 * time.Second, MaxSteps: 2})
 	if summary.Steps != 2 {
 		t.Fatalf("Steps = %d, want 2", summary.Steps)
 	}
@@ -1472,18 +1414,7 @@ func TestRunner_RecordsWhyAChosenActionNeverRan(t *testing.T) {
 func TestRunner_DispatchedActionRecordsNoSkipReason(t *testing.T) {
 	state := newHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:    5 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    2,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{Duration: 5 * time.Second, MaxSteps: 2})
 	if !containsAction(state.mock.Actions(), mockdriver.ActionTapSelector, "id:next") {
 		t.Fatalf("fixture tap never dispatched, got %v", state.mock.Actions())
 	}
@@ -1503,19 +1434,7 @@ func TestRunner_DispatchedActionRecordsNoSkipReason(t *testing.T) {
 func TestRunner_ASourceAskedAndHandedNothingSaysSo(t *testing.T) {
 	state := newHarnessWithSpec(t, noActionSpec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    5 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 5 * time.Second, MaxSteps: 3})
 	if summary.Steps != 3 {
 		t.Fatalf("Steps = %d, want 3", summary.Steps)
 	}
@@ -1551,21 +1470,9 @@ func TestRunner_ASourceAskedAndHandedNothingSaysSo(t *testing.T) {
 // here has an action to offer, and no step of this run gets to hear it.
 func TestRunner_AHeldStepIsNotRecordedAsASourceThatDeclined(t *testing.T) {
 	state := newHarness(t)
-	state.mock.Failures[mockdriver.ActionSnapshot] = errors.New("adb: device offline")
+	state.mock.Failures[mockdriver.ActionSnapshot] = mockdriver.FailurePlan{Err: errors.New("adb: device offline")}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    5 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 5 * time.Second, MaxSteps: 3})
 	if summary.SkippedVerification != 3 {
 		t.Fatalf("SkippedVerification = %d, want 3", summary.SkippedVerification)
 	}
@@ -1584,12 +1491,19 @@ func TestRunner_AHeldStepIsNotRecordedAsASourceThatDeclined(t *testing.T) {
 }
 
 type traceStepLine struct {
-	Step                int           `json:"step"`
-	NextAction          *trace.Action `json:"next_action"`
-	ActionSkipped       string        `json:"action_skipped"`
-	Transitional        bool          `json:"transitional"`
-	ObservationError    string        `json:"observation_error"`
-	SkippedVerification bool          `json:"skipped_verification"`
+	Step                int                              `json:"step"`
+	TraceVersion        int                              `json:"trace_version"`
+	NextAction          *trace.Action                    `json:"next_action"`
+	ActionSkipped       string                           `json:"action_skipped"`
+	Transitional        bool                             `json:"transitional"`
+	ObservationError    string                           `json:"observation_error"`
+	SkippedVerification bool                             `json:"skipped_verification"`
+	Violations          []string                         `json:"violations"`
+	ExtractorChanges    map[string]trace.ExtractorChange `json:"extractor_changes"`
+	Witnesses           map[string]trace.Witness         `json:"witnesses"`
+	Navigations         []trace.Navigation               `json:"navigations"`
+	Logs                []trace.LogEntry                 `json:"logs"`
+	Exceptions          []trace.Exception                `json:"exceptions"`
 }
 
 func readTraceLines(t *testing.T, directory string) []traceStepLine {
@@ -1611,24 +1525,19 @@ func readTraceLines(t *testing.T, directory string) []traceStepLine {
 
 func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
 	state := newHarness(t)
-	state.mock.MetricsData = driver.Metrics{CPUPercent: 5.0, HeapBytes: 1024, TotalMemoryBytes: 4096}
+	cpuPercent := 5.0
+	state.mock.MetricsData = driver.Metrics{
+		CPUPercent: &cpuPercent, HeapBytes: 1024, TotalMemoryBytes: 4096,
+	}
 	state.mock.LogEntries = []driver.LogEntry{
 		{UnixMillis: 1000, Level: "E", Tag: "test", Message: "boom"},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
+	state.run(t, Options{
 		Duration:    100 * time.Millisecond,
 		IdleTimeout: 50 * time.Millisecond,
 		BundleID:    "com.fixture",
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 
 	actions := state.mock.Actions()
 	var hasSnapshot, hasMetrics, hasLogs bool
@@ -1661,18 +1570,7 @@ func TestRunner_UsesAtomicSnapshot(t *testing.T) {
 	state := newHarness(t)
 	state.mock.ImageData = driver.Image{PNG: []byte("png"), Width: 1, Height: 1}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 100 * time.Millisecond})
 	if summary.Steps == 0 {
 		t.Fatal("expected at least one step")
 	}
@@ -1713,18 +1611,10 @@ func TestRunner_OneScreenshotPerStep(t *testing.T) {
 	state := newHarness(t)
 	state.mock.ImageData = driver.Image{PNG: []byte("fakepng"), Width: 100, Height: 200}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
+	summary := state.run(t, Options{
 		Duration:    200 * time.Millisecond,
 		IdleTimeout: 50 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	if summary.Steps < 2 {
 		t.Fatalf("need at least 2 steps for screenshot test, got %d", summary.Steps)
 	}
@@ -1761,18 +1651,7 @@ func TestRunner_StableTransitionalTreeIsVerified(t *testing.T) {
 	]}`
 	state.mock.ImageData = driver.Image{PNG: []byte("fakepng"), Width: 100, Height: 200}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    200 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 200 * time.Millisecond})
 	if summary.Steps == 0 {
 		t.Fatal("expected at least one step")
 	}
@@ -1780,19 +1659,7 @@ func TestRunner_StableTransitionalTreeIsVerified(t *testing.T) {
 		t.Fatalf("expected verifier to run on a stable two-screen tree, got %v", summary.Violations)
 	}
 
-	type traceLine struct {
-		Step         int  `json:"step"`
-		Transitional bool `json:"transitional"`
-	}
-	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
-		var line traceLine
-		if err := json.Unmarshal(raw, &line); err != nil {
-			t.Fatalf("decode trace line: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if line.Transitional {
 			t.Errorf("step %d: stable tree must not be marked transitional", line.Step)
 		}
@@ -1830,18 +1697,7 @@ func TestRunner_GenuineCrossFadeStillRetried(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 	wrapped := &snapshotCrossFade{Driver: state.mock}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    200 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      wrapped,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 200 * time.Millisecond, Driver: wrapped})
 	if summary.Steps == 0 {
 		t.Fatal("expected at least one step")
 	}
@@ -1849,21 +1705,8 @@ func TestRunner_GenuineCrossFadeStillRetried(t *testing.T) {
 		t.Fatalf("verifier must be skipped on cross-fade steps; got %v", summary.Violations)
 	}
 
-	type traceLine struct {
-		Step         int      `json:"step"`
-		Transitional bool     `json:"transitional"`
-		Violations   []string `json:"violations"`
-	}
-	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	lines := 0
-	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
-		var line traceLine
-		if err := json.Unmarshal(raw, &line); err != nil {
-			t.Fatalf("decode trace line: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		lines++
 		if !line.Transitional {
 			t.Errorf("step %d: expected transitional=true on every step, got false", line.Step)
@@ -1884,55 +1727,16 @@ func TestRunner_CleanTreeStillVerified(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"HomeScreen"},"children":[]}`
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    200 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 200 * time.Millisecond})
 	if !containsProperty(summary.Violations, "balanceNonNegative") {
 		t.Fatalf("expected verifier to surface balanceNonNegative on a clean tree, got %v", summary.Violations)
 	}
 
-	type traceLine struct {
-		Step         int  `json:"step"`
-		Transitional bool `json:"transitional"`
-	}
-	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
-		var line traceLine
-		if err := json.Unmarshal(raw, &line); err != nil {
-			t.Fatalf("decode trace line: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if line.Transitional {
 			t.Errorf("step %d: clean tree must not be marked transitional", line.Step)
 		}
 	}
-}
-
-// snapshotFailFirst wraps a mock driver so the first Snapshot call returns an
-// error (mimicking a sidecar timeout while fetching view hierarchy), then
-// delegates every subsequent call back to the mock.
-type snapshotFailFirst struct {
-	*mockdriver.Driver
-	calls int
-}
-
-func (d *snapshotFailFirst) Snapshot(ctx context.Context) (string, driver.Image, error) {
-	d.calls++
-	if d.calls == 1 {
-		return "", driver.Image{}, errors.New("Timeout while fetching view hierarchy")
-	}
-	return d.Driver.Snapshot(ctx)
 }
 
 // TestRunner_NilHierarchyMarksTransitional verifies that when the sidecar's
@@ -1942,20 +1746,12 @@ func (d *snapshotFailFirst) Snapshot(ctx context.Context) (string, driver.Image,
 func TestRunner_NilHierarchyMarksTransitional(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"HomeScreen"},"children":[]}`
-	wrapped := &snapshotFailFirst{Driver: state.mock}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    200 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      wrapped,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
+	state.mock.Failures[mockdriver.ActionSnapshot] = mockdriver.FailurePlan{
+		Err:     errors.New("Timeout while fetching view hierarchy"),
+		OnCalls: []int{1},
 	}
+
+	summary := state.run(t, Options{Duration: 200 * time.Millisecond})
 	if summary.Steps < 2 {
 		t.Fatalf("need at least 2 steps to verify the first is skipped and the second runs, got %d", summary.Steps)
 	}
@@ -1968,19 +1764,7 @@ func TestRunner_NilHierarchyMarksTransitional(t *testing.T) {
 		t.Errorf("onset step: got %d, want 2 (step 1 verifier skipped due to nil tree)", summary.Violations[0].StepIndex)
 	}
 
-	type traceLine struct {
-		Step         int      `json:"step"`
-		Transitional bool     `json:"transitional"`
-		Violations   []string `json:"violations"`
-	}
-	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var first traceLine
-	if err := json.Unmarshal(bytes.SplitN(bytes.TrimSpace(body), []byte("\n"), 2)[0], &first); err != nil {
-		t.Fatalf("decode first trace line: %v", err)
-	}
+	first := readTraceLines(t, state.writer.Directory())[0]
 	if first.Step != 1 {
 		t.Fatalf("first trace line step: got %d, want 1", first.Step)
 	}
@@ -1992,42 +1776,23 @@ func TestRunner_NilHierarchyMarksTransitional(t *testing.T) {
 	}
 }
 
-// tapSelectorFailFirst wraps a mock driver so the first TapSelector call
-// returns a gRPC DeadlineExceeded error (mimicking a sidecar-side RPC hang),
-// then delegates every subsequent call back to the mock.
-type tapSelectorFailFirst struct {
-	*mockdriver.Driver
-	calls int
-}
-
-func (d *tapSelectorFailFirst) TapSelector(ctx context.Context, selector string) error {
-	d.calls++
-	if d.calls == 1 {
-		return status.Error(codes.DeadlineExceeded, "boom")
-	}
-	return d.Driver.TapSelector(ctx, selector)
-}
-
 // TestRunner_TransientApplyErrorMarksTransitional verifies that a transient
 // gRPC error from applyAction (e.g. sidecar RPC deadline) does not kill the
 // run: the step is marked transitional, the verifier is skipped for it, and
 // the loop continues with the next step running cleanly.
 func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
 	state := newHarness(t)
-	wrapped := &tapSelectorFailFirst{Driver: state.mock}
+	state.mock.Failures[mockdriver.ActionTapSelector] = mockdriver.FailurePlan{
+		Err:     status.Error(codes.DeadlineExceeded, "boom"),
+		OnCalls: []int{1},
+	}
 
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    300 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      wrapped,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-		Logger:      logger,
+	summary, err := state.tryRun(t, Options{
+		Duration: 300 * time.Millisecond,
+		Logger:   logger,
 	})
 	if err != nil {
 		t.Fatalf("Run must not return on transient apply error, got %v", err)
@@ -2042,36 +1807,15 @@ func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
 		t.Errorf("expected apply-error WARN log, got %q", logBuf.String())
 	}
 
-	type traceLine struct {
-		Step         int      `json:"step"`
-		Transitional bool     `json:"transitional"`
-		Violations   []string `json:"violations"`
-	}
-	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := bytes.Split(bytes.TrimSpace(body), []byte("\n"))
-	var first, second traceLine
-	if err := json.Unmarshal(lines[0], &first); err != nil {
-		t.Fatalf("decode first trace line: %v", err)
-	}
-	if err := json.Unmarshal(lines[1], &second); err != nil {
-		t.Fatalf("decode second trace line: %v", err)
-	}
+	lines := readTraceLines(t, state.writer.Directory())
+	first, second := lines[0], lines[1]
 	if first.Step != 1 || !first.Transitional {
 		t.Errorf("step 1 must be transitional after transient apply error, got step=%d transitional=%v", first.Step, first.Transitional)
 	}
 	// The step still records a next_action it never dispatched, so the reason
 	// has to be on the line or an executed-action count includes it.
-	var firstSkip struct {
-		ActionSkipped string `json:"action_skipped"`
-	}
-	if err := json.Unmarshal(lines[0], &firstSkip); err != nil {
-		t.Fatalf("decode first trace line: %v", err)
-	}
-	if firstSkip.ActionSkipped != string(actionSkippedApplyError) {
-		t.Errorf("step 1 action_skipped = %q, want %q", firstSkip.ActionSkipped, actionSkippedApplyError)
+	if first.ActionSkipped != string(actionSkippedApplyError) {
+		t.Errorf("step 1 action_skipped = %q, want %q", first.ActionSkipped, actionSkippedApplyError)
 	}
 	if len(first.Violations) != 0 {
 		t.Errorf("transient apply step must have no violations, got %v", first.Violations)
@@ -2081,39 +1825,18 @@ func TestRunner_TransientApplyErrorMarksTransitional(t *testing.T) {
 	}
 }
 
-// internalApplyErrorFailFirst wraps a mock driver so the first InputText call
-// fails with the bare Internal error the iOS runner's input handler emits
-// when it chokes (HTTP 500 with an empty body), then recovers.
-type internalApplyErrorFailFirst struct {
-	*mockdriver.Driver
-	calls int
-}
-
-func (d *internalApplyErrorFailFirst) TapSelector(ctx context.Context, selector string) error {
-	d.calls++
-	if d.calls == 1 {
-		return status.Error(codes.Internal, "UnknownFailure(errorResponse=Request for inputText failed, code: 500, body: )")
-	}
-	return d.Driver.TapSelector(ctx, selector)
-}
-
 // TestRunner_InternalApplyErrorMarksTransitional pins the policy that a
 // one-off device-side failure (e.g. the iOS input handler's bare 500) is
 // absorbed as a transitional step instead of killing the run. Persistent
 // failure is covered by the consecutive-failure cap.
 func TestRunner_InternalApplyErrorMarksTransitional(t *testing.T) {
 	state := newHarness(t)
-	wrapped := &internalApplyErrorFailFirst{Driver: state.mock}
+	state.mock.Failures[mockdriver.ActionTapSelector] = mockdriver.FailurePlan{
+		Err:     status.Error(codes.Internal, "UnknownFailure(errorResponse=Request for inputText failed, code: 500, body: )"),
+		OnCalls: []int{1},
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    300 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      wrapped,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
+	summary, err := state.tryRun(t, Options{Duration: 300 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("Run must not return on a one-off internal apply error, got %v", err)
 	}
@@ -2165,33 +1888,16 @@ func TestIsWDADrop_Classification(t *testing.T) {
 	}
 }
 
-// tapSelectorAlwaysUnavailable wraps a mock driver so every TapSelector call
-// fails with a transient Unavailable error, mimicking a device whose channel
-// never recovers between steps.
-type tapSelectorAlwaysUnavailable struct {
-	*mockdriver.Driver
-}
-
-func (d *tapSelectorAlwaysUnavailable) TapSelector(ctx context.Context, selector string) error {
-	return status.Error(codes.Unavailable, "connection dropped mid-action; the action may have applied")
-}
-
 // TestRunner_ConsecutiveTransientApplyFailuresAbort verifies the run fails
 // fast once transient apply errors form an unbroken streak instead of burning
 // the whole budget on a wedged device.
 func TestRunner_ConsecutiveTransientApplyFailuresAbort(t *testing.T) {
 	state := newHarness(t)
-	wrapped := &tapSelectorAlwaysUnavailable{Driver: state.mock}
+	state.mock.Failures[mockdriver.ActionTapSelector] = mockdriver.FailurePlan{
+		Err: status.Error(codes.Unavailable, "connection dropped mid-action; the action may have applied"),
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    5 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      wrapped,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
+	summary, err := state.tryRun(t, Options{Duration: 5 * time.Second})
 	if err == nil {
 		t.Fatal("Run must abort after consecutive transient apply failures")
 	}
@@ -2213,18 +1919,7 @@ import { actions, Wait } from "@sanderling/spec";
 globalThis.actions = actions(() => [Wait({ durationMillis: 5 })]);
 `
 	state := newHarnessWithSpec(t, waitSpec)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
-		Duration:    150 * time.Millisecond,
-		IdleTimeout: 50 * time.Millisecond,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{Duration: 150 * time.Millisecond, IdleTimeout: 50 * time.Millisecond})
 	for _, action := range state.mock.Actions() {
 		if action.Kind == mockdriver.ActionWaitForIdle {
 			t.Fatalf("Wait action must skip WaitForIdle, got: %v", action)
@@ -2291,19 +1986,7 @@ func TestRunner_RelaunchesWhenAppLeavesForeground(t *testing.T) {
 	// relaunch.
 	state.mock.ForegroundResults = []string{"app.folio", "com.android.chrome"}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		BundleID:    "app.folio",
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{Duration: 100 * time.Millisecond, BundleID: "app.folio"})
 	relaunches := 0
 	for _, a := range state.mock.Actions() {
 		if a.Kind == mockdriver.ActionLaunch && a.BundleID == "app.folio" && !a.ClearState {
@@ -2319,19 +2002,7 @@ func TestRunner_NoRelaunchWhenAppInForeground(t *testing.T) {
 	state := newHarness(t)
 	state.mock.ForegroundResults = []string{"app.folio"}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		BundleID:    "app.folio",
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{Duration: 100 * time.Millisecond, BundleID: "app.folio"})
 	for _, a := range state.mock.Actions() {
 		if a.Kind == mockdriver.ActionLaunch {
 			t.Fatalf("expected no relaunch while app in foreground, got %v", a)
@@ -2348,19 +2019,7 @@ func TestRunner_WaitsForForegroundBeforeFirstAction(t *testing.T) {
 	// First the device shows a system setup screen, then the app is on top.
 	state.mock.ForegroundResults = []string{"com.google.android.setupwizard", "app.folio"}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		BundleID:    "app.folio",
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{Duration: 100 * time.Millisecond, BundleID: "app.folio"})
 
 	actions := state.mock.Actions()
 	firstLaunch, firstTap := -1, -1
@@ -2399,19 +2058,7 @@ func TestRunner_WaitsForWindowDrawnBeforeFirstAction(t *testing.T) {
 	state.mock.ForegroundResults = []string{"app.folio"}
 	state.mock.FocusedWindowResults = []string{"com.android.settings", "com.android.settings", "app.folio"}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		BundleID:    "app.folio",
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{Duration: 100 * time.Millisecond, BundleID: "app.folio"})
 
 	// The gate must have polled the focused window until it named the app,
 	// i.e. at least the three queued results were consumed.
@@ -2604,38 +2251,16 @@ func TestRunner_SkipsActionWhenOverlayStealsFocusAtApplyTime(t *testing.T) {
 	state.mock.ForegroundResults = []string{"app.folio"}
 	state.mock.FocusedWindowResults = []string{"app.folio", "com.android.systemui"}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		BundleID:    "app.folio",
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 100 * time.Millisecond, BundleID: "app.folio"})
 	if summary.Steps == 0 {
 		t.Fatal("expected the loop to run steps")
 	}
 	if containsAction(state.mock.Actions(), mockdriver.ActionTapSelector, "id:next") {
 		t.Error("apply-time guard failed: a tap fired while a system overlay held focus")
 	}
-	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var skipped bool
-	for _, line := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
-		var step struct {
-			ActionSkipped string `json:"action_skipped"`
-		}
-		if err := json.Unmarshal(line, &step); err != nil {
-			t.Fatalf("decode trace line: %v", err)
-		}
-		skipped = skipped || step.ActionSkipped == string(actionSkippedForeground)
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
+		skipped = skipped || line.ActionSkipped == string(actionSkippedForeground)
 	}
 	if !skipped {
 		t.Errorf("no step recorded action_skipped=%q, so the undispatched action looks executed", actionSkippedForeground)
@@ -2658,20 +2283,7 @@ globalThis.actions = actions(() => []);
 `
 	state := newHarnessWithSpec(t, thirdStepViolationSpec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:        time.Hour,
-		IdleTimeout:     20 * time.Millisecond,
-		MaxSteps:        8,
-		StopOnViolation: true,
-		Driver:          state.mock,
-		Verifier:        state.verifier,
-		TraceWriter:     state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{MaxSteps: 8, StopOnViolation: true})
 	if !containsProperty(summary.Violations, "staysUnderThree") {
 		t.Fatalf("expected staysUnderThree to fire, got %v", summary.Violations)
 	}
@@ -2693,19 +2305,7 @@ globalThis.actions = actions(() => []);
 func TestRunner_WithoutStopOnViolationRunsTheWholeBudget(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    4,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{MaxSteps: 4})
 	if summary.Steps != 4 {
 		t.Errorf("steps: got %d, want 4; a violation must not shorten a default run", summary.Steps)
 	}
@@ -2715,25 +2315,9 @@ func TestRunner_WithoutStopOnViolationRunsTheWholeBudget(t *testing.T) {
 // assert on what the run actually wrote rather than on the summary alone.
 func traceStepIndices(t *testing.T, directory string) []int {
 	t.Helper()
-	file, err := os.Open(filepath.Join(directory, "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
 	var steps []int
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var line struct {
-			Step int `json:"step"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			t.Fatalf("trace line decode: %v", err)
-		}
+	for _, line := range readTraceLines(t, directory) {
 		steps = append(steps, line.Step)
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan trace: %v", err)
 	}
 	return steps
 }
@@ -2802,41 +2386,19 @@ func TestRunner_SiblingTapsReachTheDriverAtTheirOwnCoordinates(t *testing.T) {
 	}
 }
 
-// tapReachesNoElement wraps a mock driver so every tap reports what the chrome
-// driver reports when the action's point holds no element: nothing was
-// dispatched, so the app cannot have responded.
-type tapReachesNoElement struct {
-	*mockdriver.Driver
-}
-
-func (d *tapReachesNoElement) TapSelector(
-	_ context.Context,
-	selector string,
-) error {
-	return fmt.Errorf("%w: %s", driver.ErrGestureUndelivered, selector)
-}
-
-func (d *tapReachesNoElement) Tap(_ context.Context, x, y int) error {
-	return fmt.Errorf("%w: (%d,%d)", driver.ErrGestureUndelivered, x, y)
-}
-
 // TestRunner_UndeliveredGestureIsRecordedNotSilentlyClean is the runner half of
 // the silent-actuation bug: a run whose every tap reached nothing used to look
 // exactly like a run that exercised the app and found no violations. The step
 // now names the reason, and the run says how many actions did nothing.
 func TestRunner_UndeliveredGestureIsRecordedNotSilentlyClean(t *testing.T) {
 	state := newHarness(t)
-	wrapped := &tapReachesNoElement{Driver: state.mock}
+	state.mock.Failures[mockdriver.ActionTapSelector] = mockdriver.FailurePlan{
+		Err: fmt.Errorf("%w: id:next", driver.ErrGestureUndelivered),
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    10 * time.Second,
-		MaxSteps:    maxConsecutiveApplyFailures + 2,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      wrapped,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
+	summary, err := state.tryRun(t, Options{
+		Duration: 10 * time.Second,
+		MaxSteps: maxConsecutiveApplyFailures + 2,
 	})
 	if err != nil {
 		t.Fatalf(
@@ -2868,22 +2430,7 @@ func TestRunner_UndeliveredGestureIsRecordedNotSilentlyClean(t *testing.T) {
 		)
 	}
 
-	type traceLine struct {
-		Step          int    `json:"step"`
-		ActionSkipped string `json:"action_skipped"`
-		Transitional  bool   `json:"transitional"`
-	}
-	body, err := os.ReadFile(
-		filepath.Join(state.writer.Directory(), "trace.jsonl"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
-		var line traceLine
-		if err := json.Unmarshal(raw, &line); err != nil {
-			t.Fatalf("decode trace line: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if line.ActionSkipped != "gesture_undelivered" {
 			t.Errorf("step %d: action_skipped = %q, want %q",
 				line.Step, line.ActionSkipped, "gesture_undelivered")
@@ -2898,16 +2445,6 @@ func TestRunner_UndeliveredGestureIsRecordedNotSilentlyClean(t *testing.T) {
 	}
 }
 
-// selectorMatchesNothing wraps a mock driver so every by-selector tap reports
-// what the drivers report when the selector names no element on the screen.
-type selectorMatchesNothing struct {
-	*mockdriver.Driver
-}
-
-func (d *selectorMatchesNothing) TapSelector(_ context.Context, selector string) error {
-	return fmt.Errorf("%w: %q", driver.ErrSelectorMatchedNothing, selector)
-}
-
 // TestRunner_SelectorThatMatchesNothingIsRecordedApartFromAnUndeliveredGesture
 // keeps the two silent paths distinguishable. A selector that named no element
 // is a resolution failure, so the step records unresolved_selector, keeps the
@@ -2915,17 +2452,13 @@ func (d *selectorMatchesNothing) TapSelector(_ context.Context, selector string)
 // budget that a wedged device is meant to exhaust.
 func TestRunner_SelectorThatMatchesNothingIsRecordedApartFromAnUndeliveredGesture(t *testing.T) {
 	state := newHarnessWithSpec(t, absentSelectorSpec)
-	wrapped := &selectorMatchesNothing{Driver: state.mock}
+	state.mock.Failures[mockdriver.ActionTapSelector] = mockdriver.FailurePlan{
+		Err: fmt.Errorf("%w: %q", driver.ErrSelectorMatchedNothing, "id:absent"),
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    10 * time.Second,
-		MaxSteps:    maxConsecutiveApplyFailures + 2,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      wrapped,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
+	summary, err := state.tryRun(t, Options{
+		Duration: 10 * time.Second,
+		MaxSteps: maxConsecutiveApplyFailures + 2,
 	})
 	if err != nil {
 		t.Fatalf("a selector that matched nothing is not a device fault: %v", err)
@@ -2946,20 +2479,7 @@ func TestRunner_SelectorThatMatchesNothingIsRecordedApartFromAnUndeliveredGestur
 		t.Errorf("the summary must name the actions that found no target, got:\n%s", rendered.String())
 	}
 
-	type traceLine struct {
-		Step          int    `json:"step"`
-		ActionSkipped string `json:"action_skipped"`
-		Transitional  bool   `json:"transitional"`
-	}
-	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
-		var line traceLine
-		if err := json.Unmarshal(raw, &line); err != nil {
-			t.Fatalf("decode trace line: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if line.ActionSkipped != "unresolved_selector" {
 			t.Errorf("step %d: action_skipped = %q, want %q",
 				line.Step, line.ActionSkipped, "unresolved_selector")
@@ -2998,8 +2518,11 @@ func TestApplyAction_TapAboveTheViewportReachesTheDriver(t *testing.T) {
 // element under is still a failure, reported as ErrGestureUndelivered rather
 // than as an action the runner declined to try.
 func TestApplyAction_TapAboveTheViewportKeepsTheUndeliveredReport(t *testing.T) {
-	drv := &tapReachesNoElement{Driver: mockdriver.New()}
-	skipped, err := applyAction(context.Background(), drv, verifier.Action{
+	mock := mockdriver.New()
+	mock.Failures[mockdriver.ActionTap] = mockdriver.FailurePlan{
+		Err: fmt.Errorf("%w: (622,-208)", driver.ErrGestureUndelivered),
+	}
+	skipped, err := applyAction(context.Background(), mock, verifier.Action{
 		Kind: verifier.ActionKindTap,
 		X:    622,
 		Y:    -208,
@@ -3019,19 +2542,7 @@ func TestApplyAction_TapAboveTheViewportKeepsTheUndeliveredReport(t *testing.T) 
 func TestRenderSummary_NamesTheActionsThatNeverReachedTheApp(t *testing.T) {
 	state := newHarnessWithSpec(t, zeroWaitSpec)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    5 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 5 * time.Second, MaxSteps: 3})
 	reason := string(actionSkippedZeroDurationWait)
 	if summary.SkippedActions[reason] != 3 {
 		t.Errorf("SkippedActions[%s] = %d, want 3", reason, summary.SkippedActions[reason])
@@ -3080,16 +2591,7 @@ func TestRunner_AnActionThatNeverReturnsFailsTheStepNotTheRun(t *testing.T) {
 	t.Cleanup(func() { applyTimeout = previousApplyTimeout })
 	wrapped := &wedgedTapSelector{Driver: state.mock}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      wrapped,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
+	summary, err := state.tryRun(t, Options{MaxSteps: 3, Driver: wrapped})
 	if err != nil {
 		t.Fatalf("Run must outlive an action that never returns, got %v", err)
 	}
@@ -3142,19 +2644,7 @@ func TestRunner_AFailedObservationIsNotAnObservationOfAnEmptyScreen(t *testing.T
 	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"HomeScreen"},"children":[]}`
 	wrapped := &snapshotFailThenEmpty{Driver: state.mock}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      wrapped,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{MaxSteps: 3, Driver: wrapped})
 	if summary.Steps != 3 {
 		t.Fatalf("Steps = %d, want 3", summary.Steps)
 	}

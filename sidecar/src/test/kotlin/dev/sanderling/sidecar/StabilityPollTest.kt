@@ -20,12 +20,9 @@ class StabilityPollTest {
     }
 
     @Test fun slowSnapshotReadsDoNotEatTheStreak() {
-        // Every other test here uses an instant lambda and so passes whether or
-        // not a read is charged to the streak; this one is the difference.
-        // StubDriverBackend's waitForIdle polls a real `uiautomator dump`,
-        // which costs hundreds of milliseconds, so the slow read is the case it
-        // runs in.
-        val readMillis = 400L
+        // A hierarchy fetch costs about this on a physical device, which is the
+        // read pollUntilStable's contract works its numbers out against.
+        val readMillis = 500L
         val sampleStarts = mutableListOf<Long>()
         val sampleEnds = mutableListOf<Long>()
         val start = System.currentTimeMillis()
@@ -36,18 +33,17 @@ class StabilityPollTest {
             "stable"
         }
 
-        // What the poll actually watched: the last read began this long after
-        // the first one returned, and every sample in between matched.
-        val observedQuiet = sampleStarts.last() - sampleEnds.first()
+        assertTrue(
+            sampleStarts.size >= 3,
+            "a ${readMillis}ms read cannot clear the streak in one pair, starts=$sampleStarts",
+        )
+        val firstMatchingReadReturned = sampleEnds[1]
+        val observedQuiet = sampleStarts.last() - firstMatchingReadReturned
         assertTrue(
             observedQuiet >= MIN_STABLE_STREAK_MILLIS,
             "the poll returned having observed only ${observedQuiet}ms of " +
                 "quiet, not ${MIN_STABLE_STREAK_MILLIS}ms; " +
                 "starts=$sampleStarts ends=$sampleEnds",
-        )
-        assertTrue(
-            sampleStarts.size >= 3,
-            "a ${readMillis}ms read cannot clear the streak in one pair, starts=$sampleStarts",
         )
     }
 

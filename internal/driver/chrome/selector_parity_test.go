@@ -5,13 +5,10 @@ package chrome
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/chromedp/chromedp"
 
@@ -31,16 +28,7 @@ import (
 // This test starts from one real page in a real browser and asks both matchers
 // the same questions.
 func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/selector-parity.html")
 
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
@@ -131,7 +119,7 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			// Every name for the accessible label has to name one element. Four
 			// of the six reached it on one host only: label and
 			// accessibilityLabel aliased onto accessibilityText alone, which
-			// the ios sidecar writes and this dump does not, and alias
+			// the ios companion writes and this dump does not, and alias
 			// expansion is one level; ariaLabel and contentDescription aliased
 			// onto nothing. accessibilityText was the mirror image, resolving
 			// against the dump and reaching no DOM attribute of that name.
@@ -381,16 +369,7 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 // turned the whole selector into a parse error: querySelectorAll throws, and
 // what a spec sees is an exception out of the extractor rather than an element.
 func TestSelectors_SecureCombinesWithAnotherKey(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/selector-parity.html")
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)
@@ -426,16 +405,7 @@ func TestSelectors_SecureCombinesWithAnotherKey(t *testing.T) {
 // has an opinion about (everything is enabled, almost nothing is checked)
 // answers with most of the document and a want list nobody can check by reading.
 func TestSelectors_BooleanStatesNameWhatBothProducersReport(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/selector-parity.html")
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)
@@ -619,16 +589,7 @@ func TestSelectors_BooleanStatesNameWhatBothProducersReport(t *testing.T) {
 // '[id="state_month"]select' and querySelectorAll threw a SyntaxError. Which of
 // the two a spec got depended on the order its author wrote the keys in.
 func TestSelectors_TagCombinesWithAnotherKey(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/selector-parity.html")
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)
@@ -661,16 +622,7 @@ func TestSelectors_TagCombinesWithAnotherKey(t *testing.T) {
 // ancestors up to the document root read as matches too, and the deepest one is
 // the element the author meant.
 func TestSelectors_TextNamesTheInnermostMatchInEveryResolver(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/selector-parity.html")
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)
@@ -825,16 +777,7 @@ func TestSelectors_TextNamesTheInnermostMatchInEveryResolver(t *testing.T) {
 // "January" is not clickable: resolving text to its own innermost match before
 // the other keys narrow anything answers with nothing in both.
 func TestSelectors_TextCombinesWithAnotherKey(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/selector-parity.html")
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)
@@ -971,16 +914,7 @@ func xpathIDsOverCDP(
 // step, resolving the target in the dump and tapping it over CDP, so a selector
 // the two read differently taps one element and reads the text of another.
 func TestSelectors_DataTestIDNamesTheSameElementInTheDumpAndOverCDP(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/selector-parity.html")
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)
@@ -1026,16 +960,7 @@ func TestSelectors_DataTestIDNamesTheSameElementInTheDumpAndOverCDP(t *testing.T
 // already does. placeholder keeps its CSS: it is the attribute the markup
 // writes, which is what all three resolvers read it as.
 func TestSelectors_HintSelectorsResolveOverCDPToWhatBothMatchersName(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/selector-parity.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/selector-parity.html")
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
 		t.Fatalf("Hierarchy: %v", err)

@@ -651,7 +651,8 @@ func TestClient_MetricsMapsResponseFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.CPUPercent != 12.5 || got.HeapBytes != 100 || got.TotalMemoryBytes != 200 {
+	if got.CPUPercent == nil || *got.CPUPercent != 12.5 ||
+		got.HeapBytes != 100 || got.TotalMemoryBytes != 200 {
 		t.Errorf("metrics mapping wrong: %+v", got)
 	}
 	if len(state.fake.metricsBundles) != 1 || state.fake.metricsBundles[0] != "com.example" {

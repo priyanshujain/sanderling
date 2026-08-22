@@ -699,14 +699,35 @@ func TestForegroundAppFallsBackToOtherRunningUserApp(t *testing.T) {
 	}
 }
 
-func TestHealthReportsIOS(t *testing.T) {
+// The three reads the companion has no RPC for must say so. Answering an empty
+// log slice, a zeroed sample or Ready reports three checks as having passed
+// that never ran, and a spec's log properties then hold on evidence nobody
+// collected.
+func TestUnbackedReadsReportNotSupported(t *testing.T) {
 	d := newTestDriver(&fakeCompanion{})
-	health, err := d.Health(context.Background())
-	if err != nil {
-		t.Fatalf("Health: %v", err)
+
+	logs, err := d.RecentLogs(context.Background(), time.Time{}, "E")
+	if !errors.Is(err, driver.ErrNotSupported) {
+		t.Errorf("RecentLogs err = %v, want driver.ErrNotSupported", err)
 	}
-	if !health.Ready || health.Platform != "ios" {
-		t.Fatalf("Health = %+v, want ready ios", health)
+	if len(logs) != 0 {
+		t.Errorf("RecentLogs returned %d entries alongside its error", len(logs))
+	}
+
+	metrics, err := d.Metrics(context.Background(), "com.fixture")
+	if !errors.Is(err, driver.ErrNotSupported) {
+		t.Errorf("Metrics err = %v, want driver.ErrNotSupported", err)
+	}
+	if metrics != (driver.Metrics{}) {
+		t.Errorf("Metrics = %+v, want the zero sample", metrics)
+	}
+
+	health, err := d.Health(context.Background())
+	if !errors.Is(err, driver.ErrNotSupported) {
+		t.Errorf("Health err = %v, want driver.ErrNotSupported", err)
+	}
+	if health.Ready {
+		t.Errorf("Health = %+v: the driver reports a readiness check it never ran", health)
 	}
 }
 

@@ -214,9 +214,10 @@ func (v *Verifier) checkNotExtracting(slot string) {
 	}
 }
 
-// bindAlways accepts either a predicate function (legacy shape) or a formula
-// handle (new shape). Both produce a formula handle tagged with
-// __sanderlingFormulaSpec.
+// bindAlways accepts either a predicate function or a formula handle, both
+// current: the shipped default properties pass a predicate, and every property
+// in the example specs passes a formula. Both produce a formula handle tagged
+// with __sanderlingFormulaSpec.
 func (v *Verifier) bindAlways(call goja.FunctionCall) goja.Value {
 	if len(call.Arguments) != 1 {
 		panic(v.runtime.NewTypeError("always requires exactly one argument"))

@@ -83,6 +83,14 @@ test("installRuntime defined the host-invoked globals", () => {
   assert.equal(typeof g.__sanderling__, "object");
 });
 
+// The host refuses to run a bundle whose declaration is not the encoding it
+// decodes (ActionWireContract, internal/verifier/marshal.go). The literal is
+// asserted on both sides so neither half can move to a new encoding alone.
+test("installRuntime declares the action wire contract to the host", () => {
+  const g = globalThis as Record<string, unknown>;
+  assert.equal(g.__sanderlingActionEncoding__, "action-wire/2");
+});
+
 const { fakeElement, withFakeDocument } = await import("./web-dom-harness.ts");
 type FakeElementSpec = Parameters<typeof fakeElement>[0];
 

@@ -19,14 +19,17 @@ type Action struct {
 	Kind ActionKind
 	On   string
 	Text string
-	// X, Y hold the element center when the spec passed an ax element to
-	// Tap/InputText. Zero means the runner must resolve On against the
-	// current hierarchy.
+	// X, Y hold the element center when the spec passed an ax element to a
+	// point-dispatched kind (Tap, DoubleTap, LongPress, InputText). Zero means
+	// the runner must resolve On against the current hierarchy.
 	X, Y int
-	// Swipe coordinates (raw px). Used only for ActionKindSwipe.
+	// Gesture endpoints (raw px), read by Swipe and by Scroll. A Scroll that
+	// carries none has them computed from its container and Direction, so
+	// leaving them zero is how an authored Scroll asks for that.
 	FromX, FromY int
 	ToX, ToY     int
-	// DurationMillis is the Swipe gesture duration or the Wait duration.
+	// DurationMillis is the Swipe or Scroll gesture duration, or the Wait
+	// duration.
 	DurationMillis int
 	// Key is the logical key name for ActionKindPressKey.
 	Key string

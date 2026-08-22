@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
 
@@ -160,20 +159,9 @@ func TestTheTraceNeverCarriesATypedSecretThroughALastActionExtractor(t *testing.
 			state := newHarnessWithSpec(t, fmt.Sprintf(lastActionExtractorSpec, testCase.selector))
 			state.mock.HierarchyJSON = testCase.treeJSON
 
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := Run(ctx, Options{
-				Duration:    time.Hour,
-				IdleTimeout: 20 * time.Millisecond,
-				MaxSteps:    2,
-				Driver:      state.mock,
-				Verifier:    state.verifier,
-				TraceWriter: state.writer,
-			}); err != nil {
-				t.Fatalf("Run: %v", err)
-			}
+			state.run(t, Options{MaxSteps: 2})
 
-			steps := traceSteps(t, state.writer.Directory())
+			steps := readTraceLines(t, state.writer.Directory())
 			if len(steps) < 2 {
 				t.Fatalf("trace holds %d step(s), want the step that reports the action back", len(steps))
 			}

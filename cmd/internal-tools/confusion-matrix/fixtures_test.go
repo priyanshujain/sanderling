@@ -21,7 +21,10 @@ type fixtureRun struct {
 	// the run inside that campaign.
 	CampaignExitCode int
 	TimedOut         bool
-	Violated         []string
+	// PreconditionFailures is how many of the run's 400 steps never had the app
+	// under test in front of them.
+	PreconditionFailures int
+	Violated             []string
 	// Surfaces is the locatableSurfaces reading the trace records. A nil map
 	// with NoTrace false still writes a reading of every surface false.
 	Surfaces map[string]bool
@@ -135,6 +138,9 @@ func writeImplementation(t *testing.T, built fixture, implementation fixtureImpl
 		}
 		if run.TimedOut {
 			campaignRun["timed_out"] = true
+		}
+		if run.PreconditionFailures > 0 {
+			campaignRun["precondition_failures"] = run.PreconditionFailures
 		}
 		if len(run.Violated) > 0 {
 			campaignRun["violated_properties"] = run.Violated

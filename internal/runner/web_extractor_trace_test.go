@@ -1,17 +1,11 @@
 package runner
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
-	"github.com/priyanshujain/sanderling/internal/trace"
 )
 
 // engineDisagreementSpec makes the two runtimes disagree on purpose: the
@@ -31,23 +25,13 @@ globalThis.actions = actions(() => []);
 // takes the V8 path, where extractor values come from the page rather than
 // from goja.
 type webMockDriver struct {
-	*mockdriver.Driver
+	webDriverBase
 	overrides map[int]json.RawMessage
 }
-
-func (d *webMockDriver) InstallBundle(context.Context, []byte) error { return nil }
 
 func (d *webMockDriver) EvaluateExtractors(context.Context) (map[int]json.RawMessage, error) {
 	return d.overrides, nil
 }
-
-func (d *webMockDriver) NextActionFromV8(context.Context) (json.RawMessage, error) {
-	return nil, nil
-}
-
-func (d *webMockDriver) SetLastAction(context.Context, json.RawMessage) error { return nil }
-
-func (d *webMockDriver) SetLogs(context.Context, json.RawMessage) error { return nil }
 
 // TestRunner_TraceRecordsTheValueTheVerdictUsed fails if the trace and the
 // verdict disagree about an extractor. A witness is only an explanation of a
@@ -56,46 +40,18 @@ func TestRunner_TraceRecordsTheValueTheVerdictUsed(t *testing.T) {
 	state := newHarnessWithSpec(t, engineDisagreementSpec)
 	const pageValue = `"v8"`
 	web := &webMockDriver{
-		Driver:    state.mock,
-		overrides: map[int]json.RawMessage{0: json.RawMessage(pageValue)},
+		webDriverBase: webDriverBase{Driver: state.mock},
+		overrides:     map[int]json.RawMessage{0: json.RawMessage(pageValue)},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		Driver:      web,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 100 * time.Millisecond, Driver: web})
 	if !containsProperty(summary.Violations, "ranInGoja") {
 		t.Fatalf("ranInGoja did not violate, so the page value never reached the verdict: %v",
 			summary.Violations)
 	}
 
-	file, err := os.Open(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-
-	type traceLine struct {
-		Step             int                              `json:"step"`
-		ExtractorChanges map[string]trace.ExtractorChange `json:"extractor_changes"`
-		Witnesses        map[string]trace.Witness         `json:"witnesses"`
-	}
 	changes, witnesses := 0, 0
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var line traceLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			t.Fatalf("trace line decode: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if change, ok := line.ExtractorChanges["engine"]; ok {
 			changes++
 			if got := string(change.Curr); got != pageValue {
@@ -110,9 +66,6 @@ func TestRunner_TraceRecordsTheValueTheVerdictUsed(t *testing.T) {
 					line.Step, name, got, pageValue)
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan trace: %v", err)
 	}
 	if changes == 0 {
 		t.Error("no extractor change reached the trace; nothing was compared")
@@ -143,20 +96,11 @@ globalThis.actions = actions(() => []);
 func TestRunner_PartialExtractorTableIsFatal(t *testing.T) {
 	state := newHarnessWithSpec(t, splitTableSpec)
 	web := &webMockDriver{
-		Driver:    state.mock,
-		overrides: map[int]json.RawMessage{0: json.RawMessage(`"v8"`)},
+		webDriverBase: webDriverBase{Driver: state.mock},
+		overrides:     map[int]json.RawMessage{0: json.RawMessage(`"v8"`)},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    2,
-		Driver:      web,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
+	_, err := state.tryRun(t, Options{MaxSteps: 2, Driver: web})
 	if err == nil {
 		t.Fatal("the run completed on a page that reported 1 of 2 extractors; " +
 			"the second extractor silently kept goja's value")
