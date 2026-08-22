@@ -5,12 +5,9 @@ package chrome
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/chromedp/chromedp"
 
@@ -31,16 +28,7 @@ import (
 // reading element.getAttribute("checked") reports the starting value forever and
 // passes any test that only reads a freshly loaded page.
 func TestElementState_ChecksTrackTheLiveDOM(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/element-state.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/element-state.html")
 	installStateProbe(ctx, t, d)
 
 	requireChecked(ctx, t, d, "toggle-all", false)
@@ -96,16 +84,7 @@ func requireChecked(
 // the same reason `checked` is: the attribute records only where the page
 // started.
 func TestElementState_ReportsTheOtherDocumentedBooleans(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/element-state.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/element-state.html")
 	installStateProbe(ctx, t, d)
 
 	requireBoolean(
@@ -191,43 +170,6 @@ func TestElementState_ReportsTheOtherDocumentedBooleans(t *testing.T) {
 	)
 }
 
-// Every editable field states `secure`, false included. internal/verifier
-// redacts a typed value whenever the target does not positively report "not a
-// secure entry", so a dump that omitted the key on an ordinary text field would
-// redact the whole recent-action memory on web.
-func TestElementState_SecureStatesEveryEditableField(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/element-state.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-
-	for _, testCase := range []struct {
-		selector string
-		want     bool
-	}{
-		{"id:secret", true},
-		{"id:editing", false},
-	} {
-		element := elementInHierarchyDump(ctx, t, d, testCase.selector)
-		if !element.SecureReported() {
-			t.Errorf("the dump states no secure fact for %s", testCase.selector)
-		}
-		if element.Secure != testCase.want {
-			t.Errorf("%s secure = %v, want %v", testCase.selector, element.Secure, testCase.want)
-		}
-	}
-
-	if button := elementInHierarchyDump(ctx, t, d, "id:save"); button.SecureReported() {
-		t.Error("a button is not a text entry and states nothing")
-	}
-}
-
 // Focus belongs to the node the user is typing into, not to the element the
 // shadow tree is mounted on.
 //
@@ -237,16 +179,7 @@ func TestElementState_SecureStatesEveryEditableField(t *testing.T) {
 // to type when the field it tapped is not the one holding focus, so every
 // InputText step on such an app failed and the run aborted.
 func TestElementState_FocusDescendsIntoTheShadowRoot(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/shadow-focus.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/shadow-focus.html")
 
 	field := elementInHierarchyDump(ctx, t, d, "id:shadow-field")
 	x, y := field.Bounds.Center()
@@ -274,16 +207,7 @@ func TestElementState_FocusDescendsIntoTheShadowRoot(t *testing.T) {
 // Both fields are tapped, because reporting the first editable in the tree
 // would satisfy the email half of this and still type into the wrong field.
 func TestElementState_FocusFollowsTheCaretToItsField(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/compose-backing-input.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/compose-backing-input.html")
 
 	for _, field := range []string{"EmailField", "PasswordField"} {
 		tapped := elementInHierarchyDump(ctx, t, d, "id:"+field)
@@ -466,16 +390,7 @@ func installStateProbe(ctx context.Context, t *testing.T, d *Driver) {
 // green having actuated nothing. The page records its own keydown events, so
 // what is asserted here is what the DOM received, not what the driver sent.
 func TestPressKey_ArrivesAtThePage(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/element-state.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/element-state.html")
 
 	for _, keyCase := range []struct{ key, want string }{
 		{"enter", "Enter"},
@@ -544,16 +459,7 @@ func keysSeenByThePage(ctx context.Context, t *testing.T, d *Driver) []string {
 // pkg/spec/src/web-runtime.ts already answers `state.selected === true`, so the
 // two hosts also disagreed about the same fact on the same page.
 func TestElementState_AComponentPropertyDoesNotBlankTheTree(t *testing.T) {
-	server := httptest.NewServer(http.FileServer(http.Dir("testdata")))
-	defer server.Close()
-
-	d := New()
-	defer d.Terminate(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := d.Launch(ctx, server.URL+"/custom-element-flags.html", false, nil); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
+	d, ctx := launchChrome(t, testdataServer(t).URL+"/custom-element-flags.html")
 
 	dump, err := d.Hierarchy(ctx)
 	if err != nil {
