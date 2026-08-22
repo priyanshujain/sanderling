@@ -1702,7 +1702,7 @@ func captureMetrics(ctx context.Context, options Options, logger *slog.Logger, s
 		logger.Warn("metrics capture failed", "step", stepIndex, "err", err)
 		return nil, true
 	}
-	if sample.CPUPercent == 0 && sample.HeapBytes == 0 && sample.TotalMemoryBytes == 0 {
+	if sample.CPUPercent == nil && sample.HeapBytes == 0 && sample.TotalMemoryBytes == 0 {
 		return nil, true
 	}
 	return &trace.Metrics{

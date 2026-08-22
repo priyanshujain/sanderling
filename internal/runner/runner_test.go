@@ -1525,7 +1525,10 @@ func readTraceLines(t *testing.T, directory string) []traceStepLine {
 
 func TestRunner_ParallelFetchCallsAllDriverMethods(t *testing.T) {
 	state := newHarness(t)
-	state.mock.MetricsData = driver.Metrics{CPUPercent: 5.0, HeapBytes: 1024, TotalMemoryBytes: 4096}
+	cpuPercent := 5.0
+	state.mock.MetricsData = driver.Metrics{
+		CPUPercent: &cpuPercent, HeapBytes: 1024, TotalMemoryBytes: 4096,
+	}
 	state.mock.LogEntries = []driver.LogEntry{
 		{UnixMillis: 1000, Level: "E", Tag: "test", Message: "boom"},
 	}
