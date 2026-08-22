@@ -975,6 +975,9 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 	case verifier.ActionKindScroll:
 		fromX, fromY, toX, toY := scrollEndpoints(action, tree)
 		fromX, fromY, toX, toY = clampGestureToSafeArea(fromX, fromY, toX, toY, screenBounds(tree))
+		if fromX == toX && fromY == toY {
+			return actionSkippedZeroDistanceScroll, nil
+		}
 		duration := time.Duration(action.DurationMillis) * time.Millisecond
 		if duration <= 0 {
 			duration = 300 * time.Millisecond
@@ -1032,6 +1035,9 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 			duration = 250 * time.Millisecond
 		}
 		fromX, fromY, toX, toY := clampGestureToSafeArea(action.FromX, action.FromY, action.ToX, action.ToY, screenBounds(tree))
+		if fromX == toX && fromY == toY {
+			return actionSkippedZeroDistanceSwipe, nil
+		}
 		return "", drv.Swipe(ctx, fromX, fromY, toX, toY, duration)
 	case verifier.ActionKindPressKey:
 		if action.Key == "" {
@@ -1766,6 +1772,14 @@ const (
 	actionSkippedUnresolvedSelector actionSkipReason = "unresolved_selector"
 	actionSkippedMissingKey         actionSkipReason = "missing_key"
 	actionSkippedZeroDurationWait   actionSkipReason = "zero_duration_wait"
+	// A gesture whose endpoints coincide is a press and hold the app reads as
+	// a tap, not a drag that moved nothing: dispatching it records an executed
+	// scroll or swipe for a gesture that could never travel. The two are
+	// reported apart because they arrive from different places, a scroll from
+	// a container whose own point became both endpoints and a swipe from
+	// authored coordinates or a clamp that collapsed them.
+	actionSkippedZeroDistanceScroll actionSkipReason = "zero_distance_scroll"
+	actionSkippedZeroDistanceSwipe  actionSkipReason = "zero_distance_swipe"
 	// The driver resolved the action's point and found no element there, so
 	// the gesture was never dispatched. Recorded rather than counted as a
 	// device fault: a run that acts on nothing has to say so.
