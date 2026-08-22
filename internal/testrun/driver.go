@@ -138,11 +138,6 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 		return d, cleanup, nil
 	}
 
-	// Android uses the JVM sidecar, which requires java.
-	if err := preflightDevice(options.Platform); err != nil {
-		return nil, nil, err
-	}
-
 	sidecarDirectory := os.TempDir() + "/sanderling-sidecar"
 	jarPath, err := sidecarassets.Extract(sidecarDirectory)
 	if err != nil {
@@ -169,9 +164,8 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	sidecarCommand.Stdout = stdout
 	sidecarCommand.Stderr = stdout
 	sidecarCommand.Env = android.EnvWithAndroidPlatformTools(os.Environ(), adbPath)
-	// SIGTERM lets the sidecar's shutdown hook stop the iOS XCTest runner.
-	// SIGKILL skips the hook and orphans an xcodebuild session that later
-	// restarts its runner and hijacks the simulator mid-run.
+	// SIGTERM lets the sidecar run its shutdown hook. SIGKILL skips it and
+	// leaves the adb connection and the device-side instrumentation behind.
 	sidecarCommand.Cancel = func() error {
 		return sidecarCommand.Process.Signal(syscall.SIGTERM)
 	}
@@ -190,9 +184,9 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	}
 	driverClient.SetPlatform(options.Platform)
 	driverClient.SetClearStateReinstall(options.Device, options.AndroidAppPath, stdout)
-	// WaitForHealth confirms the gRPC sidecar is up. For iOS, the WDA warmup
-	// (absorbing the XCUITest startup race) runs inside IosDriverBackend.init
-	// in the sidecar - no additional sleep needed here.
+	// WaitForHealth confirms the gRPC sidecar is up. This path is Android
+	// only: iOS has not routed through the sidecar since the native companion
+	// replaced it, and buildDriver returns before reaching here.
 	healthCtx, healthCancel := context.WithTimeout(ctx, sidecarStartupTimeout)
 	healthErr := awaitSidecar(healthCtx, address, sidecarStartupTimeout, func(pollCtx context.Context) error {
 		return driverClient.WaitForHealth(pollCtx, 250e6)

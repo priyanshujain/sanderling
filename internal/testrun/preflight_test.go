@@ -122,27 +122,17 @@ func TestPreflight_AllOK(t *testing.T) {
 	}
 }
 
-func TestPreflightDevice_NonIosIsNoop(t *testing.T) {
-	for _, platform := range []string{"web", "android"} {
-		if err := preflightDevice(platform); err != nil {
-			t.Errorf("%s: preflightDevice should be a no-op, got %v", platform, err)
-		}
-	}
-}
-
-func TestPreflightDevice_JavaFailurePointsAtIosDeviceDoctor(t *testing.T) {
+// Neither iOS path runs a JVM, so preflight must not turn a host away for
+// want of java on the platform that never asks for it.
+func TestPreflight_IosDoesNotRequireJava(t *testing.T) {
 	check := func(name string) error {
 		if name == "java" {
 			return errors.New("java not found")
 		}
 		return nil
 	}
-	err := runPreflightDevice("ios", check)
-	if err == nil || !strings.Contains(err.Error(), "java") {
-		t.Fatalf("expected java error, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "sanderling doctor --platform=ios-device") {
-		t.Errorf("hint must name the ios-device doctor platform: %v", err)
+	if err := runPreflight(context.Background(), "ios", check); err != nil {
+		t.Errorf("ios preflight failed on a host with no java: %v", err)
 	}
 }
 
