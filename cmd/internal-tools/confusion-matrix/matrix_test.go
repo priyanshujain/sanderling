@@ -66,6 +66,15 @@ func TestCrossTabulateScoresEachImplementationIntoOneCell(t *testing.T) {
 			wantExcluded: missingNoUsableRun,
 		},
 		{
+			name: "every run spent its budget outside the app under test",
+			implementation: fixtureImplementation{
+				Name: "impl-10", Model: "Opus 5",
+				Runs:   []fixtureRun{{Seed: 1, PreconditionFailures: 380}},
+				Review: &fixtureReview{Overall: overallNotDefective},
+			},
+			wantExcluded: missingNoUsableRun,
+		},
+		{
 			name: "no verdict was filed",
 			implementation: fixtureImplementation{
 				Name: "impl-07", Model: "Opus 5",

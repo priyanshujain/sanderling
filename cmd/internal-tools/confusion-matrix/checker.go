@@ -30,6 +30,11 @@ const (
 	reasonTimedOut    = "timed out"
 	reasonNonzeroExit = "nonzero exit"
 	reasonTraceError  = "unreadable trace"
+	// reasonPreconditionFailures is the run that exited cleanly having spent its
+	// budget failing preconditions, so its properties judged some other app than
+	// the one under test. Scoring the silence as a checker that fired on nothing
+	// reads a run that never explored as agreement with the reviewer.
+	reasonPreconditionFailures = "precondition failures"
 )
 
 type sweepManifest struct {
@@ -54,13 +59,18 @@ type sweepImplementationRecord struct {
 }
 
 type campaignRunRecord struct {
-	Seed               int64    `json:"seed"`
-	ExitCode           int      `json:"exit_code"`
-	LaunchError        string   `json:"launch_error"`
-	TimedOut           bool     `json:"timed_out"`
-	TraceError         string   `json:"trace_error"`
-	RunDirectory       string   `json:"run_directory"`
-	ViolatedProperties []string `json:"violated_properties"`
+	Seed        int64  `json:"seed"`
+	ExitCode    int    `json:"exit_code"`
+	LaunchError string `json:"launch_error"`
+	TimedOut    bool   `json:"timed_out"`
+	TraceError  string `json:"trace_error"`
+	Steps       int    `json:"steps"`
+	// PreconditionFailures is how many of the run's steps never had the app under
+	// test in front of them. The campaign omits the field when it is zero, so
+	// absence and zero mean the same thing here.
+	PreconditionFailures int      `json:"precondition_failures"`
+	RunDirectory         string   `json:"run_directory"`
+	ViolatedProperties   []string `json:"violated_properties"`
 }
 
 // checkerVerdict is one implementation's whole checker side, pooled across the
@@ -280,6 +290,8 @@ func excludedBecause(record campaignRunRecord) string {
 		return reasonNonzeroExit
 	case record.TraceError != "":
 		return reasonTraceError
+	case record.PreconditionFailures*2 > record.Steps:
+		return reasonPreconditionFailures
 	default:
 		return ""
 	}
