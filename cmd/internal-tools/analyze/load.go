@@ -65,17 +65,30 @@ type runRecord struct {
 	// field, and reading that silence as none would let a denominator of unknown
 	// provenance pass for one that excludes the setup's login.
 	UnattributedActions *int `json:"unattributed_actions"`
+	// PreconditionFailures is how many of the run's steps never had the app under
+	// test in front of them: the startup gate's verdict and every later step the
+	// scope guard could not bring the app back for. The campaign omits the field
+	// when it is zero, so absence and zero mean the same thing here.
+	PreconditionFailures int `json:"precondition_failures"`
 }
 
 // Exclusion reasons. A run that failed or timed out is missing data, not a
 // censored observation: it broke off, so its step count is not exposure the app
 // survived and counting it as one would bias the survival estimate downward.
 const (
-	reasonLaunchError   = "launch error"
-	reasonTimedOut      = "timed out"
-	reasonNonzeroExit   = "nonzero exit"
-	reasonTraceError    = "unreadable trace"
-	reasonMalformedStep = "violation step outside the budget"
+	reasonLaunchError = "launch error"
+	reasonTimedOut    = "timed out"
+	reasonNonzeroExit = "nonzero exit"
+	reasonTraceError  = "unreadable trace"
+	// reasonPreconditionFailures is the run that exited cleanly having spent its
+	// budget failing preconditions. The scope guard records one on every step it
+	// could not bring the app back for and lets the run finish, so nothing else
+	// here separates it from a run that explored the whole budget and found
+	// nothing. A majority is the line: below it the failures are transient and
+	// the run still explored, above it the step count the analysis would censor
+	// at is mostly steps the app was never there for.
+	reasonPreconditionFailures = "precondition failures"
+	reasonMalformedStep        = "violation step outside the budget"
 )
 
 type classifiedRun struct {
@@ -200,6 +213,9 @@ func classify(record runRecord, budget int) classifiedRun {
 		return item
 	case record.TraceError != "":
 		item.ExcludedBecause = reasonTraceError
+		return item
+	case record.PreconditionFailures*2 > record.Steps:
+		item.ExcludedBecause = reasonPreconditionFailures
 		return item
 	}
 	if record.FirstViolationOriginStep == nil {
