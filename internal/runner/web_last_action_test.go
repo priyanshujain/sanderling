@@ -130,7 +130,7 @@ func TestRunner_WebInstallsTheStepsLogsInThePage(t *testing.T) {
 // be dropped in silence, under a comment claiming it was warned about.
 func TestRunner_ReportsALogFetchItCouldNotMake(t *testing.T) {
 	state := newHarnessWithSpec(t, lastActionSpec)
-	state.mock.Failures[mockdriver.ActionRecentLogs] = errors.New("adb: device offline")
+	state.mock.Failures[mockdriver.ActionRecentLogs] = mockdriver.FailurePlan{Err: errors.New("adb: device offline")}
 
 	var buffer bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelWarn}))

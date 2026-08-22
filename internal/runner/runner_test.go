@@ -365,9 +365,9 @@ func TestRenderSummary_CountsTheStepsNothingJudged(t *testing.T) {
 // green iOS summary is indistinguishable from one over a silent app.
 func TestRunner_ReadsTheDriverCannotMakeAreNotPassedChecks(t *testing.T) {
 	state := newHarnessWithSpec(t, logErrorSpec)
-	state.mock.Failures[mockdriver.ActionRecentLogs] = driver.ErrNotSupported
-	state.mock.Failures[mockdriver.ActionMetrics] = driver.ErrNotSupported
-	state.mock.Failures[mockdriver.ActionHealth] = driver.ErrNotSupported
+	state.mock.Failures[mockdriver.ActionRecentLogs] = mockdriver.FailurePlan{Err: driver.ErrNotSupported}
+	state.mock.Failures[mockdriver.ActionMetrics] = mockdriver.FailurePlan{Err: driver.ErrNotSupported}
+	state.mock.Failures[mockdriver.ActionHealth] = mockdriver.FailurePlan{Err: driver.ErrNotSupported}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -877,7 +877,7 @@ func TestTraceActionFor_RecordsKindSpecificFields(t *testing.T) {
 
 func TestRunner_LogsWaitForIdleDriverErrors(t *testing.T) {
 	state := newHarness(t)
-	state.mock.Failures[mockdriver.ActionWaitForIdle] = errors.New("sidecar lost gRPC stream")
+	state.mock.Failures[mockdriver.ActionWaitForIdle] = mockdriver.FailurePlan{Err: errors.New("sidecar lost gRPC stream")}
 
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -976,7 +976,7 @@ func TestApplyAction_InputTextSkipsEraseWhenTargetEmpty(t *testing.T) {
 func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 	t.Run("selector focus tap fails", func(t *testing.T) {
 		driverMock := mockdriver.New()
-		driverMock.Failures[mockdriver.ActionTapSelector] = errors.New("adb unreachable")
+		driverMock.Failures[mockdriver.ActionTapSelector] = mockdriver.FailurePlan{Err: errors.New("adb unreachable")}
 		action := verifier.Action{Kind: verifier.ActionKindInputText, On: "id:username", Text: "alice"}
 
 		_, err := applyAction(context.Background(), driverMock, action, nil)
@@ -989,7 +989,7 @@ func TestApplyAction_InputTextSurfacesFocusTapError(t *testing.T) {
 	})
 	t.Run("coordinate focus tap fails", func(t *testing.T) {
 		driverMock := mockdriver.New()
-		driverMock.Failures[mockdriver.ActionTap] = errors.New("tap driver error")
+		driverMock.Failures[mockdriver.ActionTap] = mockdriver.FailurePlan{Err: errors.New("tap driver error")}
 		action := verifier.Action{Kind: verifier.ActionKindInputText, X: 10, Y: 20, Text: "alice"}
 
 		_, err := applyAction(context.Background(), driverMock, action, nil)
@@ -1639,7 +1639,7 @@ func TestRunner_ASourceAskedAndHandedNothingSaysSo(t *testing.T) {
 // here has an action to offer, and no step of this run gets to hear it.
 func TestRunner_AHeldStepIsNotRecordedAsASourceThatDeclined(t *testing.T) {
 	state := newHarness(t)
-	state.mock.Failures[mockdriver.ActionSnapshot] = errors.New("adb: device offline")
+	state.mock.Failures[mockdriver.ActionSnapshot] = mockdriver.FailurePlan{Err: errors.New("adb: device offline")}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

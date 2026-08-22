@@ -100,7 +100,7 @@ func TestProgrammableScreenshotIsReturned(t *testing.T) {
 func TestFailureInjection(t *testing.T) {
 	boom := errors.New("boom")
 	mock := New()
-	mock.Failures[ActionTap] = boom
+	mock.Failures[ActionTap] = FailurePlan{Err: boom}
 
 	if err := mock.Tap(context.Background(), 0, 0); !errors.Is(err, boom) {
 		t.Fatalf("expected boom, got %v", err)
