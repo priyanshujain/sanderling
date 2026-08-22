@@ -119,7 +119,7 @@ func TestSelectors_ResolveTheSameElementsAsTheWebRuntime(t *testing.T) {
 			// Every name for the accessible label has to name one element. Four
 			// of the six reached it on one host only: label and
 			// accessibilityLabel aliased onto accessibilityText alone, which
-			// the ios sidecar writes and this dump does not, and alias
+			// the ios companion writes and this dump does not, and alias
 			// expansion is one level; ariaLabel and contentDescription aliased
 			// onto nothing. accessibilityText was the mirror image, resolving
 			// against the dump and reaching no DOM attribute of that name.

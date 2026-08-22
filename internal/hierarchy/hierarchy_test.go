@@ -695,7 +695,7 @@ func TestAccessibilityLabelAliasesReachContentDesc(t *testing.T) {
 	}
 }
 
-// The iOS sidecar writes the same fact under accessibilityText, which the two
+// The iOS companion writes the same fact under accessibilityText, which the two
 // names already reached and have to keep reaching.
 func TestAccessibilityLabelAliasesStillReachAccessibilityText(t *testing.T) {
 	tree, _ := Parse(iosAttrDump)
