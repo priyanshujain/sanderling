@@ -98,8 +98,8 @@ type ViolationRecord struct {
 }
 
 // Run drives the evaluate/act loop until the duration elapses or the context
-// is canceled. The caller is responsible for launching the app before Run is
-// called and for terminating it afterwards.
+// is canceled. It relaunches the app whenever the foreground check says it is
+// not on top; the caller terminates it afterwards.
 func Run(ctx context.Context, options Options) (Summary, error) {
 	if err := validate(options); err != nil {
 		return Summary{}, err
@@ -192,16 +192,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var logs []verifier.LogEntry
 		var logsRead, metricsRead bool
 
-		// gctx is bound to the errgroup so a returned error (or outer
-		// cancellation) propagates to every sibling read rather than leaving
-		// one blocked on a hung device, and to observationTimeout so a read
-		// that never answers ends the step instead of the run.
+		// gctx carries observationTimeout so a read that never answers ends
+		// the step instead of the run.
 		observeCtx, observeCancel := context.WithTimeout(ctx, observationTimeout)
 		g, gctx := errgroup.WithContext(observeCtx)
 		si := stepIndex
-		// fetchSyncedState issues a single Snapshot RPC so hierarchy and
-		// screenshot describe the same frame, then re-fetches the pair
-		// while the tree still looks transitional.
 		g.Go(func() error {
 			tree, screenshotPNG, transitional, hierarchyErr = fetchSyncedState(
 				gctx, options, logger, si, rereadHierarchy)
@@ -242,7 +237,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		if tree != nil {
 			treeSize = len(tree.Elements)
 		}
-		// A nil or empty tree means the sidecar's hierarchy fetch failed or
+		// A nil or empty tree means the driver's hierarchy fetch failed or
 		// returned nothing (e.g. transient device-side timeout). Pushing it
 		// would let spec extractors call findAll() and chain .map() on a null
 		// result; treat it like a transitional capture so the verifier is
@@ -1467,12 +1462,11 @@ const (
 // pair shows the same UI moment. If the hierarchy looks like a NavHost
 // cross-fade (multiple route-level *Screen tags), the function waits briefly
 // and re-fetches the pair, up to transitionalRetryAttempts times. This
-// handles transitions whose async work begins after the sidecar's settle
+// handles transitions whose async work begins after the driver's settle
 // poll has already exited.
 //
-// The driver's Snapshot RPC captures both reads under a backend-side mutex
-// so they describe the same on-device frame; the retry exists for the
-// orthogonal case where the frame itself is transitional.
+// Snapshot pairs the two reads as closely as the driver can, not atomically;
+// the retry exists for the orthogonal case where the frame is transitional.
 //
 // The transitional return reports whether the retry budget was exhausted
 // on a still-transitional tree, or (when reread is set) whether a second
@@ -1879,11 +1873,10 @@ func applyBound(action verifier.Action) time.Duration {
 	return applyTimeout + time.Duration(action.DurationMillis)*time.Millisecond
 }
 
-// isWDADrop reports that the sidecar could not restart the iOS XCTest
-// runner: the channel is gone for good and the run must abort. Transient
-// drops are classified by the sidecar itself (it reconnects and surfaces
-// UNAVAILABLE), so matching on raw exception text like "ConnectException"
-// here would kill runs the sidecar already recovered.
+// isWDADrop matches the phrase the JVM sidecar's WdaRecovery threw when it
+// could not restart the iOS XCTest runner. iOS no longer routes through the
+// sidecar and nothing constructs WdaRecovery any more, so no run reaches this
+// path; the iOS driver restarts its own companion instead (withRecovery).
 func isWDADrop(err error) bool {
 	return strings.Contains(err.Error(), "WDA reconnect failed")
 }
