@@ -21,6 +21,14 @@ var ErrGestureUndelivered = errors.New("gesture reached no element")
 // ErrGestureUndelivered and the runner records it as an unresolved selector.
 var ErrSelectorMatchedNothing = errors.New("selector matched no element")
 
+// ErrNotSupported reports a contract method the driver has no way to answer on
+// its platform. It is neither a device fault nor an observation: a caller that
+// reads the zero value as one records a reading it never took, which is what
+// lets a property over a channel the driver never opened hold vacuously with
+// nothing in the run's output saying so. Callers check it with errors.Is and
+// record that the read did not happen.
+var ErrNotSupported = errors.New("driver: capability not supported")
+
 // DeviceDriver abstracts the platform-specific UI automation backend. v0.1
 // surface matches proto/driverpb/driver.proto. The sidecar implementation
 // lives under driver/sidecar; the web implementation under driver/chrome;
@@ -50,15 +58,23 @@ type DeviceDriver interface {
 	// independent reads can land on different frames during transitions.
 	Snapshot(ctx context.Context) (string, Image, error)
 	// RecentLogs returns log entries at or after `since`, filtered to
-	// `minLevel` or above. An empty minLevel defaults to "E".
+	// `minLevel` or above. An empty minLevel defaults to "E". A driver with
+	// no log source returns ErrNotSupported rather than an empty slice: the
+	// two are the same answer to a spec reading state.logs, and only one of
+	// them means the app logged nothing.
 	RecentLogs(ctx context.Context, since time.Time, minLevel string) ([]LogEntry, error)
 
 	WaitForIdle(ctx context.Context, duration time.Duration) error
+	// Health reports whether the backend is attached and serving. A driver
+	// that runs no readiness check returns ErrNotSupported; Ready is a
+	// verdict, so reporting it true without one tells the caller a check
+	// passed that never ran.
 	Health(ctx context.Context) (Health, error)
 	// Metrics samples the app's CPU and memory at the time of the call.
 	// CPUPercent is percent of a single core (multi-core apps can exceed
 	// 100). HeapBytes is resident set size; TotalMemoryBytes includes
-	// native allocations.
+	// native allocations. A driver that cannot sample returns
+	// ErrNotSupported rather than a zeroed sample.
 	Metrics(ctx context.Context, bundleID string) (Metrics, error)
 }
 

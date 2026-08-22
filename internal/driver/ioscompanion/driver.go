@@ -1107,21 +1107,24 @@ func (d *Driver) WaitForIdle(ctx context.Context, _ time.Duration) error {
 	return nil
 }
 
-// RecentLogs returns no entries: the companion log RPC is a follow-up, so v1
-// reports an empty slice rather than failing. Every property reading state.logs
-// therefore holds vacuously on iOS and nothing says so; closing it means
-// tailing idb's streaming log RPC and mapping os_log levels onto the
-// single-letter scale driver.LogEntry declares.
+// RecentLogs, Metrics and Health have no companion RPC behind them yet, so
+// each reports driver.ErrNotSupported. An empty log slice, a zeroed sample and
+// a hardcoded Ready are the same values a working read can return, so answering
+// with them told the runner three checks had passed that never ran and left
+// every property reading state.logs holding vacuously with nothing saying so.
+// Closing them means tailing the streaming log RPC and mapping os_log levels
+// onto the single-letter scale driver.LogEntry declares, sampling the app
+// process, and probing the bridge for readiness.
 func (d *Driver) RecentLogs(_ context.Context, _ time.Time, _ string) ([]driver.LogEntry, error) {
-	return []driver.LogEntry{}, nil
+	return nil, driver.ErrNotSupported
 }
 
 func (d *Driver) Metrics(_ context.Context, _ string) (driver.Metrics, error) {
-	return driver.Metrics{}, nil
+	return driver.Metrics{}, driver.ErrNotSupported
 }
 
 func (d *Driver) Health(_ context.Context) (driver.Health, error) {
-	return driver.Health{Ready: true, Platform: "ios"}, nil
+	return driver.Health{}, driver.ErrNotSupported
 }
 
 // ForegroundApp reports the foreground app. It returns the app under test when
