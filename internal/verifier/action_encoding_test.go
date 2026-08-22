@@ -1,13 +1,13 @@
 package verifier
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/priyanshujain/sanderling/internal/bundler"
 )
+
+// The picker under test comes from the runtime entry, so the spec beside it
+// only has to satisfy Load's demand for a properties global.
+const propertiesOnlySpec = "globalThis.properties = {};\n"
 
 // legacyRuntimeEntry stands in for the @sanderling/spec 0.0.3 runtime entry:
 // it installs the picker and declares nothing, and its authored Scroll carries
@@ -33,28 +33,13 @@ Object.defineProperty(target, "__sanderlingNextAction__", {
 });
 `
 
-func bundleWithRuntimeEntry(t *testing.T, runtimeSource string) string {
-	t.Helper()
-	dir := t.TempDir()
-	specPath := filepath.Join(dir, "spec.ts")
-	if err := os.WriteFile(specPath, []byte("globalThis.properties = {};\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runtimePath := filepath.Join(dir, "legacy-runtime.ts")
-	if err := os.WriteFile(runtimePath, []byte(runtimeSource), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	bundle, err := bundler.Bundle(bundler.Options{EntryFile: specPath, RuntimeFile: runtimePath})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(bundle.JavaScript)
-}
-
 func TestLoad_RefusesABundleThatDeclaresNoActionEncoding(t *testing.T) {
 	verifier := newVerifier(t)
 
-	err := verifier.Load(bundleWithRuntimeEntry(t, legacyRuntimeEntry))
+	err := verifier.Load(bundleSpec(t, bundleOptions{
+		SpecSource:    propertiesOnlySpec,
+		RuntimeSource: legacyRuntimeEntry,
+	}))
 	if err == nil {
 		t.Fatal("Load accepted a bundle that declares no action encoding; a spec " +
 			"bundled by a package older than this binary dispatches every scroll " +
@@ -76,7 +61,10 @@ func TestLoad_RefusesABundleThatDeclaresADifferentActionEncoding(t *testing.T) {
 		`const target = globalThis as Record<string, unknown>;
 target.__sanderlingActionEncoding__ = "action-wire/1";`, 1)
 
-	err := verifier.Load(bundleWithRuntimeEntry(t, runtime))
+	err := verifier.Load(bundleSpec(t, bundleOptions{
+		SpecSource:    propertiesOnlySpec,
+		RuntimeSource: runtime,
+	}))
 	if err == nil {
 		t.Fatal("Load accepted a bundle built against a different action encoding")
 	}
@@ -119,7 +107,11 @@ target.__sanderlingBundleCheck__ = true;
 func TestLoad_AcceptsABundleThatInstallsNoPicker(t *testing.T) {
 	verifier := newVerifier(t)
 
-	if err := verifier.Load(bundleWithRuntimeEntry(t, pickerFreeRuntimeEntry)); err != nil {
+	bundle := bundleSpec(t, bundleOptions{
+		SpecSource:    propertiesOnlySpec,
+		RuntimeSource: pickerFreeRuntimeEntry,
+	})
+	if err := verifier.Load(bundle); err != nil {
 		t.Fatalf("Load refused a bundle that generates no actions: %v", err)
 	}
 }

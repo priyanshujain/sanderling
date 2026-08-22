@@ -3,46 +3,11 @@ package verifier
 import (
 	"errors"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 
-	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
 )
-
-// bundleInlineSpec bundles an inline spec through the real @sanderling/spec API
-// and goja runtime entry, so the bundle installs __sanderlingSetupAction__ the
-// way the CLI does.
-func bundleInlineSpec(t *testing.T, source string) string {
-	t.Helper()
-	dir := t.TempDir()
-	specPath := filepath.Join(dir, "spec.ts")
-	if err := os.WriteFile(specPath, []byte(source), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	abs := func(rel string) string {
-		path, err := filepath.Abs(rel)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	bundle, err := bundler.Bundle(bundler.Options{
-		EntryFile:   specPath,
-		RuntimeFile: abs("../../pkg/spec/src/goja-runtime.ts"),
-		Aliases: map[string]string{
-			"@sanderling/spec":                     abs("../../pkg/spec/src/index.ts"),
-			"@sanderling/spec/defaults":            abs("../../pkg/spec/src/defaults/index.ts"),
-			"@sanderling/spec/defaults/properties": abs("../../pkg/spec/src/defaults/properties.ts"),
-		},
-	})
-	if err != nil {
-		t.Fatalf("bundle: %v", err)
-	}
-	return string(bundle.JavaScript)
-}
 
 func loadBundled(t *testing.T, source, treeJSON string) *Verifier {
 	t.Helper()
@@ -50,7 +15,7 @@ func loadBundled(t *testing.T, source, treeJSON string) *Verifier {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Load(bundleInlineSpec(t, source)); err != nil {
+	if err := v.Load(bundleSpec(t, bundleOptions{SpecSource: source})); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	tree, err := hierarchy.Parse(treeJSON)

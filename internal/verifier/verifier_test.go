@@ -34,41 +34,67 @@ func mustLoad(t *testing.T, verifier *Verifier, source string) {
 	}
 }
 
-// bundleActionSpec bundles an inline TS spec authored against @sanderling/spec
-// together with the goja runtime entry, so loading it installs
-// __sanderlingNextAction__ (the shared picker). Action targets must be resolved
-// ax elements (carrying x/y) or builtins; raw selector strings no longer
-// resolve to coordinates in the unified contract.
-func bundleActionSpec(t *testing.T, specSource string) string {
+// bundleOptions names the entry of a test bundle: SpecSource is written to a
+// temporary file, SpecFile is a path already on disk, and setting both is a
+// mistake. RuntimeSource stands in for the shipped goja runtime entry so a
+// test can bundle against a picker this binary does not ship.
+type bundleOptions struct {
+	SpecSource    string
+	SpecFile      string
+	RuntimeSource string
+}
+
+// bundleSpec bundles through the real @sanderling/spec API and runtime entry,
+// so loading the result installs __sanderlingNextAction__ and
+// __sanderlingSetupAction__ the way the CLI does.
+func bundleSpec(t *testing.T, options bundleOptions) string {
 	t.Helper()
-	dir := t.TempDir()
-	specPath := filepath.Join(dir, "spec.ts")
-	if err := os.WriteFile(specPath, []byte(specSource), 0o600); err != nil {
-		t.Fatal(err)
+	directory := t.TempDir()
+	absolute := func(relative string) string {
+		path, err := filepath.Abs(relative)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return path
 	}
-	apiPath, err := filepath.Abs("../../pkg/spec/src/index.ts")
-	if err != nil {
-		t.Fatal(err)
+	write := func(name, contents string) string {
+		path := filepath.Join(directory, name)
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
 	}
-	runtimePath, err := filepath.Abs("../../pkg/spec/src/goja-runtime.ts")
-	if err != nil {
-		t.Fatal(err)
+
+	specPath := write("spec.ts", options.SpecSource)
+	if options.SpecFile != "" {
+		specPath = absolute(options.SpecFile)
 	}
+	runtimePath := absolute("../../pkg/spec/src/goja-runtime.ts")
+	if options.RuntimeSource != "" {
+		runtimePath = write("runtime-entry.ts", options.RuntimeSource)
+	}
+
 	bundle, err := bundler.Bundle(bundler.Options{
 		EntryFile:   specPath,
 		RuntimeFile: runtimePath,
-		Aliases:     map[string]string{"@sanderling/spec": apiPath},
+		Aliases: map[string]string{
+			"@sanderling/spec":                     absolute("../../pkg/spec/src/index.ts"),
+			"@sanderling/spec/defaults":            absolute("../../pkg/spec/src/defaults/index.ts"),
+			"@sanderling/spec/defaults/properties": absolute("../../pkg/spec/src/defaults/properties.ts"),
+		},
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("bundle: %v", err)
 	}
 	return string(bundle.JavaScript)
 }
 
-// loadActionSpec bundles and loads an inline authored spec into the verifier.
+// Action targets in specSource must be resolved ax elements (carrying x/y) or
+// builtins; raw selector strings no longer resolve to coordinates in the
+// unified contract.
 func loadActionSpec(t *testing.T, verifier *Verifier, specSource string) {
 	t.Helper()
-	mustLoad(t, verifier, bundleActionSpec(t, specSource))
+	mustLoad(t, verifier, bundleSpec(t, bundleOptions{SpecSource: specSource}))
 }
 
 const helloSpec = `
