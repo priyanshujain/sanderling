@@ -20,7 +20,7 @@ The spec package, in your project:
 npm install --save-dev @sanderling/spec
 ```
 
-Both come from the same release tag, and the CLI bundles the package's TypeScript sources when it evaluates your spec, so upgrade them together. Pre-releases are published under npm's `next` tag; `npm install @sanderling/spec` gives you the current stable one.
+Both come from the same release tag, and the CLI bundles the package's TypeScript sources when it evaluates your spec, so upgrade them together. A pair that disagrees about how an action is encoded fails the run at startup, naming both encodings, rather than dispatching every action successfully into the wrong gesture. Pre-releases are published under npm's `next` tag; `npm install @sanderling/spec` gives you the current stable one.
 
 ## Check your environment
 
