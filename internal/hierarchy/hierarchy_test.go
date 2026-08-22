@@ -78,6 +78,59 @@ func TestBoundsCenter(t *testing.T) {
 	}
 }
 
+func TestBoundsRightAndBottomAreExclusive(t *testing.T) {
+	dump := `{
+	  "attributes": {"resource-id": "screen", "bounds": "[0,0,1080,2340]"},
+	  "children": [
+	    {"attributes": {"resource-id": "upper", "bounds": "[0,0,100,50]"}, "children": []},
+	    {"attributes": {"resource-id": "lower", "bounds": "[0,50,100,100]"}, "children": []},
+	    {"attributes": {"resource-id": "hairlineFlat", "bounds": "[7,3,8,4]"}, "children": []},
+	    {"attributes": {"resource-id": "hairlinePairs", "bounds": "[7,3][8,4]"}, "children": []}
+	  ]
+	}`
+	tree, err := Parse(dump)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	for _, want := range []struct {
+		selector                        string
+		width, height, centerX, centerY int
+	}{
+		{"id:screen", 1080, 2340, 540, 1170},
+		{"id:upper", 100, 50, 50, 25},
+		{"id:lower", 100, 50, 50, 75},
+		{"id:hairlineFlat", 1, 1, 7, 3},
+		{"id:hairlinePairs", 1, 1, 7, 3},
+	} {
+		t.Run(want.selector, func(t *testing.T) {
+			element := tree.Find(want.selector)
+			if element == nil {
+				t.Fatalf("no match for %s", want.selector)
+			}
+			if got := element.Bounds.Width(); got != want.width {
+				t.Errorf("width %d, want %d", got, want.width)
+			}
+			if got := element.Bounds.Height(); got != want.height {
+				t.Errorf("height %d, want %d", got, want.height)
+			}
+			x, y := element.Bounds.Center()
+			if x != want.centerX || y != want.centerY {
+				t.Errorf("center %d,%d, want %d,%d", x, y, want.centerX, want.centerY)
+			}
+		})
+	}
+
+	upper, lower := tree.Find("id:upper"), tree.Find("id:lower")
+	if upper.Bounds.Bottom != lower.Bounds.Top {
+		t.Fatalf("fixture stopped abutting: %d, %d", upper.Bounds.Bottom, lower.Bounds.Top)
+	}
+	if upper.Bounds.Height()+lower.Bounds.Height() != lower.Bounds.Bottom-upper.Bounds.Top {
+		t.Errorf("abutting rows cover %d+%d of %d",
+			upper.Bounds.Height(), lower.Bounds.Height(), lower.Bounds.Bottom-upper.Bounds.Top)
+	}
+}
+
 func TestParseEmpty(t *testing.T) {
 	tree, err := Parse("")
 	if err != nil {

@@ -5,10 +5,10 @@
 //
 //	String selectors (global scan or element-scoped):
 //	  attribute:value      - substring match; exact for "true"/"false" booleans
-//	  id:<suffix>          - substring on resource-id / identifier (backward compat)
+//	  id:<value>           - exact on resource-id / identifier, or on the local name after ":id/"
 //	  idPrefix:<prefix>    - starts-with on resource-id / identifier, package prefix skipped
 //	  text:<value>         - substring on text attribute, innermost match only
-//	  desc:<value>         - substring on content-desc / accessibilityText
+//	  desc:<value>         - exact on content-desc / accessibilityText, or on the part before ", " in an iOS merged label
 //	  descPrefix:<prefix>  - starts-with on content-desc / accessibilityText
 //	  tag:<value>          - exact match on the element's tag name (web)
 //
@@ -40,7 +40,9 @@ import (
 	"strings"
 )
 
-// Bounds is an inclusive rectangle in device pixels.
+// Bounds is a rectangle in device pixels. Right and Bottom are exclusive, which
+// is how uiautomator, getBoundingClientRect and an XCUIElement frame all report
+// them, so Width is Right - Left and a tap at Right lands on the next element.
 type Bounds struct {
 	Left   int `json:"left"`
 	Top    int `json:"top"`
@@ -1020,10 +1022,13 @@ func parseSelector(selector string) (string, string, bool) {
 	return selector[:index], selector[index+1:], true
 }
 
-// boundsPattern matches "[l,t,r,b]" (4-value Android/sidecar format).
+// boundsPattern matches "[l,t,r,b]", which the chrome driver and the sidecar's
+// stub backend emit.
 var boundsPattern = regexp.MustCompile(`^\[(-?\d+),(-?\d+),(-?\d+),(-?\d+)\]$`)
 
-// boundsPatternTwo matches "[x1,y1][x2,y2]" (iOS XCUITest format).
+// boundsPatternTwo matches "[x1,y1][x2,y2]", which both device backends emit:
+// it is uiautomator's own form on Android and what hierarchymap builds from an
+// XCUIElement frame on iOS.
 var boundsPatternTwo = regexp.MustCompile(`^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$`)
 
 func parseBounds(text string) (Bounds, error) {
