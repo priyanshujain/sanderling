@@ -79,6 +79,11 @@ type Summary struct {
 	// A run at zero never touched the app, whatever its step count says, so its
 	// empty violation list is the reading of an instrument that measured nothing.
 	DispatchedActions int
+	// UnsupportedReads names the device reads the driver could not perform at
+	// all, deduped. A property over a channel the driver never opened holds on
+	// every step and reports as a property that passed, so a run whose logs
+	// were never read has to say the logs were never read.
+	UnsupportedReads []string
 	// GeneratorActions counts the dispatched actions the generator chose. The
 	// spec's setup drives the app into its starting position before the
 	// generator is consulted, so a run at zero here explored nothing however
@@ -132,7 +137,11 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	_, pageExtractors := extractorSource.(webSource)
 	exceptionReporter, _ := options.Driver.(driver.ExceptionReporter)
 	navigationReporter, _ := options.Driver.(driver.NavigationReporter)
-	rereadHierarchy := driverIsAndroid(ctx, options, logger)
+	unsupportedReads := map[string]bool{}
+	rereadHierarchy, healthRead := driverIsAndroid(ctx, options, logger)
+	if !healthRead {
+		noteUnsupportedRead(unsupportedReads, unsupportedReadHealth, logger)
+	}
 
 	summary := Summary{StartTime: time.Now()}
 	deadline := summary.StartTime.Add(options.Duration)
@@ -181,6 +190,7 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 		var screenshotPNG []byte
 		var metrics *trace.Metrics
 		var logs []verifier.LogEntry
+		var logsRead, metricsRead bool
 
 		// gctx is bound to the errgroup so a returned error (or outer
 		// cancellation) propagates to every sibling read rather than leaving
@@ -198,18 +208,24 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 			return nil
 		})
 		g.Go(func() error {
-			metrics = captureMetrics(gctx, options, logger, si)
+			metrics, metricsRead = captureMetrics(gctx, options, logger, si)
 			return nil
 		})
 		logSince := lastLogTime
 		g.Go(func() error {
-			logs = collectLogs(gctx, options.Driver, logger, si, logSince)
+			logs, logsRead = collectLogs(gctx, options.Driver, logger, si, logSince)
 			return nil
 		})
 		// All goroutines write to local variables and return nil, so the Wait
 		// error is always nil; ignored intentionally.
 		_ = g.Wait()
 		observeCancel()
+		if !logsRead {
+			noteUnsupportedRead(unsupportedReads, unsupportedReadLogs, logger)
+		}
+		if !metricsRead {
+			noteUnsupportedRead(unsupportedReads, unsupportedReadMetrics, logger)
+		}
 
 		navigations := collectNavigations(ctx, navigationReporter, logger, stepIndex)
 
@@ -565,13 +581,29 @@ func Run(ctx context.Context, options Options) (Summary, error) {
 	}
 
 	summary.UnsupportedVerbs = options.Verifier.UnsupportedVerbs()
+	if len(unsupportedReads) > 0 {
+		summary.UnsupportedReads = slices.Sorted(maps.Keys(unsupportedReads))
+	}
 	summary.EndTime = time.Now()
 	return summary, nil
 }
 
+// noteUnsupportedRead records a device read the driver cannot perform and warns
+// the first time it is seen, so the live log says once what the summary says at
+// the end instead of repeating it on every step of the run.
+func noteUnsupportedRead(reads map[string]bool, name string, logger *slog.Logger) {
+	if reads[name] {
+		return
+	}
+	reads[name] = true
+	logger.Warn("the driver cannot perform this read; anything reading it holds vacuously",
+		"read", name)
+}
+
 // RenderSummary writes the human-facing run summary: step count, each violation
-// record, and any unsupported verbs. The wall-clock duration is excluded so the
-// output is deterministic and snapshot-testable; the CLI prints it separately.
+// record, the device reads the driver could not make, and any unsupported
+// verbs. The wall-clock duration is excluded so the output is deterministic
+// and snapshot-testable; the CLI prints it separately.
 func RenderSummary(w io.Writer, summary Summary, platform string) {
 	fmt.Fprintf(w, "\nrun complete: %d steps, %d driven by the generator\n",
 		summary.Steps, summary.GeneratorActions)
@@ -601,6 +633,10 @@ func RenderSummary(w io.Writer, summary Summary, platform string) {
 	if summary.SkippedVerification > 0 {
 		fmt.Fprintf(w, "%d step(s) judged by nothing: the screen was still moving when it was read\n",
 			summary.SkippedVerification)
+	}
+	if len(summary.UnsupportedReads) > 0 {
+		fmt.Fprintf(w, "never read on %s: %s; every property over them held vacuously\n",
+			platform, strings.Join(summary.UnsupportedReads, ", "))
 	}
 	if len(summary.UnsupportedVerbs) > 0 {
 		fmt.Fprintf(w, "unsupported on %s: %s\n",
@@ -1068,19 +1104,23 @@ func applyAction(ctx context.Context, drv driver.DeviceDriver, action verifier.A
 // whole evidence base for state.logs, so a step that could not make it leaves
 // every log property (the default noLogcatErrors included) holding on an empty
 // slice, and that has to be visible in the run's output rather than read as the
-// app having logged nothing.
+// app having logged nothing. The second result is false when the driver has no
+// log source at all, which is that same vacuity for the whole run.
 func collectLogs(
 	ctx context.Context,
 	drv driver.DeviceDriver,
 	logger *slog.Logger,
 	step int,
 	since time.Time,
-) []verifier.LogEntry {
+) ([]verifier.LogEntry, bool) {
 	entries, err := drv.RecentLogs(ctx, since, "E")
+	if errors.Is(err, driver.ErrNotSupported) {
+		return nil, false
+	}
 	if err != nil {
 		logger.Warn("log fetch failed; log properties hold vacuously this step",
 			"step", step, "err", err)
-		return nil
+		return nil, true
 	}
 	result := make([]verifier.LogEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -1091,7 +1131,7 @@ func collectLogs(
 			Message:    entry.Message,
 		})
 	}
-	return result
+	return result, true
 }
 
 // collectExceptions reads the app's captured uncaught errors. Like log
@@ -1575,13 +1615,20 @@ func structuralShape(tree *hierarchy.Tree) string {
 // never repeats the RPC. It gates the reread: #75 is about Compose composition,
 // and web and iOS have their own settle paths and no measurement saying an
 // extra hierarchy read there is cheap. An unreadable answer is not android.
-func driverIsAndroid(ctx context.Context, options Options, logger *slog.Logger) bool {
+//
+// healthRead is false when the driver runs no readiness check at all, which is
+// not a device fault: the run records a check it never made rather than a
+// device it never confirmed was ready.
+func driverIsAndroid(ctx context.Context, options Options, logger *slog.Logger) (isAndroid, healthRead bool) {
 	health, err := options.Driver.Health(ctx)
+	if errors.Is(err, driver.ErrNotSupported) {
+		return false, false
+	}
 	if err != nil {
 		logger.Warn("health read failed; not rereading the hierarchy", "err", err)
-		return false
+		return false, true
 	}
-	return health.Platform == "android"
+	return health.Platform == "android", true
 }
 
 func traceActionFor(action verifier.Action, tree *hierarchy.Tree) *trace.Action {
@@ -1645,23 +1692,30 @@ func stampSelectorTarget(traceAction *trace.Action, action verifier.Action, tree
 	}
 }
 
-func captureMetrics(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) *trace.Metrics {
+// captureMetrics samples the app's CPU and memory for this step's trace line.
+// The second result is false when the driver cannot sample at all, so a trace
+// with no metrics on any step says the sampler was never there rather than
+// reading as an app that used nothing.
+func captureMetrics(ctx context.Context, options Options, logger *slog.Logger, stepIndex int) (*trace.Metrics, bool) {
 	if options.BundleID == "" {
-		return nil
+		return nil, true
 	}
 	sample, err := options.Driver.Metrics(ctx, options.BundleID)
+	if errors.Is(err, driver.ErrNotSupported) {
+		return nil, false
+	}
 	if err != nil {
 		logger.Warn("metrics capture failed", "step", stepIndex, "err", err)
-		return nil
+		return nil, true
 	}
 	if sample.CPUPercent == 0 && sample.HeapBytes == 0 && sample.TotalMemoryBytes == 0 {
-		return nil
+		return nil, true
 	}
 	return &trace.Metrics{
 		CPUPercent:       sample.CPUPercent,
 		HeapBytes:        sample.HeapBytes,
 		TotalMemoryBytes: sample.TotalMemoryBytes,
-	}
+	}, true
 }
 
 // violationRecords groups newly-violated properties by the step their witness
@@ -1752,6 +1806,16 @@ func encodeResiduals(residuals map[string]ltl.Formula) (map[string]json.RawMessa
 	}
 	return encoded, firstErr
 }
+
+// The device reads a driver can be missing. Each names an evidence source the
+// run would otherwise report as read and empty: no log lines, no samples, a
+// device confirmed ready. They reach the summary so a green run that never
+// opened one of them cannot read as a run that opened it and found nothing.
+const (
+	unsupportedReadLogs    = "device_logs"
+	unsupportedReadMetrics = "app_metrics"
+	unsupportedReadHealth  = "device_health"
+)
 
 // actionSkipReason names why a chosen action was never dispatched. It is
 // recorded on the step so a count of executed actions is not inflated by the

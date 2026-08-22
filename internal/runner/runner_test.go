@@ -67,6 +67,17 @@ globalThis.properties = {
 globalThis.actions = actions(() => []);
 `
 
+// logErrorSpec's only property reads state.logs, the channel a driver without a
+// log source never opens.
+const logErrorSpec = `
+import { actions, always, extract } from "@sanderling/spec";
+const errorLines = extract(state => state.logs.filter(entry => entry.level === "E").length);
+globalThis.properties = {
+  noLoggedErrors: always(() => errorLines.current === 0),
+};
+globalThis.actions = actions(() => []);
+`
+
 const violationSpec = `
 import { actions, always } from "@sanderling/spec";
 globalThis.properties = {
@@ -345,6 +356,83 @@ func TestRenderSummary_CountsTheStepsNothingJudged(t *testing.T) {
 	RenderSummary(&out, Summary{Steps: 10}, "android")
 	if strings.Contains(out.String(), "judged by nothing") {
 		t.Errorf("a run that judged every step must not print the line, got:\n%s", out.String())
+	}
+}
+
+// A driver that cannot read a channel is not a device that had nothing to
+// report on it. The property over state.logs holds here because nobody ever
+// looked, so the run has to say which reads it never made: without the line a
+// green iOS summary is indistinguishable from one over a silent app.
+func TestRunner_ReadsTheDriverCannotMakeAreNotPassedChecks(t *testing.T) {
+	state := newHarnessWithSpec(t, logErrorSpec)
+	state.mock.Failures[mockdriver.ActionRecentLogs] = driver.ErrNotSupported
+	state.mock.Failures[mockdriver.ActionMetrics] = driver.ErrNotSupported
+	state.mock.Failures[mockdriver.ActionHealth] = driver.ErrNotSupported
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    3,
+		BundleID:    "com.fixture",
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Steps != 3 {
+		t.Fatalf("Steps = %d, want 3", summary.Steps)
+	}
+	if len(summary.Violations) != 0 {
+		t.Fatalf("the log property fired; this test needs it holding on the empty channel: %v",
+			summary.Violations)
+	}
+	if summary.FailedObservations != 0 {
+		t.Errorf("FailedObservations = %d: a read the driver does not have is not a device fault",
+			summary.FailedObservations)
+	}
+	want := []string{unsupportedReadMetrics, unsupportedReadHealth, unsupportedReadLogs}
+	slices.Sort(want)
+	if !slices.Equal(summary.UnsupportedReads, want) {
+		t.Errorf("UnsupportedReads = %v, want %v", summary.UnsupportedReads, want)
+	}
+
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "ios")
+	if !strings.Contains(rendered.String(), "never read on ios: "+strings.Join(want, ", ")) {
+		t.Errorf("the run reports as a clean one:\n%s", rendered.String())
+	}
+}
+
+// The inverse, so the line cannot start appearing on every run: a driver that
+// answers all three reports none missing and prints nothing.
+func TestRunner_ADriverThatAnswersEveryReadReportsNoneMissing(t *testing.T) {
+	state := newHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := Run(ctx, Options{
+		Duration:    5 * time.Second,
+		IdleTimeout: 20 * time.Millisecond,
+		MaxSteps:    2,
+		BundleID:    "com.fixture",
+		Driver:      state.mock,
+		Verifier:    state.verifier,
+		TraceWriter: state.writer,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(summary.UnsupportedReads) != 0 {
+		t.Errorf("UnsupportedReads = %v, want none", summary.UnsupportedReads)
+	}
+	var rendered bytes.Buffer
+	RenderSummary(&rendered, summary, "android")
+	if strings.Contains(rendered.String(), "never read on") {
+		t.Errorf("a run that made every read must not print the line:\n%s", rendered.String())
 	}
 }
 
