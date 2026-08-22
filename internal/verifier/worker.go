@@ -150,6 +150,10 @@ func (v *Verifier) Load(source string) error {
 		return fmt.Errorf("run spec: %w", err)
 	}
 
+	if err := v.checkActionEncoding(); err != nil {
+		return err
+	}
+
 	propertiesValue := v.runtime.GlobalObject().Get("properties")
 	if propertiesValue != nil && !goja.IsUndefined(propertiesValue) && !goja.IsNull(propertiesValue) {
 		propertiesObject := propertiesValue.ToObject(v.runtime)
@@ -208,6 +212,30 @@ func (v *Verifier) Load(source string) error {
 	}
 
 	return nil
+}
+
+// checkActionEncoding fails the load when the bundle's action encoding is not
+// the one this binary decodes. A bundle that installs the picker and declares
+// nothing is an @sanderling/spec older than the declaration, which is the
+// pairing that has to be caught: an absent declaration is a mismatch, never a
+// default. A bundle with no picker (a raw-JS fixture, the bundle-check tool)
+// generates no actions at all, so it has no encoding to disagree about.
+//
+// chrome.Driver.InstallBundle applies this same rule to the web host.
+func (v *Verifier) checkActionEncoding() error {
+	picker := v.runtime.GlobalObject().Get("__sanderlingNextAction__")
+	if picker == nil || goja.IsUndefined(picker) || goja.IsNull(picker) {
+		return nil
+	}
+	declared := ""
+	if value := v.runtime.GlobalObject().Get(actionEncodingGlobal); value != nil &&
+		!goja.IsUndefined(value) && !goja.IsNull(value) {
+		declared = value.String()
+	}
+	if declared == ActionWireContract {
+		return nil
+	}
+	return ActionEncodingError(declared)
 }
 
 // buildFormula walks the formula-spec registry and produces a Go ltl.Formula
