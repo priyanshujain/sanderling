@@ -2,10 +2,6 @@ package runner
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -43,34 +39,13 @@ func TestRunner_LogsAndExceptionsLandInTheTrace(t *testing.T) {
 		Message:    "FATAL EXCEPTION: main",
 	}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := Run(ctx, Options{
-		Duration:    100 * time.Millisecond,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    1,
-		Driver:      &throwingDriver{Driver: state.mock},
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{
+		Duration: 100 * time.Millisecond,
+		MaxSteps: 1,
+		Driver:   &throwingDriver{Driver: state.mock},
+	})
 
-	body, err := os.ReadFile(
-		filepath.Join(state.writer.Directory(), "trace.jsonl"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	line := strings.SplitN(strings.TrimSpace(string(body)), "\n", 2)[0]
-	var stored struct {
-		TraceVersion int               `json:"trace_version"`
-		Logs         []trace.LogEntry  `json:"logs"`
-		Exceptions   []trace.Exception `json:"exceptions"`
-	}
-	if err := json.Unmarshal([]byte(line), &stored); err != nil {
-		t.Fatalf("decode trace line: %v\n%s", err, line)
-	}
+	stored := readTraceLines(t, state.writer.Directory())[0]
 	if stored.TraceVersion != trace.TraceVersion {
 		t.Errorf(
 			"trace_version = %d, want %d; an old trace could not be told apart",

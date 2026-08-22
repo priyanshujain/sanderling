@@ -1,20 +1,16 @@
 package runner
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
 	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
-	"github.com/priyanshujain/sanderling/internal/trace"
 )
 
 // homeWithRows is one settled route whose list holds rows. A row arriving
@@ -68,19 +64,7 @@ func TestRunner_AStepWhoseTreeChangedBetweenReadsIsNotVerified(t *testing.T) {
 		state := newHarnessWithSpec(t, violationSpec)
 		device := &composesLateDriver{Driver: state.mock, composingReads: composingReads}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		summary, err := Run(ctx, Options{
-			Duration:    time.Hour,
-			IdleTimeout: 20 * time.Millisecond,
-			MaxSteps:    3,
-			Driver:      device,
-			Verifier:    state.verifier,
-			TraceWriter: state.writer,
-		})
-		if err != nil {
-			t.Fatalf("Run: %v", err)
-		}
+		summary := state.run(t, Options{MaxSteps: 3, Driver: device})
 		if summary.Steps != 3 {
 			t.Fatalf("steps = %d, want 3", summary.Steps)
 		}
@@ -107,7 +91,7 @@ func TestRunner_AStepWhoseTreeChangedBetweenReadsIsNotVerified(t *testing.T) {
 		}
 		// Skipped is not lost: the step is still recorded, screenshot and all,
 		// so the run can be replayed over the frame nothing judged.
-		steps := traceSteps(t, directory)
+		steps := readTraceLines(t, directory)
 		if len(steps) != 3 {
 			t.Fatalf("trace holds %d step(s), want 3", len(steps))
 		}
@@ -201,19 +185,7 @@ func TestRunner_ASkippedStepDoesNotSwallowTheActionBeforeIt(t *testing.T) {
 			composingRead: composingRead,
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		summary, err := Run(ctx, Options{
-			Duration:    time.Hour,
-			IdleTimeout: 20 * time.Millisecond,
-			MaxSteps:    3,
-			Driver:      device,
-			Verifier:    state.verifier,
-			TraceWriter: state.writer,
-		})
-		if err != nil {
-			t.Fatalf("Run: %v", err)
-		}
+		summary := state.run(t, Options{MaxSteps: 3, Driver: device})
 		if summary.Steps != 3 {
 			t.Fatalf("steps = %d, want 3", summary.Steps)
 		}
@@ -277,19 +249,7 @@ func TestRunner_ARunOfSkippedStepsReportsEveryActionItApplied(t *testing.T) {
 			composingThrough: 5,
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		summary, err := Run(ctx, Options{
-			Duration:    time.Hour,
-			IdleTimeout: 20 * time.Millisecond,
-			MaxSteps:    6,
-			Driver:      device,
-			Verifier:    state.verifier,
-			TraceWriter: state.writer,
-		})
-		if err != nil {
-			t.Fatalf("Run: %v", err)
-		}
+		summary := state.run(t, Options{MaxSteps: 6, Driver: device})
 		if summary.Steps != 6 {
 			t.Fatalf("steps = %d, want 6", summary.Steps)
 		}
@@ -341,19 +301,7 @@ func TestRunner_AScreenThatNeverSettlesActsOnNothingAndSaysSo(t *testing.T) {
 	state := newHarnessWithSpec(t, specWithFolioPredicates(t))
 	device := &submitsOnTapDriver{Driver: state.mock, commitsPerTap: 1, everyRead: true}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    5,
-		Driver:      device,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{MaxSteps: 5, Driver: device})
 	if summary.Steps != 5 {
 		t.Fatalf("steps = %d, want 5; the run stalled instead of finishing its budget",
 			summary.Steps)
@@ -442,19 +390,7 @@ func TestRunner_OnlyAChangeOfShapeCostsAStepItsVerdict(t *testing.T) {
 				rereadTree:   testCase.reread,
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			summary, err := Run(ctx, Options{
-				Duration:    time.Hour,
-				IdleTimeout: 20 * time.Millisecond,
-				MaxSteps:    3,
-				Driver:      device,
-				Verifier:    state.verifier,
-				TraceWriter: state.writer,
-			})
-			if err != nil {
-				t.Fatalf("Run: %v", err)
-			}
+			summary := state.run(t, Options{MaxSteps: 3, Driver: device})
 			if summary.Steps != 3 {
 				t.Fatalf("steps = %d, want 3", summary.Steps)
 			}
@@ -483,27 +419,4 @@ func TestRunner_OnlyAChangeOfShapeCostsAStepItsVerdict(t *testing.T) {
 			}
 		})
 	}
-}
-
-type traceLine struct {
-	Step             int                              `json:"step"`
-	Violations       []string                         `json:"violations"`
-	ExtractorChanges map[string]trace.ExtractorChange `json:"extractor_changes"`
-}
-
-func traceSteps(t *testing.T, directory string) []traceLine {
-	t.Helper()
-	body, err := os.ReadFile(filepath.Join(directory, "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var steps []traceLine
-	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
-		var line traceLine
-		if err := json.Unmarshal(raw, &line); err != nil {
-			t.Fatalf("decode trace line: %v", err)
-		}
-		steps = append(steps, line)
-	}
-	return steps
 }

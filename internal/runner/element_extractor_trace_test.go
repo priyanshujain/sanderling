@@ -1,16 +1,9 @@
 package runner
 
 import (
-	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
-
-	"github.com/priyanshujain/sanderling/internal/trace"
 )
 
 // elementExtractorSpec reads a live ax element, the shape every field and
@@ -47,43 +40,14 @@ func TestRunner_TraceRecordsElementValuedExtractors(t *testing.T) {
 	state := newHarnessWithSpec(t, elementExtractorSpec)
 	state.mock.HierarchyJSON = amountFieldTreeJSON
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    2,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{MaxSteps: 2})
 	if !containsProperty(summary.Violations, "noAmountField") {
 		t.Fatalf("noAmountField did not violate, so the element never reached a predicate: %v",
 			summary.Violations)
 	}
 
-	file, err := os.Open(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-
-	type traceLine struct {
-		Step             int                              `json:"step"`
-		ExtractorChanges map[string]trace.ExtractorChange `json:"extractor_changes"`
-		Witnesses        map[string]trace.Witness         `json:"witnesses"`
-	}
 	changes, witnesses := 0, 0
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var line traceLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			t.Fatalf("trace line decode: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if change, ok := line.ExtractorChanges["amountField"]; ok {
 			changes++
 			assertAmountField(t, fmt.Sprintf("step %d extractor_changes", line.Step), change.Curr)
@@ -93,9 +57,6 @@ func TestRunner_TraceRecordsElementValuedExtractors(t *testing.T) {
 			assertAmountField(t, fmt.Sprintf("step %d %s witness", line.Step, name),
 				witness.Extractors["amountField"])
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan trace: %v", err)
 	}
 	if changes == 0 {
 		t.Error("amountField never appears in extractor_changes; the element the run read is not in the trace")

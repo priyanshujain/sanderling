@@ -3,7 +3,6 @@ package runner
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -91,19 +90,7 @@ func TestGolden_TraceStreamIsReproducible(t *testing.T) {
 	state.verifier = mustSeededVerifier(t, fixtureSpec, goldenSeed)
 	state.mock.HierarchyJSON = `{"attributes":{"resource-id":"HomeScreen"},"children":[{"attributes":{"resource-id":"next","bounds":"[40,80,240,160]"},"children":[],"clickable":true,"enabled":true}]}`
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 10 * time.Millisecond,
-		MaxSteps:    goldenSteps,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	state.run(t, Options{IdleTimeout: 10 * time.Millisecond, MaxSteps: goldenSteps})
 	raw, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -119,19 +106,7 @@ func TestGolden_ViolationSummaryIsReproducible(t *testing.T) {
 	state := newHarnessWithSpec(t, violationSpec)
 	state.verifier = mustSeededVerifier(t, violationSpec, goldenSeed)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    time.Hour,
-		IdleTimeout: 10 * time.Millisecond,
-		MaxSteps:    goldenSteps,
-		Driver:      state.mock,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{IdleTimeout: 10 * time.Millisecond, MaxSteps: goldenSteps})
 
 	var rendered bytes.Buffer
 	RenderSummary(&rendered, summary, "android")

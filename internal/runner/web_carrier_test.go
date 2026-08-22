@@ -6,15 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
-	mockdriver "github.com/priyanshujain/sanderling/internal/driver/mock"
-	"github.com/priyanshujain/sanderling/internal/trace"
 )
 
 // carrierSpec registers one extractor whose value the page supplies. It stands
@@ -33,7 +29,7 @@ globalThis.actions = actions(() => []);
 // whose page-side extractor advances a counter on every evaluation - exactly
 // what a spec-authored carrier does in V8.
 type carrierWebDriver struct {
-	*mockdriver.Driver
+	webDriverBase
 	transitional bool
 	snapshots    int
 	reads        int
@@ -53,8 +49,6 @@ func (d *carrierWebDriver) Snapshot(ctx context.Context) (string, driver.Image, 
 	]}`, d.snapshots), image, err
 }
 
-func (d *carrierWebDriver) InstallBundle(context.Context, []byte) error { return nil }
-
 // A web target says so. The runner's per-step hierarchy reread is android-only,
 // and a fake claiming android would take a path no chrome run takes.
 func (d *carrierWebDriver) Health(context.Context) (driver.Health, error) {
@@ -73,10 +67,6 @@ func (d *carrierWebDriver) NextActionFromV8(context.Context) (json.RawMessage, e
 	return json.RawMessage(`{"kind":"Tap","x":5,"y":5}`), nil
 }
 
-func (d *carrierWebDriver) SetLastAction(context.Context, json.RawMessage) error { return nil }
-
-func (d *carrierWebDriver) SetLogs(context.Context, json.RawMessage) error { return nil }
-
 // TestRunner_TransitionalStepNeverAdvancesThePageCarrier pins the ordering the
 // web path depends on. The page-side extractors must run only on steps the
 // verifier accepts: their getters advance spec state every time they evaluate,
@@ -86,41 +76,16 @@ func (d *carrierWebDriver) SetLogs(context.Context, json.RawMessage) error { ret
 // convicts an app that did nothing wrong.
 func TestRunner_TransitionalStepNeverAdvancesThePageCarrier(t *testing.T) {
 	state := newHarnessWithSpec(t, carrierSpec)
-	web := &carrierWebDriver{Driver: state.mock}
+	web := &carrierWebDriver{webDriverBase: webDriverBase{Driver: state.mock}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	summary, err := Run(ctx, Options{
-		Duration:    30 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    5,
-		Driver:      web,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	summary := state.run(t, Options{Duration: 30 * time.Second, MaxSteps: 5, Driver: web})
 	if summary.Steps != 5 {
 		t.Fatalf("steps = %d, want 5", summary.Steps)
 	}
 
-	type traceLine struct {
-		Step             int                              `json:"step"`
-		Transitional     bool                             `json:"transitional"`
-		ExtractorChanges map[string]trace.ExtractorChange `json:"extractor_changes"`
-	}
-	body, err := os.ReadFile(filepath.Join(state.writer.Directory(), "trace.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	verified, transitional := 0, 0
 	previous := 0
-	for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
-		var line traceLine
-		if err := json.Unmarshal(raw, &line); err != nil {
-			t.Fatalf("decode trace line: %v", err)
-		}
+	for _, line := range readTraceLines(t, state.writer.Directory()) {
 		if line.Transitional {
 			transitional++
 			continue
@@ -157,10 +122,8 @@ func TestRunner_TransitionalStepNeverAdvancesThePageCarrier(t *testing.T) {
 // lastAction: an older published @sanderling/spec runtime, a bundle that never
 // installed, a tab that navigated away from it.
 type installFailsWebDriver struct {
-	*mockdriver.Driver
+	webDriverBase
 }
-
-func (d *installFailsWebDriver) InstallBundle(context.Context, []byte) error { return nil }
 
 func (d *installFailsWebDriver) EvaluateExtractors(context.Context) (map[int]json.RawMessage, error) {
 	return map[int]json.RawMessage{0: json.RawMessage(`1`)}, nil
@@ -174,8 +137,6 @@ func (d *installFailsWebDriver) SetLastAction(context.Context, json.RawMessage) 
 	return errors.New("__sanderlingSetLastAction__ is not a function")
 }
 
-func (d *installFailsWebDriver) SetLogs(context.Context, json.RawMessage) error { return nil }
-
 // TestRunner_LastActionInstallFailureFailsTheRun covers the other half of the
 // same trust boundary. A run that cannot install lastAction in the page cannot
 // apply the page's extractor values either, so the step keeps goja's
@@ -184,18 +145,9 @@ func (d *installFailsWebDriver) SetLogs(context.Context, json.RawMessage) error 
 // green run reporting a violation nobody can reproduce.
 func TestRunner_LastActionInstallFailureFailsTheRun(t *testing.T) {
 	state := newHarnessWithSpec(t, carrierSpec)
-	web := &installFailsWebDriver{Driver: state.mock}
+	web := &installFailsWebDriver{webDriverBase: webDriverBase{Driver: state.mock}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
-		Duration:    2 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      web,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
+	_, err := state.tryRun(t, Options{Duration: 2 * time.Second, MaxSteps: 3, Driver: web})
 	if err == nil {
 		t.Fatal("Run succeeded with a page that cannot take lastAction; the run " +
 			"reported green while its extractor values came from two engines")
@@ -229,19 +181,10 @@ func (d *logInstallFailsWebDriver) SetLogs(context.Context, json.RawMessage) err
 func TestRunner_LogInstallFailureFailsTheRun(t *testing.T) {
 	state := newHarnessWithSpec(t, carrierSpec)
 	web := &logInstallFailsWebDriver{
-		installFailsWebDriver: &installFailsWebDriver{Driver: state.mock},
+		installFailsWebDriver: &installFailsWebDriver{webDriverBase: webDriverBase{Driver: state.mock}},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_, err := Run(ctx, Options{
-		Duration:    2 * time.Second,
-		IdleTimeout: 20 * time.Millisecond,
-		MaxSteps:    3,
-		Driver:      web,
-		Verifier:    state.verifier,
-		TraceWriter: state.writer,
-	})
+	_, err := state.tryRun(t, Options{Duration: 2 * time.Second, MaxSteps: 3, Driver: web})
 	if err == nil {
 		t.Fatal("Run succeeded with a page that cannot take the step's logs; " +
 			"every property reading the log stream ran against an empty array")
