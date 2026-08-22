@@ -13,7 +13,7 @@ import (
 // `foo]:has(*),body[x="..."]` that would escape the intended match.
 var attrNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 
-// TranslateStringSelector converts a legacy string selector ("id:foo",
+// TranslateStringSelector converts a string selector ("id:foo",
 // "descPrefix:bar") into a CSS selector or XPath expression usable from the
 // chrome driver's TapSelector fallback path. The boolean return is true when
 // the result is XPath rather than CSS. Unknown prefixes pass through to a CSS
