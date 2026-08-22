@@ -267,7 +267,7 @@ var attributeAliases = map[string][]string{
 	// Every other name for the accessible label. Alias expansion is one level,
 	// so each name lists both keys a producer writes the fact under rather than
 	// hopping through accessibilityText: android and the chrome dump write
-	// content-desc, the ios sidecar writes accessibilityText.
+	// content-desc, the ios companion writes accessibilityText.
 	"label":              {"accessibilityText", "content-desc"},
 	"accessibilityLabel": {"accessibilityText", "content-desc"},
 	"ariaLabel":          {"accessibilityText", "content-desc"},
