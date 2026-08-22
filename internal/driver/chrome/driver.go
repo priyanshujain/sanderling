@@ -21,6 +21,7 @@ import (
 	"github.com/chromedp/chromedp/kb"
 
 	"github.com/priyanshujain/sanderling/internal/driver"
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
 // Driver implements DeviceDriver via chromedp for web platform testing.
@@ -1055,10 +1056,19 @@ func (d *Driver) runCtx(ctx context.Context) (context.Context, context.CancelFun
 // InstallBundle registers the source so it runs at every freshly-navigated
 // document context, then immediately evaluates it against the current page so
 // the very first tick has access to the registered globals.
+//
+// The installed runtime then has to declare the action encoding it serializes,
+// and it has to be the one this binary decodes. The web bundle is resolved from
+// whatever @sanderling/spec the spec's project has installed, so a page can
+// carry a runtime that encodes an action differently from the runner that
+// dispatches it: both halves then run to completion, every action reports
+// success, and the gestures are wrong. Verifier.checkActionEncoding applies the
+// same rule to the goja host.
 func (d *Driver) InstallBundle(ctx context.Context, source []byte) error {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
-	return chromedp.Run(runCtx,
+	var declaration actionEncodingDeclaration
+	if err := chromedp.Run(runCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			if _, err := page.AddScriptToEvaluateOnNewDocument(string(source)).Do(ctx); err != nil {
 				return fmt.Errorf("addScriptToEvaluateOnNewDocument: %w", err)
@@ -1072,8 +1082,35 @@ func (d *Driver) InstallBundle(ctx context.Context, source []byte) error {
 			}
 			return nil
 		}),
-	)
+		chromedp.Evaluate(actionEncodingScript, &declaration),
+	); err != nil {
+		return err
+	}
+	if !declaration.InstallsPicker {
+		return nil
+	}
+	if declaration.Encoding != verifier.ActionWireContract {
+		return verifier.ActionEncodingError(declaration.Encoding)
+	}
+	return nil
 }
+
+type actionEncodingDeclaration struct {
+	InstallsPicker bool   `json:"installsPicker"`
+	Encoding       string `json:"encoding"`
+}
+
+// actionEncodingScript reports both halves of the rule in one round trip. A
+// bundle that installs no picker generates no actions, so it has no encoding to
+// disagree about; a bundle that installs a picker and declares nothing is an
+// @sanderling/spec older than the declaration, so an absent declaration is a
+// mismatch rather than a default. Coercing to a string keeps that case
+// decodable as "".
+const actionEncodingScript = `({
+	installsPicker: window.__sanderlingNextAction__ !== undefined &&
+		window.__sanderlingNextAction__ !== null,
+	encoding: String(window.__sanderlingActionEncoding__ ?? ""),
+})`
 
 // EvaluateExtractors invokes the bundle-installed extractor table and returns
 // each extractor's JSON-encoded current value keyed by its registration index.

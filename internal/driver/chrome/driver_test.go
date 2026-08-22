@@ -10,13 +10,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/priyanshujain/sanderling/internal/bundler"
 	"github.com/priyanshujain/sanderling/internal/driver"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/verifier"
 )
 
 // TestLaunch_ClearStateWipesStorageForTheTargetOrigin covers the CLI's default
@@ -1568,5 +1572,117 @@ func TestSwipe_DeliversATrustedDragToARowHandler(t *testing.T) {
 	}
 	if status != "dismissed left trusted" {
 		t.Errorf("row status = %q, want %q", status, "dismissed left trusted")
+	}
+}
+
+// TestInstallBundle_RefusesARuntimeThatDeclaresADifferentActionEncoding covers
+// the pairing that voided a whole campaign: a spec bundled by an older
+// @sanderling/spec, run by this binary. internal/testrun resolves the web
+// runtime from whatever the spec's project has installed, so the page's picker
+// and the runner that dispatches its actions can encode a gesture differently.
+// Neither half fails: every action dispatches successfully and executes the
+// wrong gesture, and the run reports a full step count of results that mean
+// nothing.
+func TestInstallBundle_RefusesARuntimeThatDeclaresADifferentActionEncoding(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<body><div id="app">app</div></body>`))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	const legacyRuntime = `window.__sanderlingNextAction__ = function () { return null; };`
+	if err := d.InstallBundle(ctx, []byte(legacyRuntime)); err == nil {
+		t.Error("InstallBundle accepted a runtime that declares no action encoding; " +
+			"the run would dispatch every action successfully and execute the wrong gesture")
+	} else if !strings.Contains(err.Error(), verifier.ActionWireContract) {
+		t.Errorf("InstallBundle error %q does not name the encoding this binary implements", err)
+	}
+
+	currentRuntime := legacyRuntime +
+		`window.__sanderlingActionEncoding__ = ` + strconv.Quote(verifier.ActionWireContract) + `;`
+	if err := d.InstallBundle(ctx, []byte(currentRuntime)); err != nil {
+		t.Fatalf("InstallBundle rejected a runtime on this binary's encoding: %v", err)
+	}
+}
+
+// TestInstallBundle_AcceptsTheWebRuntimeThisCheckoutShips is the other half of
+// the gate: the encoding pkg/spec/src/web-runtime.ts declares has to be the one
+// this binary decodes, or every web run refuses to start.
+func TestInstallBundle_AcceptsTheWebRuntimeThisCheckoutShips(t *testing.T) {
+	directory := t.TempDir()
+	specPath := filepath.Join(directory, "spec.ts")
+	const spec = `
+import { actions, Wait } from "@sanderling/spec";
+export const actionsRoot = actions(Wait({ durationMillis: 1 }));
+export const properties = {};
+`
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	apiPath, err := filepath.Abs("../../../pkg/spec/src/index.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimePath, err := filepath.Abs("../../../pkg/spec/src/web-runtime.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := bundler.BundleWeb(bundler.WebOptions{
+		EntryFile:      specPath,
+		WebRuntimeFile: runtimePath,
+		Aliases:        map[string]string{"@sanderling/spec": apiPath},
+	})
+	if err != nil {
+		t.Fatalf("BundleWeb: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<body><div id="app">app</div></body>`))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if err := d.InstallBundle(ctx, bundle.JavaScript); err != nil {
+		t.Fatalf("InstallBundle rejected this checkout's own web runtime: %v", err)
+	}
+}
+
+// TestInstallBundle_AcceptsAPageThatInstallsNoPicker pins the other half of the
+// rule Verifier.checkActionEncoding states: a bundle that installs no picker
+// generates no actions, so it has no encoding to disagree about and demanding a
+// declaration from it would refuse a spec that was never going to dispatch.
+func TestInstallBundle_AcceptsAPageThatInstallsNoPicker(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<body><div id="app">app</div></body>`))
+	}))
+	defer server.Close()
+
+	d := New()
+	defer d.Terminate(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	const pickerFree = `window.__sanderlingBundleCheck__ = true;`
+	if err := d.InstallBundle(ctx, []byte(pickerFree)); err != nil {
+		t.Fatalf("InstallBundle refused a bundle that generates no actions: %v", err)
 	}
 }
