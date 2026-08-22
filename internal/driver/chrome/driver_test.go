@@ -1686,3 +1686,34 @@ func TestInstallBundle_AcceptsAPageThatInstallsNoPicker(t *testing.T) {
 		t.Fatalf("InstallBundle refused a bundle that generates no actions: %v", err)
 	}
 }
+
+// TestMetrics_AFailedRoundTripIsNotAPageWithoutTheAPI pins the distinction the
+// zero-and-nil return erased. performance.memory is absent on plenty of pages
+// and zero is the honest answer there, so a round trip that never happened has
+// to be an error or a run records a memory reading it never took.
+func TestMetrics_AFailedRoundTripIsNotAPageWithoutTheAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<body><div id="app">app</div></body>`))
+	}))
+	defer server.Close()
+
+	d := New()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := d.Launch(ctx, server.URL, false, nil); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if _, err := d.Metrics(ctx, ""); err != nil {
+		t.Fatalf("Metrics on a live page: %v", err)
+	}
+
+	if err := d.Terminate(context.Background()); err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+	metrics, err := d.Metrics(ctx, "")
+	if err == nil {
+		t.Errorf("Metrics returned %+v and a nil error after the tab was gone; "+
+			"the run cannot tell that from a page with no performance.memory", metrics)
+	}
+}

@@ -971,6 +971,10 @@ func (d *Driver) Health(_ context.Context) (driver.Health, error) {
 	}
 }
 
+// Metrics reports zero with a nil error on a page that does not expose
+// performance.memory, so a failed round trip has to be an error: the two are
+// otherwise the same answer, and a run would record a memory reading it never
+// took.
 func (d *Driver) Metrics(ctx context.Context, _ string) (driver.Metrics, error) {
 	runCtx, cancel := d.runCtx(ctx)
 	defer cancel()
@@ -981,7 +985,7 @@ func (d *Driver) Metrics(ctx context.Context, _ string) (driver.Metrics, error) 
   return {heap: mem.usedJSHeapSize || 0, totalMem: mem.totalJSHeapSize || 0};
 })()`
 	if err := chromedp.Run(runCtx, chromedp.Evaluate(script, &result)); err != nil {
-		return driver.Metrics{}, nil
+		return driver.Metrics{}, fmt.Errorf("read performance.memory: %w", err)
 	}
 	heap, _ := result["heap"].(float64)
 	total, _ := result["totalMem"].(float64)
