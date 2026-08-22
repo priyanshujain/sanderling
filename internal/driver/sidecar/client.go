@@ -300,8 +300,9 @@ func (c *Client) Metrics(ctx context.Context, bundleID string) (driver.Metrics, 
 	if err != nil {
 		return driver.Metrics{}, err
 	}
+	cpuPercent := response.GetCpuPercent()
 	return driver.Metrics{
-		CPUPercent:       response.GetCpuPercent(),
+		CPUPercent:       &cpuPercent,
 		HeapBytes:        response.GetHeapBytes(),
 		TotalMemoryBytes: response.GetTotalMemoryBytes(),
 	}, nil

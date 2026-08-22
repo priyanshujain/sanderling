@@ -183,7 +183,10 @@ type Health struct {
 }
 
 type Metrics struct {
-	CPUPercent       float64
+	// CPUPercent is nil on a driver that samples memory but not CPU, which
+	// Chrome does: zero is a reading an idle app can produce, so a driver that
+	// never looked has to answer with nothing rather than with that.
+	CPUPercent       *float64
 	HeapBytes        int64
 	TotalMemoryBytes int64
 }
