@@ -1233,3 +1233,19 @@ func TestMetrics_AFailedRoundTripIsNotAPageWithoutTheAPI(t *testing.T) {
 			"the run cannot tell that from a page with no performance.memory", metrics)
 	}
 }
+
+// CDP exposes no per-page CPU, so every web step used to record a zero the
+// sampler never took, which is the same answer an idle app gives.
+func TestMetrics_ReportsNoCPUSampleRatherThanZero(t *testing.T) {
+	server := servePage(t, `<body><div id="app">app</div></body>`)
+	d, ctx := launchChrome(t, server.URL)
+
+	metrics, err := d.Metrics(ctx, "")
+	if err != nil {
+		t.Fatalf("Metrics: %v", err)
+	}
+	if metrics.CPUPercent != nil {
+		t.Errorf("Metrics reported CPUPercent %v; chrome samples no CPU, and a "+
+			"run cannot tell that reading from an app using none", *metrics.CPUPercent)
+	}
+}
