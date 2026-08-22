@@ -5,6 +5,7 @@ import (
 
 	"github.com/priyanshujain/sanderling/internal/driver/ioscompanion"
 	"github.com/priyanshujain/sanderling/internal/hierarchy"
+	"github.com/priyanshujain/sanderling/internal/testsupport"
 	"github.com/priyanshujain/sanderling/internal/trace"
 	"github.com/priyanshujain/sanderling/internal/tracecorpus"
 )
@@ -136,27 +137,8 @@ func measureRun(t *testing.T, seed int64, dumps ...string) Reach {
 
 func writeRun(t *testing.T, seed int64, dumps ...string) string {
 	t.Helper()
-	directory := t.TempDir()
-	writer, err := trace.NewWriter(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.WriteMeta(trace.Meta{Seed: seed, Platform: "web"}); err != nil {
-		t.Fatal(err)
-	}
-	for index, dump := range dumps {
-		tree, err := hierarchy.Parse(dump)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := writer.WriteStep(trace.Step{Index: index + 1, Hierarchy: tree}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return directory
+	return testsupport.WriteRunFromDumps(
+		t, t.TempDir(), trace.Meta{Seed: seed, Platform: "web"}, dumps...)
 }
 
 func appendFinalize(t *testing.T, directory string, index int) {
