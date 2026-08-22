@@ -118,6 +118,13 @@ jobs:
       - name: Run tests
         run: make test
 
+      # The withsidecar-tagged tests had never been compiled into a test
+      # binary: the tag appears only under go build, go install and go run.
+      # They cover the embedded JAR's extraction, checksum reuse and the
+      # concurrent-extraction race, so they need the staged JAR to be real.
+      - name: Run the sidecar-tagged tests
+        run: make test-sidecar
+
       # folio is its own gradle build, and the metro plugin it compiles with
       # needs a 21 runtime where the sidecar toolchain pins 17. Switching
       # JAVA_HOME after `make test` rather than installing both up front
@@ -265,6 +272,13 @@ jobs:
 
       - name: Build sanderling
         run: make sanderling-ios
+
+      # The withcompanion-tagged tests are reachable only through this target
+      # and no other job invokes it. It runs here because staging the companion
+      # and runner bundles needs the darwin toolchain, and make sanderling-ios
+      # has already built both.
+      - name: Run the companion-tagged tests
+        run: make test-companion
 
       # simctl resolves a device by name alone, and one image carries the same
       # phone under several runtimes: iPhone 17 Pro exists here on iOS 26.2,
