@@ -11,8 +11,8 @@ Inventory of user interaction primitives Sanderling currently supports, compared
 | `LongPress` | `on` (selector or element) | Press and hold; resolves to coordinates |
 | `InputText` | `into`, `text` | Type into focused field |
 | `Swipe` | `from`, `to`, `durationMillis?` | Point-to-point or element-to-element |
-| `Scroll` | `direction`, `in?`, `durationMillis?` | Scroll a container up, down, left, or right |
-| `PressKey` | `key` | back, home, enter, tab, up, down, left, right |
+| `Scroll` | `direction`, `in?` | Scroll a container up, down, left, or right |
+| `PressKey` | `key` | back, home, enter, tab, escape, up, down, left, right |
 | `Wait` | `durationMillis` | Sleep for N ms |
 
 ## Gaps vs Native Driver
