@@ -26,7 +26,7 @@ func TestWriteMeta_RoundTrip(t *testing.T) {
 		SpecPath:          "spec.ts",
 		BundleSHA256:      "deadbeef",
 		Platform:          "android",
-		BundleID:          "in.okcredit.merchant",
+		BundleID:          "com.fixture.merchant",
 		StartedAt:         time.Date(2026, 4, 17, 22, 30, 0, 0, time.UTC),
 		SanderlingVersion: "0.0.1",
 	}
