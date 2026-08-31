@@ -15,9 +15,9 @@ Run a spec against an app for a fixed duration.
 | Flag | Default | Description |
 |---|---|---|
 | `--spec` | required | Path to the TypeScript spec. |
-| `--bundle-id` | required | Target app bundle ID (Android: applicationId). |
+| `--bundle-id` | required | Target app bundle ID (Android: applicationId). Optional on Android when `--android-app-path` is given: the applicationId is read from the APK's compiled manifest. |
 | `--device` | optional (android) | Android device serial, as `adb devices` reports it. Required when more than one device is attached. |
-| `--android-app-path` | optional (android) | Path to the APK. Clear-state reinstalls from it instead of running `pm clear`. |
+| `--android-app-path` | optional (android) | Path to the APK. Clear-state reinstalls from it instead of running `pm clear`, and it also supplies `--bundle-id` when that flag is absent. |
 | `--platform` | `android` | Target platform: `android`, `ios`, or `web`. |
 | `--avd` | optional (android) | Android AVD name to boot if no device is connected. Required only when no device is connected and multiple AVDs exist. |
 | `--ios-device` | optional (ios) | iOS target: a simulator name/UDID to boot, or a connected device's name, UDID, or CoreDevice id. |
