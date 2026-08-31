@@ -88,6 +88,52 @@ func TestParseTestArgs_RequiresBundleID(t *testing.T) {
 	}
 }
 
+// folioAPK is the android package's fixture, borrowed rather than copied so
+// there is one compiled manifest in the tree to keep current.
+const folioAPK = "../../internal/android/testdata/folio.apk"
+
+func TestParseTestArgs_ReadsBundleIDFromTheAPK(t *testing.T) {
+	options, err := parseTestArgs([]string{"--spec", "s.ts", "--android-app-path", folioAPK}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.bundleID != "app.folio" {
+		t.Fatalf("bundle id: got %q, want app.folio", options.bundleID)
+	}
+}
+
+func TestParseTestArgs_ExplicitBundleIDOutranksTheAPK(t *testing.T) {
+	options, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--bundle-id", "app.folio.debug",
+		"--android-app-path", folioAPK,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if options.bundleID != "app.folio.debug" {
+		t.Fatalf("bundle id: got %q, want app.folio.debug", options.bundleID)
+	}
+}
+
+func TestParseTestArgs_APKDoesNotNameTheBundleOffAndroid(t *testing.T) {
+	_, err := parseTestArgs([]string{
+		"--spec", "s.ts",
+		"--platform", "ios",
+		"--android-app-path", folioAPK,
+	}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--bundle-id") {
+		t.Fatalf("expected missing --bundle-id error, got %v", err)
+	}
+}
+
+func TestParseTestArgs_UnreadableAPKIsReported(t *testing.T) {
+	_, err := parseTestArgs([]string{"--spec", "s.ts", "--android-app-path", "testdata/absent.apk"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "testdata/absent.apk") {
+		t.Fatalf("expected an error naming the apk, got %v", err)
+	}
+}
+
 func TestParseTestArgs_AVDIsOptional(t *testing.T) {
 	options, err := parseTestArgs([]string{"--spec", "s.ts", "--bundle-id", "com.example"}, io.Discard)
 	if err != nil {

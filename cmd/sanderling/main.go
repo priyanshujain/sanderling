@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/priyanshujain/sanderling/internal/android"
 	"github.com/priyanshujain/sanderling/internal/testrun"
 )
 
@@ -60,7 +61,7 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 	flagSet.SetOutput(stderr)
 	var options testOptions
 	flagSet.StringVar(&options.spec, "spec", "", "path to the TypeScript spec (required)")
-	flagSet.StringVar(&options.bundleID, "bundle-id", "", "target app bundle ID (required)")
+	flagSet.StringVar(&options.bundleID, "bundle-id", "", "target app bundle ID (required, except on android with --android-app-path: the APK names the package itself)")
 	flagSet.StringVar(&options.platform, "platform", "android", "target platform: android, ios, web")
 	flagSet.StringVar(&options.avd, "avd", "", "Android AVD name to boot if no device is connected")
 	flagSet.StringVar(&options.device, "device", "", "Android device serial (from `adb devices`) to target when several are connected")
@@ -85,7 +86,14 @@ func parseTestArgs(args []string, stderr io.Writer) (testOptions, error) {
 		return testOptions{}, errors.New("--spec is required")
 	}
 	if options.bundleID == "" {
-		return testOptions{}, errors.New("--bundle-id is required")
+		if options.platform != "android" || options.androidAppPath == "" {
+			return testOptions{}, errors.New("--bundle-id is required")
+		}
+		packageName, err := android.PackageName(options.androidAppPath)
+		if err != nil {
+			return testOptions{}, err
+		}
+		options.bundleID = packageName
 	}
 	switch options.platform {
 	case "android", "ios", "web":
