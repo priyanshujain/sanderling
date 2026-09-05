@@ -154,13 +154,7 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 	if err != nil {
 		return nil, nil, err
 	}
-	sidecarArgs := []string{"-jar", jarPath,
-		"--port", strconv.Itoa(sidecarPort),
-		"--platform", options.Platform,
-	}
-	if options.Device != "" {
-		sidecarArgs = append(sidecarArgs, "--serial", options.Device)
-	}
+	sidecarArgs := sidecarArguments(ctx, jarPath, sidecarPort, options.Platform, options.Device)
 	adbPath, err := android.AdbBinary()
 	if err != nil {
 		return nil, nil, preflightFailure("android", err)
@@ -210,6 +204,25 @@ func buildDriver(ctx context.Context, options Options, stdout io.Writer) (driver
 		stopSidecar(sidecarCommand, sidecarExited)
 	}
 	return driverClient, cleanup, nil
+}
+
+// From JDK 24 the JVM prints a four-line sun.misc.Unsafe deprecation warning
+// on every sidecar start, because the netty that grpc pulls in still reads
+// field offsets through it. The flag that silences it did not exist before JDK
+// 23 and an older JVM refuses to start when handed it, so ask this JVM whether
+// it takes the flag rather than reading its version string.
+const unsafeMemoryAccessAllow = "--sun-misc-unsafe-memory-access=allow"
+
+func sidecarArguments(ctx context.Context, jarPath string, port int, platform, serial string) []string {
+	var args []string
+	if exec.CommandContext(ctx, "java", unsafeMemoryAccessAllow, "-version").Run() == nil {
+		args = append(args, unsafeMemoryAccessAllow)
+	}
+	args = append(args, "-jar", jarPath, "--port", strconv.Itoa(port), "--platform", platform)
+	if serial != "" {
+		args = append(args, "--serial", serial)
+	}
+	return args
 }
 
 // watchSidecar reaps the sidecar and publishes its exit status. The channel is
