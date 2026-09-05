@@ -57,10 +57,6 @@ data class SnapshotSample(
     val screenshot: Triple<ByteArray, Int, Int>,
 )
 
-// VIEW_HIERARCHY_ATTEMPTS is maestro's own default for the same call: one try,
-// retried internally on a transport fault.
-internal const val VIEW_HIERARCHY_ATTEMPTS = 1
-
 // STABILITY_POLL_INTERVAL_MILLIS is set wide enough that UiAutomation /
 // Maestro's contentDescriptor doesn't get hammered: tighter intervals were
 // observed to back the sidecar gRPC stream up under fuzz load to the point
@@ -1420,13 +1416,14 @@ class MaestroDriverBackend(private val serial: String?) : DriverBackend {
     // it from, which is the only form still carrying the password attribute
     // maestro's own mapper drops. The call is private to maestro, so a version
     // that renames it leaves every typed value redacted rather than exposed;
-    // the warning is what says that happened.
+    // the warning is what says that happened. The 1 is the attempt count,
+    // maestro's own default for the call.
     private fun deviceViewHierarchyXml(): String? = runCatching {
         val attempts = Int::class.javaPrimitiveType
         val call = maestro.drivers.AndroidDriver::class.java
             .getDeclaredMethod("callViewHierarchy", attempts)
         call.isAccessible = true
-        val response = call.invoke(driver, VIEW_HIERARCHY_ATTEMPTS)
+        val response = call.invoke(driver, 1)
         response.javaClass.getMethod("getHierarchy").invoke(response) as String
     }.onFailure {
         if (viewHierarchyXmlWarned.compareAndSet(false, true)) {
