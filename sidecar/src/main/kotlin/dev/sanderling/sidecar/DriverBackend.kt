@@ -954,7 +954,7 @@ internal fun treeWithoutKeyboard(
 // cannot tell a password field from a search box and everything typed anywhere
 // gets recorded as a credential. The XML the same read produced does carry the
 // fact, so it is fetched (lazily: a screen with no text field never pays for
-// it) and matched back onto the fields by identity and bounds.
+// it) and matched back onto the fields by identity, class and bounds.
 //
 // A field the XML cannot be matched to is left unstated rather than guessed.
 // Unstated reads as "may be a credential" downstream, which is the safe way to
@@ -976,6 +976,7 @@ internal fun withSecureFacts(
     for (field in fields) {
         val key = secureFactKey(
             nodeAttribute(field, "resource-id"),
+            nodeAttribute(field, "class"),
             nodeAttribute(field, "bounds"),
         )
         field.put("secure", facts[key] ?: continue)
@@ -1002,6 +1003,7 @@ internal fun secureFactsFromXml(xml: String): Map<String, Boolean> {
         val element = nodes.item(index) as? org.w3c.dom.Element ?: continue
         val key = secureFactKey(
             element.getAttribute("resource-id"),
+            element.getAttribute("class"),
             element.getAttribute("bounds"),
         )
         val password = element.getAttribute("password") == "true"
@@ -1011,7 +1013,8 @@ internal fun secureFactsFromXml(xml: String): Map<String, Boolean> {
     return facts
 }
 
-private fun secureFactKey(id: String, bounds: String) = "$id@$bounds"
+private fun secureFactKey(id: String, className: String, bounds: String) =
+    "$id@$className@$bounds"
 
 // A text field is what the Go side calls editable off the same two attributes
 // (internal/hierarchy): stating the fact on a narrower set would leave fields

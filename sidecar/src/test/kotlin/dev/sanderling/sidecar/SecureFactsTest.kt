@@ -27,22 +27,21 @@ private const val LOGIN_XML = """<?xml version='1.0' encoding='UTF-8'?>
 """
 
 private fun secureOf(tree: String, resourceId: String): Boolean? {
-    val field = jacksonTree(tree, resourceId) ?: return null
+    val field = jacksonTree(tree, "resource-id", resourceId) ?: return null
     val secure = field.get("secure") ?: return null
     return secure.asBoolean()
 }
 
 private fun jacksonTree(
     tree: String,
-    resourceId: String,
+    attribute: String,
+    value: String,
 ): com.fasterxml.jackson.databind.JsonNode? {
     val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
     fun walk(
         node: com.fasterxml.jackson.databind.JsonNode,
     ): com.fasterxml.jackson.databind.JsonNode? {
-        if (node.get("attributes")?.get("resource-id")?.asText() ==
-            resourceId
-        ) {
+        if (node.get("attributes")?.get(attribute)?.asText() == value) {
             return node
         }
         node.get("children")?.forEach { child ->
@@ -109,6 +108,35 @@ class SecureFactsTest {
                 "xml ${xml ?: "null"}",
             )
         }
+    }
+
+    // A wrapper drawn to the same bounds as the untagged field inside it shares
+    // the field's empty id and its bounds. The class is what still tells them
+    // apart; without it the two collide, the field answers for nothing, and
+    // every value typed into an untagged field is redacted.
+    @Test fun anUntaggedFieldInsideAWrapperOfItsOwnSizeIsStillStated() {
+        val wrapped = """
+        {"attributes":{"bounds":"[0,0,1080,2340]"},"children":[
+          {"attributes":{"class":"android.view.View","bounds":"[51,249][429,321]"},"children":[
+            {"attributes":{"class":"android.widget.EditText","bounds":"[51,249][429,321]"},"children":[]}
+          ]}
+        ]}
+        """
+        val xml = """<?xml version='1.0' encoding='UTF-8'?>
+        <hierarchy rotation="0">
+          <node index="0" resource-id="" class="android.view.View" password="false" bounds="[51,249][429,321]">
+            <node index="0" resource-id="" class="android.widget.EditText" password="true" bounds="[51,249][429,321]" />
+          </node>
+        </hierarchy>
+        """
+
+        val field = jacksonTree(
+            withSecureFacts(wrapped) { xml },
+            "class",
+            "android.widget.EditText",
+        )
+
+        assertEquals(true, field?.get("secure")?.asBoolean())
     }
 
     // Two nodes sharing a key answer for neither: taking the first would state
