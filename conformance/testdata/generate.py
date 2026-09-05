@@ -12,8 +12,8 @@ BASE = datetime(2026, 6, 6, 12, 0, 0, tzinfo=timezone(timedelta(hours=5, minutes
 
 
 # What a typed value is written to the trace as when the target reports no
-# secure fact for the field. Android reports none for any field, so every
-# InputText it records reads this (internal/verifier/redaction.go).
+# secure fact for the field, which is what the android fixtures below model
+# (internal/verifier/redaction.go).
 REDACTED = "[redacted]"
 
 

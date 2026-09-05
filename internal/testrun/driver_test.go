@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -303,5 +306,43 @@ func TestResolveIOSTargetDeviceResolutionErrorSurfaces(t *testing.T) {
 	options := Options{Platform: "ios", IosDevice: "iPhone"}
 	if _, err := resolveIOSTarget(context.Background(), options, io.Discard); err == nil {
 		t.Fatal("expected the device-resolution error to surface")
+	}
+}
+
+func fakeJava(t *testing.T, script string) {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "java")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		t.Fatalf("write fake java: %v", err)
+	}
+	t.Setenv("PATH", directory)
+}
+
+func TestSidecarArgumentsSilencesTheUnsafeWarningOnAJvmThatTakesTheFlag(t *testing.T) {
+	fakeJava(t, "exit 0")
+
+	args := sidecarArguments(context.Background(), "/tmp/sidecar.jar", 51129, "android", "663c91b1")
+
+	want := []string{
+		"--sun-misc-unsafe-memory-access=allow",
+		"-jar", "/tmp/sidecar.jar",
+		"--port", "51129",
+		"--platform", "android",
+		"--serial", "663c91b1",
+	}
+	if !slices.Equal(args, want) {
+		t.Fatalf("sidecar argv = %q, want %q", args, want)
+	}
+}
+
+func TestSidecarArgumentsOmitsTheFlagAJvmBefore23WouldRefuseToStartWith(t *testing.T) {
+	fakeJava(t, `case "$1" in --sun-misc-unsafe-memory-access=*) echo "Unrecognized option: $1" >&2; exit 1;; esac; exit 0`)
+
+	args := sidecarArguments(context.Background(), "/tmp/sidecar.jar", 51129, "android", "")
+
+	want := []string{"-jar", "/tmp/sidecar.jar", "--port", "51129", "--platform", "android"}
+	if !slices.Equal(args, want) {
+		t.Fatalf("sidecar argv = %q, want %q", args, want)
 	}
 }

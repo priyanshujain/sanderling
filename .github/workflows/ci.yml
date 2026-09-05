@@ -275,12 +275,13 @@ jobs:
       # pair fails here naming what it does carry, rather than as a
       # `bootstatus` error to read backwards from.
       #
-      # The UDID stays in this step. IOS_DEVICE has to keep holding the name,
-      # because `just ios` spends it as xcodebuild's `-destination name=`, which
-      # matches on the display name and rejects a UDID. Nothing downstream needs
-      # it anyway: the install, the launch and the terminate all address
-      # `booted`, and sanderling resolves --ios-device against booted simulators
-      # before available ones, so the one booted here is the one they all get.
+      # The UDID stays in this step, and IOS_DEVICE keeps holding the name,
+      # because the lookup below is what pairs that name with IOS_RUNTIME.
+      # Nothing downstream needs the UDID: `just ios` resolves IOS_DEVICE to one
+      # itself, matching booted simulators before merely available ones, so it
+      # lands on the simulator this step booted and spends its UDID as the build
+      # destination, the install and the launch. sanderling matches
+      # --ios-device the same way.
       - name: Boot a simulator
         run: |
           udid="$(python3 <<'PY'

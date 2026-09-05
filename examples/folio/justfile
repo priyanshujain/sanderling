@@ -7,7 +7,7 @@ android_device := env_var_or_default("ANDROID_DEVICE", "")
 duration   := env_var_or_default("DURATION", "1m")
 seed       := env_var_or_default("SEED", "0")
 output     := env_var_or_default("OUTPUT", justfile_directory() / "sanderling" / "runs")
-ios_device := env_var_or_default("IOS_DEVICE", "iPhone 17 Pro")
+ios_device := env_var_or_default("IOS_DEVICE", "")
 ios_app    := justfile_directory() / "app" / "iosApp" / "build" / "Build" / "Products" / "Debug-iphonesimulator" / "iosApp.app"
 ios_app_device := justfile_directory() / "app" / "iosApp" / "build" / "Build" / "Products" / "Debug-iphoneos" / "iosApp.app"
 apk        := justfile_directory() / "app" / "androidApp" / "build" / "outputs" / "apk" / "debug" / "androidApp-debug.apk"
@@ -39,9 +39,56 @@ _android-home:
     echo "could not locate Android SDK (set ANDROID_HOME)" >&2
     exit 1
 
+# Ask which of a list of targets to act on. Callers set FOLIO_PICK_ITEMS to
+# "value<TAB>label" lines and read one line back: "picked <value>", "cancelled"
+# or "no-tty". The answer goes to stdout rather than an exit code so a caller
+# reading it does not have to sieve just's own failure line out of the menu.
+_pick header:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! { exec 3</dev/tty; } 2>/dev/null; then
+      echo "no-tty"
+      exit 0
+    fi
+    values=()
+    labels=()
+    while IFS=$'\t' read -r value label; do
+      [[ -n "$value" ]] || continue
+      values+=("$value")
+      labels+=("${label:-$value}")
+    done <<<"$FOLIO_PICK_ITEMS"
+    echo "{{header}}" >&2
+    for i in "${!values[@]}"; do
+      printf '  %d) %s\n' "$((i + 1))" "${labels[$i]}" >&2
+    done
+    while :; do
+      printf 'folio: number (enter to cancel): ' >&2
+      read -r -u 3 reply || break
+      [[ -n "$reply" ]] || break
+      if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 1 && reply <= ${#values[@]} )); then
+        echo "picked ${values[$((reply - 1))]}"
+        exit 0
+      fi
+      echo "folio: not one of the numbers above." >&2
+    done
+    echo "cancelled"
+
+# Print where adb has been aimed when that is not this machine's default
+# server, and nothing when it is. Read the way the adb CLI reads it, so the
+# recipes that only ever guess at a local emulator can tell the difference.
+_adb-server:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -n "${ADB_SERVER_SOCKET:-}" ]]; then
+      echo "${ADB_SERVER_SOCKET}"
+    elif [[ -n "${ANDROID_ADB_SERVER_ADDRESS:-}${ANDROID_ADB_SERVER_PORT:-}" ]]; then
+      echo "tcp:${ANDROID_ADB_SERVER_ADDRESS:-localhost}:${ANDROID_ADB_SERVER_PORT:-5037}"
+    fi
+
 # Ensure an Android device is online. If none is connected and no AVD is
 # provided, boot the first AVD whose system image is actually installed
-# (headless) and wait for it to finish booting.
+# (headless) and wait for it to finish booting. A remote adb server is left
+# alone: an emulator booted here would never appear on it.
 _ensure-device:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -49,6 +96,11 @@ _ensure-device:
     adb="$sdk/platform-tools/adb"
     if "$adb" devices | awk 'NR>1 && $2=="device"{f=1} END{exit !f}'; then
       exit 0
+    fi
+    server="$(just _adb-server)"
+    if [[ -n "$server" ]]; then
+      echo "no device is online on the adb server at $server, and an emulator booted here would not appear on it" >&2
+      exit 1
     fi
     if [[ -n "{{avd}}" ]]; then
       exit 0  # sanderling boots the named AVD itself
@@ -79,15 +131,16 @@ _ensure-device:
     echo "emulator did not finish booting in time (see /tmp/folio-emulator.log)" >&2
     exit 1
 
-# Print the serial every device-affecting recipe must act on, or refuse. A run
-# installs the app, clears its state and fuzzes it, so the target is never
-# inferred from "whatever adb resolved to": the one case it picks on its own is
-# a single emulator on the local adb server, which is cheap to rebuild.
+# Print the serial every device-affecting recipe must act on. A run installs
+# the app, clears its state and fuzzes it, so the target is never inferred from
+# "whatever adb resolved to": the one case it picks on its own is a single
+# emulator on the local adb server, which is cheap to rebuild. Anything else is
+# asked about when there is a terminal to ask on, and refused when there is not.
 _require-device:
     #!/usr/bin/env bash
     set -euo pipefail
     adb="$(just _android-home)/platform-tools/adb"
-    listing="$("$adb" devices)"
+    listing="$("$adb" devices -l)"
     online="$(echo "$listing" | awk 'NR>1 && $2=="device"{print $1}')"
     count="$(printf '%s' "$online" | grep -c . || true)"
 
@@ -106,6 +159,12 @@ _require-device:
       exit 1
     }
 
+    model_of() {
+      printf '%s\n' "$listing" | awk -v serial="$1" '$1 == serial {
+        for (i = 3; i <= NF; i++) if ($i ~ /^model:/) { sub(/^model:/, "", $i); print $i; exit }
+      }'
+    }
+
     if [[ -n "{{android_device}}" ]]; then
       if printf '%s\n' "$online" | grep -qxF "{{android_device}}"; then
         echo "{{android_device}}"
@@ -116,13 +175,33 @@ _require-device:
     if [[ "$count" -eq 0 ]]; then
       refuse "no device is online."
     fi
-    if [[ -z "${ADB_SERVER_SOCKET:-}" && "$count" -eq 1 && "$online" =~ ^emulator-[0-9]+$ ]]; then
+    if [[ -z "$(just _adb-server)" && "$count" -eq 1 && "$online" =~ ^emulator-[0-9]+$ ]]; then
       echo "$online"
       exit 0
     fi
-    refuse "refusing to install on and fuzz a device nobody named. A run installs
-    the app, clears its state and drives it, so the only target it picks on its
-    own is a single emulator on the local adb server."
+
+    items="$(printf '%s\n' "$online" | while read -r serial; do
+      [[ -n "$serial" ]] || continue
+      model="$(model_of "$serial")"
+      printf '%s\t%s%s\n' "$serial" "$serial" "${model:+  $model}"
+    done)"
+    answer="$(FOLIO_PICK_ITEMS="$items" just _pick "folio: a run installs the app, clears its state and drives it. Pick the device:")"
+    case "$answer" in
+      "picked "*)
+        serial="${answer#picked }"
+        echo "folio: using $serial (ANDROID_DEVICE=$serial in examples/folio/.env skips this)" >&2
+        echo "$serial"
+        exit 0
+        ;;
+      cancelled)
+        echo "folio: cancelled." >&2
+        exit 1
+        ;;
+    esac
+    refuse "refusing to install on and fuzz a device nobody named, and there is no
+    terminal here to ask on. A run installs the app, clears its state and drives
+    it, so the only target it picks on its own is a single emulator on the local
+    adb server."
 
 # Run folio's own unit tests. Named test-unit because `test` is the fuzz run.
 test-unit:
@@ -138,15 +217,16 @@ build:
     export ANDROID_HOME="$(just _android-home)"
     ./gradlew :app:androidApp:assembleDebug
 
-# Build and install the folio APK on a running emulator/device. Gradle only
-# assembles: adb does the install because it reads ADB_SERVER_SOCKET, so the
-# device may live on a remote adb server, which AGP's loopback-only client
-# cannot reach.
-install: _ensure-device
+# Build and install the folio APK on a running emulator/device, on the serial
+# given or the one picked by _require-device. Gradle only assembles: adb does
+# the install because it reads ADB_SERVER_SOCKET, so the device may live on a
+# remote adb server, which AGP's loopback-only client cannot reach.
+install serial="": _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
-    serial="$(just _require-device)"
+    serial="{{serial}}"
+    [[ -n "$serial" ]] || serial="$(just _require-device)"
     export ANDROID_SERIAL="$serial"
     ./gradlew :app:androidApp:assembleDebug
     "$ANDROID_HOME/platform-tools/adb" install -r "{{apk}}"
@@ -168,33 +248,109 @@ clean:
     ./gradlew clean
     rm -rf app/iosApp/build
 
+# Print the UDID of the simulator the iOS recipes drive. IOS_DEVICE names it by
+# name or UDID, matched against booted simulators before merely available ones,
+# the way sanderling matches --ios-device. A UDID rather than a name because the
+# same iPhone exists under every installed runtime, and a seed only means
+# something against one of them. Without IOS_DEVICE, a lone booted simulator is
+# the one case taken without asking.
+_require-ios-device:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rows="$(xcrun simctl list devices available | awk '
+    /^-- / { runtime = $0; sub(/^-- /, "", runtime); sub(/ --$/, "", runtime); next }
+    runtime ~ /^iOS/ && match($0, /\([0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\)/) {
+      name = substr($0, 1, RSTART - 1)
+      gsub(/^[ \t]+|[ \t]+$/, "", name)
+      state = substr($0, RSTART + RLENGTH)
+      gsub(/[()[:space:]]/, "", state)
+      printf "%s\t%s\t%s\t%s\n", substr($0, RSTART + 1, RLENGTH - 2), name, runtime, state
+    }')"
+
+    catalog() {
+      printf '%s\n' "$rows" | awk -F'\t' 'NF { printf "  %s  (%s)  %s%s\n", $2, $3, $1, ($4 == "Booted" ? "  booted" : "") }'
+    }
+
+    refuse() {
+      cat >&2 <<EOF
+    folio: $1
+
+    $(catalog)
+
+    Set IOS_DEVICE to the simulator name or UDID to use. It can live in
+    examples/folio/.env:
+
+      IOS_DEVICE="iPhone 17 Pro" just test-ios
+    EOF
+      exit 1
+    }
+
+    if [[ -z "$rows" ]]; then
+      echo "folio: no iOS simulator is available. Create one in Xcode, or see 'xcrun simctl list devices'." >&2
+      exit 1
+    fi
+
+    if [[ -n "{{ios_device}}" ]]; then
+      matches="$(printf '%s\n' "$rows" | awk -F'\t' -v want="{{ios_device}}" '$4 == "Booted" && ($1 == want || $2 == want)')"
+      [[ -n "$matches" ]] || matches="$(printf '%s\n' "$rows" | awk -F'\t' -v want="{{ios_device}}" '$1 == want || $2 == want')"
+      [[ -n "$matches" ]] || refuse "IOS_DEVICE={{ios_device}} is not an available simulator."
+    else
+      matches="$(printf '%s\n' "$rows" | awk -F'\t' '$4 == "Booted"')"
+      [[ -n "$matches" ]] || matches="$rows"
+    fi
+
+    if [[ "$(printf '%s\n' "$matches" | grep -c .)" -eq 1 ]]; then
+      printf '%s\n' "$matches" | cut -f1
+      exit 0
+    fi
+
+    items="$(printf '%s\n' "$matches" | awk -F'\t' 'NF { printf "%s\t%s  (%s)  %s%s\n", $1, $2, $3, $1, ($4 == "Booted" ? "  booted" : "") }')"
+    answer="$(FOLIO_PICK_ITEMS="$items" just _pick "folio: a run installs folio on the simulator, clears its state and drives it. Pick one:")"
+    case "$answer" in
+      "picked "*)
+        udid="${answer#picked }"
+        echo "folio: using $udid (IOS_DEVICE=$udid in examples/folio/.env skips this)" >&2
+        echo "$udid"
+        exit 0
+        ;;
+      cancelled)
+        echo "folio: cancelled." >&2
+        exit 1
+        ;;
+    esac
+    refuse "more than one simulator answers to that, and there is no terminal here to ask on."
+
 # Regenerate iosApp.xcodeproj from project.yml.
 ios-gen:
     #!/usr/bin/env bash
     set -euo pipefail
     cd app/iosApp && xcodegen generate
 
-# Build + install + launch on a booted iOS simulator (boots IOS_DEVICE if none).
-ios:
+# Build + install + launch on the simulator given, or the one folio settles on.
+ios udid="":
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
-    if ! xcrun simctl list devices booted | grep -q Booted; then
-      xcrun simctl boot "{{ios_device}}"
+    # Every step addresses this UDID rather than "booted", so the build, the
+    # install and the launch cannot land on different simulators.
+    udid="{{udid}}"
+    [[ -n "$udid" ]] || udid="$(just _require-ios-device)"
+    if ! xcrun simctl list devices booted | grep -q "$udid"; then
+      xcrun simctl boot "$udid"
       open -a Simulator
       sleep 3
     fi
     just ios-gen
     xcodebuild -project app/iosApp/iosApp.xcodeproj -scheme iosApp \
-      -destination 'platform=iOS Simulator,name={{ios_device}}' \
+      -destination "platform=iOS Simulator,id=$udid" \
       -derivedDataPath app/iosApp/build \
       build | tail -5
     # Installing over the top keeps the data container, and folio's signed-in
     # session with it, so a run started straight after would open on the last
     # run's Home screen instead of Login and diverge at step 1.
-    xcrun simctl uninstall booted app.folio || true
-    xcrun simctl install booted "{{ios_app}}"
-    xcrun simctl launch booted app.folio
+    xcrun simctl uninstall "$udid" app.folio || true
+    xcrun simctl install "$udid" "{{ios_app}}"
+    xcrun simctl launch "$udid" app.folio
 
 # Build the folio app for a connected physical iOS device (signed via .env creds).
 # Signing reads ASC_API_* and DEVELOPMENT_TEAM/SANDERLING_IOS_TEAM from .env;
@@ -217,12 +373,13 @@ ios-device:
 
 # Run 'sanderling test' against the folio app. Uses a connected device if one is
 # online; otherwise boots AVD=<name> when provided, or auto-boots a bootable AVD.
-# Depends on install so the run always fuzzes the current build, matching
+# Installs before it runs so the run always fuzzes the current build, matching
 # test-ios which rebuilds and reinstalls the app first.
-test: install
+test: _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     serial="$(just _require-device)"
+    just install "$serial"
     device_flag=(--device "$serial")
     if [[ -n "{{avd}}" ]]; then
       device_flag+=(--avd "{{avd}}")
@@ -239,10 +396,11 @@ test: install
 # Run 'sanderling test' with the LLM action generator instead of the seeded
 # fuzzer. Needs OPENROUTER_API_KEY (or OPENAI_API_KEY) in the environment; the
 # model is configured by generator = llm({...}) in spec.ts.
-test-llm: install
+test-llm: _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     serial="$(just _require-device)"
+    just install "$serial"
     device_flag=(--device "$serial")
     if [[ -n "{{avd}}" ]]; then
       device_flag+=(--avd "{{avd}}")
@@ -275,17 +433,14 @@ web-build:
 test-ios:
     #!/usr/bin/env bash
     set -euo pipefail
-    just ios
-    ios_device_flag=()
-    if [[ -n "{{ios_device}}" ]]; then
-      ios_device_flag=(--ios-device "{{ios_device}}")
-    fi
+    udid="$(just _require-ios-device)"
+    just ios "$udid"
     "{{sanderling}}" test \
       --platform ios \
       --spec "{{justfile_directory()}}/sanderling/spec.ts" \
       --bundle-id app.folio \
       --ios-app-path "{{ios_app}}" \
-      "${ios_device_flag[@]}" \
+      --ios-device "$udid" \
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"
@@ -296,6 +451,10 @@ test-ios:
 test-ios-device:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [[ -z "{{ios_device}}" ]]; then
+      echo "folio: set IOS_DEVICE to the connected device's name, UDID or CoreDevice id (see 'xcrun devicectl list devices'). Left empty, sanderling resolves a booted simulator and fuzzes that instead." >&2
+      exit 1
+    fi
     just ios-device
     "{{sanderling}}" test \
       --platform ios \

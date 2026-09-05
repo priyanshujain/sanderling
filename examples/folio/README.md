@@ -23,15 +23,17 @@ example sanderling runs its property-based specs against.
 ## Android
 
 ```sh
+just install                                # asks which device, then builds + installs
 ANDROID_DEVICE=emulator-5554 just install   # build + install on that device
 ANDROID_DEVICE=emulator-5554 just uninstall
 just clean
 ```
 
 `ANDROID_DEVICE` is the serial `adb devices` reports. Every recipe that
-installs, uninstalls or fuzzes refuses to run without it, unless the only
-device adb can see is a single emulator on the local adb server. The refusal
-prints what adb currently sees.
+installs, uninstalls or fuzzes acts on that serial. Without it they print the
+online devices and ask which one to use, and pick on their own only when the
+one device adb can see is an emulator on the local adb server. With no terminal
+to ask on, a CI job say, the ask becomes a refusal that prints what adb sees.
 
 A run installs the app, clears its state and drives it, which is not something
 to do to a handset that happens to be the one thing plugged in. An emulator is
@@ -40,9 +42,17 @@ cheap to rebuild, so a lone local one is the single case worth guessing at.
 ## iOS
 
 ```sh
-just ios                          # default device: iPhone 17 Pro
-IOS_DEVICE="iPhone 15" just ios   # pick a different simulator
+just ios                          # asks which simulator, unless one is booted
+IOS_DEVICE="iPhone 15" just ios   # name it, by name or UDID
 ```
+
+`IOS_DEVICE` follows the same rule as `ANDROID_DEVICE`: a lone booted simulator
+is taken without asking, anything else is asked about, and with no terminal to
+ask on it refuses and lists what is installed. A name is matched against booted
+simulators first and available ones second, and it can name several, since the
+same iPhone exists under every installed runtime. When it does, you pick which,
+and everything after that addresses the chosen UDID: the build destination, the
+install, the launch and `--ios-device` all get the one simulator.
 
 `just ios` regenerates `app/iosApp/iosApp.xcodeproj` from `app/iosApp/project.yml`,
 builds the KMP framework (`Shared.framework` from `:app:shared`), links it
@@ -73,9 +83,9 @@ password: ledger123
 ANDROID_DEVICE=emulator-5554 just test
 ```
 
-The same naming rule as `just install` applies. If nothing is attached at all,
-`just test` boots a bootable AVD and runs against that. With multiple AVDs,
-pick one:
+The same naming rule as `just install` applies, and `just test` asks once for
+the whole run. If nothing is attached at all, `just test` boots a bootable AVD
+and runs against that. With multiple AVDs, pick one:
 
 ```sh
 AVD=Pixel_7 just test
@@ -90,13 +100,18 @@ DURATION=5m
 
 The device does not have to be attached to this machine. `ADB_SERVER_SOCKET`
 aims adb at another host's adb server, and `ANDROID_DEVICE` names the serial
-that server reports. A remote server is shared, so `ANDROID_DEVICE` is required
-there even when it holds only one device:
+that server reports. A remote server is shared, so nothing there is ever picked
+without being named or asked about, one device on it or twenty:
 
 ```
 ADB_SERVER_SOCKET=tcp:10.0.0.5:5037
 ANDROID_DEVICE=emulator-5556
 ```
+
+The older `ANDROID_ADB_SERVER_ADDRESS` / `ANDROID_ADB_SERVER_PORT` pair works
+too, at the same precedence the adb CLI gives it. A remote server is never
+auto-booted against: when it reports no device, `just test` says so rather than
+starting a local emulator that server will never see.
 
 Gradle only assembles the APK. The install goes through adb, which reads those
 variables, so a remote server needs nothing else. Gradle's own `installDebug`
@@ -128,13 +143,18 @@ each pick was made.
 ## Run a sanderling test (iOS)
 
 ```sh
-just test-ios                          # default simulator: iPhone 17 Pro
-IOS_DEVICE="iPhone 15" just test-ios   # pick a different simulator
+just test-ios                          # asks which simulator, unless one is booted
+IOS_DEVICE="iPhone 15" just test-ios   # name it, by name or UDID
 ```
 
-`just test-ios` boots the simulator if needed, runs `just ios` to install
-and launch the app, then invokes `sanderling test --platform ios`. Same
-`DURATION`, `SEED`, and `OUTPUT` env vars as the Android target.
+`just test-ios` settles on a simulator once for the whole run, boots it if
+needed, runs `just ios` to install and launch the app, then invokes `sanderling
+test --platform ios`. Same `DURATION`, `SEED`, and `OUTPUT` env vars as the
+Android target.
+
+A physical iPhone is a different target: `just test-ios-device` requires
+`IOS_DEVICE` to name it, and says so rather than running, because an empty one
+resolves to a booted simulator and would fuzz that instead.
 
 ## How it connects to sanderling
 

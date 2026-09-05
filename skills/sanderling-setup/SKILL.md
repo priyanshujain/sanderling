@@ -73,6 +73,10 @@ attached devices with `--device <serial>` as `adb devices` prints it:
 sanderling test --spec spec.ts --bundle-id com.example.app --avd Pixel_7_API_34
 ```
 
+`--android-app-path <apk>` stands in for `--bundle-id`: the applicationId is
+read out of the APK's compiled manifest, so the id and the file it came from
+cannot disagree.
+
 iOS takes `--platform ios` and `--ios-device`, which accepts a simulator name or
 UDID, or a connected device's name, UDID, or CoreDevice id. `--ios-app-path`
 points at the `.app` bundle and is what makes clear-state real; see section 4.

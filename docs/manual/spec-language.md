@@ -84,7 +84,7 @@ Every key-value pair must match. A key means the same thing here as in the strin
 
 Known attribute names are typed; you get autocomplete on `testTag`, `text`, `content-desc`, the boolean states (`clickable`, `enabled`, `focused`, `checked`, `selected`, `editable`, `secure`), and the cross-platform aliases (`identifier`, `accessibilityIdentifier`, `accessibilityText`, `accessibilityLabel`, `ariaLabel`, `contentDescription`, `label`, `testID`, `resource-id`, `class`, `className`, `elementType`, `package`, `placeholderValue`, `hintText`). Boolean state attributes accept a native `true` / `false`. Other attribute keys still type-check as a string-valued fallback so raw driver attributes remain reachable.
 
-A boolean state matches only where the platform reports it. `{secure: true}` names the password entry and `{secure: false}` names an editable field that is not one, so neither value names an element that is no field at all, and neither matches anything on Android, which reports the fact for nothing.
+A boolean state matches only where the platform reports it. `{secure: true}` names the password entry and `{secure: false}` names an editable field that is not one, so neither value names an element that is no field at all. All three platforms report it; on Android a text field the sidecar cannot match against the device's own view hierarchy is left unstated and answers to neither value.
 
 `clickable`, `enabled`, `focused`, `checked`, `selected` and `editable` are reported for every element, so both values of each match: `{clickable: false}` names every element that is not a tap target. They are read off the element as it stands, never off a markup attribute of the same name, so a box the user ticked answers to `{checked: true}` on a page whose markup never wrote `checked` anywhere.
 
@@ -145,7 +145,7 @@ Fields available on every element returned by `find` / `findAll`:
 | `checked` | `boolean` | Checkbox or toggle state |
 | `focused` | `boolean` | Element has input focus |
 | `selected` | `boolean` | Selection state |
-| `secure` | `boolean \| null` | Field masks what is typed into it; `null` where the platform does not report it (Android never does) |
+| `secure` | `boolean \| null` | Field masks what is typed into it; `null` where the platform does not report it |
 | `bounds` | `{ left, top, right, bottom }` | Bounding box in device pixels |
 | `x` | `number` | Center X (derived from bounds) |
 | `y` | `number` | Center Y (derived from bounds) |

@@ -1821,3 +1821,48 @@ func TestTagMatchesTheElementItNames(t *testing.T) {
 		})
 	}
 }
+
+func TestScreenNameNamesTheRouteTheTreeShows(t *testing.T) {
+	cases := []struct {
+		name string
+		tree string
+		want string
+	}{
+		{
+			"driver-set screen",
+			`{"attributes": {"bounds": "[0,0,10,10]", "sanderling-screen": "/ledger"}, "children": []}`,
+			"/ledger",
+		},
+		{
+			"route marker",
+			`{"attributes": {"bounds": "[0,0,10,10]"}, "children": [
+				{"attributes": {"resource-id": "HomeScreen", "bounds": "[0,0,10,10]"}, "children": []}
+			]}`,
+			"HomeScreen",
+		},
+		{
+			"cross-fade names no screen",
+			`{"attributes": {"bounds": "[0,0,10,10]"}, "children": [
+				{"attributes": {"resource-id": "HomeScreen", "bounds": "[0,0,10,10]"}, "children": []},
+				{"attributes": {"resource-id": "LedgerScreen", "bounds": "[0,0,10,10]"}, "children": []}
+			]}`,
+			"",
+		},
+		{
+			"no marker at all",
+			`{"attributes": {"bounds": "[0,0,10,10]"}, "children": []}`,
+			"",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tree, err := Parse(testCase.tree)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if got := tree.ScreenName(); got != testCase.want {
+				t.Errorf("ScreenName = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
