@@ -39,9 +39,56 @@ _android-home:
     echo "could not locate Android SDK (set ANDROID_HOME)" >&2
     exit 1
 
+# Ask which of a list of targets to act on. Callers set FOLIO_PICK_ITEMS to
+# "value<TAB>label" lines and read one line back: "picked <value>", "cancelled"
+# or "no-tty". The answer goes to stdout rather than an exit code so a caller
+# reading it does not have to sieve just's own failure line out of the menu.
+_pick header:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! { exec 3</dev/tty; } 2>/dev/null; then
+      echo "no-tty"
+      exit 0
+    fi
+    values=()
+    labels=()
+    while IFS=$'\t' read -r value label; do
+      [[ -n "$value" ]] || continue
+      values+=("$value")
+      labels+=("${label:-$value}")
+    done <<<"$FOLIO_PICK_ITEMS"
+    echo "{{header}}" >&2
+    for i in "${!values[@]}"; do
+      printf '  %d) %s\n' "$((i + 1))" "${labels[$i]}" >&2
+    done
+    while :; do
+      printf 'folio: number (enter to cancel): ' >&2
+      read -r -u 3 reply || break
+      [[ -n "$reply" ]] || break
+      if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 1 && reply <= ${#values[@]} )); then
+        echo "picked ${values[$((reply - 1))]}"
+        exit 0
+      fi
+      echo "folio: not one of the numbers above." >&2
+    done
+    echo "cancelled"
+
+# Print where adb has been aimed when that is not this machine's default
+# server, and nothing when it is. Read the way the adb CLI reads it, so the
+# recipes that only ever guess at a local emulator can tell the difference.
+_adb-server:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -n "${ADB_SERVER_SOCKET:-}" ]]; then
+      echo "${ADB_SERVER_SOCKET}"
+    elif [[ -n "${ANDROID_ADB_SERVER_ADDRESS:-}${ANDROID_ADB_SERVER_PORT:-}" ]]; then
+      echo "tcp:${ANDROID_ADB_SERVER_ADDRESS:-localhost}:${ANDROID_ADB_SERVER_PORT:-5037}"
+    fi
+
 # Ensure an Android device is online. If none is connected and no AVD is
 # provided, boot the first AVD whose system image is actually installed
-# (headless) and wait for it to finish booting.
+# (headless) and wait for it to finish booting. A remote adb server is left
+# alone: an emulator booted here would never appear on it.
 _ensure-device:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -49,6 +96,11 @@ _ensure-device:
     adb="$sdk/platform-tools/adb"
     if "$adb" devices | awk 'NR>1 && $2=="device"{f=1} END{exit !f}'; then
       exit 0
+    fi
+    server="$(just _adb-server)"
+    if [[ -n "$server" ]]; then
+      echo "no device is online on the adb server at $server, and an emulator booted here would not appear on it" >&2
+      exit 1
     fi
     if [[ -n "{{avd}}" ]]; then
       exit 0  # sanderling boots the named AVD itself
@@ -79,15 +131,16 @@ _ensure-device:
     echo "emulator did not finish booting in time (see /tmp/folio-emulator.log)" >&2
     exit 1
 
-# Print the serial every device-affecting recipe must act on, or refuse. A run
-# installs the app, clears its state and fuzzes it, so the target is never
-# inferred from "whatever adb resolved to": the one case it picks on its own is
-# a single emulator on the local adb server, which is cheap to rebuild.
+# Print the serial every device-affecting recipe must act on. A run installs
+# the app, clears its state and fuzzes it, so the target is never inferred from
+# "whatever adb resolved to": the one case it picks on its own is a single
+# emulator on the local adb server, which is cheap to rebuild. Anything else is
+# asked about when there is a terminal to ask on, and refused when there is not.
 _require-device:
     #!/usr/bin/env bash
     set -euo pipefail
     adb="$(just _android-home)/platform-tools/adb"
-    listing="$("$adb" devices)"
+    listing="$("$adb" devices -l)"
     online="$(echo "$listing" | awk 'NR>1 && $2=="device"{print $1}')"
     count="$(printf '%s' "$online" | grep -c . || true)"
 
@@ -106,6 +159,12 @@ _require-device:
       exit 1
     }
 
+    model_of() {
+      printf '%s\n' "$listing" | awk -v serial="$1" '$1 == serial {
+        for (i = 3; i <= NF; i++) if ($i ~ /^model:/) { sub(/^model:/, "", $i); print $i; exit }
+      }'
+    }
+
     if [[ -n "{{android_device}}" ]]; then
       if printf '%s\n' "$online" | grep -qxF "{{android_device}}"; then
         echo "{{android_device}}"
@@ -116,13 +175,33 @@ _require-device:
     if [[ "$count" -eq 0 ]]; then
       refuse "no device is online."
     fi
-    if [[ -z "${ADB_SERVER_SOCKET:-}" && "$count" -eq 1 && "$online" =~ ^emulator-[0-9]+$ ]]; then
+    if [[ -z "$(just _adb-server)" && "$count" -eq 1 && "$online" =~ ^emulator-[0-9]+$ ]]; then
       echo "$online"
       exit 0
     fi
-    refuse "refusing to install on and fuzz a device nobody named. A run installs
-    the app, clears its state and drives it, so the only target it picks on its
-    own is a single emulator on the local adb server."
+
+    items="$(printf '%s\n' "$online" | while read -r serial; do
+      [[ -n "$serial" ]] || continue
+      model="$(model_of "$serial")"
+      printf '%s\t%s%s\n' "$serial" "$serial" "${model:+  $model}"
+    done)"
+    answer="$(FOLIO_PICK_ITEMS="$items" just _pick "folio: a run installs the app, clears its state and drives it. Pick the device:")"
+    case "$answer" in
+      "picked "*)
+        serial="${answer#picked }"
+        echo "folio: using $serial (ANDROID_DEVICE=$serial in examples/folio/.env skips this)" >&2
+        echo "$serial"
+        exit 0
+        ;;
+      cancelled)
+        echo "folio: cancelled." >&2
+        exit 1
+        ;;
+    esac
+    refuse "refusing to install on and fuzz a device nobody named, and there is no
+    terminal here to ask on. A run installs the app, clears its state and drives
+    it, so the only target it picks on its own is a single emulator on the local
+    adb server."
 
 # Run folio's own unit tests. Named test-unit because `test` is the fuzz run.
 test-unit:
@@ -138,15 +217,16 @@ build:
     export ANDROID_HOME="$(just _android-home)"
     ./gradlew :app:androidApp:assembleDebug
 
-# Build and install the folio APK on a running emulator/device. Gradle only
-# assembles: adb does the install because it reads ADB_SERVER_SOCKET, so the
-# device may live on a remote adb server, which AGP's loopback-only client
-# cannot reach.
-install: _ensure-device
+# Build and install the folio APK on a running emulator/device, on the serial
+# given or the one picked by _require-device. Gradle only assembles: adb does
+# the install because it reads ADB_SERVER_SOCKET, so the device may live on a
+# remote adb server, which AGP's loopback-only client cannot reach.
+install serial="": _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
-    serial="$(just _require-device)"
+    serial="{{serial}}"
+    [[ -n "$serial" ]] || serial="$(just _require-device)"
     export ANDROID_SERIAL="$serial"
     ./gradlew :app:androidApp:assembleDebug
     "$ANDROID_HOME/platform-tools/adb" install -r "{{apk}}"
@@ -217,12 +297,13 @@ ios-device:
 
 # Run 'sanderling test' against the folio app. Uses a connected device if one is
 # online; otherwise boots AVD=<name> when provided, or auto-boots a bootable AVD.
-# Depends on install so the run always fuzzes the current build, matching
+# Installs before it runs so the run always fuzzes the current build, matching
 # test-ios which rebuilds and reinstalls the app first.
-test: install
+test: _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     serial="$(just _require-device)"
+    just install "$serial"
     device_flag=(--device "$serial")
     if [[ -n "{{avd}}" ]]; then
       device_flag+=(--avd "{{avd}}")
@@ -239,10 +320,11 @@ test: install
 # Run 'sanderling test' with the LLM action generator instead of the seeded
 # fuzzer. Needs OPENROUTER_API_KEY (or OPENAI_API_KEY) in the environment; the
 # model is configured by generator = llm({...}) in spec.ts.
-test-llm: install
+test-llm: _ensure-device
     #!/usr/bin/env bash
     set -euo pipefail
     serial="$(just _require-device)"
+    just install "$serial"
     device_flag=(--device "$serial")
     if [[ -n "{{avd}}" ]]; then
       device_flag+=(--avd "{{avd}}")
