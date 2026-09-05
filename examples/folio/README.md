@@ -42,9 +42,17 @@ cheap to rebuild, so a lone local one is the single case worth guessing at.
 ## iOS
 
 ```sh
-just ios                          # default device: iPhone 17 Pro
-IOS_DEVICE="iPhone 15" just ios   # pick a different simulator
+just ios                          # asks which simulator, unless one is booted
+IOS_DEVICE="iPhone 15" just ios   # name it, by name or UDID
 ```
+
+`IOS_DEVICE` follows the same rule as `ANDROID_DEVICE`: a lone booted simulator
+is taken without asking, anything else is asked about, and with no terminal to
+ask on it refuses and lists what is installed. A name is matched against booted
+simulators first and available ones second, and it can name several, since the
+same iPhone exists under every installed runtime. When it does, you pick which,
+and everything after that addresses the chosen UDID: the build destination, the
+install, the launch and `--ios-device` all get the one simulator.
 
 `just ios` regenerates `app/iosApp/iosApp.xcodeproj` from `app/iosApp/project.yml`,
 builds the KMP framework (`Shared.framework` from `:app:shared`), links it
@@ -135,13 +143,18 @@ each pick was made.
 ## Run a sanderling test (iOS)
 
 ```sh
-just test-ios                          # default simulator: iPhone 17 Pro
-IOS_DEVICE="iPhone 15" just test-ios   # pick a different simulator
+just test-ios                          # asks which simulator, unless one is booted
+IOS_DEVICE="iPhone 15" just test-ios   # name it, by name or UDID
 ```
 
-`just test-ios` boots the simulator if needed, runs `just ios` to install
-and launch the app, then invokes `sanderling test --platform ios`. Same
-`DURATION`, `SEED`, and `OUTPUT` env vars as the Android target.
+`just test-ios` settles on a simulator once for the whole run, boots it if
+needed, runs `just ios` to install and launch the app, then invokes `sanderling
+test --platform ios`. Same `DURATION`, `SEED`, and `OUTPUT` env vars as the
+Android target.
+
+A physical iPhone is a different target: `just test-ios-device` requires
+`IOS_DEVICE` to name it, and says so rather than running, because an empty one
+resolves to a booted simulator and would fuzz that instead.
 
 ## How it connects to sanderling
 

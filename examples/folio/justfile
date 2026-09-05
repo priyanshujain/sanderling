@@ -7,7 +7,7 @@ android_device := env_var_or_default("ANDROID_DEVICE", "")
 duration   := env_var_or_default("DURATION", "1m")
 seed       := env_var_or_default("SEED", "0")
 output     := env_var_or_default("OUTPUT", justfile_directory() / "sanderling" / "runs")
-ios_device := env_var_or_default("IOS_DEVICE", "iPhone 17 Pro")
+ios_device := env_var_or_default("IOS_DEVICE", "")
 ios_app    := justfile_directory() / "app" / "iosApp" / "build" / "Build" / "Products" / "Debug-iphonesimulator" / "iosApp.app"
 ios_app_device := justfile_directory() / "app" / "iosApp" / "build" / "Build" / "Products" / "Debug-iphoneos" / "iosApp.app"
 apk        := justfile_directory() / "app" / "androidApp" / "build" / "outputs" / "apk" / "debug" / "androidApp-debug.apk"
@@ -248,33 +248,109 @@ clean:
     ./gradlew clean
     rm -rf app/iosApp/build
 
+# Print the UDID of the simulator the iOS recipes drive. IOS_DEVICE names it by
+# name or UDID, matched against booted simulators before merely available ones,
+# the way sanderling matches --ios-device. A UDID rather than a name because the
+# same iPhone exists under every installed runtime, and a seed only means
+# something against one of them. Without IOS_DEVICE, a lone booted simulator is
+# the one case taken without asking.
+_require-ios-device:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rows="$(xcrun simctl list devices available | awk '
+    /^-- / { runtime = $0; sub(/^-- /, "", runtime); sub(/ --$/, "", runtime); next }
+    runtime ~ /^iOS/ && match($0, /\([0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\)/) {
+      name = substr($0, 1, RSTART - 1)
+      gsub(/^[ \t]+|[ \t]+$/, "", name)
+      state = substr($0, RSTART + RLENGTH)
+      gsub(/[()[:space:]]/, "", state)
+      printf "%s\t%s\t%s\t%s\n", substr($0, RSTART + 1, RLENGTH - 2), name, runtime, state
+    }')"
+
+    catalog() {
+      printf '%s\n' "$rows" | awk -F'\t' 'NF { printf "  %s  (%s)  %s%s\n", $2, $3, $1, ($4 == "Booted" ? "  booted" : "") }'
+    }
+
+    refuse() {
+      cat >&2 <<EOF
+    folio: $1
+
+    $(catalog)
+
+    Set IOS_DEVICE to the simulator name or UDID to use. It can live in
+    examples/folio/.env:
+
+      IOS_DEVICE="iPhone 17 Pro" just test-ios
+    EOF
+      exit 1
+    }
+
+    if [[ -z "$rows" ]]; then
+      echo "folio: no iOS simulator is available. Create one in Xcode, or see 'xcrun simctl list devices'." >&2
+      exit 1
+    fi
+
+    if [[ -n "{{ios_device}}" ]]; then
+      matches="$(printf '%s\n' "$rows" | awk -F'\t' -v want="{{ios_device}}" '$4 == "Booted" && ($1 == want || $2 == want)')"
+      [[ -n "$matches" ]] || matches="$(printf '%s\n' "$rows" | awk -F'\t' -v want="{{ios_device}}" '$1 == want || $2 == want')"
+      [[ -n "$matches" ]] || refuse "IOS_DEVICE={{ios_device}} is not an available simulator."
+    else
+      matches="$(printf '%s\n' "$rows" | awk -F'\t' '$4 == "Booted"')"
+      [[ -n "$matches" ]] || matches="$rows"
+    fi
+
+    if [[ "$(printf '%s\n' "$matches" | grep -c .)" -eq 1 ]]; then
+      printf '%s\n' "$matches" | cut -f1
+      exit 0
+    fi
+
+    items="$(printf '%s\n' "$matches" | awk -F'\t' 'NF { printf "%s\t%s  (%s)  %s%s\n", $1, $2, $3, $1, ($4 == "Booted" ? "  booted" : "") }')"
+    answer="$(FOLIO_PICK_ITEMS="$items" just _pick "folio: a run installs folio on the simulator, clears its state and drives it. Pick one:")"
+    case "$answer" in
+      "picked "*)
+        udid="${answer#picked }"
+        echo "folio: using $udid (IOS_DEVICE=$udid in examples/folio/.env skips this)" >&2
+        echo "$udid"
+        exit 0
+        ;;
+      cancelled)
+        echo "folio: cancelled." >&2
+        exit 1
+        ;;
+    esac
+    refuse "more than one simulator answers to that, and there is no terminal here to ask on."
+
 # Regenerate iosApp.xcodeproj from project.yml.
 ios-gen:
     #!/usr/bin/env bash
     set -euo pipefail
     cd app/iosApp && xcodegen generate
 
-# Build + install + launch on a booted iOS simulator (boots IOS_DEVICE if none).
-ios:
+# Build + install + launch on the simulator given, or the one folio settles on.
+ios udid="":
     #!/usr/bin/env bash
     set -euo pipefail
     export ANDROID_HOME="$(just _android-home)"
-    if ! xcrun simctl list devices booted | grep -q Booted; then
-      xcrun simctl boot "{{ios_device}}"
+    # Every step addresses this UDID rather than "booted", so the build, the
+    # install and the launch cannot land on different simulators.
+    udid="{{udid}}"
+    [[ -n "$udid" ]] || udid="$(just _require-ios-device)"
+    if ! xcrun simctl list devices booted | grep -q "$udid"; then
+      xcrun simctl boot "$udid"
       open -a Simulator
       sleep 3
     fi
     just ios-gen
     xcodebuild -project app/iosApp/iosApp.xcodeproj -scheme iosApp \
-      -destination 'platform=iOS Simulator,name={{ios_device}}' \
+      -destination "platform=iOS Simulator,id=$udid" \
       -derivedDataPath app/iosApp/build \
       build | tail -5
     # Installing over the top keeps the data container, and folio's signed-in
     # session with it, so a run started straight after would open on the last
     # run's Home screen instead of Login and diverge at step 1.
-    xcrun simctl uninstall booted app.folio || true
-    xcrun simctl install booted "{{ios_app}}"
-    xcrun simctl launch booted app.folio
+    xcrun simctl uninstall "$udid" app.folio || true
+    xcrun simctl install "$udid" "{{ios_app}}"
+    xcrun simctl launch "$udid" app.folio
 
 # Build the folio app for a connected physical iOS device (signed via .env creds).
 # Signing reads ASC_API_* and DEVELOPMENT_TEAM/SANDERLING_IOS_TEAM from .env;
@@ -357,17 +433,14 @@ web-build:
 test-ios:
     #!/usr/bin/env bash
     set -euo pipefail
-    just ios
-    ios_device_flag=()
-    if [[ -n "{{ios_device}}" ]]; then
-      ios_device_flag=(--ios-device "{{ios_device}}")
-    fi
+    udid="$(just _require-ios-device)"
+    just ios "$udid"
     "{{sanderling}}" test \
       --platform ios \
       --spec "{{justfile_directory()}}/sanderling/spec.ts" \
       --bundle-id app.folio \
       --ios-app-path "{{ios_app}}" \
-      "${ios_device_flag[@]}" \
+      --ios-device "$udid" \
       --duration "{{duration}}" \
       --seed "{{seed}}" \
       --output "{{output}}"
@@ -378,6 +451,10 @@ test-ios:
 test-ios-device:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [[ -z "{{ios_device}}" ]]; then
+      echo "folio: set IOS_DEVICE to the connected device's name, UDID or CoreDevice id (see 'xcrun devicectl list devices'). Left empty, sanderling resolves a booted simulator and fuzzes that instead." >&2
+      exit 1
+    fi
     just ios-device
     "{{sanderling}}" test \
       --platform ios \
