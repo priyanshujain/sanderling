@@ -669,9 +669,7 @@ func (t *Tree) Transitional() bool {
 
 // ScreenName names the route this tree shows: the driver-set screen when the
 // platform reports one (web), otherwise the resource id ending in "Screen" that
-// marks the route composable. A tree carrying two different route ids is a
-// cross-fade in flight and names no screen, which is the same reading
-// Transitional gives it.
+// marks the route composable. A transitional tree names no screen.
 func (t *Tree) ScreenName() string {
 	if t == nil || len(t.Elements) == 0 {
 		return ""
@@ -679,17 +677,15 @@ func (t *Tree) ScreenName() string {
 	if screen := t.Elements[0].Screen; screen != "" {
 		return screen
 	}
-	name := ""
-	for _, element := range t.Elements {
-		if !strings.HasSuffix(element.ResourceID, "Screen") {
-			continue
-		}
-		if name != "" && name != element.ResourceID {
-			return ""
-		}
-		name = element.ResourceID
+	if t.Transitional() {
+		return ""
 	}
-	return name
+	for _, element := range t.Elements {
+		if strings.HasSuffix(element.ResourceID, "Screen") {
+			return element.ResourceID
+		}
+	}
+	return ""
 }
 
 // Find returns the first element matching the selector, or nil.

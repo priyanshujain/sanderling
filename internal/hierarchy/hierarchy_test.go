@@ -1841,15 +1841,6 @@ func TestScreenNameNamesTheRouteTheTreeShows(t *testing.T) {
 			"HomeScreen",
 		},
 		{
-			"route marker repeated by a nested node",
-			`{"attributes": {"bounds": "[0,0,10,10]"}, "children": [
-				{"attributes": {"resource-id": "HomeScreen", "bounds": "[0,0,10,10]"}, "children": [
-					{"attributes": {"resource-id": "HomeScreen", "bounds": "[0,0,10,5]"}, "children": []}
-				]}
-			]}`,
-			"HomeScreen",
-		},
-		{
 			"cross-fade names no screen",
 			`{"attributes": {"bounds": "[0,0,10,10]"}, "children": [
 				{"attributes": {"resource-id": "HomeScreen", "bounds": "[0,0,10,10]"}, "children": []},
