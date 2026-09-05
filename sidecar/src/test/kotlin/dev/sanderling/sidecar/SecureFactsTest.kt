@@ -3,7 +3,6 @@ package dev.sanderling.sidecar
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 // The tree maestro hands back for a login form: it names both fields and says
 // nothing about either being a credential entry, because maestro's mapper does
@@ -166,15 +165,19 @@ class SecureFactsTest {
     // The rest of the tree has to survive the annotation: it is the same tree
     // every selector, bounds read and screen classification runs against.
     @Test fun theTreeIsOtherwiseUnchanged() {
-        val annotated = withSecureFacts(LOGIN_TREE) { LOGIN_XML }
-
-        assertTrue(annotated.contains("\"LoginSubmit\""))
-        assertEquals(
-            "[51,249][429,321]",
-            jacksonTree(
-                annotated,
-                "LoginPassword",
-            )?.get("attributes")?.get("bounds")?.asText(),
+        val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+        val annotated = mapper.readTree(
+            withSecureFacts(LOGIN_TREE) {
+                LOGIN_XML
+            },
         )
+
+        val stated = annotated.findParents("secure")
+        assertEquals(2, stated.size)
+        for (node in stated) {
+            (node as com.fasterxml.jackson.databind.node.ObjectNode)
+                .remove("secure")
+        }
+        assertEquals(mapper.readTree(LOGIN_TREE), annotated)
     }
 }
